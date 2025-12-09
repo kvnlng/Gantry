@@ -154,6 +154,14 @@ pytest -v
 
 ---
 
+## 🗺️ Roadmap
+
+Interested in where Gantry is heading? Check out our [Roadmap](ROADMAP.md).
+
+We welcome contributions! If you'd like to help with any items, please open a Pull Request.
+
+---
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
