@@ -1,0 +1,30 @@
+name: Build and Publish
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build_wheels:
+    name: Build Wheel
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - name: Install Build Tools
+        run: pip install build
+
+      - name: Build Package
+        run: python -m build
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist
+          path: dist/
