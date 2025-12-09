@@ -9,7 +9,7 @@ setup(
     install_requires=[
         "pydicom>=2.4.0",
         "numpy>=1.20.0",
-        "pylibjpeg==2.1.0"
+        # "pylibjpeg==2.1.0"
     ],
     python_requires=">=3.9",
 )
