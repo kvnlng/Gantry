@@ -70,8 +70,13 @@
              
   <h1>Source code for gantry.services</h1><div class="highlight"><pre>
 <span></span><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">.entities</span><span class="w"> </span><span class="kn">import</span> <span class="n">Instance</span><span class="p">,</span> <span class="n">Patient</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.entities</span><span class="w"> </span><span class="kn">import</span> <span class="n">Instance</span><span class="p">,</span> <span class="n">Patient</span><span class="p">,</span> <span class="n">DicomItem</span><span class="p">,</span> <span class="n">DicomSequence</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.io_handlers</span><span class="w"> </span><span class="kn">import</span> <span class="n">DicomStore</span>
+
+
+<span class="c1"># Define standard codes for the Sequence</span>
+<span class="n">CODE_BASIC_PROFILE</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;0008,0100&quot;</span><span class="p">:</span> <span class="s2">&quot;113100&quot;</span><span class="p">,</span> <span class="s2">&quot;0008,0102&quot;</span><span class="p">:</span> <span class="s2">&quot;DCM&quot;</span><span class="p">,</span> <span class="s2">&quot;0008,0104&quot;</span><span class="p">:</span> <span class="s2">&quot;Basic Application Confidentiality Profile&quot;</span><span class="p">}</span>
+<span class="n">CODE_CLEAN_PIXEL</span> <span class="o">=</span>   <span class="p">{</span><span class="s2">&quot;0008,0100&quot;</span><span class="p">:</span> <span class="s2">&quot;113101&quot;</span><span class="p">,</span> <span class="s2">&quot;0008,0102&quot;</span><span class="p">:</span> <span class="s2">&quot;DCM&quot;</span><span class="p">,</span> <span class="s2">&quot;0008,0104&quot;</span><span class="p">:</span> <span class="s2">&quot;Clean Pixel Data Option&quot;</span><span class="p">}</span>
 
 
 <div class="viewcode-block" id="MachinePixelIndex">
@@ -178,10 +183,53 @@
                     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;⚠️ ROI </span><span class="si">{</span><span class="n">roi</span><span class="si">}</span><span class="s2"> extends beyond image (</span><span class="si">{</span><span class="n">rows</span><span class="si">}</span><span class="s2">x</span><span class="si">{</span><span class="n">cols</span><span class="si">}</span><span class="s2">). Clipping to image bounds.&quot;</span><span class="p">)</span>
 
                 <span class="n">arr</span><span class="p">[</span><span class="n">r1</span><span class="p">:</span><span class="n">r2_clamped</span><span class="p">,</span> <span class="n">c1</span><span class="p">:</span><span class="n">c2_clamped</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_apply_redaction_flags</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
+
+                <span class="n">inst</span><span class="o">.</span><span class="n">regenerate_uid</span><span class="p">()</span>
+
                 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Modified </span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
             <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
                 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Failed </span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
-</div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_apply_redaction_flags</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inst</span><span class="p">:</span> <span class="n">Instance</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Sets DICOM tags indicating Pixel Data modification (Derivation)</span>
+<span class="sd">        WITHOUT claiming full patient de-identification.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        
+        <span class="c1"># 1. Image Type (0008,0008)</span>
+        <span class="c1"># We need to preserve existing values but ensure &#39;DERIVED&#39; is first.</span>
+        <span class="c1"># Note: In a robust implementation, we&#39;d read the old value first. </span>
+        <span class="c1"># Here we force a standard Derived type.</span>
+        <span class="n">current_type</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0008,0008&quot;</span><span class="p">,</span> <span class="p">[])</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">current_type</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+            <span class="n">current_type</span> <span class="o">=</span> <span class="p">[</span><span class="n">current_type</span><span class="p">]</span>
+        
+        <span class="c1"># Ensure &#39;DERIVED&#39; is the first value (Value 1)</span>
+        <span class="n">new_type</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;DERIVED&quot;</span><span class="p">]</span> <span class="o">+</span> <span class="p">[</span><span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">current_type</span> <span class="k">if</span> <span class="n">x</span> <span class="o">!=</span> <span class="s2">&quot;ORIGINAL&quot;</span> <span class="ow">and</span> <span class="n">x</span> <span class="o">!=</span> <span class="s2">&quot;DERIVED&quot;</span><span class="p">]</span>
+        <span class="c1"># Ensure we have at least &#39;PRIMARY&#39; or &#39;SECONDARY&#39; as Value 2</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">new_type</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="n">new_type</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;SECONDARY&quot;</span><span class="p">)</span>
+            
+        <span class="n">inst</span><span class="o">.</span><span class="n">set_attr</span><span class="p">(</span><span class="s2">&quot;0008,0008&quot;</span><span class="p">,</span> <span class="n">new_type</span><span class="p">)</span>
+
+        <span class="c1"># 2. Burned In Annotation (0028,0301) -&gt; NO</span>
+        <span class="n">inst</span><span class="o">.</span><span class="n">set_attr</span><span class="p">(</span><span class="s2">&quot;0028,0301&quot;</span><span class="p">,</span> <span class="s2">&quot;NO&quot;</span><span class="p">)</span>
+        
+        <span class="c1"># 3. Derivation Description (0008,2111)</span>
+        <span class="n">inst</span><span class="o">.</span><span class="n">set_attr</span><span class="p">(</span><span class="s2">&quot;0008,2111&quot;</span><span class="p">,</span> <span class="s2">&quot;Gantry Pixel Redaction: Burned-in PHI removed&quot;</span><span class="p">)</span>
+        
+        <span class="c1"># 4. Derivation Code Sequence (0008,9215)</span>
+        <span class="c1"># Code 113062: Pixel Data modification</span>
+        <span class="n">seq</span> <span class="o">=</span> <span class="n">DicomSequence</span><span class="p">(</span><span class="n">tag</span><span class="o">=</span><span class="s2">&quot;0008,9215&quot;</span><span class="p">)</span>
+        <span class="n">item</span> <span class="o">=</span> <span class="n">DicomItem</span><span class="p">()</span>
+        <span class="n">item</span><span class="o">.</span><span class="n">set_attr</span><span class="p">(</span><span class="s2">&quot;0008,0100&quot;</span><span class="p">,</span> <span class="s2">&quot;113062&quot;</span><span class="p">)</span>
+        <span class="n">item</span><span class="o">.</span><span class="n">set_attr</span><span class="p">(</span><span class="s2">&quot;0008,0102&quot;</span><span class="p">,</span> <span class="s2">&quot;DCM&quot;</span><span class="p">)</span>
+        <span class="n">item</span><span class="o">.</span><span class="n">set_attr</span><span class="p">(</span><span class="s2">&quot;0008,0104&quot;</span><span class="p">,</span> <span class="s2">&quot;Pixel Data modification&quot;</span><span class="p">)</span>
+        <span class="n">seq</span><span class="o">.</span><span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+        
+        <span class="n">inst</span><span class="o">.</span><span class="n">sequences</span><span class="p">[</span><span class="s2">&quot;0008,9215&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">seq</span></div>
 
 </pre></div>
 
