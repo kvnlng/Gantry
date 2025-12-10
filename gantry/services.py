@@ -64,7 +64,22 @@ class RedactionService:
                 arr = inst.get_pixel_data()
                 # Apply redaction in memory
                 r1, r2, c1, c2 = roi
-                arr[r1:r2, c1:c2] = 0
+                
+                rows, cols = arr.shape[-2], arr.shape[-1]
+                
+                # Safety Checks
+                if r1 >= rows or c1 >= cols:
+                     print(f"⚠️ ROI {roi} is completely outside image dimensions ({rows}x{cols}). Skipping.")
+                     continue
+                
+                # Clipping
+                r2_clamped = min(r2, rows)
+                c2_clamped = min(c2, cols)
+                
+                if r2_clamped != r2 or c2_clamped != c2:
+                    print(f"⚠️ ROI {roi} extends beyond image ({rows}x{cols}). Clipping to image bounds.")
+
+                arr[r1:r2_clamped, c1:c2_clamped] = 0
                 print(f"  Modified {inst.sop_instance_uid}")
             except Exception as e:
                 print(f"  Failed {inst.sop_instance_uid}: {e}")
