@@ -1,0 +1,636 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>gantry package &mdash; Gantry 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=01f34227"></script>
+      <script src="_static/doctools.js?v=9a2dae69"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="prev" title="gantry" href="modules.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            Gantry
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="reference internal" href="modules.html">gantry</a><ul class="current">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">gantry package</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#submodules">Submodules</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#module-gantry.builders">gantry.builders module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.builders.DicomBuilder"><code class="docutils literal notranslate"><span class="pre">DicomBuilder</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.builders.InstanceContextBuilder"><code class="docutils literal notranslate"><span class="pre">InstanceContextBuilder</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.builders.PatientBuilder"><code class="docutils literal notranslate"><span class="pre">PatientBuilder</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.builders.SeriesBuilder"><code class="docutils literal notranslate"><span class="pre">SeriesBuilder</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.builders.StudyBuilder"><code class="docutils literal notranslate"><span class="pre">StudyBuilder</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-gantry.config_manager">gantry.config_manager module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.config_manager.ConfigLoader"><code class="docutils literal notranslate"><span class="pre">ConfigLoader</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-gantry.entities">gantry.entities module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.entities.DicomItem"><code class="docutils literal notranslate"><span class="pre">DicomItem</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.entities.DicomSequence"><code class="docutils literal notranslate"><span class="pre">DicomSequence</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.entities.Equipment"><code class="docutils literal notranslate"><span class="pre">Equipment</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.entities.Instance"><code class="docutils literal notranslate"><span class="pre">Instance</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.entities.Patient"><code class="docutils literal notranslate"><span class="pre">Patient</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.entities.Series"><code class="docutils literal notranslate"><span class="pre">Series</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.entities.Study"><code class="docutils literal notranslate"><span class="pre">Study</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-gantry.io_handlers">gantry.io_handlers module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.DicomExporter"><code class="docutils literal notranslate"><span class="pre">DicomExporter</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.DicomImporter"><code class="docutils literal notranslate"><span class="pre">DicomImporter</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.DicomStore"><code class="docutils literal notranslate"><span class="pre">DicomStore</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-gantry.services">gantry.services module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.services.MachinePixelIndex"><code class="docutils literal notranslate"><span class="pre">MachinePixelIndex</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.services.RedactionService"><code class="docutils literal notranslate"><span class="pre">RedactionService</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-gantry.session">gantry.session module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.session.DicomSession"><code class="docutils literal notranslate"><span class="pre">DicomSession</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-gantry.validation">gantry.validation module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.validation.IODValidator"><code class="docutils literal notranslate"><span class="pre">IODValidator</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-gantry">Module contents</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.Builder"><code class="docutils literal notranslate"><span class="pre">Builder</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.Equipment"><code class="docutils literal notranslate"><span class="pre">Equipment</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.Session"><code class="docutils literal notranslate"><span class="pre">Session</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">Gantry</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="modules.html">gantry</a></li>
+      <li class="breadcrumb-item active">gantry package</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/gantry.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="gantry-package">
+<h1>gantry package<a class="headerlink" href="#gantry-package" title="Link to this heading"></a></h1>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading"></a></h2>
+</section>
+<section id="module-gantry.builders">
+<span id="gantry-builders-module"></span><h2>gantry.builders module<a class="headerlink" href="#module-gantry.builders" title="Link to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.builders.DicomBuilder">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.builders.</span></span><span class="sig-name descname"><span class="pre">DicomBuilder</span></span><a class="reference internal" href="_modules/gantry/builders.html#DicomBuilder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.DicomBuilder" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.DicomBuilder.start_patient">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">start_patient</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#DicomBuilder.start_patient"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.DicomBuilder.start_patient" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.builders.InstanceContextBuilder">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.builders.</span></span><span class="sig-name descname"><span class="pre">InstanceContextBuilder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parent</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">instance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#InstanceContextBuilder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.InstanceContextBuilder" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.InstanceContextBuilder.end_instance">
+<span class="sig-name descname"><span class="pre">end_instance</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#InstanceContextBuilder.end_instance"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.InstanceContextBuilder.end_instance" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.InstanceContextBuilder.set_attribute">
+<span class="sig-name descname"><span class="pre">set_attribute</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tag</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">val</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#InstanceContextBuilder.set_attribute"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.InstanceContextBuilder.set_attribute" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.InstanceContextBuilder.set_pixel_data">
+<span class="sig-name descname"><span class="pre">set_pixel_data</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">arr</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#InstanceContextBuilder.set_pixel_data"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.InstanceContextBuilder.set_pixel_data" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.builders.PatientBuilder">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.builders.</span></span><span class="sig-name descname"><span class="pre">PatientBuilder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#PatientBuilder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.PatientBuilder" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.PatientBuilder.add_study">
+<span class="sig-name descname"><span class="pre">add_study</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">date</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#PatientBuilder.add_study"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.PatientBuilder.add_study" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.PatientBuilder.build">
+<span class="sig-name descname"><span class="pre">build</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#PatientBuilder.build"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.PatientBuilder.build" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.builders.SeriesBuilder">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.builders.</span></span><span class="sig-name descname"><span class="pre">SeriesBuilder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parent</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">series</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#SeriesBuilder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.SeriesBuilder" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.SeriesBuilder.add_instance">
+<span class="sig-name descname"><span class="pre">add_instance</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cls</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#SeriesBuilder.add_instance"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.SeriesBuilder.add_instance" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.SeriesBuilder.end_series">
+<span class="sig-name descname"><span class="pre">end_series</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#SeriesBuilder.end_series"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.SeriesBuilder.end_series" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.SeriesBuilder.set_equipment">
+<span class="sig-name descname"><span class="pre">set_equipment</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">man</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mod</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sn</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#SeriesBuilder.set_equipment"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.SeriesBuilder.set_equipment" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.builders.StudyBuilder">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.builders.</span></span><span class="sig-name descname"><span class="pre">StudyBuilder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parent</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">study</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#StudyBuilder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.StudyBuilder" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.StudyBuilder.add_series">
+<span class="sig-name descname"><span class="pre">add_series</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mod</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#StudyBuilder.add_series"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.StudyBuilder.add_series" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.StudyBuilder.end_study">
+<span class="sig-name descname"><span class="pre">end_study</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#StudyBuilder.end_study"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.StudyBuilder.end_study" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-gantry.config_manager">
+<span id="gantry-config-manager-module"></span><h2>gantry.config_manager module<a class="headerlink" href="#module-gantry.config_manager" title="Link to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.config_manager.ConfigLoader">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.config_manager.</span></span><span class="sig-name descname"><span class="pre">ConfigLoader</span></span><a class="reference internal" href="_modules/gantry/config_manager.html#ConfigLoader"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.config_manager.ConfigLoader" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.config_manager.ConfigLoader.load_rules">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">load_rules</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="_modules/gantry/config_manager.html#ConfigLoader.load_rules"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.config_manager.ConfigLoader.load_rules" title="Link to this definition"></a></dt>
+<dd><p>Parses the JSON config and returns a list of machine rules.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-gantry.entities">
+<span id="gantry-entities-module"></span><h2>gantry.entities module<a class="headerlink" href="#module-gantry.entities" title="Link to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.entities.DicomItem">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.entities.</span></span><span class="sig-name descname"><span class="pre">DicomItem</span></span><a class="reference internal" href="_modules/gantry/entities.html#DicomItem"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.entities.DicomItem" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.entities.DicomItem.add_sequence_item">
+<span class="sig-name descname"><span class="pre">add_sequence_item</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tag</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">item</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#gantry.entities.DicomItem" title="gantry.entities.DicomItem"><span class="pre">DicomItem</span></a></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/entities.html#DicomItem.add_sequence_item"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.entities.DicomItem.add_sequence_item" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.DicomItem.attributes">
+<span class="sig-name descname"><span class="pre">attributes</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#gantry.entities.DicomItem.attributes" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.DicomItem.sequences">
+<span class="sig-name descname"><span class="pre">sequences</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference internal" href="#gantry.entities.DicomSequence" title="gantry.entities.DicomSequence"><span class="pre">DicomSequence</span></a><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#gantry.entities.DicomItem.sequences" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.entities.DicomItem.set_attr">
+<span class="sig-name descname"><span class="pre">set_attr</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tag</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">value</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Any</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/entities.html#DicomItem.set_attr"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.entities.DicomItem.set_attr" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.entities.DicomSequence">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.entities.</span></span><span class="sig-name descname"><span class="pre">DicomSequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tag:</span> <span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">items:</span> <span class="pre">List[ForwardRef('DicomItem')]</span> <span class="pre">=</span> <span class="pre">&lt;factory&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/entities.html#DicomSequence"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.entities.DicomSequence" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.DicomSequence.items">
+<span class="sig-name descname"><span class="pre">items</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">List</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#gantry.entities.DicomItem" title="gantry.entities.DicomItem"><span class="pre">DicomItem</span></a><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#gantry.entities.DicomSequence.items" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.DicomSequence.tag">
+<span class="sig-name descname"><span class="pre">tag</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.entities.DicomSequence.tag" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.entities.Equipment">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.entities.</span></span><span class="sig-name descname"><span class="pre">Equipment</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">manufacturer</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_serial_number</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">''</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/entities.html#Equipment"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.entities.Equipment" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Immutable Equipment definition.
+Frozen=True allows hashing, enabling unique set generation.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Equipment.device_serial_number">
+<span class="sig-name descname"><span class="pre">device_serial_number</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">''</span></em><a class="headerlink" href="#gantry.entities.Equipment.device_serial_number" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Equipment.manufacturer">
+<span class="sig-name descname"><span class="pre">manufacturer</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.entities.Equipment.manufacturer" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Equipment.model_name">
+<span class="sig-name descname"><span class="pre">model_name</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.entities.Equipment.model_name" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.entities.Instance">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.entities.</span></span><span class="sig-name descname"><span class="pre">Instance</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sop_instance_uid</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sop_class_uid</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">instance_number</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">file_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pixel_array</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">numpy.ndarray</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/entities.html#Instance"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.entities.Instance" title="Link to this definition"></a></dt>
+<dd><p>Bases: <a class="reference internal" href="#gantry.entities.DicomItem" title="gantry.entities.DicomItem"><code class="xref py py-class docutils literal notranslate"><span class="pre">DicomItem</span></code></a></p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Instance.file_path">
+<span class="sig-name descname"><span class="pre">file_path</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#gantry.entities.Instance.file_path" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.entities.Instance.get_pixel_data">
+<span class="sig-name descname"><span class="pre">get_pixel_data</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">ndarray</span></span></span><a class="reference internal" href="_modules/gantry/entities.html#Instance.get_pixel_data"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.entities.Instance.get_pixel_data" title="Link to this definition"></a></dt>
+<dd><p>Returns pixel_array. Loads from disk if not in memory.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Instance.instance_number">
+<span class="sig-name descname"><span class="pre">instance_number</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></em><a class="headerlink" href="#gantry.entities.Instance.instance_number" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Instance.pixel_array">
+<span class="sig-name descname"><span class="pre">pixel_array</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">ndarray</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#gantry.entities.Instance.pixel_array" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.entities.Instance.set_pixel_data">
+<span class="sig-name descname"><span class="pre">set_pixel_data</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">array</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">ndarray</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/entities.html#Instance.set_pixel_data"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.entities.Instance.set_pixel_data" title="Link to this definition"></a></dt>
+<dd><p>unpacking of 2D/3D/4D arrays.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Instance.sop_class_uid">
+<span class="sig-name descname"><span class="pre">sop_class_uid</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">''</span></em><a class="headerlink" href="#gantry.entities.Instance.sop_class_uid" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Instance.sop_instance_uid">
+<span class="sig-name descname"><span class="pre">sop_instance_uid</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">''</span></em><a class="headerlink" href="#gantry.entities.Instance.sop_instance_uid" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.entities.Patient">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.entities.</span></span><span class="sig-name descname"><span class="pre">Patient</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">patient_id:</span> <span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">patient_name:</span> <span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">studies:</span> <span class="pre">List[gantry.entities.Study]</span> <span class="pre">=</span> <span class="pre">&lt;factory&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/entities.html#Patient"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.entities.Patient" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Patient.patient_id">
+<span class="sig-name descname"><span class="pre">patient_id</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.entities.Patient.patient_id" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Patient.patient_name">
+<span class="sig-name descname"><span class="pre">patient_name</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.entities.Patient.patient_name" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Patient.studies">
+<span class="sig-name descname"><span class="pre">studies</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">List</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#gantry.entities.Study" title="gantry.entities.Study"><span class="pre">Study</span></a><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#gantry.entities.Patient.studies" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.entities.Series">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.entities.</span></span><span class="sig-name descname"><span class="pre">Series</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">series_instance_uid:</span> <span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">modality:</span> <span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">series_number:</span> <span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">equipment:</span> <span class="pre">Optional[gantry.entities.Equipment]</span> <span class="pre">=</span> <span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">instances:</span> <span class="pre">List[gantry.entities.Instance]</span> <span class="pre">=</span> <span class="pre">&lt;factory&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/entities.html#Series"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.entities.Series" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Series.equipment">
+<span class="sig-name descname"><span class="pre">equipment</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference internal" href="#gantry.entities.Equipment" title="gantry.entities.Equipment"><span class="pre">Equipment</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#gantry.entities.Series.equipment" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Series.instances">
+<span class="sig-name descname"><span class="pre">instances</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">List</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#gantry.entities.Instance" title="gantry.entities.Instance"><span class="pre">Instance</span></a><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#gantry.entities.Series.instances" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Series.modality">
+<span class="sig-name descname"><span class="pre">modality</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.entities.Series.modality" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Series.series_instance_uid">
+<span class="sig-name descname"><span class="pre">series_instance_uid</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.entities.Series.series_instance_uid" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Series.series_number">
+<span class="sig-name descname"><span class="pre">series_number</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><a class="headerlink" href="#gantry.entities.Series.series_number" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.entities.Study">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.entities.</span></span><span class="sig-name descname"><span class="pre">Study</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">study_instance_uid:</span> <span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">study_date:</span> <span class="pre">Any</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">series:</span> <span class="pre">List[gantry.entities.Series]</span> <span class="pre">=</span> <span class="pre">&lt;factory&gt;</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/entities.html#Study"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.entities.Study" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Study.series">
+<span class="sig-name descname"><span class="pre">series</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">List</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#gantry.entities.Series" title="gantry.entities.Series"><span class="pre">Series</span></a><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#gantry.entities.Study.series" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Study.study_date">
+<span class="sig-name descname"><span class="pre">study_date</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Any</span></em><a class="headerlink" href="#gantry.entities.Study.study_date" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.entities.Study.study_instance_uid">
+<span class="sig-name descname"><span class="pre">study_instance_uid</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.entities.Study.study_instance_uid" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-gantry.io_handlers">
+<span id="gantry-io-handlers-module"></span><h2>gantry.io_handlers module<a class="headerlink" href="#module-gantry.io_handlers" title="Link to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.io_handlers.DicomExporter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.io_handlers.</span></span><span class="sig-name descname"><span class="pre">DicomExporter</span></span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomExporter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomExporter" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.io_handlers.DicomExporter.save_patient">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">save_patient</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">patient</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#gantry.entities.Patient" title="gantry.entities.Patient"><span class="pre">Patient</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">out_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomExporter.save_patient"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomExporter.save_patient" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.io_handlers.DicomImporter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.io_handlers.</span></span><span class="sig-name descname"><span class="pre">DicomImporter</span></span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomImporter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomImporter" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.io_handlers.DicomImporter.import_files">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">import_files</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">file_paths</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">store</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#gantry.io_handlers.DicomStore" title="gantry.io_handlers.DicomStore"><span class="pre">DicomStore</span></a></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomImporter.import_files"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomImporter.import_files" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.io_handlers.DicomStore">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.io_handlers.</span></span><span class="sig-name descname"><span class="pre">DicomStore</span></span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomStore"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomStore" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Root of the Object Graph + Persistence Logic</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.io_handlers.DicomStore.get_unique_equipment">
+<span class="sig-name descname"><span class="pre">get_unique_equipment</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#gantry.entities.Equipment" title="gantry.entities.Equipment"><span class="pre">Equipment</span></a><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomStore.get_unique_equipment"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomStore.get_unique_equipment" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.io_handlers.DicomStore.load_state">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">load_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#gantry.io_handlers.DicomStore" title="gantry.io_handlers.DicomStore"><span class="pre">DicomStore</span></a></span></span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomStore.load_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomStore.load_state" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.io_handlers.DicomStore.save_state">
+<span class="sig-name descname"><span class="pre">save_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomStore.save_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomStore.save_state" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-gantry.services">
+<span id="gantry-services-module"></span><h2>gantry.services module<a class="headerlink" href="#module-gantry.services" title="Link to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.services.MachinePixelIndex">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.services.</span></span><span class="sig-name descname"><span class="pre">MachinePixelIndex</span></span><a class="reference internal" href="_modules/gantry/services.html#MachinePixelIndex"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.services.MachinePixelIndex" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.services.MachinePixelIndex.get_by_machine">
+<span class="sig-name descname"><span class="pre">get_by_machine</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sn</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/services.html#MachinePixelIndex.get_by_machine"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.services.MachinePixelIndex.get_by_machine" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.services.MachinePixelIndex.index_store">
+<span class="sig-name descname"><span class="pre">index_store</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">store</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#gantry.io_handlers.DicomStore" title="gantry.io_handlers.DicomStore"><span class="pre">DicomStore</span></a></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/services.html#MachinePixelIndex.index_store"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.services.MachinePixelIndex.index_store" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.services.RedactionService">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.services.</span></span><span class="sig-name descname"><span class="pre">RedactionService</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">store</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#gantry.io_handlers.DicomStore" title="gantry.io_handlers.DicomStore"><span class="pre">DicomStore</span></a></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/services.html#RedactionService"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.services.RedactionService" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.services.RedactionService.process_machine_rules">
+<span class="sig-name descname"><span class="pre">process_machine_rules</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">machine_rules</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/services.html#RedactionService.process_machine_rules"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.services.RedactionService.process_machine_rules" title="Link to this definition"></a></dt>
+<dd><p>Applies all zones defined in a single machine config object.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.services.RedactionService.redact_machine_region">
+<span class="sig-name descname"><span class="pre">redact_machine_region</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">machine_sn</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">roi</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">tuple</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/services.html#RedactionService.redact_machine_region"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.services.RedactionService.redact_machine_region" title="Link to this definition"></a></dt>
+<dd><p>roi: (row_start, row_end, col_start, col_end)</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-gantry.session">
+<span id="gantry-session-module"></span><h2>gantry.session module<a class="headerlink" href="#module-gantry.session" title="Link to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.session.DicomSession">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.session.</span></span><span class="sig-name descname"><span class="pre">DicomSession</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">persistence_file</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'dicom_session.pkl'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.execute_config">
+<span class="sig-name descname"><span class="pre">execute_config</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.execute_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.execute_config" title="Link to this definition"></a></dt>
+<dd><p>User Action: ‘Apply the currently loaded rules to the pixel data.’</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.export">
+<span class="sig-name descname"><span class="pre">export</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">folder</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.export"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.export" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.import_folder">
+<span class="sig-name descname"><span class="pre">import_folder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">folder_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.import_folder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.import_folder" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.inventory">
+<span class="sig-name descname"><span class="pre">inventory</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.inventory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.inventory" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.load_config">
+<span class="sig-name descname"><span class="pre">load_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_file</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.load_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.load_config" title="Link to this definition"></a></dt>
+<dd><p>User Action: ‘Load these rules into memory, but DO NOT run them yet.’
+Useful for validation or previewing what will happen.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.preview_config">
+<span class="sig-name descname"><span class="pre">preview_config</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.preview_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.preview_config" title="Link to this definition"></a></dt>
+<dd><p>User Action: ‘Tell me what WOULD happen if I ran these rules.’
+checks the loaded rules against the current Store inventory.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.redact_by_machine">
+<span class="sig-name descname"><span class="pre">redact_by_machine</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">serial_number</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">roi</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.redact_by_machine"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.redact_by_machine" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-gantry.validation">
+<span id="gantry-validation-module"></span><h2>gantry.validation module<a class="headerlink" href="#module-gantry.validation" title="Link to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.validation.IODValidator">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.validation.</span></span><span class="sig-name descname"><span class="pre">IODValidator</span></span><a class="reference internal" href="_modules/gantry/validation.html#IODValidator"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.validation.IODValidator" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.validation.IODValidator.validate">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">validate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ds</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dataset</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="_modules/gantry/validation.html#IODValidator.validate"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.validation.IODValidator.validate" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="module-gantry">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-gantry" title="Link to this heading"></a></h2>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.Builder">
+<span class="sig-prename descclassname"><span class="pre">gantry.</span></span><span class="sig-name descname"><span class="pre">Builder</span></span><a class="headerlink" href="#gantry.Builder" title="Link to this definition"></a></dt>
+<dd><p>alias of <a class="reference internal" href="#gantry.builders.DicomBuilder" title="gantry.builders.DicomBuilder"><code class="xref py py-class docutils literal notranslate"><span class="pre">DicomBuilder</span></code></a></p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.Equipment">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.</span></span><span class="sig-name descname"><span class="pre">Equipment</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">manufacturer</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_serial_number</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">''</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/entities.html#Equipment"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.Equipment" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Immutable Equipment definition.
+Frozen=True allows hashing, enabling unique set generation.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.Equipment.device_serial_number">
+<span class="sig-name descname"><span class="pre">device_serial_number</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">''</span></em><a class="headerlink" href="#gantry.Equipment.device_serial_number" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.Equipment.manufacturer">
+<span class="sig-name descname"><span class="pre">manufacturer</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.Equipment.manufacturer" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.Equipment.model_name">
+<span class="sig-name descname"><span class="pre">model_name</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.Equipment.model_name" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.Session">
+<span class="sig-prename descclassname"><span class="pre">gantry.</span></span><span class="sig-name descname"><span class="pre">Session</span></span><a class="headerlink" href="#gantry.Session" title="Link to this definition"></a></dt>
+<dd><p>alias of <a class="reference internal" href="#gantry.session.DicomSession" title="gantry.session.DicomSession"><code class="xref py py-class docutils literal notranslate"><span class="pre">DicomSession</span></code></a></p>
+</dd></dl>
+
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="modules.html" class="btn btn-neutral float-left" title="gantry" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Kevin Long.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
