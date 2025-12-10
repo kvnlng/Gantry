@@ -101,6 +101,19 @@
         <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">unique</span><span class="p">)</span></div>
 
 
+<div class="viewcode-block" id="DicomStore.get_known_files">
+<a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.DicomStore.get_known_files">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_known_files</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Set</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="n">files</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">patients</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">st</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
+                    <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="n">inst</span><span class="o">.</span><span class="n">file_path</span><span class="p">:</span>
+                            <span class="n">files</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">inst</span><span class="o">.</span><span class="n">file_path</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">files</span></div>
+
+
 <div class="viewcode-block" id="DicomStore.save_state">
 <a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.DicomStore.save_state">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">save_state</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">filepath</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
@@ -129,7 +142,14 @@
 <a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.DicomImporter.import_files">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">import_files</span><span class="p">(</span><span class="n">file_paths</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">store</span><span class="p">:</span> <span class="n">DicomStore</span><span class="p">):</span>
-        <span class="k">for</span> <span class="n">fp</span> <span class="ow">in</span> <span class="n">file_paths</span><span class="p">:</span>
+        <span class="n">known_files</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">get_known_files</span><span class="p">()</span>
+        <span class="n">new_files</span> <span class="o">=</span> <span class="p">[</span><span class="n">fp</span> <span class="k">for</span> <span class="n">fp</span> <span class="ow">in</span> <span class="n">file_paths</span> <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">fp</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">known_files</span><span class="p">]</span>
+        
+        <span class="n">skipped_count</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">file_paths</span><span class="p">)</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">new_files</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">skipped_count</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Skipping </span><span class="si">{</span><span class="n">skipped_count</span><span class="si">}</span><span class="s2"> already imported files.&quot;</span><span class="p">)</span>
+            
+        <span class="k">for</span> <span class="n">fp</span> <span class="ow">in</span> <span class="n">new_files</span><span class="p">:</span>
             <span class="k">try</span><span class="p">:</span>
                 <span class="c1"># read metadata only</span>
                 <span class="n">ds</span> <span class="o">=</span> <span class="n">pydicom</span><span class="o">.</span><span class="n">dcmread</span><span class="p">(</span><span class="n">fp</span><span class="p">,</span> <span class="n">stop_before_pixels</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">force</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -181,10 +201,16 @@
             <span class="k">if</span> <span class="n">elem</span><span class="o">.</span><span class="n">tag</span><span class="o">.</span><span class="n">group</span> <span class="o">==</span> <span class="mh">0x7fe0</span><span class="p">:</span> <span class="k">continue</span>  <span class="c1"># Skip pixels</span>
             <span class="n">tag</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">elem</span><span class="o">.</span><span class="n">tag</span><span class="o">.</span><span class="n">group</span><span class="si">:</span><span class="s2">04x</span><span class="si">}</span><span class="s2">,</span><span class="si">{</span><span class="n">elem</span><span class="o">.</span><span class="n">tag</span><span class="o">.</span><span class="n">element</span><span class="si">:</span><span class="s2">04x</span><span class="si">}</span><span class="s2">&quot;</span>
             <span class="k">if</span> <span class="n">elem</span><span class="o">.</span><span class="n">VR</span> <span class="o">==</span> <span class="s1">&#39;SQ&#39;</span><span class="p">:</span>
-                <span class="c1"># TODO: Recursive sequence handling should go here</span>
-                <span class="k">pass</span>
+                <span class="n">DicomImporter</span><span class="o">.</span><span class="n">_process_sequence</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">elem</span><span class="p">,</span> <span class="n">item</span><span class="p">)</span>
             <span class="k">else</span><span class="p">:</span>
-                <span class="n">item</span><span class="o">.</span><span class="n">set_attr</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">elem</span><span class="o">.</span><span class="n">value</span><span class="p">)</span></div>
+                <span class="n">item</span><span class="o">.</span><span class="n">set_attr</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">elem</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_process_sequence</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">elem</span><span class="p">,</span> <span class="n">parent_item</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">ds_item</span> <span class="ow">in</span> <span class="n">elem</span><span class="p">:</span>
+            <span class="n">seq_item</span> <span class="o">=</span> <span class="n">DicomItem</span><span class="p">()</span>
+            <span class="n">DicomImporter</span><span class="o">.</span><span class="n">_populate_attrs</span><span class="p">(</span><span class="n">ds_item</span><span class="p">,</span> <span class="n">seq_item</span><span class="p">)</span>
+            <span class="n">parent_item</span><span class="o">.</span><span class="n">add_sequence_item</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">seq_item</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="DicomExporter">
@@ -230,10 +256,16 @@
                         <span class="n">ds</span><span class="o">.</span><span class="n">SamplesPerPixel</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0002&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
                         <span class="c1"># Ensure Photometric Interpretation is present (Type 1)</span>
                         <span class="n">ds</span><span class="o">.</span><span class="n">PhotometricInterpretation</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0004&quot;</span><span class="p">,</span> <span class="s2">&quot;MONOCHROME2&quot;</span><span class="p">)</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">BitsAllocated</span> <span class="o">=</span> <span class="mi">16</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">BitsStored</span> <span class="o">=</span> <span class="mi">12</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">HighBit</span> <span class="o">=</span> <span class="mi">11</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">PixelRepresentation</span> <span class="o">=</span> <span class="mi">0</span>
+                        <span class="c1"># Infer depth from numpy array</span>
+                        <span class="k">if</span> <span class="n">arr</span><span class="o">.</span><span class="n">itemsize</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+                            <span class="n">default_bits</span> <span class="o">=</span> <span class="mi">8</span>
+                        <span class="k">else</span><span class="p">:</span>
+                            <span class="n">default_bits</span> <span class="o">=</span> <span class="mi">16</span>
+
+                        <span class="n">ds</span><span class="o">.</span><span class="n">BitsAllocated</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0100&quot;</span><span class="p">,</span> <span class="n">default_bits</span><span class="p">)</span>
+                        <span class="n">ds</span><span class="o">.</span><span class="n">BitsStored</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0101&quot;</span><span class="p">,</span> <span class="n">default_bits</span><span class="p">)</span>
+                        <span class="n">ds</span><span class="o">.</span><span class="n">HighBit</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0102&quot;</span><span class="p">,</span> <span class="n">default_bits</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+                        <span class="n">ds</span><span class="o">.</span><span class="n">PixelRepresentation</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0103&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
                     <span class="k">except</span><span class="p">:</span>
                         <span class="k">pass</span>
 
