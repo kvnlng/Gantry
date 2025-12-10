@@ -25,6 +25,16 @@ class DicomStore:
                     if se.equipment: unique.add(se.equipment)
         return list(unique)
 
+    def get_known_files(self) -> Set[str]:
+        files = set()
+        for p in self.patients:
+            for st in p.studies:
+                for se in st.series:
+                    for inst in se.instances:
+                        if inst.file_path:
+                            files.add(os.path.abspath(inst.file_path))
+        return files
+
     def save_state(self, filepath: str):
         print(f"Persisting session metadata to {filepath}...")
         with open(filepath, 'wb') as f:
@@ -42,7 +52,14 @@ class DicomStore:
 class DicomImporter:
     @staticmethod
     def import_files(file_paths: List[str], store: DicomStore):
-        for fp in file_paths:
+        known_files = store.get_known_files()
+        new_files = [fp for fp in file_paths if os.path.abspath(fp) not in known_files]
+        
+        skipped_count = len(file_paths) - len(new_files)
+        if skipped_count > 0:
+            print(f"Skipping {skipped_count} already imported files.")
+            
+        for fp in new_files:
             try:
                 # read metadata only
                 ds = pydicom.dcmread(fp, stop_before_pixels=True, force=True)
@@ -93,10 +110,16 @@ class DicomImporter:
             if elem.tag.group == 0x7fe0: continue  # Skip pixels
             tag = f"{elem.tag.group:04x},{elem.tag.element:04x}"
             if elem.VR == 'SQ':
-                # TODO: Recursive sequence handling should go here
-                pass
+                DicomImporter._process_sequence(tag, elem, item)
             else:
                 item.set_attr(tag, elem.value)
+
+    @staticmethod
+    def _process_sequence(tag, elem, parent_item):
+        for ds_item in elem:
+            seq_item = DicomItem()
+            DicomImporter._populate_attrs(ds_item, seq_item)
+            parent_item.add_sequence_item(tag, seq_item)
 
 class DicomExporter:
     @staticmethod
@@ -137,10 +160,16 @@ class DicomExporter:
                         ds.SamplesPerPixel = inst.attributes.get("0028,0002", 1)
                         # Ensure Photometric Interpretation is present (Type 1)
                         ds.PhotometricInterpretation = inst.attributes.get("0028,0004", "MONOCHROME2")
-                        ds.BitsAllocated = 16
-                        ds.BitsStored = 12
-                        ds.HighBit = 11
-                        ds.PixelRepresentation = 0
+                        # Infer depth from numpy array
+                        if arr.itemsize == 1:
+                            default_bits = 8
+                        else:
+                            default_bits = 16
+
+                        ds.BitsAllocated = inst.attributes.get("0028,0100", default_bits)
+                        ds.BitsStored = inst.attributes.get("0028,0101", default_bits)
+                        ds.HighBit = inst.attributes.get("0028,0102", default_bits - 1)
+                        ds.PixelRepresentation = inst.attributes.get("0028,0103", 0)
                     except:
                         pass
 
