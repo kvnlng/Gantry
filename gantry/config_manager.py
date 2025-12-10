@@ -5,7 +5,6 @@ from typing import List, Dict, Any
 
 class ConfigLoader:
     @staticmethod
-    @staticmethod
     def load_redaction_rules(filepath: str) -> List[Dict[str, Any]]:
         """
         Parses the JSON config and returns a list of machine rules.
