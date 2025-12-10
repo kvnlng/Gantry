@@ -104,6 +104,26 @@ app.export("./clean_dicoms")
 
 ---
 
+## 🕵️ Privacy Inspector
+
+Ensure your data is HIPAA Safe Harbor compliant by scanning for common PHI identifiers.
+
+```python
+from gantry.privacy import PhiInspector
+
+# Scan a specific patient
+inspector = PhiInspector()
+# Assuming 'app' is your DicomSession
+patient = app.store.patients[0] 
+
+findings = inspector.scan_patient(patient)
+
+for f in findings:
+    print(f"⚠️ Found PHI: {f.field_name} = '{f.value}' ({f.reason})")
+```
+
+---
+
 ## 🏗️ Advanced: The Builder Pattern
 
 Need to generate synthetic test data? Use the Fluent Builder.

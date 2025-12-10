@@ -18,6 +18,7 @@ class DicomStore:
         self.patients: List[Patient] = []
 
     def get_unique_equipment(self) -> List[Equipment]:
+        """Returns a list of all unique Equipment (Manufacturer/Model/Serial) found in the store."""
         unique = set()
         for p in self.patients:
             for st in p.studies:
@@ -26,6 +27,7 @@ class DicomStore:
         return list(unique)
 
     def get_known_files(self) -> Set[str]:
+        """Returns a set of absolute file paths for all instances currently indexed."""
         files = set()
         for p in self.patients:
             for st in p.studies:
@@ -50,8 +52,16 @@ class DicomStore:
 
 
 class DicomImporter:
+    """
+    Handles scanning of folders/files and ingesting them into the Object Graph.
+    Reads metadata only (lazy loading) for performance.
+    """
     @staticmethod
     def import_files(file_paths: List[str], store: DicomStore):
+        """
+        Parses a list of files, skipping those already in the store.
+        Builds the Patient -> Study -> Series -> Instance hierarchy.
+        """
         known_files = store.get_known_files()
         new_files = [fp for fp in file_paths if os.path.abspath(fp) not in known_files]
         
@@ -116,14 +126,22 @@ class DicomImporter:
 
     @staticmethod
     def _process_sequence(tag, elem, parent_item):
+        """Recursively parses Sequence (SQ) items."""
         for ds_item in elem:
             seq_item = DicomItem()
             DicomImporter._populate_attrs(ds_item, seq_item)
             parent_item.add_sequence_item(tag, seq_item)
 
 class DicomExporter:
+    """
+    Handles writing the Object Graph back to standard DICOM files.
+    """
     @staticmethod
     def save_patient(patient: Patient, out_dir: str):
+        """
+        Iterates over a Patient's hierarchy and saves valid .dcm files to out_dir.
+        Performs IOD Validation before saving.
+        """
         if not os.path.exists(out_dir): os.makedirs(out_dir)
         from gantry.validation import IODValidator
 

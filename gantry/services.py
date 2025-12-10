@@ -4,10 +4,14 @@ from .io_handlers import DicomStore
 
 
 class MachinePixelIndex:
+    """
+    Inverted index allowing O(1) retrieval of Instances by Device Serial Number.
+    """
     def __init__(self):
         self._index: Dict[str, List[Instance]] = {}
 
     def index_store(self, store: DicomStore):
+        """Indexes all instances in the given store."""
         self._index.clear()
         for p in store.patients:
             for st in p.studies:
@@ -22,6 +26,9 @@ class MachinePixelIndex:
 
 
 class RedactionService:
+    """
+    Applies pixel data redaction based on rules.
+    """
     def __init__(self, store: DicomStore):
         self.index = MachinePixelIndex()
         self.index.index_store(store)
@@ -54,7 +61,11 @@ class RedactionService:
                 print(f"Invalid ROI format in config: {roi}")
 
     def redact_machine_region(self, machine_sn: str, roi: tuple):
-        """roi: (row_start, row_end, col_start, col_end)"""
+        """
+        Zeroes out a rectangular region for all images from the specified machine.
+        roi: (row_start, row_end, col_start, col_end)
+        Includes safety checks for image bounds.
+        """
         targets = self.index.get_by_machine(machine_sn)
         print(f"Redacting {len(targets)} images for {machine_sn}...")
 

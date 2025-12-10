@@ -9,12 +9,18 @@ from typing import List, Dict, Any, Optional
 
 @dataclass
 class DicomSequence:
+    """
+    Represents a DICOM Sequence (SQ) containing multiple DicomItems.
+    """
     tag: str
     items: List['DicomItem'] = field(default_factory=list)
 
 
 @dataclass
 class DicomItem:
+    """
+    Base class for any entity that holds DICOM attributes and sequences.
+    """
     # init=False to avoid constructor conflicts during inheritance
     attributes: Dict[str, Any] = field(init=False)
     sequences: Dict[str, DicomSequence] = field(init=False)
@@ -24,9 +30,11 @@ class DicomItem:
         self.sequences = {}
 
     def set_attr(self, tag: str, value: Any):
+        """Sets a generic attribute by its hex tag (e.g., '0010,0010')."""
         self.attributes[tag] = value
 
     def add_sequence_item(self, tag: str, item: 'DicomItem'):
+        """Appends a new item to a sequence, creating the sequence if needed."""
         if tag not in self.sequences:
             self.sequences[tag] = DicomSequence(tag=tag)
         self.sequences[tag].items.append(item)
@@ -47,6 +55,10 @@ class Equipment:
 
 @dataclass
 class Instance(DicomItem):
+    """
+    Represents a single DICOM image (SOP Instance).
+    Manages lazy loading of pixel data.
+    """
     sop_instance_uid: str = ""
     sop_class_uid: str = ""
     instance_number: int = 0
@@ -92,7 +104,11 @@ class Instance(DicomItem):
         raise FileNotFoundError(f"Pixels missing and file not found: {self.file_path}")
 
     def set_pixel_data(self, array: np.ndarray):
-        """ unpacking of 2D/3D/4D arrays."""
+        """
+        Sets the pixel array and automatically updates metadata tags
+        (rows, cols, samples, frames, etc.) based on array shape.
+        Handles unpacking of 2D/3D/4D arrays.
+        """
         self.pixel_array = array
         shape = array.shape
         ndim = len(shape)
@@ -122,6 +138,10 @@ class Instance(DicomItem):
 
 @dataclass
 class Series:
+    """
+    Groups Instances by Series Instance UID.
+    Typically represents a single scan or reconstruction.
+    """
     series_instance_uid: str
     modality: str
     series_number: int
@@ -131,6 +151,10 @@ class Series:
 
 @dataclass
 class Study:
+    """
+    Groups Series by Study Instance UID.
+    Represents a single patient visit or examination.
+    """
     study_instance_uid: str
     study_date: Any
     series: List[Series] = field(default_factory=list)
@@ -138,6 +162,9 @@ class Study:
 
 @dataclass
 class Patient:
+    """
+    Root of the object hierarchy. Groups Studies by Patient ID.
+    """
     patient_id: str
     patient_name: str
     studies: List[Study] = field(default_factory=list)
