@@ -127,6 +127,9 @@
 <span class="sd">        Scans all patients in the session for potential PHI.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">inspector</span><span class="o">.</span><span class="n">phi_tags</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;⚠️ PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.&quot;</span><span class="p">)</span>
+        
         <span class="n">all_findings</span> <span class="o">=</span> <span class="p">[]</span>
         
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Scanning for PHI...&quot;</span><span class="p">)</span>
