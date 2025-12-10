@@ -43,6 +43,9 @@ class DicomSession:
         Scans all patients in the session for potential PHI.
         """
         inspector = PhiInspector(config_path)
+        if not inspector.phi_tags:
+            print("⚠️ PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
+        
         all_findings = []
         
         print("\nScanning for PHI...")

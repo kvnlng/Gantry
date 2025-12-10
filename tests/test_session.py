@@ -26,6 +26,22 @@ def test_load_config(tmp_path, config_file):
     assert len(session.active_rules) == 1
     assert session.active_rules[0]["serial_number"] == "SN-999"
 
+def test_load_empty_config(tmp_path):
+    """Ensure session handles config files with no machines gracefully."""
+    session = DicomSession(str(tmp_path / "empty.pkl"))
+    
+    empty_conf = tmp_path / "empty_rules.json"
+    import json
+    with open(empty_conf, "w") as f:
+        json.dump({"version": "1.0", "machines": []}, f)
+        
+    session.load_config(str(empty_conf))
+    assert len(session.active_rules) == 0
+    
+    # Should not crash on execution
+    session.execute_config() 
+
+
 
 def test_execute_config_integration(tmp_path, dummy_patient, config_file):
     """Full integration: Load Data -> Load Rules -> Execute Redaction."""
