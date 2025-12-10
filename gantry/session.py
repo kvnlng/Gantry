@@ -144,6 +144,48 @@ class DicomSession:
         except Exception as e:
             print(f"Execution interrupted: {e}")
 
+    def scaffold_config(self, output_path: str):
+        """
+        Generates a skeleton configuration file for machines found in the inventory
+        that are NOT covered by the currently loaded rules.
+        """
+        import json
+        
+        # 1. Identify what we have
+        all_equipment = self.store.get_unique_equipment()
+        
+        # 2. Identify what is already configured
+        configured_serials = {rule.get("serial_number") for rule in self.active_rules}
+        
+        # 3. Find the gap
+        missing_configs = []
+        for eq in all_equipment:
+            if eq.device_serial_number and eq.device_serial_number not in configured_serials:
+                missing_configs.append({
+                    "serial_number": eq.device_serial_number,
+                    "model_name": eq.model_name,
+                    "manufacturer": eq.manufacturer,
+                    "comment": "Auto-detected. Please define redaction zones.",
+                    "redaction_zones": []
+                })
+        
+        if not missing_configs:
+            print("All detected machines are already configured. Nothing to scaffold.")
+            return
+
+        # 4. Write to disk
+        data = {
+            "version": "1.0",
+            "machines": missing_configs
+        }
+        
+        try:
+            with open(output_path, 'w') as f:
+                json.dump(data, f, indent=4)
+            print(f"Scaffolded configuration for {len(missing_configs)} new machines to {output_path}")
+        except Exception as e:
+            print(f"Failed to write scaffold: {e}")
+
     def _save(self):
         self.store.save_state(self.persistence_file)
 

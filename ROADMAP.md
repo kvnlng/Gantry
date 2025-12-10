@@ -11,6 +11,9 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 - [x] PHI Detection (Privacy Inspector)
 - [x] Consolidated Configuration Management
 - [x] Facade-based PHI Scanning
+- [x] Recursive Directory Import
+- [x] Configuration Scaffolding (Auto-Inventory)
+- [x] Standardized DICOM Derivation (UID Regeneration & Flags)
 - [x] Improved Documentation & Docstrings
 
 ---

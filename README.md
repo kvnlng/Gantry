@@ -65,7 +65,18 @@ app.inventory()
 
 Gantry excels at redacting burned-in pixel data based on the specific machine that captured the image. You can define rules in a JSON configuration file.
 
-### 1. Define Rules (`redaction_rules.json`)
+### 1. Auto-Inventory (Scaffold Config)
+
+Unsure which machines are in your dataset? Gantry can generate a config skeleton for you.
+
+```python
+# Identify unconfigured machines and write them to a JSON file
+app.scaffold_config("my_redaction_rules.json")
+```
+
+Open `my_redaction_rules.json` and fill in the `redaction_zones` for each machine.
+
+### 2. Define Rules (`redaction_rules.json`)
 
 ```json
 {
