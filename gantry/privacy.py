@@ -16,14 +16,9 @@ class PhiInspector:
     Scans the Object Graph for attributes that are known to contain Protected Health Information (PHI).
     Based on HIPAA Safe Harbor identifier rules.
     """
-    HIPAA_TAGS = {
-        "0010,0010": "Patient Name",
-        "0010,0020": "Patient ID",
-        "0010,0030": "Patient Birth Date",
-        "0008,0080": "Institution Name",
-        "0008,0090": "Referring Physician Name",
-        "0008,0050": "Accession Number"
-    }
+    def __init__(self, config_path: str = None):
+        from .config_manager import ConfigLoader
+        self.phi_tags = ConfigLoader.load_phi_config(config_path)
 
     def scan_patient(self, patient: Patient) -> List[PhiFinding]:
         """

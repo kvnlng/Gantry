@@ -5,28 +5,51 @@ from typing import List, Dict, Any
 
 class ConfigLoader:
     @staticmethod
-    def load_rules(filepath: str) -> List[Dict[str, Any]]:
+    @staticmethod
+    def load_redaction_rules(filepath: str) -> List[Dict[str, Any]]:
         """
         Parses the JSON config and returns a list of machine rules.
         """
+        data = ConfigLoader._load_json(filepath)
+        
+        # Basic Validation
+        if "machines" not in data:
+            print("⚠️ Config warning: 'machines' key missing.")
+            return []
+        
+        rules = data["machines"]
+        for i, rule in enumerate(rules):
+            ConfigLoader._validate_rule(rule, i)
+            
+        return rules
+
+    @staticmethod
+    def load_phi_config(filepath: str = None) -> Dict[str, str]:
+        """
+        Loads PHI tags from a JSON file.
+        If filepath is None, loads the default 'resources/phi_tags.json' from the package.
+        """
+        if filepath:
+            data = ConfigLoader._load_json(filepath)
+        else:
+            # Load default from package resources
+            base = os.path.dirname(os.path.abspath(__file__))
+            filepath = os.path.join(base, "resources", "phi_tags.json")
+            if os.path.exists(filepath):
+                 data = ConfigLoader._load_json(filepath)
+            else:
+                 data = {}
+
+        return data.get("phi_tags", {})
+
+    @staticmethod
+    def _load_json(filepath: str) -> Dict[str, Any]:
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Configuration file not found: {filepath}")
 
         try:
             with open(filepath, 'r') as f:
-                data = json.load(f)
-
-            # Basic Validation
-            if "machines" not in data:
-                print("⚠️ Config warning: 'machines' key missing.")
-                return []
-            
-            rules = data["machines"]
-            for i, rule in enumerate(rules):
-                ConfigLoader._validate_rule(rule, i)
-                
-            return rules
-
+                return json.load(f)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON format in {filepath}: {e}")
 

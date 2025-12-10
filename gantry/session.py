@@ -2,6 +2,7 @@ import glob
 from .io_handlers import DicomStore, DicomImporter, DicomExporter
 from .services import RedactionService
 from .config_manager import ConfigLoader
+from .privacy import PhiInspector, PhiFinding
 
 class DicomSession:
     """
@@ -36,6 +37,24 @@ class DicomSession:
         svc = RedactionService(self.store)
         svc.redact_machine_region(serial_number, roi)
 
+    def scan_for_phi(self, config_path: str = None) -> List[PhiFinding]:
+        """
+        Scans all patients in the session for potential PHI.
+        """
+        inspector = PhiInspector(config_path)
+        all_findings = []
+        
+        print("\nScanning for PHI...")
+        for patient in self.store.patients:
+            findings = inspector.scan_patient(patient)
+            all_findings.extend(findings)
+            
+        print(f"Scan Complete. Found {len(all_findings)} potential PHI issues.")
+        for f in all_findings:
+            print(f" - [{f.entity_type}] {f.field_name}: {f.value} ({f.reason})")
+            
+        return all_findings
+
     def export(self, folder):
         """Exports the current state of all patients to a folder."""
         print("Exporting...")
@@ -50,7 +69,7 @@ class DicomSession:
         """
         try:
             print(f"Loading configuration from {config_file}...")
-            self.active_rules = ConfigLoader.load_rules(config_file)
+            self.active_rules = ConfigLoader.load_redaction_rules(config_file)
             print(f"Loaded {len(self.active_rules)} machine rule definitions.")
             print("Tip: Run .preview_config() to see matches, or .execute_config() to apply.")
         except Exception as e:
