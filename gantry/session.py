@@ -18,9 +18,10 @@ class DicomSession:
         print(f"Session started. {len(self.store.patients)} patients loaded.")
 
     def import_folder(self, folder_path):
-        """Scans a folder for .dcm files and imports them into the session."""
-        files = glob.glob(f"{folder_path}/*.dcm")
-        DicomImporter.import_files(files, self.store)
+        """
+        Scans a folder for .dcm files (recursively) and imports them into the session.
+        """
+        DicomImporter.import_files([folder_path], self.store)
         self._save()
 
     def inventory(self):
