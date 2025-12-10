@@ -95,12 +95,38 @@
             <span class="k">if</span> <span class="s2">&quot;machines&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
                 <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;⚠️ Config warning: &#39;machines&#39; key missing.&quot;</span><span class="p">)</span>
                 <span class="k">return</span> <span class="p">[]</span>
-
-            <span class="k">return</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;machines&quot;</span><span class="p">]</span>
+            
+            <span class="n">rules</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;machines&quot;</span><span class="p">]</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">rule</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">rules</span><span class="p">):</span>
+                <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">_validate_rule</span><span class="p">(</span><span class="n">rule</span><span class="p">,</span> <span class="n">i</span><span class="p">)</span>
+                
+            <span class="k">return</span> <span class="n">rules</span>
 
         <span class="k">except</span> <span class="n">json</span><span class="o">.</span><span class="n">JSONDecodeError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid JSON format in </span><span class="si">{</span><span class="n">filepath</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
-</div>
+
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_validate_rule</span><span class="p">(</span><span class="n">rule</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">index</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="n">sn</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;serial_number&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">sn</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Rule #</span><span class="si">{</span><span class="n">index</span><span class="si">}</span><span class="s2">: Missing &#39;serial_number&#39;.&quot;</span><span class="p">)</span>
+
+        <span class="n">zones</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;redaction_zones&quot;</span><span class="p">,</span> <span class="p">[])</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">zones</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Rule #</span><span class="si">{</span><span class="n">index</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">sn</span><span class="si">}</span><span class="s2">): &#39;redaction_zones&#39; must be a list.&quot;</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">z_idx</span><span class="p">,</span> <span class="n">zone</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">zones</span><span class="p">):</span>
+            <span class="n">roi</span> <span class="o">=</span> <span class="n">zone</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;roi&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">roi</span> <span class="ow">or</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">roi</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">roi</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">4</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Rule #</span><span class="si">{</span><span class="n">index</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">sn</span><span class="si">}</span><span class="s2">), Zone #</span><span class="si">{</span><span class="n">z_idx</span><span class="si">}</span><span class="s2">: ROI must be a list of 4 integers.&quot;</span><span class="p">)</span>
+            
+            <span class="n">r1</span><span class="p">,</span> <span class="n">r2</span><span class="p">,</span> <span class="n">c1</span><span class="p">,</span> <span class="n">c2</span> <span class="o">=</span> <span class="n">roi</span>
+            <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">x</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">roi</span><span class="p">):</span>
+                 <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Rule #</span><span class="si">{</span><span class="n">index</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">sn</span><span class="si">}</span><span class="s2">), Zone #</span><span class="si">{</span><span class="n">z_idx</span><span class="si">}</span><span class="s2">: ROI values must be non-negative.&quot;</span><span class="p">)</span>
+            
+            <span class="k">if</span> <span class="n">r1</span> <span class="o">&gt;</span> <span class="n">r2</span> <span class="ow">or</span> <span class="n">c1</span> <span class="o">&gt;</span> <span class="n">c2</span><span class="p">:</span>
+                 <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Rule #</span><span class="si">{</span><span class="n">index</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">sn</span><span class="si">}</span><span class="s2">), Zone #</span><span class="si">{</span><span class="n">z_idx</span><span class="si">}</span><span class="s2">: Invalid ROI logic (Start &gt; End).&quot;</span><span class="p">)</span></div>
 
 </pre></div>
 
