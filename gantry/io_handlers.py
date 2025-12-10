@@ -59,13 +59,23 @@ class DicomImporter:
     @staticmethod
     def import_files(file_paths: List[str], store: DicomStore):
         """
-        Parses a list of files, skipping those already in the store.
+        Parses a list of files or directories. Recurses into directories to find all files.
+        Skips those already in the store.
         Builds the Patient -> Study -> Series -> Instance hierarchy.
         """
-        known_files = store.get_known_files()
-        new_files = [fp for fp in file_paths if os.path.abspath(fp) not in known_files]
+        all_files = []
+        for path in file_paths:
+            if os.path.isfile(path):
+                all_files.append(path)
+            elif os.path.isdir(path):
+                for root, _, filenames in os.walk(path):
+                    for filename in filenames:
+                        all_files.append(os.path.join(root, filename))
         
-        skipped_count = len(file_paths) - len(new_files)
+        known_files = store.get_known_files()
+        new_files = [fp for fp in all_files if os.path.abspath(fp) not in known_files]
+        
+        skipped_count = len(all_files) - len(new_files)
         if skipped_count > 0:
             print(f"Skipping {skipped_count} already imported files.")
             

@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import pydicom
+from pydicom.uid import generate_uid
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
@@ -84,6 +85,27 @@ class Instance(DicomItem):
     def __setstate__(self, state):
         """Called when loading from disk. Restore metadata."""
         self.__dict__.update(state)
+
+    def regenerate_uid(self):
+        """
+        Generates a new, globally unique SOP Instance UID.
+        Call this whenever pixel data is modified.
+        """
+        # 1. Generate new UID using pydicom's generator (or your org root)
+        new_uid = generate_uid()
+        
+        # 2. Update the Object Property
+        self.sop_instance_uid = new_uid
+        
+        # 3. Update the DICOM Attribute Dictionary
+        self.set_attr("0008,0018", new_uid)
+        
+        # 4. Detach from physical file
+        # Since this object is now a "new" instance in memory, 
+        # it no longer matches the file on disk.
+        self.file_path = None 
+        
+        print(f"  -> Identity regenerated: {new_uid}")
 
     def get_pixel_data(self) -> np.ndarray:
         """

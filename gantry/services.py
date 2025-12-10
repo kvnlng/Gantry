@@ -1,6 +1,11 @@
 from typing import Dict, List
-from .entities import Instance, Patient
+from .entities import Instance, Patient, DicomItem, DicomSequence
 from .io_handlers import DicomStore
+
+
+# Define standard codes for the Sequence
+CODE_BASIC_PROFILE = {"0008,0100": "113100", "0008,0102": "DCM", "0008,0104": "Basic Application Confidentiality Profile"}
+CODE_CLEAN_PIXEL =   {"0008,0100": "113101", "0008,0102": "DCM", "0008,0104": "Clean Pixel Data Option"}
 
 
 class MachinePixelIndex:
@@ -91,6 +96,49 @@ class RedactionService:
                     print(f"⚠️ ROI {roi} extends beyond image ({rows}x{cols}). Clipping to image bounds.")
 
                 arr[r1:r2_clamped, c1:c2_clamped] = 0
+                self._apply_redaction_flags(inst)
+
+                inst.regenerate_uid()
+
                 print(f"  Modified {inst.sop_instance_uid}")
             except Exception as e:
                 print(f"  Failed {inst.sop_instance_uid}: {e}")
+
+    def _apply_redaction_flags(self, inst: Instance):
+        """
+        Sets DICOM tags indicating Pixel Data modification (Derivation)
+        WITHOUT claiming full patient de-identification.
+        """
+        
+        # 1. Image Type (0008,0008)
+        # We need to preserve existing values but ensure 'DERIVED' is first.
+        # Note: In a robust implementation, we'd read the old value first. 
+        # Here we force a standard Derived type.
+        current_type = inst.attributes.get("0008,0008", [])
+        if isinstance(current_type, str):
+            current_type = [current_type]
+        
+        # Ensure 'DERIVED' is the first value (Value 1)
+        new_type = ["DERIVED"] + [x for x in current_type if x != "ORIGINAL" and x != "DERIVED"]
+        # Ensure we have at least 'PRIMARY' or 'SECONDARY' as Value 2
+        if len(new_type) < 2:
+            new_type.append("SECONDARY")
+            
+        inst.set_attr("0008,0008", new_type)
+
+        # 2. Burned In Annotation (0028,0301) -> NO
+        inst.set_attr("0028,0301", "NO")
+        
+        # 3. Derivation Description (0008,2111)
+        inst.set_attr("0008,2111", "Gantry Pixel Redaction: Burned-in PHI removed")
+        
+        # 4. Derivation Code Sequence (0008,9215)
+        # Code 113062: Pixel Data modification
+        seq = DicomSequence(tag="0008,9215")
+        item = DicomItem()
+        item.set_attr("0008,0100", "113062")
+        item.set_attr("0008,0102", "DCM")
+        item.set_attr("0008,0104", "Pixel Data modification")
+        seq.items.append(item)
+        
+        inst.sequences["0008,9215"] = seq

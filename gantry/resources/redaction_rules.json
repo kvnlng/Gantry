@@ -1,0 +1,27 @@
+{
+    "version": "1.0",
+    "description": "De-identification rules for specific machines",
+    "machines": [
+        {
+            "serial_number": "SN-SCANNER-01",
+            "model_name": "Revolution CT",
+            "comment": "Redact burned-in Patient Name top-left",
+            "redaction_zones": [
+                {
+                    "roi": [50, 100, 50, 200],
+                    "note": "RowStart, RowEnd, ColStart, ColEnd"
+                }
+            ]
+        },
+        {
+            "serial_number": "SN-SCANNER-02",
+            "comment": "Redact Hospital ID bottom-right",
+            "redaction_zones": [
+                {
+                    "roi": [400, 450, 400, 512],
+                    "note": "Bottom right box"
+                }
+            ]
+        }
+    ]
+}
