@@ -8,6 +8,8 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 - [x] Lazy Loading Pixel Data
 - [x] Basic Redaction by Machine Serial Number
 - [x] Configuration Validation & Safety Checks
+- [x] PHI Detection (Privacy Inspector)
+- [x] Improved Documentation & Docstrings
 
 ---
 
