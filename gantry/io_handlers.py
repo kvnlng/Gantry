@@ -131,6 +131,9 @@ class DicomImporter:
             tag = f"{elem.tag.group:04x},{elem.tag.element:04x}"
             if elem.VR == 'SQ':
                 DicomImporter._process_sequence(tag, elem, item)
+            elif elem.VR == 'PN':
+                # Sanitize PersonName for pickle safety
+                item.set_attr(tag, str(elem.value))
             else:
                 item.set_attr(tag, elem.value)
 
