@@ -77,12 +77,16 @@
 <div class="viewcode-block" id="MachinePixelIndex">
 <a class="viewcode-back" href="../../gantry.html#gantry.services.MachinePixelIndex">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">MachinePixelIndex</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Inverted index allowing O(1) retrieval of Instances by Device Serial Number.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_index</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Instance</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
 
 <div class="viewcode-block" id="MachinePixelIndex.index_store">
 <a class="viewcode-back" href="../../gantry.html#gantry.services.MachinePixelIndex.index_store">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">index_store</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n">DicomStore</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Indexes all instances in the given store.&quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_index</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
         <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">:</span>
             <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
@@ -104,6 +108,9 @@
 <div class="viewcode-block" id="RedactionService">
 <a class="viewcode-back" href="../../gantry.html#gantry.services.RedactionService">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">RedactionService</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Applies pixel data redaction based on rules.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n">DicomStore</span><span class="p">):</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">index</span> <span class="o">=</span> <span class="n">MachinePixelIndex</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">index_store</span><span class="p">(</span><span class="n">store</span><span class="p">)</span>
@@ -141,7 +148,11 @@
 <div class="viewcode-block" id="RedactionService.redact_machine_region">
 <a class="viewcode-back" href="../../gantry.html#gantry.services.RedactionService.redact_machine_region">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">redact_machine_region</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">machine_sn</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">roi</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;roi: (row_start, row_end, col_start, col_end)&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Zeroes out a rectangular region for all images from the specified machine.</span>
+<span class="sd">        roi: (row_start, row_end, col_start, col_end)</span>
+<span class="sd">        Includes safety checks for image bounds.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">targets</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">get_by_machine</span><span class="p">(</span><span class="n">machine_sn</span><span class="p">)</span>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Redacting </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">targets</span><span class="p">)</span><span class="si">}</span><span class="s2"> images for </span><span class="si">{</span><span class="n">machine_sn</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span>
 

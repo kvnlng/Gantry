@@ -82,6 +82,9 @@
 <a class="viewcode-back" href="../../gantry.html#gantry.entities.DicomSequence">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">DicomSequence</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Represents a DICOM Sequence (SQ) containing multiple DicomItems.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">tag</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">items</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="s1">&#39;DicomItem&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span></div>
 
@@ -91,6 +94,9 @@
 <a class="viewcode-back" href="../../gantry.html#gantry.entities.DicomItem">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">DicomItem</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Base class for any entity that holds DICOM attributes and sequences.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="c1"># init=False to avoid constructor conflicts during inheritance</span>
     <span class="n">attributes</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
     <span class="n">sequences</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">DicomSequence</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
@@ -102,12 +108,14 @@
 <div class="viewcode-block" id="DicomItem.set_attr">
 <a class="viewcode-back" href="../../gantry.html#gantry.entities.DicomItem.set_attr">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">set_attr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tag</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Sets a generic attribute by its hex tag (e.g., &#39;0010,0010&#39;).&quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="n">tag</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span></div>
 
 
 <div class="viewcode-block" id="DicomItem.add_sequence_item">
 <a class="viewcode-back" href="../../gantry.html#gantry.entities.DicomItem.add_sequence_item">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">add_sequence_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tag</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">item</span><span class="p">:</span> <span class="s1">&#39;DicomItem&#39;</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Appends a new item to a sequence, creating the sequence if needed.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="n">tag</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">sequences</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">sequences</span><span class="p">[</span><span class="n">tag</span><span class="p">]</span> <span class="o">=</span> <span class="n">DicomSequence</span><span class="p">(</span><span class="n">tag</span><span class="o">=</span><span class="n">tag</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">sequences</span><span class="p">[</span><span class="n">tag</span><span class="p">]</span><span class="o">.</span><span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">item</span><span class="p">)</span></div>
@@ -135,6 +143,10 @@
 <a class="viewcode-back" href="../../gantry.html#gantry.entities.Instance">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">Instance</span><span class="p">(</span><span class="n">DicomItem</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Represents a single DICOM image (SOP Instance).</span>
+<span class="sd">    Manages lazy loading of pixel data.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">sop_instance_uid</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
     <span class="n">sop_class_uid</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
     <span class="n">instance_number</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
@@ -185,7 +197,11 @@
 <div class="viewcode-block" id="Instance.set_pixel_data">
 <a class="viewcode-back" href="../../gantry.html#gantry.entities.Instance.set_pixel_data">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">set_pixel_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">array</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot; unpacking of 2D/3D/4D arrays.&quot;&quot;&quot;</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Sets the pixel array and automatically updates metadata tags</span>
+<span class="sd">        (rows, cols, samples, frames, etc.) based on array shape.</span>
+<span class="sd">        Handles unpacking of 2D/3D/4D arrays.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">pixel_array</span> <span class="o">=</span> <span class="n">array</span>
         <span class="n">shape</span> <span class="o">=</span> <span class="n">array</span><span class="o">.</span><span class="n">shape</span>
         <span class="n">ndim</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">shape</span><span class="p">)</span>
@@ -219,6 +235,10 @@
 <a class="viewcode-back" href="../../gantry.html#gantry.entities.Series">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">Series</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Groups Instances by Series Instance UID.</span>
+<span class="sd">    Typically represents a single scan or reconstruction.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">series_instance_uid</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">modality</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">series_number</span><span class="p">:</span> <span class="nb">int</span>
@@ -231,6 +251,10 @@
 <a class="viewcode-back" href="../../gantry.html#gantry.entities.Study">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">Study</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Groups Series by Study Instance UID.</span>
+<span class="sd">    Represents a single patient visit or examination.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">study_instance_uid</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">study_date</span><span class="p">:</span> <span class="n">Any</span>
     <span class="n">series</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Series</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span></div>
@@ -241,6 +265,9 @@
 <a class="viewcode-back" href="../../gantry.html#gantry.entities.Patient">[docs]</a>
 <span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">Patient</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Root of the object hierarchy. Groups Studies by Patient ID.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">patient_name</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">studies</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Study</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span></div>

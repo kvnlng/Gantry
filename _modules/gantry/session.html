@@ -77,6 +77,10 @@
 <div class="viewcode-block" id="DicomSession">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">DicomSession</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    The Main Facade for the Gantry library.</span>
+<span class="sd">    Manages the lifecycle of the DicomStore (Load/Import/Redact/Export/Save).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">persistence_file</span><span class="o">=</span><span class="s2">&quot;dicom_session.pkl&quot;</span><span class="p">):</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">persistence_file</span> <span class="o">=</span> <span class="n">persistence_file</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">store</span> <span class="o">=</span> <span class="n">DicomStore</span><span class="o">.</span><span class="n">load_state</span><span class="p">(</span><span class="n">persistence_file</span><span class="p">)</span>
@@ -87,6 +91,7 @@
 <div class="viewcode-block" id="DicomSession.import_folder">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.import_folder">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">import_folder</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">folder_path</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Scans a folder for .dcm files and imports them into the session.&quot;&quot;&quot;</span>
         <span class="n">files</span> <span class="o">=</span> <span class="n">glob</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">folder_path</span><span class="si">}</span><span class="s2">/*.dcm&quot;</span><span class="p">)</span>
         <span class="n">DicomImporter</span><span class="o">.</span><span class="n">import_files</span><span class="p">(</span><span class="n">files</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_save</span><span class="p">()</span></div>
@@ -95,6 +100,7 @@
 <div class="viewcode-block" id="DicomSession.inventory">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.inventory">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">inventory</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Prints a summary of devices (Manufacturers/Models) found in the current session.&quot;&quot;&quot;</span>
         <span class="n">eqs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">get_unique_equipment</span><span class="p">()</span>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Inventory: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">eqs</span><span class="p">)</span><span class="si">}</span><span class="s2"> Devices&quot;</span><span class="p">)</span>
         <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">eqs</span><span class="p">:</span>
@@ -104,6 +110,10 @@
 <div class="viewcode-block" id="DicomSession.redact_by_machine">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.redact_by_machine">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">redact_by_machine</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">serial_number</span><span class="p">,</span> <span class="n">roi</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Manually triggers redaction for a machine.</span>
+<span class="sd">        roi: (r1, r2, c1, c2)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">svc</span> <span class="o">=</span> <span class="n">RedactionService</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="p">)</span>
         <span class="n">svc</span><span class="o">.</span><span class="n">redact_machine_region</span><span class="p">(</span><span class="n">serial_number</span><span class="p">,</span> <span class="n">roi</span><span class="p">)</span></div>
 
@@ -111,6 +121,7 @@
 <div class="viewcode-block" id="DicomSession.export">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.export">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">folder</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Exports the current state of all patients to a folder.&quot;&quot;&quot;</span>
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Exporting...&quot;</span><span class="p">)</span>
         <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">:</span>
             <span class="n">DicomExporter</span><span class="o">.</span><span class="n">save_patient</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">folder</span><span class="p">)</span>

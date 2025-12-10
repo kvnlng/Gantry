@@ -93,6 +93,7 @@
 <div class="viewcode-block" id="DicomStore.get_unique_equipment">
 <a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.DicomStore.get_unique_equipment">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">get_unique_equipment</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Equipment</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a list of all unique Equipment (Manufacturer/Model/Serial) found in the store.&quot;&quot;&quot;</span>
         <span class="n">unique</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
         <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">patients</span><span class="p">:</span>
             <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
@@ -104,6 +105,7 @@
 <div class="viewcode-block" id="DicomStore.get_known_files">
 <a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.DicomStore.get_known_files">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">get_known_files</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Set</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns a set of absolute file paths for all instances currently indexed.&quot;&quot;&quot;</span>
         <span class="n">files</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
         <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">patients</span><span class="p">:</span>
             <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
@@ -138,10 +140,18 @@
 <div class="viewcode-block" id="DicomImporter">
 <a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.DicomImporter">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">DicomImporter</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Handles scanning of folders/files and ingesting them into the Object Graph.</span>
+<span class="sd">    Reads metadata only (lazy loading) for performance.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
 <div class="viewcode-block" id="DicomImporter.import_files">
 <a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.DicomImporter.import_files">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">import_files</span><span class="p">(</span><span class="n">file_paths</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">store</span><span class="p">:</span> <span class="n">DicomStore</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Parses a list of files, skipping those already in the store.</span>
+<span class="sd">        Builds the Patient -&gt; Study -&gt; Series -&gt; Instance hierarchy.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">known_files</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">get_known_files</span><span class="p">()</span>
         <span class="n">new_files</span> <span class="o">=</span> <span class="p">[</span><span class="n">fp</span> <span class="k">for</span> <span class="n">fp</span> <span class="ow">in</span> <span class="n">file_paths</span> <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">fp</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">known_files</span><span class="p">]</span>
         
@@ -207,6 +217,7 @@
 
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">_process_sequence</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">elem</span><span class="p">,</span> <span class="n">parent_item</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Recursively parses Sequence (SQ) items.&quot;&quot;&quot;</span>
         <span class="k">for</span> <span class="n">ds_item</span> <span class="ow">in</span> <span class="n">elem</span><span class="p">:</span>
             <span class="n">seq_item</span> <span class="o">=</span> <span class="n">DicomItem</span><span class="p">()</span>
             <span class="n">DicomImporter</span><span class="o">.</span><span class="n">_populate_attrs</span><span class="p">(</span><span class="n">ds_item</span><span class="p">,</span> <span class="n">seq_item</span><span class="p">)</span>
@@ -216,10 +227,17 @@
 <div class="viewcode-block" id="DicomExporter">
 <a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.DicomExporter">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">DicomExporter</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Handles writing the Object Graph back to standard DICOM files.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
 <div class="viewcode-block" id="DicomExporter.save_patient">
 <a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.DicomExporter.save_patient">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">save_patient</span><span class="p">(</span><span class="n">patient</span><span class="p">:</span> <span class="n">Patient</span><span class="p">,</span> <span class="n">out_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Iterates over a Patient&#39;s hierarchy and saves valid .dcm files to out_dir.</span>
+<span class="sd">        Performs IOD Validation before saving.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">out_dir</span><span class="p">):</span> <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">out_dir</span><span class="p">)</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">gantry.validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">IODValidator</span>
 
