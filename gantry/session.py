@@ -257,7 +257,9 @@ class DicomSession:
         Scans a folder for .dcm files (recursively) and imports them into the session.
         """
         DicomImporter.import_files([folder_path], self.store)
+        print("\nImport complete. Persisting session... please wait.")
         self._save()
+        print("Done.")
 
     def inventory(self):
         get_logger().info("Generating inventory report.")

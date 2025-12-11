@@ -10,5 +10,15 @@ from .builders import DicomBuilder as Builder
 # Expose Equipment for type hinting
 from .entities import Equipment
 
-__version__ = "0.2.0"
+try:
+    from importlib.metadata import version, PackageNotFoundError
+except ImportError:
+    # Backport for older Pythons if needed, though Gantry requires 3.9+ where this is standard
+    from importlib_metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("gantry")
+except PackageNotFoundError:
+    # Package is not installed
+    __version__ = "0.0.0"
 __all__ = ["Session", "Builder", "Equipment"]
