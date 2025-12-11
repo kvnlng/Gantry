@@ -215,13 +215,20 @@ class DicomExporter:
     def save_patient(patient: Patient, out_dir: str):
         """
         Iterates over a Patient's hierarchy and saves valid .dcm files to out_dir.
-        Performs IOD Validation before saving.
+        """
+        DicomExporter.save_studies(patient, patient.studies, out_dir)
+
+    @staticmethod
+    def save_studies(patient: Patient, studies: List[Study], out_dir: str):
+        """
+        Exports a specific list of studies for a patient.
+        Useful for partial exports or filtering.
         """
         if not os.path.exists(out_dir): os.makedirs(out_dir)
         from gantry.validation import IODValidator
         logger = get_logger()
 
-        for st in patient.studies:
+        for st in studies:
             for se in st.series:
                 for inst in se.instances:
                     ds = DicomExporter._create_ds(inst)

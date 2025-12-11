@@ -316,13 +316,62 @@ class DicomSession:
         svc = RemediationService(self.store_backend)
         svc.apply_remediation(findings)
 
-    def export(self, folder):
-        """Exports the current state of all patients to a folder."""
-        get_logger().info(f"Exporting session to {folder}...")
+    def export(self, folder, safe=False):
+        """
+        Exports the current state of all patients to a folder.
+        If safe=True, performs a fresh PHI scan and ONLY exports clean data.
+        """
+        get_logger().info(f"Exporting session to {folder} (safe={safe})...")
         print("Exporting...")
+
+        dirty_patients = set()
+        dirty_studies = set()
+
+        if safe:
+            print("Running safety scan...")
+            report = self.scan_for_phi()
+            for finding in report:
+                if finding.entity_type == "Patient":
+                    dirty_patients.add(finding.entity_uid)
+                elif finding.entity_type == "Study":
+                    dirty_studies.add(finding.entity_uid)
+            
+            if dirty_patients or dirty_studies:
+                msg = f"Safety Scan Found Issues: {len(dirty_patients)} Patients, {len(dirty_studies)} Studies will be skipped."
+                get_logger().warning(msg)
+                print(msg)
+
+        exported_count = 0
+        skipped_count = 0
+
         for p in self.store.patients:
-            DicomExporter.save_patient(p, folder)
-        get_logger().info("Export complete.")
+            # Check Patient Level
+            if safe and p.patient_id in dirty_patients:
+                get_logger().warning(f"Skipping Dirty Patient: {p.patient_id}")
+                skipped_count += 1
+                continue
+
+            # Determine which studies to export
+            if safe:
+                safe_studies = [st for st in p.studies if st.study_instance_uid not in dirty_studies]
+                if not p.studies: # Handle empty patient
+                     pass
+                elif not safe_studies:
+                     get_logger().warning(f"Skipping Patient {p.patient_id} (All {len(p.studies)} studies dirty).")
+                     skipped_count += 1
+                     continue
+                
+                # Check if we filtered some out
+                if len(safe_studies) < len(p.studies):
+                     get_logger().info(f"Partial Export for {p.patient_id}: {len(safe_studies)}/{len(p.studies)} studies.")
+            else:
+                safe_studies = p.studies
+
+            if safe_studies:
+                DicomExporter.save_studies(p, safe_studies, folder)
+                exported_count += 1
+
+        get_logger().info(f"Export complete. (Exported Groups: {exported_count}, Skipped: {skipped_count})")
         print("Done.")
 
     def load_config(self, config_file: str):
