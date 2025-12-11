@@ -11,8 +11,10 @@ from .logger import configure_logger, get_logger
 from .persistence import SqliteStore
 from .crypto import KeyManager
 from .reversibility import ReversibilityService
+from .persistence_manager import PersistenceManager
 import json
 from .parallel import run_parallel
+
 
 def _scan_patient_worker(args):
     """
@@ -30,13 +32,16 @@ class DicomSession:
     The Main Facade for the Gantry library.
     Manages the lifecycle of the DicomStore (Load/Import/Redact/Export/Save).
     """
+
+
     def __init__(self, persistence_file="gantry.db"):
         configure_logger()
         self.persistence_file = persistence_file
         self.store_backend = SqliteStore(persistence_file)
+        self.persistence_manager = PersistenceManager(self.store_backend)
         
         # Hydrate memory from DB
-        self.store = DicomStore() # Keep the wrapper for now, but populate it
+        self.store = DicomStore() 
         print(f"Loading session from {persistence_file}...")
         self.store.patients = self.store_backend.load_all()
         
@@ -47,6 +52,21 @@ class DicomSession:
         self.reversibility_service = None
 
         get_logger().info(f"Session started. {len(self.store.patients)} patients loaded.")
+
+    def _save(self):
+        """
+        Delegates persistence to the background manager.
+        """
+        # self.store_backend.save_all(self.store.patients) # Old sync way
+        self.persistence_manager.save_async(self.store.patients)
+
+    def import_folder(self, folder_path):
+        """
+        Scans a folder for .dcm files (recursively) and imports them into the session.
+        """
+        DicomImporter.import_files([folder_path], self.store)
+        print("\nImport complete. Saving in background...")
+        self._save()
 
     def enable_reversible_anonymization(self, key_path: str = "gantry.key"):
         """
@@ -190,6 +210,17 @@ class DicomSession:
         get_logger().info(f"PHI Scan Complete. Found {len(all_findings)} issues.")
             
         return PhiReport(all_findings)
+
+    def save_analysis(self, report):
+        """
+        Persists the results of a PHI analysis to the database.
+        report: PhiReport or List[PhiFinding]
+        """
+        findings = report
+        if hasattr(report, 'findings'):
+            findings = report.findings
+            
+        self.store_backend.save_findings(findings)
 
     def _rehydrate_findings(self, findings):
         """
