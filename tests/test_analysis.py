@@ -57,6 +57,8 @@ def test_batch_preserve_from_report(tmp_path):
     
     # Preserve using Report directly
     session.preserve_identities(report)
+    session.save()
+    session.persistence_manager.shutdown()
     
     # Verify persistence
     import sqlite3

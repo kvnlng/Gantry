@@ -40,6 +40,8 @@ def test_reversible_anonymization_flow(tmp_path):
     
     # 2. Preserve Identity
     session.preserve_patient_identity(pid)
+    session.save()
+    session.persistence_manager.shutdown()
     
     # Verify encrypted blob is in memory
     assert "0099,0010" in inst.attributes

@@ -23,6 +23,10 @@ class PersistenceManager:
         atexit.register(self.shutdown)
         get_logger().info("PersistenceManager started in background.")
 
+    def flush(self):
+        """Blocks until all tasks in the queue have been processed."""
+        self.queue.join()
+
     def save_async(self, patients: List[Patient]):
         """
         Queues a save operation.

@@ -16,16 +16,22 @@ import json
 from .parallel import run_parallel
 
 
-def _scan_patient_worker(args):
+def scan_worker(args):
     """
     Worker to scan a single patient.
     args: (patient_copy, config_path)
-    Returns: List[PhiFinding] (with cloned entities)
+    Returns: List[PhiFinding] (WITHOUT entities, lightweight)
     """
     patient, config_path = args
     from .privacy import PhiInspector # Import inside worker
     inspector = PhiInspector(config_path)
-    return inspector.scan_patient(patient)
+    findings = inspector.scan_patient(patient)
+    
+    # Strip heavy entity objects before returning across process boundary
+    for f in findings:
+        f.entity = None
+        
+    return findings
 
 class DicomSession:
     """
@@ -70,7 +76,7 @@ class DicomSession:
         self.reversibility_service = ReversibilityService(self.key_manager)
         get_logger().info(f"Reversible anonymization enabled. Key: {key_path}")
 
-    def preserve_patient_identity(self, patient_id: str, persist: bool = True) -> List["Instance"]:
+    def preserve_patient_identity(self, patient_id: str, persist: bool = False) -> List["Instance"]:
         """
         Securely embeds the original patient name/ID into a private DICOM tag
         for all instances belonging to the specified patient.
@@ -146,12 +152,13 @@ class DicomSession:
             modified_instances.extend(res)
             count_patients += 1
             
+             
         if modified_instances:
-             msg = f"Persisting changes for {len(modified_instances)} instances..."
-             print(f"\n{msg}") # Force newline after tqdm
+             msg = f"Preserved identity for {len(modified_instances)} instances."
+             print(f"\n{msg}\nRemember to call .save() to persist changes.")
              get_logger().info(msg)
-             self.store_backend.update_attributes(modified_instances)
-             print("Persistence complete.")
+             # self.store_backend.update_attributes(modified_instances)
+             # print("Persistence complete.")
              
         get_logger().info(f"Batch preserved identity for {count_patients} patients ({len(modified_instances)} instances).")
 
@@ -189,7 +196,7 @@ class DicomSession:
         # We rely on lazy loading NOT triggering pixel reads during pickle, which `store` proxy helps with.
         worker_args = [(p, config_path) for p in self.store.patients]
         
-        results = run_parallel(_scan_patient_worker, worker_args, desc="Scanning PHI")
+        results = run_parallel(scan_worker, worker_args, desc="Scanning PHI")
         
         all_findings = []
         for findings in results:

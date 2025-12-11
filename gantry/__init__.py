@@ -1,6 +1,6 @@
 import warnings
-# Suppress strict pydicom validation warnings for UIDs (common in test data)
-warnings.filterwarnings("ignore", message="Invalid value for VR UI", category=UserWarning)
+# Suppress all pydicom warnings (e.g. strict UID validation)
+warnings.filterwarnings("ignore", module="pydicom.*")
 
 from .session import DicomSession as Session
 
