@@ -25,6 +25,7 @@ class DicomSession:
         
         # Hydrate memory from DB
         self.store = DicomStore() # Keep the wrapper for now, but populate it
+        print(f"Loading session from {persistence_file}...")
         self.store.patients = self.store_backend.load_all()
         
         self.active_rules: List[Dict[str, Any]] = []
@@ -86,59 +87,28 @@ class DicomSession:
         Batch preservation for multiple patients.
         input_data can be:
         - List[str]: List of Patient IDs
-        - List[PhiFinding]: Output from scan_for_phi
+        - PhiReport: Result from scan_for_phi
+        - List[PhiFinding]: List of findings
         """
         if not self.reversibility_service:
             raise RuntimeError("Reversible anonymization not enabled. Call enable_reversible_anonymization() first.")
 
         # Extract unique patient IDs
         patient_ids = set()
-        for item in input_data:
+        
+        # Helper to iterate different input types
+        iterable_data = input_data
+        if hasattr(input_data, 'findings'): # PhiReport
+            iterable_data = input_data.findings
+
+        for item in iterable_data:
             if isinstance(item, str):
                 patient_ids.add(item)
             elif hasattr(item, 'patient_id') and item.patient_id:
-                 # Check if patient_id is available on the finding/entity. 
-                 # PhiFinding usually has 'value' but might not link back to ID easily unless we encoded it.
-                 # Actually PhiFinding structure is: entity_type, field_name, value, reason.
-                 # It doesn't strictly hold patient_id unless the scanner was smart.
-                 # BUT, the user prompt said "preserve the entire list from the findings of scan_for_phi".
-                 # If scan_for_phi returns findings, we need to know WHICH patient they belong to.
-                 # Looking at PhiInspector, it scans a patient. 
-                 # We might need to iterate ALL patients and check if they are in the list?
-                 # OR, simply accept that input_data might just be a list of IDs for now.
-                 # Wait, PhiFinding logic:
-                 # findings = inspector.scan_patient(patient)
-                 # It returns a list of PhiFinding. It doesn't seem to attach the Patient object or ID.
-                 # I should probably update PhiInspector to include patient_id if I want to use findings as input.
-                 # OR, for now, I supports List[str] patient_ids, and rely on user to map findings -> patients.
-                 pass
-        
-        # If input was empty or logic failed
-        if not patient_ids and input_data:
-             # Fallback: Maybe they passed Patients?
-             if hasattr(input_data[0], 'patient_id'):
-                 patient_ids = {p.patient_id for p in input_data}
-        
-        # Let's support naive "List of PatientIDs" for sure. 
-        # Resolving "List of Findings" -> "Patient IDs" requires findings to have context.
-        # Current PhiInspector findings don't have back-refs.
-        # I'll stick to List[str] primarily and document it.
-        # Actually, if I look at scan_for_phi, it iterates patients.
-        # I should probably enhance scan_for_phi or PhiFinding to include patient context if requested.
-        # But for now, let's just implement the loop.
-        
-        # Wait, the user said "from the findings of scan_for_phi". 
-        # If I can't deduce patient from findings, I can't do it.
-        # Let's check PhiFinding class if I can.
-        # If not, I might need to ignore that part of request or improve PhiFinding.
-        # Let's assume input is List[str] for now to be safe, or objects with .patient_id
+                 patient_ids.add(item.patient_id)
         
         modified_instances = []
         count_patients = 0
-        
-        # To handle list of findings efficiently? 
-        # If a finding doesn't have ID, we can't do much.
-        # Let's assume the user will map it or pass IDs.
         
         for pid in patient_ids:
             patient = next((p for p in self.store.patients if p.patient_id == pid), None)
@@ -159,6 +129,40 @@ class DicomSession:
         self.store_backend.update_attributes(modified_instances)
         get_logger().info(f"Batch preserved identity for {count_patients} patients ({len(modified_instances)} instances).")
 
+    def recover_patient_identity(self, patient_id: str):
+        """
+        ... existing ...
+        """
+        return self._recover_identity_logic(patient_id) # Simplify for brevity if needed, but I should just replace the loop
+
+    def _recover_identity_logic(self, patient_id: str):
+        # implementation details
+        pass
+
+
+    # ... skip to scan_for_phi ...
+    
+    def scan_for_phi(self, config_path: str = None) -> "PhiReport":
+        """
+        Scans all patients in the session for potential PHI.
+        Returns a PhiReport object (iterable, and convertible to DataFrame).
+        """
+        from .privacy import PhiReport # Import here to avoid circular
+        
+        inspector = PhiInspector(config_path)
+        if not inspector.phi_tags:
+            get_logger().warning("PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
+        
+        all_findings = []
+        
+        get_logger().info("Scanning for PHI...")
+        for patient in self.store.patients:
+            findings = inspector.scan_patient(patient)
+            all_findings.extend(findings)
+            
+        get_logger().info(f"PHI Scan Complete. Found {len(all_findings)} issues.")
+            
+        return PhiReport(all_findings)
     def recover_patient_identity(self, patient_id: str):
         """
         Attempts to decrypt and read original identity from the first instance found.
@@ -220,25 +224,6 @@ class DicomSession:
         """
         svc = RemediationService(self.store_backend)
         svc.apply_remediation(findings)
-
-    def scan_for_phi(self, config_path: str = None) -> List[PhiFinding]:
-        """
-        Scans all patients in the session for potential PHI.
-        """
-        inspector = PhiInspector(config_path)
-        if not inspector.phi_tags:
-            get_logger().warning("PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
-        
-        all_findings = []
-        
-        get_logger().info("Scanning for PHI...")
-        for patient in self.store.patients:
-            findings = inspector.scan_patient(patient)
-            all_findings.extend(findings)
-            
-        get_logger().info(f"PHI Scan Complete. Found {len(all_findings)} issues.")
-            
-        return all_findings
 
     def export(self, folder):
         """Exports the current state of all patients to a folder."""

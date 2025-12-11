@@ -37,6 +37,33 @@ cd gantry
 pip install -e .
 ```
 
+## ⚡ Quick Start: The Gantry Session
+
+The `gantry.Session` Facade is your primary entry point. It manages imports, persistence, and inventory.
+
+```python
+import gantry
+
+# 1. Initialize a Session (Loads previous state if 'gantry.db' exists)
+app = gantry.Session("gantry.db")
+
+# 2. Ingest Data (Fast Metadata Scan)
+app.import_folder("./raw_dicom_data")
+
+# 3. Check Inventory
+app.inventory()
+# Output:
+# Inventory: 3 Devices
+#  - GE Revolution (S/N: SN-SCANNER-01)
+#  - Siemens Prisma (S/N: SN-SCANNER-02)
+
+# 4. Save State
+# (Happens automatically on import/export operations)
+
+# 5. Explore De-Identification Workflow (PHI Remediation & Pixel Redaction)
+# See the "De-Identification Workflow" section below for details.
+```
+
 ## 🛡️ De-Identification Workflow
 
 Gantry supports **Metadata Remediation** (Anonymization/Date Shifting), **Reversible Anonymization**, and **Pixel Redaction**.

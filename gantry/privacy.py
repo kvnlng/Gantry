@@ -20,8 +20,52 @@ class PhiFinding:
     field_name: str
     value: Any
     reason: str
+    patient_id: Optional[str] = None # Added for linkage
     entity: Any = None # Reference to the actual object (Patient, Study, etc.)
     remediation_proposal: Optional[PhiRemediation] = None
+
+class PhiReport:
+    """
+    A container for PHI findings that supports analysis and export.
+    Acts as a list for backward compatibility.
+    """
+    def __init__(self, findings: List[PhiFinding]):
+        self.findings = findings
+
+    def to_dataframe(self):
+        """
+        Converts findings to a Pandas DataFrame for analysis.
+        """
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError("Pandas is required for this feature. Install it with `pip install pandas`.")
+            
+        data = []
+        for f in self.findings:
+            row = {
+                "patient_id": f.patient_id,
+                "entity_type": f.entity_type,
+                "entity_uid": f.entity_uid,
+                "field": f.field_name,
+                "value": str(f.value),
+                "reason": f.reason,
+                "action": f.remediation_proposal.action_type if f.remediation_proposal else None
+            }
+            data.append(row)
+        return pd.DataFrame(data)
+
+    def __iter__(self):
+        return iter(self.findings)
+
+    def __len__(self):
+        return len(self.findings)
+    
+    def __getitem__(self, index):
+        return self.findings[index]
+    
+    def __repr__(self):
+        return f"<PhiReport: {len(self.findings)} findings>"
 
 class PhiInspector:
     """
@@ -52,6 +96,7 @@ class PhiInspector:
                  field_name="patient_name", 
                  value=patient.patient_name, 
                  reason="Names are PHI",
+                 patient_id=patient.patient_id,
                  entity=patient,
                  remediation_proposal=proposal
              ))
@@ -72,6 +117,7 @@ class PhiInspector:
                  field_name="patient_id", 
                  value=patient.patient_id, 
                  reason="Medical Record Numbers are PHI",
+                 patient_id=patient.patient_id,
                  entity=patient,
                  remediation_proposal=proposal
              ))
@@ -99,6 +145,7 @@ class PhiInspector:
                 field_name="study_date", 
                 value=study.study_date, 
                 reason="Dates are Safe Harbor restricted",
+                patient_id=patient_id,
                 entity=study,
                 remediation_proposal=proposal
             ))
