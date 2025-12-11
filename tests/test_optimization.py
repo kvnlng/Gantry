@@ -30,6 +30,7 @@ def test_optimization_preservation(tmp_path):
     p.studies.append(st)
     session.store.patients.append(p)
     session.save()
+    session.persistence_manager.shutdown()
     
     # 2. Monitor SQL to verify update_attributes is used
     # We will hook into sqlite3 to check calls or just verify data is updated without full re-insert
@@ -72,6 +73,7 @@ def test_batch_reversibility(tmp_path):
         session.store.patients.append(p)
         
     session.save()
+    session.persistence_manager.shutdown()
     
     # Batch Preserve
     session.preserve_identities(ids)
