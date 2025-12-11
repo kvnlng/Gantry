@@ -80,6 +80,9 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">.logger</span><span class="w"> </span><span class="kn">import</span> <span class="n">configure_logger</span><span class="p">,</span> <span class="n">get_logger</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.persistence</span><span class="w"> </span><span class="kn">import</span> <span class="n">SqliteStore</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.crypto</span><span class="w"> </span><span class="kn">import</span> <span class="n">KeyManager</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.reversibility</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReversibilityService</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
 
 <div class="viewcode-block" id="DicomSession">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession">[docs]</a>
@@ -98,8 +101,96 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="o">.</span><span class="n">load_all</span><span class="p">()</span>
         
         <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+        
+        <span class="c1"># Reversibility</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">key_manager</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">reversibility_service</span> <span class="o">=</span> <span class="kc">None</span>
 
         <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Session started. </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">)</span><span class="si">}</span><span class="s2"> patients loaded.&quot;</span><span class="p">)</span>
+
+<div class="viewcode-block" id="DicomSession.enable_reversible_anonymization">
+<a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.enable_reversible_anonymization">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">enable_reversible_anonymization</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;gantry.key&quot;</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Initializes the encryption subsystem.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">key_manager</span> <span class="o">=</span> <span class="n">KeyManager</span><span class="p">(</span><span class="n">key_path</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">key_manager</span><span class="o">.</span><span class="n">load_or_generate_key</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">reversibility_service</span> <span class="o">=</span> <span class="n">ReversibilityService</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">key_manager</span><span class="p">)</span>
+        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Reversible anonymization enabled. Key: </span><span class="si">{</span><span class="n">key_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="DicomSession.preserve_patient_identity">
+<a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.preserve_patient_identity">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">preserve_patient_identity</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Captures current Patient Attributes (Name, ID) and embeds them as encrypted</span>
+<span class="sd">        private tags into EVERY instance belonging to this patient.</span>
+<span class="sd">        MUST BE CALLED BEFORE ANONYMIZATION.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">reversibility_service</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;Reversibility not enabled. Call enable_reversible_anonymization() first.&quot;</span><span class="p">)</span>
+        
+        <span class="n">p</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span> <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">patient_id</span> <span class="o">==</span> <span class="n">patient_id</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">p</span><span class="p">:</span>
+            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Patient </span><span class="si">{</span><span class="n">patient_id</span><span class="si">}</span><span class="s2"> not found.&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="c1"># 1. Capture Identity</span>
+        <span class="c1"># In a real app, we might capture more or make this configurable.</span>
+        <span class="n">identity</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;PatientName&quot;</span><span class="p">:</span> <span class="n">p</span><span class="o">.</span><span class="n">patient_name</span><span class="p">,</span>
+            <span class="s2">&quot;PatientID&quot;</span><span class="p">:</span> <span class="n">p</span><span class="o">.</span><span class="n">patient_id</span><span class="p">,</span>
+            <span class="c1"># We could grab AccessionNumber from studies if we wanted</span>
+        <span class="p">}</span>
+        
+        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Preserving identity for </span><span class="si">{</span><span class="n">p</span><span class="o">.</span><span class="n">patient_name</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">p</span><span class="o">.</span><span class="n">patient_id</span><span class="si">}</span><span class="s2">)...&quot;</span><span class="p">)</span>
+        
+        <span class="c1"># 2. Embed into all instances</span>
+        <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">st</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">reversibility_service</span><span class="o">.</span><span class="n">embed_original_data</span><span class="p">(</span><span class="n">inst</span><span class="p">,</span> <span class="n">identity</span><span class="p">)</span>
+                    <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+        
+        <span class="bp">self</span><span class="o">.</span><span class="n">_save</span><span class="p">()</span>
+        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Secured identity in </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2"> instances.&quot;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="DicomSession.recover_patient_identity">
+<a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.recover_patient_identity">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">recover_patient_identity</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Attempts to decrypt and read original identity from the first instance found.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">reversibility_service</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;Reversibility not enabled.&quot;</span><span class="p">)</span>
+
+        <span class="n">p</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span> <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">patient_id</span> <span class="o">==</span> <span class="n">patient_id</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">p</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Patient not found.&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Locate first instance</span>
+        <span class="n">first_inst</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">st</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">:</span>
+                    <span class="n">first_inst</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+                    <span class="k">break</span>
+        
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">first_inst</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;No instances found for patient.&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="n">original</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">reversibility_service</span><span class="o">.</span><span class="n">recover_original_data</span><span class="p">(</span><span class="n">first_inst</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">original</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Recovered Identity:&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">original</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;No encrypted identity found or decryption failed.&quot;</span><span class="p">)</span></div>
+
 
 <div class="viewcode-block" id="DicomSession.import_folder">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.import_folder">[docs]</a>
