@@ -2,10 +2,11 @@ from setuptools import setup, find_packages
 
 setup(
     name="gantry",
-    version="0.2.0",
+    version="0.3.0",
     description="A Python DICOM Object Model and Redaction Toolkit",
     author="Kevin Long",
     packages=find_packages(),
+    install_requires=[
         "pydicom>=2.4.0",
         "numpy>=1.20.0",
         "tqdm>=4.65.0",

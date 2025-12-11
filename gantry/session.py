@@ -4,18 +4,26 @@ from .io_handlers import DicomStore, DicomImporter, DicomExporter
 from .services import RedactionService
 from .config_manager import ConfigLoader
 from .privacy import PhiInspector, PhiFinding
+from .remediation import RemediationService
 
 from .logger import configure_logger, get_logger
+
+from .persistence import SqliteStore
 
 class DicomSession:
     """
     The Main Facade for the Gantry library.
     Manages the lifecycle of the DicomStore (Load/Import/Redact/Export/Save).
     """
-    def __init__(self, persistence_file="dicom_session.pkl"):
+    def __init__(self, persistence_file="gantry.db"):
         configure_logger()
         self.persistence_file = persistence_file
-        self.store = DicomStore.load_state(persistence_file)
+        self.store_backend = SqliteStore(persistence_file)
+        
+        # Hydrate memory from DB
+        self.store = DicomStore() # Keep the wrapper for now, but populate it
+        self.store.patients = self.store_backend.load_all()
+        
         self.active_rules: List[Dict[str, Any]] = []
 
         get_logger().info(f"Session started. {len(self.store.patients)} patients loaded.")
@@ -40,8 +48,16 @@ class DicomSession:
         Manually triggers redaction for a machine.
         roi: (r1, r2, c1, c2)
         """
-        svc = RedactionService(self.store)
+        svc = RedactionService(self.store, self.store_backend)
         svc.redact_machine_region(serial_number, roi)
+
+    def apply_remediation(self, findings: List[PhiFinding]):
+        """
+        Applies remediation to the current session based on findings.
+        Auto-logs to Audit Trail.
+        """
+        svc = RemediationService(self.store_backend)
+        svc.apply_remediation(findings)
 
     def scan_for_phi(self, config_path: str = None) -> List[PhiFinding]:
         """
@@ -106,7 +122,7 @@ class DicomSession:
 
         # We need the index to check matches
         # We instantiate the service just to query the index, not to modify
-        service = RedactionService(self.store)
+        service = RedactionService(self.store, self.store_backend)
 
         match_count = 0
 
@@ -140,7 +156,7 @@ class DicomSession:
             return
 
         print(f"\nExecuting {len(self.active_rules)} rules...")
-        service = RedactionService(self.store)
+        service = RedactionService(self.store, self.store_backend)
 
         try:
             for rule in self.active_rules:
@@ -205,5 +221,5 @@ class DicomSession:
             print(f"Failed to write scaffold: {e}")
 
     def _save(self):
-        self.store.save_state(self.persistence_file)
+        self.store_backend.save_all(self.store.patients)
 

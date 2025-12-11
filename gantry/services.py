@@ -35,10 +35,11 @@ class RedactionService:
     """
     Applies pixel data redaction based on rules.
     """
-    def __init__(self, store: DicomStore):
+    def __init__(self, store: DicomStore, store_backend=None):
         self.index = MachinePixelIndex()
         self.index.index_store(store)
         self.logger = get_logger()
+        self.store_backend = store_backend
 
     def process_machine_rules(self, machine_rules: dict):
         """
@@ -75,6 +76,13 @@ class RedactionService:
         """
         targets = self.index.get_by_machine(machine_sn)
         self.logger.info(f"Redacting {len(targets)} images for {machine_sn}...")
+        
+        if self.store_backend and targets:
+             self.store_backend.log_audit(
+                action_type="REDACTION",
+                entity_uid=machine_sn,
+                details=f"Redacting {len(targets)} images with ROI {roi}"
+            )
 
         for inst in targets:
             try:

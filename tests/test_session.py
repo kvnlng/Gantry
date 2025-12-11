@@ -6,21 +6,22 @@ from gantry.io_handlers import DicomExporter
 
 def test_session_persistence(tmp_path, dummy_patient):
     """Test saving and loading state."""
-    pkl_file = tmp_path / "session.pkl"
-
-    # 1. Create and Save
-    store = DicomStore()
-    store.patients.append(dummy_patient)
-    store.save_state(str(pkl_file))
+    db_file = tmp_path / "session.db"
+    
+    # 1. Create Session
+    session = DicomSession(str(db_file))
+    session.store.patients.append(dummy_patient)
+    session._save()
 
     # 2. Load into Session
-    session = DicomSession(str(pkl_file))
-    assert len(session.store.patients) == 1
-    assert session.store.patients[0].patient_id == "P123"
+    # 2. Reload Session
+    session2 = DicomSession(str(db_file))
+    assert len(session2.store.patients) == 1
+    assert session2.store.patients[0].patient_id == "P123"
 
 
 def test_load_config(tmp_path, config_file):
-    session = DicomSession(str(tmp_path / "dummy.pkl"))
+    session = DicomSession(str(tmp_path / "dummy.db"))
 
     session.load_config(config_file)
     assert len(session.active_rules) == 1
@@ -28,7 +29,7 @@ def test_load_config(tmp_path, config_file):
 
 def test_load_empty_config(tmp_path):
     """Ensure session handles config files with no machines gracefully."""
-    session = DicomSession(str(tmp_path / "empty.pkl"))
+    session = DicomSession(str(tmp_path / "empty.db"))
     
     empty_conf = tmp_path / "empty_rules.json"
     import json
@@ -57,8 +58,8 @@ def test_execute_config_integration(tmp_path, dummy_patient, config_file):
     inst.file_path = str(dicom_dir / f"{inst.sop_instance_uid}.dcm")
 
     # 3. Create Session and add the patient
-    pkl_file = str(tmp_path / "integration.pkl")
-    session = DicomSession(pkl_file)
+    db_file = str(tmp_path / "integration.db")
+    session = DicomSession(db_file)
     session.store.patients.append(dummy_patient)
 
     # 4. Modify the file to simulate "Burned In" data
@@ -73,4 +74,4 @@ def test_execute_config_integration(tmp_path, dummy_patient, config_file):
     # Assert
     # Verify the instance in memory is updated (Lazy loaded then updated)
     assert inst.pixel_array[20, 20] == 0
-    assert os.path.exists(pkl_file)
+    assert os.path.exists(db_file)

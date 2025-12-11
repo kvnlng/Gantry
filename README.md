@@ -16,10 +16,14 @@ It features a **Lazy-Loading Proxy** architecture, allowing you to index thousan
 * **Hierarchical Object Model**: Work with logical entities, not just hex tags.
 * **Machine-Centric Indexing**: Automatically group images by equipment (Scanner Model & Serial Number).
 * **Lazy Loading**: Metadata is kept in memory; Pixel Data is loaded from disk only when requested.
+* **Automated PHI Remediation**: Detects PHI in metadata and proposes fixes (Anonymization & Date Shifting).
+* **Deterministic Date Shifting**: Preserves temporal intervals by shifting dates consistently using a Patient ID hash.
 * **De-Identification Engine**: Redact sensitive pixel data (burned-in PHI) based on machine specific rules.
 * **Fluent Builder API**: Programmatically construct valid DICOM datasets for testing.
 * **IOD Validation**: Built-in checks ensure your exported files comply with DICOM standards (Type 1/Type 2 attributes).
-* **Session Persistence**: Save your workspace state to a lightweight `.pkl` file and resume later.
+* **Session Persistence**: Save your workspace state to a robust **SQLite database** (`gantry.db`) to handle large datasets.
+* **Audit Trail**: Automatically logs all sensitive actions (Redaction, Anonymization) to an internal audit log for compliance.
+* **Comprehensive Logging**: Detailed file-based logs (`gantry.log`) with user-friendly progress bars.
 
 ---
 
@@ -42,8 +46,8 @@ The `gantry.Session` Facade is your primary entry point. It manages imports, per
 ```python
 import gantry
 
-# 1. Initialize a Session (Loads previous state if 'project.pkl' exists)
-app = gantry.Session("my_project.pkl")
+# 1. Initialize a Session (Loads previous state if 'gantry.db' exists)
+app = gantry.Session("gantry.db")
 
 # 2. Ingest Data (Fast Metadata Scan)
 app.import_folder("./raw_dicom_data")
@@ -57,15 +61,38 @@ app.inventory()
 
 # 4. Save State
 # (Happens automatically on import/export operations)
+
+# 5. Explore De-Identification Workflow (PHI Remediation & Pixel Redaction)
+# See the "De-Identification Workflow" section below for details.
 ```
 
 ---
 
 ## 🛡️ De-Identification Workflow
 
-Gantry excels at redacting burned-in pixel data based on the specific machine that captured the image. You can define rules in a JSON configuration file.
+Gantry supports both **Metadata Remediation** (Anonymization/Date Shifting) and **Pixel Redaction**.
 
-### 1. Auto-Inventory (Scaffold Config)
+### 1. PHI Scanning & Remediation (Metadata)
+
+Scan your dataset for potential PHI and apply automated fixes.
+
+```python
+# 1. Scan for PHI
+findings = app.scan_for_phi()
+# Output: Found 2 potential PHI issues.
+
+# 2. Apply Remediation (Anonymize Names/IDs, Shift Dates)
+# This will modify the objects in memory
+from gantry.remediation import RemediationService
+service = RemediationService()
+service.apply_remediation(findings)
+```
+
+### 2. Pixel Redaction (Burned-in PHI)
+
+Define rules to redact burned-in pixel data based on machine serial numbers.
+
+#### A. Auto-Inventory (Scaffold Config)
 
 Unsure which machines are in your dataset? Gantry can generate a config skeleton for you.
 
@@ -76,7 +103,7 @@ app.scaffold_config("my_redaction_rules.json")
 
 Open `my_redaction_rules.json` and fill in the `redaction_zones` for each machine.
 
-### 2. Define Rules (`redaction_rules.json`)
+#### B. Define Rules (`redaction_rules.json`)
 
 ```json
 {
@@ -97,7 +124,7 @@ Open `my_redaction_rules.json` and fill in the `redaction_zones` for each machin
 }
 ```
 
-### 2. Preview and Execute
+#### C. Preview and Execute
 
 ```python
 # Load the configuration
@@ -116,8 +143,6 @@ app.export("./clean_dicoms")
 ---
 
 ## 🕵️ Privacy Inspector
-
-Ensure your data is HIPAA Safe Harbor compliant by scanning for common PHI identifiers.
 
 Ensure your data is HIPAA Safe Harbor compliant by scanning for common PHI identifiers directly from your session.
 
@@ -168,8 +193,11 @@ Gantry is modularized into the following components:
 | :--- | :--- |
 | **`gantry.session`** | The **Facade**. User-facing API for managing the workflow. |
 | **`gantry.entities`** | The **Object Model**. Contains `Patient`, `Study`, `Instance`. Implements **Lazy Loading**. |
-| **`gantry.io_handlers`** | Handles `pydicom` read/write, **Pickle persistence**, and the `DicomStore`. |
+| **`gantry.persistence`** | **SqliteStore**. Handles SQLite-based persistence and the **Audit Log**. |
+| **`gantry.io_handlers`** | Handles `pydicom` read/write and file import/export. |
 | **`gantry.services`** | Logic for **Indexing** (MachinePixelIndex) and **RedactionService**. |
+| **`gantry.privacy`** | **PhiInspector** for scanning metadata for PHI. |
+| **`gantry.remediation`** | **RemediationService** for applying fixes (Anonymization & Date Shifting). |
 | **`gantry.validation`** | Enforces **IOD Compliance** (Type 1/Type 2 tags) before export. |
 
 ---

@@ -2,7 +2,7 @@
 
 This document outlines the development plan for **Gantry**. We welcome contributions from the community to help us achieve these milestones!
 
-## 📍 Current Status: v0.2.0
+## 📍 Current Status: v0.3.0
 - [x] Core Object Model (`Patient` -> `Study` -> `Series` -> `Instance`)
 - [x] Basic Facade (`DicomSession`)
 - [x] Lazy Loading Pixel Data
@@ -16,19 +16,20 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 - [x] Standardized DICOM Derivation (UID Regeneration & Flags)
 - [x] Improved Documentation & Docstrings
 - [x] Comprehensive Logging System (File-based + Progress Bars)
+- [x] Automated PHI Remediation (Metadata Anonymization & Date Shifting)
+- [x] Robust Persistence Strategy (SQLite + Audit Trail)
 
 ---
 
 ## 🚀 Upcoming Milestones
 
-### v0.3.0 - Data Integrity & Verification
-Focus: Ensuring that modified files remain clinically valid and structurally sound.
-- [ ] **Automated PHI Remediation**: Automatically suggest redaction zones based on PHI scan findings.
-- [ ] **Robust Persistence Strategy**: Research and implement a more robust and transparent persistence layer (replacing `pickle`) to support large datasets and external querying.
+### v0.4.0 - Data Integrity & Performance
+Focus: Validating data integrity and scaling for large datasets.
 - [ ] **Pixel Integrity Tests**: Verify that zeroed-out pixels are truly zero (not just concealed by LUTs).
 - [ ] **Pixel Integrity Tests**: Add unit tests to verify `PhotometricInterpretation` and `SamplesPerPixel` are preserved after modification.
 - [ ] **UID Regeneration**: (Optional) Add a strategy to automatically regenerate SOP Instance UIDs for anonymized files to prevent ID conflicts with original data.
-- [ ] **Audit Trail**: Generate a side-car report (`audit_log.json`) listing exactly which files were modified and by which rule.
+- [ ] **Parallel Processing**: Investigate using `concurrent.futures` in `RedactionService` to process multiple images simultaneously.
+- [ ] **Memory Profiling**: Optimize `MachinePixelIndex` to handle massive datasets without excessive RAM usage.
 
 ### v0.4.0 - Performance Optimization
 Focus: Scaling Gantry to handle dataset sizes of 1,000+ images efficiently.
