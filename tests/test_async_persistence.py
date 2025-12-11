@@ -14,7 +14,7 @@ def test_async_save_completes(tmp_path):
     
     # 2. Trigger async save
     start_time = time.time()
-    session._save()
+    session.save()
     end_time = time.time()
     
     # Assert return logic was fast (no blocking IO on a tiny db, but still)
@@ -40,7 +40,7 @@ def test_shutdown_waits(tmp_path):
     for i in range(5):
         session.store.patients.append(Patient(f"P_{i}", f"Name {i}"))
         
-    session._save()
+    session.save()
     
     # Shutdown should join the thread
     t_start = time.time()

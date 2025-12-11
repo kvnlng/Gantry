@@ -53,20 +53,13 @@ class DicomSession:
 
         get_logger().info(f"Session started. {len(self.store.patients)} patients loaded.")
 
-    def _save(self):
+    def save(self):
         """
-        Delegates persistence to the background manager.
+        Persists the current session state to the database in the background.
+        User must call this manually to save changes.
         """
-        # self.store_backend.save_all(self.store.patients) # Old sync way
         self.persistence_manager.save_async(self.store.patients)
 
-    def import_folder(self, folder_path):
-        """
-        Scans a folder for .dcm files (recursively) and imports them into the session.
-        """
-        DicomImporter.import_files([folder_path], self.store)
-        print("\nImport complete. Saving in background...")
-        self._save()
 
     def enable_reversible_anonymization(self, key_path: str = "gantry.key"):
         """
@@ -288,8 +281,8 @@ class DicomSession:
         Scans a folder for .dcm files (recursively) and imports them into the session.
         """
         DicomImporter.import_files([folder_path], self.store)
-        print("\nImport complete. Persisting session... please wait.")
-        self._save()
+        print("\nImport complete. Remember to call .save() to persist changes.")
+        # self._save()
         print("Done.")
 
     def inventory(self):
@@ -397,8 +390,9 @@ class DicomSession:
                 service.process_machine_rules(rule)
 
             # Save state after modification
-            self._save()
-            get_logger().info("Execution Complete. Session saved.")
+            # self._save()
+            # get_logger().info("Execution Complete. Session saved.")
+            print("Execution Complete. Remember to call .save() to persist.")
             print("Execution Complete. Session saved.")
 
             # Clear rules after execution?
@@ -454,6 +448,5 @@ class DicomSession:
             get_logger().error(f"Failed to write scaffold: {e}")
             print(f"Failed to write scaffold: {e}")
 
-    def _save(self):
-        self.store_backend.save_all(self.store.patients)
+
 
