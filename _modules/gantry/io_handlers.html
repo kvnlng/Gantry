@@ -337,7 +337,13 @@
 
                     <span class="c1"># 2. Study Level</span>
                     <span class="n">ds</span><span class="o">.</span><span class="n">StudyInstanceUID</span> <span class="o">=</span> <span class="n">st</span><span class="o">.</span><span class="n">study_instance_uid</span>
-                    <span class="n">ds</span><span class="o">.</span><span class="n">StudyDate</span> <span class="o">=</span> <span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y%m</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span> <span class="k">if</span> <span class="n">st</span><span class="o">.</span><span class="n">study_date</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+                    <span class="k">if</span> <span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">,</span> <span class="s1">&#39;strftime&#39;</span><span class="p">):</span>
+                             <span class="n">ds</span><span class="o">.</span><span class="n">StudyDate</span> <span class="o">=</span> <span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y%m</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span>
+                        <span class="k">else</span><span class="p">:</span>
+                             <span class="n">ds</span><span class="o">.</span><span class="n">StudyDate</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">)</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">ds</span><span class="o">.</span><span class="n">StudyDate</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
                     <span class="n">ds</span><span class="o">.</span><span class="n">StudyTime</span> <span class="o">=</span> <span class="s2">&quot;120000&quot;</span>  <span class="c1"># Dummy time to satisfy Type 1</span>
 
                     <span class="c1"># 3. Series Level</span>
