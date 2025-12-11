@@ -5,19 +5,16 @@ from gantry.persistence import SqliteStore
 from gantry.entities import Patient, Study, Series, Instance
 from gantry.session import DicomSession
 
-DB_FILE = "test_persistence.db"
-
 @pytest.fixture
-def store():
-    if os.path.exists(DB_FILE):
-        os.remove(DB_FILE)
-    s = SqliteStore(DB_FILE)
+def store(tmp_path):
+    db_file = tmp_path / "test_persistence.db"
+    s = SqliteStore(str(db_file))
     yield s
-    if os.path.exists(DB_FILE):
-        os.remove(DB_FILE)
+    # Cleanup happens automatically by pytest tmp_path (creates new dir per test)
+
 
 def test_schema_init(store):
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(store.db_path) as conn:
         tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         table_names = [t[0] for t in tables]
     
@@ -62,7 +59,7 @@ def test_crud_hierarchy(store):
 def test_audit_log(store):
     store.log_audit("TEST_ACTION", "UID_123", "Details here")
     
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(store.db_path) as conn:
         row = conn.execute("SELECT * FROM audit_log").fetchone()
         
     assert row is not None
@@ -70,12 +67,10 @@ def test_audit_log(store):
     assert row[3] == "UID_123"
     assert "Details here" in row[4]
 
-def test_session_integration():
+def test_session_integration(tmp_path):
     # Verify DicomSession uses the store
-    if os.path.exists("test_session.db"):
-        os.remove("test_session.db")
-        
-    sess = DicomSession("test_session.db")
+    db_path = tmp_path / "test_session.db"
+    sess = DicomSession(str(db_path))
     # Simulate adding data (Session usually relies on Import, but let's manipulate internal store)
     p = Patient("PX", "Test")
     sess.store.patients.append(p)
@@ -84,14 +79,12 @@ def test_session_integration():
     sess._save()
     
     # Verify DB
-    with sqlite3.connect("test_session.db") as conn:
+    with sqlite3.connect(str(db_path)) as conn:
         count = conn.execute("SELECT count(*) FROM patients").fetchone()[0]
     
     assert count == 1
     
-    # Cleanup
-    if os.path.exists("test_session.db"):
-        os.remove("test_session.db")
+    # Cleanup auto by tmp_path
 
 def test_remediation_audit(store):
     from gantry.remediation import RemediationService
@@ -106,7 +99,7 @@ def test_remediation_audit(store):
     svc.apply_remediation([finding])
     
     # Verify Audit Log
-    with sqlite3.connect(DB_FILE) as conn:
+    with sqlite3.connect(store.db_path) as conn:
         row = conn.execute("SELECT * FROM audit_log WHERE action_type='REMEDIATION_REPLACE'").fetchone()
     
     assert row is not None

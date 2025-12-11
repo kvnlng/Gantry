@@ -8,9 +8,13 @@ from pydicom.uid import ImplicitVRLittleEndian
 
 # Mock tqdm to prevent console spam during tests and verify calls
 class MockTqdm:
-    def __init__(self, total, unit):
+    def __init__(self, iterable=None, total=None, desc=None, unit=None, **kwargs):
+        self.iterable = iterable
         self.total = total
         self.count = 0
+    def __iter__(self):
+        return iter(self.iterable) if self.iterable else iter([])
+
     def __enter__(self): return self
     def __exit__(self, exc_type, exc_val, exc_tb): pass
     def update(self, n=1): self.count += n
@@ -33,12 +37,12 @@ def test_import_with_progress(tmp_path, monkeypatch):
         ds.PatientID = "TEST_PATIENT"
         ds.save_as(str(fp))
 
-    # 2. Mock Tqdm in io_handlers
-    import gantry.io_handlers
-    monkeypatch.setattr(gantry.io_handlers, "tqdm", MockTqdm)
+    # 2. Mock Tqdm in parallel module
+    import gantry.parallel
+    monkeypatch.setattr(gantry.parallel, "tqdm", MockTqdm)
 
     # 3. Create Session (initializes logger)
-    session = DicomSession(str(tmp_path / "session.pkl"))
+    session = DicomSession(str(tmp_path / "session.db"))
     
     # 4. Import Folder
     session.import_folder(str(dcm_dir))
@@ -48,5 +52,4 @@ def test_import_with_progress(tmp_path, monkeypatch):
     assert os.path.exists(log_file)
     with open(log_file, "r") as f:
         content = f.read()
-        assert "Indexed: test_0.dcm" in content
-        assert "Indexed: test_4.dcm" in content
+        assert "Importing 5 files" in content
