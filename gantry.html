@@ -84,6 +84,7 @@
 </li>
 <li class="toctree-l3"><a class="reference internal" href="#module-gantry.session">gantry.session module</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="#gantry.session.DicomSession"><code class="docutils literal notranslate"><span class="pre">DicomSession</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.session.scan_worker"><code class="docutils literal notranslate"><span class="pre">scan_worker()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="#module-gantry.validation">gantry.validation module</a><ul>
@@ -631,7 +632,7 @@ input_data can be:
 
 <dl class="py method">
 <dt class="sig sig-object py" id="gantry.session.DicomSession.preserve_patient_identity">
-<span class="sig-name descname"><span class="pre">preserve_patient_identity</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">patient_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">persist</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#gantry.entities.Instance" title="gantry.entities.Instance"><span class="pre">Instance</span></a><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.preserve_patient_identity"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.preserve_patient_identity" title="Link to this definition"></a></dt>
+<span class="sig-name descname"><span class="pre">preserve_patient_identity</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">patient_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">persist</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#gantry.entities.Instance" title="gantry.entities.Instance"><span class="pre">Instance</span></a><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.preserve_patient_identity"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.preserve_patient_identity" title="Link to this definition"></a></dt>
 <dd><p>Securely embeds the original patient name/ID into a private DICOM tag
 for all instances belonging to the specified patient.
 Must be called BEFORE anonymization.</p>
@@ -693,6 +694,14 @@ that are NOT covered by the currently loaded rules.</p>
 Returns a PhiReport object (iterable, and convertible to DataFrame).</p>
 </dd></dl>
 
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="gantry.session.scan_worker">
+<span class="sig-prename descclassname"><span class="pre">gantry.session.</span></span><span class="sig-name descname"><span class="pre">scan_worker</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">args</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#scan_worker"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.scan_worker" title="Link to this definition"></a></dt>
+<dd><p>Worker to scan a single patient.
+args: (patient_copy, config_path)
+Returns: List[PhiFinding] (WITHOUT entities, lightweight)</p>
 </dd></dl>
 
 </section>

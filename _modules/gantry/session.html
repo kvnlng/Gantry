@@ -87,16 +87,25 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">.parallel</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_parallel</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_scan_patient_worker</span><span class="p">(</span><span class="n">args</span><span class="p">):</span>
+<div class="viewcode-block" id="scan_worker">
+<a class="viewcode-back" href="../../gantry.html#gantry.session.scan_worker">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">scan_worker</span><span class="p">(</span><span class="n">args</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Worker to scan a single patient.</span>
 <span class="sd">    args: (patient_copy, config_path)</span>
-<span class="sd">    Returns: List[PhiFinding] (with cloned entities)</span>
+<span class="sd">    Returns: List[PhiFinding] (WITHOUT entities, lightweight)</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">patient</span><span class="p">,</span> <span class="n">config_path</span> <span class="o">=</span> <span class="n">args</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">.privacy</span><span class="w"> </span><span class="kn">import</span> <span class="n">PhiInspector</span> <span class="c1"># Import inside worker</span>
     <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">inspector</span><span class="o">.</span><span class="n">scan_patient</span><span class="p">(</span><span class="n">patient</span><span class="p">)</span>
+    <span class="n">findings</span> <span class="o">=</span> <span class="n">inspector</span><span class="o">.</span><span class="n">scan_patient</span><span class="p">(</span><span class="n">patient</span><span class="p">)</span>
+    
+    <span class="c1"># Strip heavy entity objects before returning across process boundary</span>
+    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">findings</span><span class="p">:</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">entity</span> <span class="o">=</span> <span class="kc">None</span>
+        
+    <span class="k">return</span> <span class="n">findings</span></div>
+
 
 <div class="viewcode-block" id="DicomSession">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession">[docs]</a>
@@ -151,7 +160,7 @@
 
 <div class="viewcode-block" id="DicomSession.preserve_patient_identity">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.preserve_patient_identity">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">preserve_patient_identity</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">persist</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="s2">&quot;Instance&quot;</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">preserve_patient_identity</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">persist</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="s2">&quot;Instance&quot;</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Securely embeds the original patient name/ID into a private DICOM tag</span>
 <span class="sd">        for all instances belonging to the specified patient.</span>
@@ -230,12 +239,13 @@
             <span class="n">modified_instances</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">res</span><span class="p">)</span>
             <span class="n">count_patients</span> <span class="o">+=</span> <span class="mi">1</span>
             
+             
         <span class="k">if</span> <span class="n">modified_instances</span><span class="p">:</span>
-             <span class="n">msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Persisting changes for </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">modified_instances</span><span class="p">)</span><span class="si">}</span><span class="s2"> instances...&quot;</span>
-             <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span> <span class="c1"># Force newline after tqdm</span>
+             <span class="n">msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Preserved identity for </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">modified_instances</span><span class="p">)</span><span class="si">}</span><span class="s2"> instances.&quot;</span>
+             <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="se">\n</span><span class="s2">Remember to call .save() to persist changes.&quot;</span><span class="p">)</span>
              <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
-             <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="o">.</span><span class="n">update_attributes</span><span class="p">(</span><span class="n">modified_instances</span><span class="p">)</span>
-             <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Persistence complete.&quot;</span><span class="p">)</span>
+             <span class="c1"># self.store_backend.update_attributes(modified_instances)</span>
+             <span class="c1"># print(&quot;Persistence complete.&quot;)</span>
              
         <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Batch preserved identity for </span><span class="si">{</span><span class="n">count_patients</span><span class="si">}</span><span class="s2"> patients (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">modified_instances</span><span class="p">)</span><span class="si">}</span><span class="s2"> instances).&quot;</span><span class="p">)</span></div>
 
@@ -276,7 +286,7 @@
         <span class="c1"># We rely on lazy loading NOT triggering pixel reads during pickle, which `store` proxy helps with.</span>
         <span class="n">worker_args</span> <span class="o">=</span> <span class="p">[(</span><span class="n">p</span><span class="p">,</span> <span class="n">config_path</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">]</span>
         
-        <span class="n">results</span> <span class="o">=</span> <span class="n">run_parallel</span><span class="p">(</span><span class="n">_scan_patient_worker</span><span class="p">,</span> <span class="n">worker_args</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Scanning PHI&quot;</span><span class="p">)</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="n">run_parallel</span><span class="p">(</span><span class="n">scan_worker</span><span class="p">,</span> <span class="n">worker_args</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Scanning PHI&quot;</span><span class="p">)</span>
         
         <span class="n">all_findings</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">findings</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
