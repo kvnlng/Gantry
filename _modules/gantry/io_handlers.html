@@ -320,13 +320,23 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">save_patient</span><span class="p">(</span><span class="n">patient</span><span class="p">:</span> <span class="n">Patient</span><span class="p">,</span> <span class="n">out_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Iterates over a Patient&#39;s hierarchy and saves valid .dcm files to out_dir.</span>
-<span class="sd">        Performs IOD Validation before saving.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">DicomExporter</span><span class="o">.</span><span class="n">save_studies</span><span class="p">(</span><span class="n">patient</span><span class="p">,</span> <span class="n">patient</span><span class="o">.</span><span class="n">studies</span><span class="p">,</span> <span class="n">out_dir</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="DicomExporter.save_studies">
+<a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.DicomExporter.save_studies">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">save_studies</span><span class="p">(</span><span class="n">patient</span><span class="p">:</span> <span class="n">Patient</span><span class="p">,</span> <span class="n">studies</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Study</span><span class="p">],</span> <span class="n">out_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Exports a specific list of studies for a patient.</span>
+<span class="sd">        Useful for partial exports or filtering.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">out_dir</span><span class="p">):</span> <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">out_dir</span><span class="p">)</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">gantry.validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">IODValidator</span>
         <span class="n">logger</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
 
-        <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">patient</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">studies</span><span class="p">:</span>
             <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">st</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
                 <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">:</span>
                     <span class="n">ds</span> <span class="o">=</span> <span class="n">DicomExporter</span><span class="o">.</span><span class="n">_create_ds</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>

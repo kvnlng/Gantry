@@ -427,13 +427,62 @@
 
 <div class="viewcode-block" id="DicomSession.export">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.export">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">folder</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Exports the current state of all patients to a folder.&quot;&quot;&quot;</span>
-        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Exporting session to </span><span class="si">{</span><span class="n">folder</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">export</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">folder</span><span class="p">,</span> <span class="n">safe</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Exports the current state of all patients to a folder.</span>
+<span class="sd">        If safe=True, performs a fresh PHI scan and ONLY exports clean data.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Exporting session to </span><span class="si">{</span><span class="n">folder</span><span class="si">}</span><span class="s2"> (safe=</span><span class="si">{</span><span class="n">safe</span><span class="si">}</span><span class="s2">)...&quot;</span><span class="p">)</span>
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Exporting...&quot;</span><span class="p">)</span>
+
+        <span class="n">dirty_patients</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="n">dirty_studies</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">safe</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Running safety scan...&quot;</span><span class="p">)</span>
+            <span class="n">report</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">scan_for_phi</span><span class="p">()</span>
+            <span class="k">for</span> <span class="n">finding</span> <span class="ow">in</span> <span class="n">report</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">finding</span><span class="o">.</span><span class="n">entity_type</span> <span class="o">==</span> <span class="s2">&quot;Patient&quot;</span><span class="p">:</span>
+                    <span class="n">dirty_patients</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">finding</span><span class="o">.</span><span class="n">entity_uid</span><span class="p">)</span>
+                <span class="k">elif</span> <span class="n">finding</span><span class="o">.</span><span class="n">entity_type</span> <span class="o">==</span> <span class="s2">&quot;Study&quot;</span><span class="p">:</span>
+                    <span class="n">dirty_studies</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">finding</span><span class="o">.</span><span class="n">entity_uid</span><span class="p">)</span>
+            
+            <span class="k">if</span> <span class="n">dirty_patients</span> <span class="ow">or</span> <span class="n">dirty_studies</span><span class="p">:</span>
+                <span class="n">msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Safety Scan Found Issues: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">dirty_patients</span><span class="p">)</span><span class="si">}</span><span class="s2"> Patients, </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">dirty_studies</span><span class="p">)</span><span class="si">}</span><span class="s2"> Studies will be skipped.&quot;</span>
+                <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+
+        <span class="n">exported_count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">skipped_count</span> <span class="o">=</span> <span class="mi">0</span>
+
         <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">:</span>
-            <span class="n">DicomExporter</span><span class="o">.</span><span class="n">save_patient</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">folder</span><span class="p">)</span>
-        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Export complete.&quot;</span><span class="p">)</span>
+            <span class="c1"># Check Patient Level</span>
+            <span class="k">if</span> <span class="n">safe</span> <span class="ow">and</span> <span class="n">p</span><span class="o">.</span><span class="n">patient_id</span> <span class="ow">in</span> <span class="n">dirty_patients</span><span class="p">:</span>
+                <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Skipping Dirty Patient: </span><span class="si">{</span><span class="n">p</span><span class="o">.</span><span class="n">patient_id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="n">skipped_count</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">continue</span>
+
+            <span class="c1"># Determine which studies to export</span>
+            <span class="k">if</span> <span class="n">safe</span><span class="p">:</span>
+                <span class="n">safe_studies</span> <span class="o">=</span> <span class="p">[</span><span class="n">st</span> <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span> <span class="k">if</span> <span class="n">st</span><span class="o">.</span><span class="n">study_instance_uid</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">dirty_studies</span><span class="p">]</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span> <span class="c1"># Handle empty patient</span>
+                     <span class="k">pass</span>
+                <span class="k">elif</span> <span class="ow">not</span> <span class="n">safe_studies</span><span class="p">:</span>
+                     <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Skipping Patient </span><span class="si">{</span><span class="n">p</span><span class="o">.</span><span class="n">patient_id</span><span class="si">}</span><span class="s2"> (All </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">)</span><span class="si">}</span><span class="s2"> studies dirty).&quot;</span><span class="p">)</span>
+                     <span class="n">skipped_count</span> <span class="o">+=</span> <span class="mi">1</span>
+                     <span class="k">continue</span>
+                
+                <span class="c1"># Check if we filtered some out</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">safe_studies</span><span class="p">)</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">):</span>
+                     <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Partial Export for </span><span class="si">{</span><span class="n">p</span><span class="o">.</span><span class="n">patient_id</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">safe_studies</span><span class="p">)</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">)</span><span class="si">}</span><span class="s2"> studies.&quot;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">safe_studies</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span>
+
+            <span class="k">if</span> <span class="n">safe_studies</span><span class="p">:</span>
+                <span class="n">DicomExporter</span><span class="o">.</span><span class="n">save_studies</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">safe_studies</span><span class="p">,</span> <span class="n">folder</span><span class="p">)</span>
+                <span class="n">exported_count</span> <span class="o">+=</span> <span class="mi">1</span>
+
+        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Export complete. (Exported Groups: </span><span class="si">{</span><span class="n">exported_count</span><span class="si">}</span><span class="s2">, Skipped: </span><span class="si">{</span><span class="n">skipped_count</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Done.&quot;</span><span class="p">)</span></div>
 
 

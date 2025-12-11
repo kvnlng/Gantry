@@ -457,8 +457,14 @@ Represents a single patient visit or examination.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="gantry.io_handlers.DicomExporter.save_patient">
 <em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">save_patient</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">patient</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#gantry.entities.Patient" title="gantry.entities.Patient"><span class="pre">Patient</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">out_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomExporter.save_patient"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomExporter.save_patient" title="Link to this definition"></a></dt>
-<dd><p>Iterates over a Patient’s hierarchy and saves valid .dcm files to out_dir.
-Performs IOD Validation before saving.</p>
+<dd><p>Iterates over a Patient’s hierarchy and saves valid .dcm files to out_dir.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.io_handlers.DicomExporter.save_studies">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">save_studies</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">patient</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#gantry.entities.Patient" title="gantry.entities.Patient"><span class="pre">Patient</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">studies</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#gantry.entities.Study" title="gantry.entities.Study"><span class="pre">Study</span></a><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomExporter.save_studies"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomExporter.save_studies" title="Link to this definition"></a></dt>
+<dd><p>Exports a specific list of studies for a patient.
+Useful for partial exports or filtering.</p>
 </dd></dl>
 
 </dd></dl>
@@ -598,8 +604,9 @@ Auto-logs to Audit Trail.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="gantry.session.DicomSession.export">
-<span class="sig-name descname"><span class="pre">export</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">folder</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.export"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.export" title="Link to this definition"></a></dt>
-<dd><p>Exports the current state of all patients to a folder.</p>
+<span class="sig-name descname"><span class="pre">export</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">folder</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">safe</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.export"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.export" title="Link to this definition"></a></dt>
+<dd><p>Exports the current state of all patients to a folder.
+If safe=True, performs a fresh PHI scan and ONLY exports clean data.</p>
 </dd></dl>
 
 <dl class="py method">
