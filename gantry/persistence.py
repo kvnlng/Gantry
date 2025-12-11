@@ -217,6 +217,11 @@ class GantryJSONEncoder(json.JSONEncoder):
         if isinstance(obj, bytes):
             import base64
             return {"__type__": "bytes", "data": base64.b64encode(obj).decode('ascii')}
+        
+        from pydicom.multival import MultiValue
+        if isinstance(obj, MultiValue):
+            return list(obj)
+            
         return super().default(obj)
 
 def gantry_json_object_hook(d):
