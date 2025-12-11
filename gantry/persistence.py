@@ -134,7 +134,7 @@ class SqliteStore:
                     # Restore extra attributes
                     if r['attributes_json']:
                         try:
-                            attrs = json.loads(r['attributes_json'])
+                            attrs = json.loads(r['attributes_json'], object_hook=gantry_json_object_hook)
                             inst.attributes.update(attrs)
                         except: 
                             pass # JSON error
@@ -200,7 +200,7 @@ class SqliteStore:
                                 # If we modify metadata in memory, we need to save it. 
                                 # Let's save the 'attributes' dict as JSON.
                                 
-                                attrs_json = json.dumps(inst.attributes)
+                                attrs_json = json.dumps(inst.attributes, cls=GantryJSONEncoder)
                                 cur.execute("""
                                     INSERT INTO instances (series_id_fk, sop_instance_uid, sop_class_uid, instance_number, file_path, attributes_json)
                                     VALUES (?, ?, ?, ?, ?, ?)
@@ -211,3 +211,16 @@ class SqliteStore:
 
         except sqlite3.Error as e:
             self.logger.error(f"Failed to save to DB: {e}")
+
+class GantryJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, bytes):
+            import base64
+            return {"__type__": "bytes", "data": base64.b64encode(obj).decode('ascii')}
+        return super().default(obj)
+
+def gantry_json_object_hook(d):
+    if "__type__" in d and d["__type__"] == "bytes":
+        import base64
+        return base64.b64decode(d["data"])
+    return d

@@ -18,6 +18,8 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 - [x] Comprehensive Logging System (File-based + Progress Bars)
 - [x] Automated PHI Remediation (Metadata Anonymization & Date Shifting)
 - [x] Robust Persistence Strategy (SQLite + Audit Trail)
+- [x] Robust JSON Persistence (Support for Bytes/Private Tags)
+- [x] Reversible Anonymization (Pseudonymization with Encrypted Private Tags)
 
 ---
 

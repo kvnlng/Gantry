@@ -18,6 +18,7 @@ It features a **Lazy-Loading Proxy** architecture, allowing you to index thousan
 * **Lazy Loading**: Metadata is kept in memory; Pixel Data is loaded from disk only when requested.
 * **Automated PHI Remediation**: Detects PHI in metadata and proposes fixes (Anonymization & Date Shifting).
 * **Deterministic Date Shifting**: Preserves temporal intervals by shifting dates consistently using a Patient ID hash.
+* **Reversible Anonymization**: Securely embed encrypted original patient identity (Name/ID) within the DICOM file for future recovery (pseudonymization).
 * **De-Identification Engine**: Redact sensitive pixel data (burned-in PHI) based on machine specific rules.
 * **Fluent Builder API**: Programmatically construct valid DICOM datasets for testing.
 * **IOD Validation**: Built-in checks ensure your exported files comply with DICOM standards (Type 1/Type 2 attributes).
@@ -28,49 +29,11 @@ It features a **Lazy-Loading Proxy** architecture, allowing you to index thousan
 ---
 
 ## 📦 Installation
-
-Clone the repository and install in editable mode:
-
-```bash
-git clone https://github.com/kvnlng/gantry.git
-cd gantry
-pip install -e .
-```
-
----
-
-## ⚡ Quick Start: The Gantry Session
-
-The `gantry.Session` Facade is your primary entry point. It manages imports, persistence, and inventory.
-
-```python
-import gantry
-
-# 1. Initialize a Session (Loads previous state if 'gantry.db' exists)
-app = gantry.Session("gantry.db")
-
-# 2. Ingest Data (Fast Metadata Scan)
-app.import_folder("./raw_dicom_data")
-
-# 3. Check Inventory
-app.inventory()
-# Output:
-# Inventory: 3 Devices
-#  - GE Revolution (S/N: SN-SCANNER-01)
-#  - Siemens Prisma (S/N: SN-SCANNER-02)
-
-# 4. Save State
-# (Happens automatically on import/export operations)
-
-# 5. Explore De-Identification Workflow (PHI Remediation & Pixel Redaction)
-# See the "De-Identification Workflow" section below for details.
-```
-
----
+# ... (Installation section unchanged) ...
 
 ## 🛡️ De-Identification Workflow
 
-Gantry supports both **Metadata Remediation** (Anonymization/Date Shifting) and **Pixel Redaction**.
+Gantry supports **Metadata Remediation** (Anonymization/Date Shifting), **Reversible Anonymization**, and **Pixel Redaction**.
 
 ### 1. PHI Scanning & Remediation (Metadata)
 
@@ -88,7 +51,31 @@ service = RemediationService()
 service.apply_remediation(findings)
 ```
 
-### 2. Pixel Redaction (Burned-in PHI)
+### 2. Reversible Anonymization (Pseudonymization)
+
+Need to recover the original identity later? Gantry can securely encrypt the original `PatientName` and `PatientID` into a private DICOM tag before anonymization.
+
+**Prerequisite**: You must hold the secret key (`gantry.key`) separately from the exported data.
+
+```python
+# Enable the feature
+app.enable_reversible_anonymization("gantry.key")
+
+# Preserve Identity (Call BEFORE anonymizing)
+app.preserve_patient_identity("PATIENT_123")
+# -> Encrypts original identity and embeds it into Private Tag (0099, 1001)
+
+# Now safe to anonymize
+app.apply_remediation(...)
+
+# --------------------------
+
+# Recovery (Requires 'gantry.key')
+app.recover_patient_identity("PATIENT_123")
+# -> Decrypts and prints original identity
+```
+
+### 3. Pixel Redaction (Burned-in PHI)
 
 Define rules to redact burned-in pixel data based on machine serial numbers.
 

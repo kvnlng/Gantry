@@ -238,6 +238,14 @@ class DicomExporter:
     @staticmethod
     def _merge(ds, attrs):
         for t, v in attrs.items():
+            # Explicit handling for Gantry Private Tags to ensure correct VR
+            if t == "0099,0010":
+                ds.add_new(0x00990010, 'LO', v)
+                continue
+            if t == "0099,1001":
+                ds.add_new(0x00991001, 'OB', v)
+                continue
+
             g, e = map(lambda x: int(x, 16), t.split(','))
             try:
                 vr = dictionary_VR(Tag(g, e))

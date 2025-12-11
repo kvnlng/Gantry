@@ -9,6 +9,9 @@ from .remediation import RemediationService
 from .logger import configure_logger, get_logger
 
 from .persistence import SqliteStore
+from .crypto import KeyManager
+from .reversibility import ReversibilityService
+import json
 
 class DicomSession:
     """
@@ -25,8 +28,87 @@ class DicomSession:
         self.store.patients = self.store_backend.load_all()
         
         self.active_rules: List[Dict[str, Any]] = []
+        
+        # Reversibility
+        self.key_manager = None
+        self.reversibility_service = None
 
         get_logger().info(f"Session started. {len(self.store.patients)} patients loaded.")
+
+    def enable_reversible_anonymization(self, key_path: str = "gantry.key"):
+        """
+        Initializes the encryption subsystem.
+        """
+        self.key_manager = KeyManager(key_path)
+        self.key_manager.load_or_generate_key()
+        self.reversibility_service = ReversibilityService(self.key_manager)
+        get_logger().info(f"Reversible anonymization enabled. Key: {key_path}")
+
+    def preserve_patient_identity(self, patient_id: str):
+        """
+        Captures current Patient Attributes (Name, ID) and embeds them as encrypted
+        private tags into EVERY instance belonging to this patient.
+        MUST BE CALLED BEFORE ANONYMIZATION.
+        """
+        if not self.reversibility_service:
+            raise RuntimeError("Reversibility not enabled. Call enable_reversible_anonymization() first.")
+        
+        p = next((x for x in self.store.patients if x.patient_id == patient_id), None)
+        if not p:
+            get_logger().warning(f"Patient {patient_id} not found.")
+            return
+
+        # 1. Capture Identity
+        # In a real app, we might capture more or make this configurable.
+        identity = {
+            "PatientName": p.patient_name,
+            "PatientID": p.patient_id,
+            # We could grab AccessionNumber from studies if we wanted
+        }
+        
+        get_logger().info(f"Preserving identity for {p.patient_name} ({p.patient_id})...")
+        
+        # 2. Embed into all instances
+        count = 0
+        for st in p.studies:
+            for se in st.series:
+                for inst in se.instances:
+                    self.reversibility_service.embed_original_data(inst, identity)
+                    count += 1
+        
+        self._save()
+        get_logger().info(f"Secured identity in {count} instances.")
+
+    def recover_patient_identity(self, patient_id: str):
+        """
+        Attempts to decrypt and read original identity from the first instance found.
+        """
+        if not self.reversibility_service:
+            raise RuntimeError("Reversibility not enabled.")
+
+        p = next((x for x in self.store.patients if x.patient_id == patient_id), None)
+        if not p:
+            print("Patient not found.")
+            return
+
+        # Locate first instance
+        first_inst = None
+        for st in p.studies:
+            for se in st.series:
+                if se.instances:
+                    first_inst = se.instances[0]
+                    break
+        
+        if not first_inst:
+            print("No instances found for patient.")
+            return
+
+        original = self.reversibility_service.recover_original_data(first_inst)
+        if original:
+            print("Recovered Identity:")
+            print(json.dumps(original, indent=2))
+        else:
+            print("No encrypted identity found or decryption failed.")
 
     def import_folder(self, folder_path):
         """
