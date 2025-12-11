@@ -20,6 +20,10 @@ def test_export_string_date_error(tmp_path):
     inst.attributes["0020,0037"] = ["1","0","0","0","1","0"]
     inst.attributes["0028,0030"] = ["0.5", "0.5"]
     
+    # NEW: Add dummy pixels to satisfy strict export check
+    import numpy as np
+    inst.set_pixel_data(np.zeros((10,10), dtype=np.uint8))
+    
     se.instances.append(inst)
     st.series.append(se)
     p.studies.append(st)

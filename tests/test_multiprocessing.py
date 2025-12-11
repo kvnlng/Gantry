@@ -31,6 +31,14 @@ def test_parallel_import_and_scan(tmp_path):
             .end_study()
             .build()
         )
+        
+        # Inject dummy pixels to pass export validation
+        import numpy as np
+        for st in p.studies:
+            for se in st.series:
+                for inst in se.instances:
+                    inst.set_pixel_data(np.zeros((10,10), dtype=np.uint8))
+
         DicomExporter.save_patient(p, str(raw_dir))
 
     # 2. Parallel Import
