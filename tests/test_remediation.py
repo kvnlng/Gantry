@@ -96,3 +96,24 @@ def test_bad_date_format():
     service.apply_remediation(findings)
     assert study.study_date == "NOT_A_DATE"
 
+def test_date_object_remediation():
+    """Reproduce bug where datetime.date objects crash strptime"""
+    pat = Patient("P_DATE", "Date Test")
+    # Simulate valid date object (not string)
+    study_date = datetime.date(2023, 1, 1) 
+    study = Study("S_DATE", study_date)
+    pat.studies.append(study)
+    
+    inspector = PhiInspector()
+    service = RemediationService()
+    
+    findings = inspector.scan_patient(pat)
+    
+    # Apply -> Should crash here if not fixed
+    try:
+        service.apply_remediation(findings)
+    except TypeError as e:
+        pytest.fail(f"Remediation crashed on date object: {e}")
+        
+    assert study.study_date != study_date
+

@@ -117,12 +117,19 @@ class RemediationService:
         offset = (val % 365) + 1
         return -offset
 
-    def _shift_date_string(self, date_str: str, days: int) -> Optional[str]:
+    def _shift_date_string(self, date_val, days: int) -> Optional[str]:
         """
-        Parses YYYYMMDD, adds 'days', returns YYYYMMDD.
+        Shifts a date by 'days'. 
+        Handles 'YYYYMMDD' strings or datetime.date objects.
+        Returns same type as input (str -> str, date -> date).
         """
+        # Handles date and datetime objects
+        if hasattr(date_val, 'strftime'): 
+            return date_val + timedelta(days=days)
+            
+        # Assume string
         try:
-            dt = datetime.strptime(date_str, "%Y%m%d")
+            dt = datetime.strptime(str(date_val), "%Y%m%d")
             new_dt = dt + timedelta(days=days)
             return new_dt.strftime("%Y%m%d")
         except ValueError:
