@@ -232,7 +232,13 @@ class DicomExporter:
 
                     # 2. Study Level
                     ds.StudyInstanceUID = st.study_instance_uid
-                    ds.StudyDate = st.study_date.strftime("%Y%m%d") if st.study_date else ""
+                    if st.study_date:
+                        if hasattr(st.study_date, 'strftime'):
+                             ds.StudyDate = st.study_date.strftime("%Y%m%d")
+                        else:
+                             ds.StudyDate = str(st.study_date)
+                    else:
+                        ds.StudyDate = ""
                     ds.StudyTime = "120000"  # Dummy time to satisfy Type 1
 
                     # 3. Series Level
