@@ -5,6 +5,21 @@ All notable changes to the "Gantry" project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-12-11
+
+### Added
+- **Robust Persistence (SQLite)**: Replaced `Pickle` with `SQLite` for session storage (`gantry.db`). Allows for scale and external querying.
+- **Audit Trail**: Implemented a comprehensive audit system. Actions such as `Redaction` and `Remediation` are now logged to the `audit_log` table in the database.
+- **Automated PHI Remediation**:
+    - **Metadata Anonymization**: Automatically detects and anonymizes Patient Names and IDs.
+    - **Deterministic Date Shifting**: Shifts study dates by a consistent offset (based on Patient ID hash) to preserve temporal relationships while obscuring actual dates.
+- **`apply_remediation` API**: Added top-level API to `DicomSession` to easily apply fixes found by the privacy inspector.
+- **Documentation**: Significant updates to `README.md` and architecture documentation.
+
+### Changed
+- **Breaking Change**: The internal persistence format has changed from `.pkl` to `.db`. Existing sessions from v0.2.0 cannot be loaded and must be re-imported.
+- **Dependency Update**: Added `sqlite3` (stdlib) as a core dependency for the store backend.
+
 ## [0.2.0] - 2025-12-10
 
 ### Added
