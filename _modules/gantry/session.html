@@ -126,20 +126,16 @@
 
         <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Session started. </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">)</span><span class="si">}</span><span class="s2"> patients loaded.&quot;</span><span class="p">)</span>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_save</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<div class="viewcode-block" id="DicomSession.save">
+<a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.save">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">save</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Delegates persistence to the background manager.</span>
+<span class="sd">        Persists the current session state to the database in the background.</span>
+<span class="sd">        User must call this manually to save changes.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="c1"># self.store_backend.save_all(self.store.patients) # Old sync way</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">persistence_manager</span><span class="o">.</span><span class="n">save_async</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">persistence_manager</span><span class="o">.</span><span class="n">save_async</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">)</span></div>
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">import_folder</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">folder_path</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Scans a folder for .dcm files (recursively) and imports them into the session.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">DicomImporter</span><span class="o">.</span><span class="n">import_files</span><span class="p">([</span><span class="n">folder_path</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Import complete. Saving in background...&quot;</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_save</span><span class="p">()</span>
+
 
 <div class="viewcode-block" id="DicomSession.enable_reversible_anonymization">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.enable_reversible_anonymization">[docs]</a>
@@ -381,8 +377,8 @@
 <span class="sd">        Scans a folder for .dcm files (recursively) and imports them into the session.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">DicomImporter</span><span class="o">.</span><span class="n">import_files</span><span class="p">([</span><span class="n">folder_path</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Import complete. Persisting session... please wait.&quot;</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_save</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Import complete. Remember to call .save() to persist changes.&quot;</span><span class="p">)</span>
+        <span class="c1"># self._save()</span>
         <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Done.&quot;</span><span class="p">)</span></div>
 
 
@@ -511,8 +507,9 @@
                 <span class="n">service</span><span class="o">.</span><span class="n">process_machine_rules</span><span class="p">(</span><span class="n">rule</span><span class="p">)</span>
 
             <span class="c1"># Save state after modification</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_save</span><span class="p">()</span>
-            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Execution Complete. Session saved.&quot;</span><span class="p">)</span>
+            <span class="c1"># self._save()</span>
+            <span class="c1"># get_logger().info(&quot;Execution Complete. Session saved.&quot;)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Execution Complete. Remember to call .save() to persist.&quot;</span><span class="p">)</span>
             <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Execution Complete. Session saved.&quot;</span><span class="p">)</span>
 
             <span class="c1"># Clear rules after execution?</span>
@@ -570,10 +567,9 @@
         <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to write scaffold: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
             <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to write scaffold: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+</div>
 
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_save</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="o">.</span><span class="n">save_all</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">)</span></div>
 
 
 </pre></div>
