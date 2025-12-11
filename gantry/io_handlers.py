@@ -56,25 +56,68 @@ class DicomStore:
 
 from .parallel import run_parallel
 
-def load_dicom_worker(fp):
-    """Worker function to read DICOM metadata."""
+
+def populate_attrs(ds, item):
+    """Standalone function to populate attributes for pickle-compatibility in workers."""
+    for elem in ds:
+        if elem.tag.group == 0x7fe0: continue  # Skip pixels
+        tag = f"{elem.tag.group:04x},{elem.tag.element:04x}"
+        if elem.VR == 'SQ':
+            process_sequence(tag, elem, item)
+        elif elem.VR == 'PN':
+            # Sanitize PersonName for pickle safety
+            item.set_attr(tag, str(elem.value))
+        else:
+            item.set_attr(tag, elem.value)
+
+def process_sequence(tag, elem, parent_item):
+    """Recursively parses Sequence (SQ) items."""
+    for ds_item in elem:
+        seq_item = DicomItem()
+        populate_attrs(ds_item, seq_item)
+        parent_item.add_sequence_item(tag, seq_item)
+
+def ingest_worker(fp):
+    """
+    Worker function to read DICOM and construct Instance object.
+    Returns: (metadata_dict, instance_object, error_string)
+    metadata_dict contains keys for linking: 'pid', 'pname', 'sid', 'ser_id', etc.
+    """
     try:
         ds = pydicom.dcmread(fp, stop_before_pixels=True, force=True)
-        return (ds, fp, None)
+        
+        # Extract Linking Metadata
+        meta = {
+            'pid': str(ds.get("PatientID", "UNKNOWN")),
+            'pname': str(ds.get("PatientName", "Unknown")),
+            'sid': str(ds.get("StudyInstanceUID", "")),
+            'sdate': str(ds.get("StudyDate", "19000101")),
+            'ser_id': str(ds.get("SeriesInstanceUID", "")),
+            'modality': str(ds.get("Modality", "OT")),
+            'sop': str(ds.get("SOPInstanceUID", "")),
+            'sop_class': str(ds.get("SOPClassUID", "")),
+            'man': str(ds.get("Manufacturer", "")),
+            'model': str(ds.get("ManufacturerModelName", "")),
+            'dev_sn': str(ds.get("DeviceSerialNumber", ""))
+        }
+        
+        # Construct Instance
+        inst = Instance(meta['sop'], meta['sop_class'], 0, file_path=fp)
+        populate_attrs(ds, inst)
+        
+        return (meta, inst, None)
     except Exception as e:
-        return (None, fp, str(e))
+        return (None, None, str(e))
 
 class DicomImporter:
     """
     Handles scanning of folders/files and ingesting them into the Object Graph.
-    Reads metadata only (lazy loading) for performance.
+    optimized for parallel processing.
     """
     @staticmethod
     def import_files(file_paths: List[str], store: DicomStore):
         """
         Parses a list of files or directories. Recurses into directories to find all files.
-        Skips those already in the store.
-        Builds the Patient -> Study -> Series -> Instance hierarchy.
         """
         all_files = []
         for path in file_paths:
@@ -89,84 +132,80 @@ class DicomImporter:
         new_files = [fp for fp in all_files if os.path.abspath(fp) not in known_files]
         
         logger = get_logger()
-        
         skipped_count = len(all_files) - len(new_files)
         if skipped_count > 0:
             logger.info(f"Skipping {skipped_count} already imported files.")
             
-        logger.info(f"Importing {len(new_files)} files (Parallel)...")
+        if not new_files:
+            return
+
+        logger.info(f"Importing {len(new_files)} files (Parallel Ingest)...")
         
-        # Parallel Execution
-        results = run_parallel(load_dicom_worker, new_files, desc="Importing", chunksize=10)
+        # 1. Build Fast Lookup Maps (O(1))
+        patient_map = {p.patient_id: p for p in store.patients}
+        study_map = {} # Key: study_uid -> Study
+        series_map = {} # Key: series_uid -> Series
         
-        # Aggregation (Main Thread)
-        for ds, fp, err in results:
+        # Populate deep maps
+        for p in store.patients:
+            for st in p.studies:
+                study_map[st.study_instance_uid] = st
+                for se in st.series:
+                    series_map[se.series_instance_uid] = se
+
+        # 2. Parallel Execution
+        results = run_parallel(ingest_worker, new_files, desc="Ingesting", chunksize=10)
+        
+        # 3. Aggregation (Main Thread)
+        count = 0
+        for meta, inst, err in results:
             if err:
-                 logger.error(f"Import Failed {fp}: {err}")
+                 logger.error(f"Import Failed: {err}")
                  continue
-            if ds:
+            if inst:
                 try:
-                    DicomImporter._ingest(ds, store, fp)
-                    # logger.info(f"Indexed: {os.path.basename(fp)}") # Too verbose for big imports?
+                    # Linkage Logic
+                    pid = meta['pid']
+                    sid = meta['sid']
+                    ser_id = meta['ser_id']
+                    
+                    # Patient
+                    pat = patient_map.get(pid)
+                    if not pat:
+                        pat = Patient(pid, meta['pname'])
+                        store.patients.append(pat)
+                        patient_map[pid] = pat
+                    
+                    # Study
+                    study = study_map.get(sid)
+                    if not study:
+                        # Parse date carefully or use fallback
+                        try:
+                            sdate = datetime.strptime(meta['sdate'], "%Y%m%d").date()
+                        except:
+                            sdate = date(1900, 1, 1)
+                            
+                        study = Study(sid, sdate)
+                        pat.studies.append(study)
+                        study_map[sid] = study
+                    
+                    # Series
+                    series = series_map.get(ser_id)
+                    if not series:
+                        series = Series(ser_id, meta['modality'], 0)
+                        if meta['man'] or meta['model']:
+                            series.equipment = Equipment(meta['man'], meta['model'], meta['dev_sn'])
+                        study.series.append(series)
+                        series_map[ser_id] = series
+                    
+                    # Instance
+                    series.instances.append(inst)
+                    count += 1
                 except Exception as e:
-                    logger.error(f"Ingest Failed {fp}: {e}")
+                    logger.error(f"Linkage Failed: {e}")
 
-    @staticmethod
-    def _ingest(ds, store, filepath):
-        # Extract IDs
-        pid = str(ds.get("PatientID", "UNKNOWN"))
-        pname = str(ds.get("PatientName", "Unknown"))
-        sid = str(ds.get("StudyInstanceUID", ""))
-        ser_id = str(ds.get("SeriesInstanceUID", ""))
-        sop = str(ds.get("SOPInstanceUID", ""))
+        logger.info(f"Successfully ingested {count} instances.")
 
-        # Hierarchy Traversal
-        pat = next((p for p in store.patients if p.patient_id == pid), None)
-        if not pat:
-            pat = Patient(pid, pname)
-            store.patients.append(pat)
-
-        study = next((s for s in pat.studies if s.study_instance_uid == sid), None)
-        if not study:
-            study = Study(sid, date(1900, 1, 1))  # Simplified date parsing
-            pat.studies.append(study)
-
-        series = next((s for s in study.series if s.series_instance_uid == ser_id), None)
-        if not series:
-            series = Series(ser_id, str(ds.get("Modality", "OT")), 0)
-            # Equipment
-            man = str(ds.get("Manufacturer", ""))
-            mod = str(ds.get("ManufacturerModelName", ""))
-            sn = str(ds.get("DeviceSerialNumber", ""))
-            if man or mod:
-                series.equipment = Equipment(man, mod, sn)
-            study.series.append(series)
-
-        # Create Instance (Link file path for lazy loading)
-        inst = Instance(sop, str(ds.get("SOPClassUID", "")), 0, file_path=filepath)
-        DicomImporter._populate_attrs(ds, inst)
-        series.instances.append(inst)
-
-    @staticmethod
-    def _populate_attrs(ds, item):
-        for elem in ds:
-            if elem.tag.group == 0x7fe0: continue  # Skip pixels
-            tag = f"{elem.tag.group:04x},{elem.tag.element:04x}"
-            if elem.VR == 'SQ':
-                DicomImporter._process_sequence(tag, elem, item)
-            elif elem.VR == 'PN':
-                # Sanitize PersonName for pickle safety
-                item.set_attr(tag, str(elem.value))
-            else:
-                item.set_attr(tag, elem.value)
-
-    @staticmethod
-    def _process_sequence(tag, elem, parent_item):
-        """Recursively parses Sequence (SQ) items."""
-        for ds_item in elem:
-            seq_item = DicomItem()
-            DicomImporter._populate_attrs(ds_item, seq_item)
-            parent_item.add_sequence_item(tag, seq_item)
 
 class DicomExporter:
     """
