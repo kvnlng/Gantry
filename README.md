@@ -50,11 +50,10 @@ Scan your dataset for potential PHI and apply automated fixes.
 findings = app.scan_for_phi()
 # Output: Found 2 potential PHI issues.
 
-# 2. Apply Remediation (Anonymize Names/IDs, Shift Dates)
-# This will modify the objects in memory
-from gantry.remediation import RemediationService
-service = RemediationService()
-service.apply_remediation(findings)
+# 2. Apply Remediation (Facade)
+# Automatically initializes the service and applies fixes
+app.apply_remediation(findings)
+
 ```
 
 ### 2. Reversible Anonymization (Pseudonymization)

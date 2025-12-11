@@ -212,6 +212,39 @@ class SqliteStore:
         except sqlite3.Error as e:
             self.logger.error(f"Failed to save to DB: {e}")
 
+    def update_attributes(self, instances: List[Patient]):
+        """
+        Efficiently updates the attributes_json for a list of instances.
+        Avoids full delete/insert cycle.
+        Assumes instances are already tracked (have valid identities).
+        """
+        if not instances:
+            return
+
+        self.logger.info(f"Updating attributes for {len(instances)} instances...")
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.cursor()
+                
+                # Pre-calculate data for executemany
+                data = []
+                for inst in instances:
+                    attrs_json = json.dumps(inst.attributes, cls=GantryJSONEncoder)
+                    # We rely on SOP Instance UID as the key
+                    data.append((attrs_json, inst.sop_instance_uid))
+                
+                cur.executemany("""
+                    UPDATE instances 
+                    SET attributes_json = ? 
+                    WHERE sop_instance_uid = ?
+                """, data)
+                
+                conn.commit()
+                self.logger.info("Update complete.")
+                
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to update attributes: {e}")
+
 class GantryJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, bytes):
