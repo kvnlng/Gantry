@@ -5,17 +5,20 @@ from .services import RedactionService
 from .config_manager import ConfigLoader
 from .privacy import PhiInspector, PhiFinding
 
+from .logger import configure_logger, get_logger
+
 class DicomSession:
     """
     The Main Facade for the Gantry library.
     Manages the lifecycle of the DicomStore (Load/Import/Redact/Export/Save).
     """
     def __init__(self, persistence_file="dicom_session.pkl"):
+        configure_logger()
         self.persistence_file = persistence_file
         self.store = DicomStore.load_state(persistence_file)
         self.active_rules: List[Dict[str, Any]] = []
 
-        print(f"Session started. {len(self.store.patients)} patients loaded.")
+        get_logger().info(f"Session started. {len(self.store.patients)} patients loaded.")
 
     def import_folder(self, folder_path):
         """
@@ -25,6 +28,7 @@ class DicomSession:
         self._save()
 
     def inventory(self):
+        get_logger().info("Generating inventory report.")
         """Prints a summary of devices (Manufacturers/Models) found in the current session."""
         eqs = self.store.get_unique_equipment()
         print(f"\nInventory: {len(eqs)} Devices")
@@ -45,6 +49,7 @@ class DicomSession:
         """
         inspector = PhiInspector(config_path)
         if not inspector.phi_tags:
+            get_logger().warning("PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
             print("⚠️ PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
         
         all_findings = []
@@ -54,6 +59,7 @@ class DicomSession:
             findings = inspector.scan_patient(patient)
             all_findings.extend(findings)
             
+        get_logger().info(f"PHI Scan Complete. Found {len(all_findings)} issues.")
         print(f"Scan Complete. Found {len(all_findings)} potential PHI issues.")
         for f in all_findings:
             print(f" - [{f.entity_type}] {f.field_name}: {f.value} ({f.reason})")
@@ -62,9 +68,11 @@ class DicomSession:
 
     def export(self, folder):
         """Exports the current state of all patients to a folder."""
+        get_logger().info(f"Exporting session to {folder}...")
         print("Exporting...")
         for p in self.store.patients:
             DicomExporter.save_patient(p, folder)
+        get_logger().info("Export complete.")
         print("Done.")
 
     def load_config(self, config_file: str):
@@ -73,11 +81,14 @@ class DicomSession:
         Useful for validation or previewing what will happen.
         """
         try:
+            get_logger().info(f"Loading configuration from {config_file}...")
             print(f"Loading configuration from {config_file}...")
             self.active_rules = ConfigLoader.load_redaction_rules(config_file)
+            get_logger().info(f"Loaded {len(self.active_rules)} machine rule definitions.")
             print(f"Loaded {len(self.active_rules)} machine rule definitions.")
             print("Tip: Run .preview_config() to see matches, or .execute_config() to apply.")
         except Exception as e:
+            get_logger().error(f"Load failed: {e}")
             print(f"Load failed: {e}")
             self.active_rules = []
 
@@ -87,6 +98,7 @@ class DicomSession:
         checks the loaded rules against the current Store inventory.
         """
         if not self.active_rules:
+            get_logger().warning("No configuration loaded. Use .load_config() first.")
             print("No configuration loaded. Use .load_config() first.")
             return
 
@@ -123,6 +135,7 @@ class DicomSession:
         User Action: 'Apply the currently loaded rules to the pixel data.'
         """
         if not self.active_rules:
+            get_logger().warning("No configuration loaded. Use .load_config() first.")
             print("No configuration loaded. Use .load_config() first.")
             return
 
@@ -135,6 +148,7 @@ class DicomSession:
 
             # Save state after modification
             self._save()
+            get_logger().info("Execution Complete. Session saved.")
             print("Execution Complete. Session saved.")
 
             # Clear rules after execution?
@@ -142,6 +156,7 @@ class DicomSession:
             # self.active_rules = []
 
         except Exception as e:
+            get_logger().error(f"Execution interrupted: {e}")
             print(f"Execution interrupted: {e}")
 
     def scaffold_config(self, output_path: str):
@@ -170,6 +185,7 @@ class DicomSession:
                 })
         
         if not missing_configs:
+            get_logger().info("All detected machines are already configured. Nothing to scaffold.")
             print("All detected machines are already configured. Nothing to scaffold.")
             return
 
@@ -182,8 +198,10 @@ class DicomSession:
         try:
             with open(output_path, 'w') as f:
                 json.dump(data, f, indent=4)
+            get_logger().info(f"Scaffolded configuration for {len(missing_configs)} new machines to {output_path}")
             print(f"Scaffolded configuration for {len(missing_configs)} new machines to {output_path}")
         except Exception as e:
+            get_logger().error(f"Failed to write scaffold: {e}")
             print(f"Failed to write scaffold: {e}")
 
     def _save(self):

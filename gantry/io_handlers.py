@@ -9,6 +9,8 @@ from pydicom.datadict import dictionary_VR
 from datetime import datetime, date
 from typing import List, Set
 from .entities import Patient, Study, Series, Instance, Equipment, DicomItem
+from .logger import get_logger
+from tqdm import tqdm
 
 
 class DicomStore:
@@ -38,10 +40,11 @@ class DicomStore:
         return files
 
     def save_state(self, filepath: str):
-        print(f"Persisting session metadata to {filepath}...")
+        logger = get_logger()
+        logger.info(f"Persisting session metadata to {filepath}...")
         with open(filepath, 'wb') as f:
             pickle.dump(self, f)
-        print("Saved.")
+        logger.info("Saved.")
 
     @staticmethod
     def load_state(filepath: str) -> 'DicomStore':
@@ -75,18 +78,24 @@ class DicomImporter:
         known_files = store.get_known_files()
         new_files = [fp for fp in all_files if os.path.abspath(fp) not in known_files]
         
+        logger = get_logger()
+        
         skipped_count = len(all_files) - len(new_files)
         if skipped_count > 0:
-            print(f"Skipping {skipped_count} already imported files.")
+            logger.info(f"Skipping {skipped_count} already imported files.")
             
-        for fp in new_files:
-            try:
-                # read metadata only
-                ds = pydicom.dcmread(fp, stop_before_pixels=True, force=True)
-                DicomImporter._ingest(ds, store, fp)
-                print(f"Indexed: {os.path.basename(fp)}")
-            except Exception as e:
-                print(f"Import Failed {fp}: {e}")
+        print("Importing DICOM files...")
+        with tqdm(total=len(new_files), unit="file") as pbar:
+            for fp in new_files:
+                try:
+                    # read metadata only
+                    ds = pydicom.dcmread(fp, stop_before_pixels=True, force=True)
+                    DicomImporter._ingest(ds, store, fp)
+                    logger.info(f"Indexed: {os.path.basename(fp)}")
+                except Exception as e:
+                    logger.error(f"Import Failed {fp}: {e}")
+                finally:
+                    pbar.update(1)
 
     @staticmethod
     def _ingest(ds, store, filepath):
@@ -157,6 +166,7 @@ class DicomExporter:
         """
         if not os.path.exists(out_dir): os.makedirs(out_dir)
         from gantry.validation import IODValidator
+        logger = get_logger()
 
         for st in patient.studies:
             for se in st.series:
@@ -209,10 +219,10 @@ class DicomExporter:
                     if not errs:
                         fp = os.path.join(out_dir, f"{inst.sop_instance_uid}.dcm")
                         ds.save_as(fp)
-                        print(f"Exported: {fp}")
+                        logger.info(f"Exported: {fp}")
                     else:
                         # This print statement is why you saw 0 files!
-                        print(f"Skipped Invalid {inst.sop_instance_uid}: {errs}")
+                        logger.warning(f"Skipped Invalid {inst.sop_instance_uid}: {errs}")
 
     @staticmethod
     def _create_ds(inst):

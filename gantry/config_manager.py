@@ -1,6 +1,7 @@
 import json
 import os
 from typing import List, Dict, Any
+from .logger import get_logger
 
 
 class ConfigLoader:
@@ -13,7 +14,7 @@ class ConfigLoader:
         
         # Basic Validation
         if "machines" not in data:
-            print("⚠️ Config warning: 'machines' key missing.")
+            get_logger().warning("Config warning: 'machines' key missing.")
             return []
         
         rules = data["machines"]

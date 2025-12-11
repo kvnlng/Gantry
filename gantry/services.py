@@ -1,6 +1,7 @@
 from typing import Dict, List
 from .entities import Instance, Patient, DicomItem, DicomSequence
 from .io_handlers import DicomStore
+from .logger import get_logger
 
 
 # Define standard codes for the Sequence
@@ -37,6 +38,7 @@ class RedactionService:
     def __init__(self, store: DicomStore):
         self.index = MachinePixelIndex()
         self.index.index_store(store)
+        self.logger = get_logger()
 
     def process_machine_rules(self, machine_rules: dict):
         """
@@ -46,24 +48,24 @@ class RedactionService:
         zones = machine_rules.get("redaction_zones", [])
 
         if not serial:
-            print("⚠️ Skipping rule with missing serial number.")
+            self.logger.warning("Skipping rule with missing serial number.")
             return
 
         # Check if we even have this machine in our store
         # (Optimization: Don't load pixels if machine isn't in the dataset)
         targets = self.index.get_by_machine(serial)
         if not targets:
-            print(f"Config rule exists for {serial}, but no matching images found in Session.")
+            self.logger.warning(f"Config rule exists for {serial}, but no matching images found in Session.")
             return
 
-        print(f"Applying config rules for Machine: {serial} ({len(targets)} images)...")
+        self.logger.info(f"Applying config rules for Machine: {serial} ({len(targets)} images)...")
 
         for zone in zones:
             roi = zone.get("roi")  # Expected [r1, r2, c1, c2]
             if roi and len(roi) == 4:
                 self.redact_machine_region(serial, tuple(roi))
             else:
-                print(f"Invalid ROI format in config: {roi}")
+                self.logger.warning(f"Invalid ROI format in config: {roi}")
 
     def redact_machine_region(self, machine_sn: str, roi: tuple):
         """
@@ -72,7 +74,7 @@ class RedactionService:
         Includes safety checks for image bounds.
         """
         targets = self.index.get_by_machine(machine_sn)
-        print(f"Redacting {len(targets)} images for {machine_sn}...")
+        self.logger.info(f"Redacting {len(targets)} images for {machine_sn}...")
 
         for inst in targets:
             try:
@@ -85,7 +87,7 @@ class RedactionService:
                 
                 # Safety Checks
                 if r1 >= rows or c1 >= cols:
-                     print(f"⚠️ ROI {roi} is completely outside image dimensions ({rows}x{cols}). Skipping.")
+                     self.logger.warning(f"ROI {roi} is completely outside image dimensions ({rows}x{cols}). Skipping.")
                      continue
                 
                 # Clipping
@@ -93,16 +95,16 @@ class RedactionService:
                 c2_clamped = min(c2, cols)
                 
                 if r2_clamped != r2 or c2_clamped != c2:
-                    print(f"⚠️ ROI {roi} extends beyond image ({rows}x{cols}). Clipping to image bounds.")
+                    self.logger.warning(f"ROI {roi} extends beyond image ({rows}x{cols}). Clipping to image bounds.")
 
                 arr[r1:r2_clamped, c1:c2_clamped] = 0
                 self._apply_redaction_flags(inst)
 
                 inst.regenerate_uid()
 
-                print(f"  Modified {inst.sop_instance_uid}")
+                self.logger.debug(f"  Modified {inst.sop_instance_uid}")
             except Exception as e:
-                print(f"  Failed {inst.sop_instance_uid}: {e}")
+                self.logger.error(f"  Failed {inst.sop_instance_uid}: {e}")
 
     def _apply_redaction_flags(self, inst: Instance):
         """

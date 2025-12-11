@@ -15,6 +15,7 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 - [x] Configuration Scaffolding (Auto-Inventory)
 - [x] Standardized DICOM Derivation (UID Regeneration & Flags)
 - [x] Improved Documentation & Docstrings
+- [x] Comprehensive Logging System (File-based + Progress Bars)
 
 ---
 
@@ -22,7 +23,9 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 
 ### v0.3.0 - Data Integrity & Verification
 Focus: Ensuring that modified files remain clinically valid and structurally sound.
-- [ ] **Automated PHI Remediation**: Implement strategies to sanitize identified PHI, such as pseudonymization (replacing names/IDs) and attribute blanking.
+- [ ] **Automated PHI Remediation**: Automatically suggest redaction zones based on PHI scan findings.
+- [ ] **Robust Persistence Strategy**: Research and implement a more robust and transparent persistence layer (replacing `pickle`) to support large datasets and external querying.
+- [ ] **Pixel Integrity Tests**: Verify that zeroed-out pixels are truly zero (not just concealed by LUTs).
 - [ ] **Pixel Integrity Tests**: Add unit tests to verify `PhotometricInterpretation` and `SamplesPerPixel` are preserved after modification.
 - [ ] **UID Regeneration**: (Optional) Add a strategy to automatically regenerate SOP Instance UIDs for anonymized files to prevent ID conflicts with original data.
 - [ ] **Audit Trail**: Generate a side-car report (`audit_log.json`) listing exactly which files were modified and by which rule.
@@ -30,7 +33,6 @@ Focus: Ensuring that modified files remain clinically valid and structurally sou
 ### v0.4.0 - Performance Optimization
 Focus: Scaling Gantry to handle dataset sizes of 1,000+ images efficiently.
 - [ ] **Parallel Processing**: Investigate using `concurrent.futures` in `RedactionService` to process multiple images simultaneously.
-- [ ] **Logging System**: Replace `print()` statements with a proper Python `logging` configuration (Info/Warning/Error levels).
 - [ ] **Memory Profiling**: Optimize `MachinePixelIndex` to handle massive datasets without excessive RAM usage.
 
 ### v1.0.0 - Production Release
