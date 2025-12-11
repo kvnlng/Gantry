@@ -72,6 +72,7 @@
 <span></span><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.entities</span><span class="w"> </span><span class="kn">import</span> <span class="n">Instance</span><span class="p">,</span> <span class="n">Patient</span><span class="p">,</span> <span class="n">DicomItem</span><span class="p">,</span> <span class="n">DicomSequence</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.io_handlers</span><span class="w"> </span><span class="kn">import</span> <span class="n">DicomStore</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.logger</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
 
 
 <span class="c1"># Define standard codes for the Sequence</span>
@@ -116,9 +117,11 @@
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Applies pixel data redaction based on rules.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n">DicomStore</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n">DicomStore</span><span class="p">,</span> <span class="n">store_backend</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">index</span> <span class="o">=</span> <span class="n">MachinePixelIndex</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">index_store</span><span class="p">(</span><span class="n">store</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span> <span class="o">=</span> <span class="n">store_backend</span>
 
 <div class="viewcode-block" id="RedactionService.process_machine_rules">
 <a class="viewcode-back" href="../../gantry.html#gantry.services.RedactionService.process_machine_rules">[docs]</a>
@@ -130,24 +133,24 @@
         <span class="n">zones</span> <span class="o">=</span> <span class="n">machine_rules</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;redaction_zones&quot;</span><span class="p">,</span> <span class="p">[])</span>
 
         <span class="k">if</span> <span class="ow">not</span> <span class="n">serial</span><span class="p">:</span>
-            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;⚠️ Skipping rule with missing serial number.&quot;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Skipping rule with missing serial number.&quot;</span><span class="p">)</span>
             <span class="k">return</span>
 
         <span class="c1"># Check if we even have this machine in our store</span>
         <span class="c1"># (Optimization: Don&#39;t load pixels if machine isn&#39;t in the dataset)</span>
         <span class="n">targets</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">get_by_machine</span><span class="p">(</span><span class="n">serial</span><span class="p">)</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">targets</span><span class="p">:</span>
-            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Config rule exists for </span><span class="si">{</span><span class="n">serial</span><span class="si">}</span><span class="s2">, but no matching images found in Session.&quot;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Config rule exists for </span><span class="si">{</span><span class="n">serial</span><span class="si">}</span><span class="s2">, but no matching images found in Session.&quot;</span><span class="p">)</span>
             <span class="k">return</span>
 
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Applying config rules for Machine: </span><span class="si">{</span><span class="n">serial</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">targets</span><span class="p">)</span><span class="si">}</span><span class="s2"> images)...&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Applying config rules for Machine: </span><span class="si">{</span><span class="n">serial</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">targets</span><span class="p">)</span><span class="si">}</span><span class="s2"> images)...&quot;</span><span class="p">)</span>
 
         <span class="k">for</span> <span class="n">zone</span> <span class="ow">in</span> <span class="n">zones</span><span class="p">:</span>
             <span class="n">roi</span> <span class="o">=</span> <span class="n">zone</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;roi&quot;</span><span class="p">)</span>  <span class="c1"># Expected [r1, r2, c1, c2]</span>
             <span class="k">if</span> <span class="n">roi</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">roi</span><span class="p">)</span> <span class="o">==</span> <span class="mi">4</span><span class="p">:</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">redact_machine_region</span><span class="p">(</span><span class="n">serial</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">roi</span><span class="p">))</span>
             <span class="k">else</span><span class="p">:</span>
-                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid ROI format in config: </span><span class="si">{</span><span class="n">roi</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+                <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Invalid ROI format in config: </span><span class="si">{</span><span class="n">roi</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="RedactionService.redact_machine_region">
@@ -159,7 +162,14 @@
 <span class="sd">        Includes safety checks for image bounds.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">targets</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">get_by_machine</span><span class="p">(</span><span class="n">machine_sn</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Redacting </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">targets</span><span class="p">)</span><span class="si">}</span><span class="s2"> images for </span><span class="si">{</span><span class="n">machine_sn</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Redacting </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">targets</span><span class="p">)</span><span class="si">}</span><span class="s2"> images for </span><span class="si">{</span><span class="n">machine_sn</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span>
+        
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span> <span class="ow">and</span> <span class="n">targets</span><span class="p">:</span>
+             <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="o">.</span><span class="n">log_audit</span><span class="p">(</span>
+                <span class="n">action_type</span><span class="o">=</span><span class="s2">&quot;REDACTION&quot;</span><span class="p">,</span>
+                <span class="n">entity_uid</span><span class="o">=</span><span class="n">machine_sn</span><span class="p">,</span>
+                <span class="n">details</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Redacting </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">targets</span><span class="p">)</span><span class="si">}</span><span class="s2"> images with ROI </span><span class="si">{</span><span class="n">roi</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
 
         <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">targets</span><span class="p">:</span>
             <span class="k">try</span><span class="p">:</span>
@@ -172,7 +182,7 @@
                 
                 <span class="c1"># Safety Checks</span>
                 <span class="k">if</span> <span class="n">r1</span> <span class="o">&gt;=</span> <span class="n">rows</span> <span class="ow">or</span> <span class="n">c1</span> <span class="o">&gt;=</span> <span class="n">cols</span><span class="p">:</span>
-                     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;⚠️ ROI </span><span class="si">{</span><span class="n">roi</span><span class="si">}</span><span class="s2"> is completely outside image dimensions (</span><span class="si">{</span><span class="n">rows</span><span class="si">}</span><span class="s2">x</span><span class="si">{</span><span class="n">cols</span><span class="si">}</span><span class="s2">). Skipping.&quot;</span><span class="p">)</span>
+                     <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;ROI </span><span class="si">{</span><span class="n">roi</span><span class="si">}</span><span class="s2"> is completely outside image dimensions (</span><span class="si">{</span><span class="n">rows</span><span class="si">}</span><span class="s2">x</span><span class="si">{</span><span class="n">cols</span><span class="si">}</span><span class="s2">). Skipping.&quot;</span><span class="p">)</span>
                      <span class="k">continue</span>
                 
                 <span class="c1"># Clipping</span>
@@ -180,16 +190,16 @@
                 <span class="n">c2_clamped</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">c2</span><span class="p">,</span> <span class="n">cols</span><span class="p">)</span>
                 
                 <span class="k">if</span> <span class="n">r2_clamped</span> <span class="o">!=</span> <span class="n">r2</span> <span class="ow">or</span> <span class="n">c2_clamped</span> <span class="o">!=</span> <span class="n">c2</span><span class="p">:</span>
-                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;⚠️ ROI </span><span class="si">{</span><span class="n">roi</span><span class="si">}</span><span class="s2"> extends beyond image (</span><span class="si">{</span><span class="n">rows</span><span class="si">}</span><span class="s2">x</span><span class="si">{</span><span class="n">cols</span><span class="si">}</span><span class="s2">). Clipping to image bounds.&quot;</span><span class="p">)</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;ROI </span><span class="si">{</span><span class="n">roi</span><span class="si">}</span><span class="s2"> extends beyond image (</span><span class="si">{</span><span class="n">rows</span><span class="si">}</span><span class="s2">x</span><span class="si">{</span><span class="n">cols</span><span class="si">}</span><span class="s2">). Clipping to image bounds.&quot;</span><span class="p">)</span>
 
                 <span class="n">arr</span><span class="p">[</span><span class="n">r1</span><span class="p">:</span><span class="n">r2_clamped</span><span class="p">,</span> <span class="n">c1</span><span class="p">:</span><span class="n">c2_clamped</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">_apply_redaction_flags</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
 
                 <span class="n">inst</span><span class="o">.</span><span class="n">regenerate_uid</span><span class="p">()</span>
 
-                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Modified </span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Modified </span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
             <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Failed </span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+                <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Failed </span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
 
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_apply_redaction_flags</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inst</span><span class="p">:</span> <span class="n">Instance</span><span class="p">):</span>
