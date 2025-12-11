@@ -12,6 +12,18 @@ from .persistence import SqliteStore
 from .crypto import KeyManager
 from .reversibility import ReversibilityService
 import json
+from .parallel import run_parallel
+
+def _scan_patient_worker(args):
+    """
+    Worker to scan a single patient.
+    args: (patient_copy, config_path)
+    Returns: List[PhiFinding] (with cloned entities)
+    """
+    patient, config_path = args
+    from .privacy import PhiInspector # Import inside worker
+    inspector = PhiInspector(config_path)
+    return inspector.scan_patient(patient)
 
 class DicomSession:
     """
@@ -110,7 +122,8 @@ class DicomSession:
         modified_instances = []
         count_patients = 0
         
-        for pid in patient_ids:
+        from tqdm import tqdm
+        for pid in tqdm(patient_ids, desc="Preserving Identities", unit="patient"):
             patient = next((p for p in self.store.patients if p.patient_id == pid), None)
             if not patient: continue
             
@@ -126,7 +139,10 @@ class DicomSession:
                         modified_instances.append(inst)
             count_patients += 1
             
-        self.store_backend.update_attributes(modified_instances)
+        if modified_instances:
+             get_logger().info(f"Persisting changes for {len(modified_instances)} instances...")
+             self.store_backend.update_attributes(modified_instances)
+             
         get_logger().info(f"Batch preserved identity for {count_patients} patients ({len(modified_instances)} instances).")
 
     def recover_patient_identity(self, patient_id: str):
@@ -141,28 +157,73 @@ class DicomSession:
 
 
     # ... skip to scan_for_phi ...
-    
+
+
     def scan_for_phi(self, config_path: str = None) -> "PhiReport":
         """
         Scans all patients in the session for potential PHI.
         Returns a PhiReport object (iterable, and convertible to DataFrame).
         """
-        from .privacy import PhiReport # Import here to avoid circular
+        from .privacy import PhiReport
         
         inspector = PhiInspector(config_path)
         if not inspector.phi_tags:
             get_logger().warning("PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
         
-        all_findings = []
+        get_logger().info("Scanning for PHI (Parallel)...")
         
-        get_logger().info("Scanning for PHI...")
-        for patient in self.store.patients:
-            findings = inspector.scan_patient(patient)
+        # Prepare args
+        # We pass copies of patients (Pickle does this).
+        # Note: Large object graphs might be slow to pickle.
+        # But Patients are usually metadata only (pixels lazy loaded).
+        # We rely on lazy loading NOT triggering pixel reads during pickle, which `store` proxy helps with.
+        worker_args = [(p, config_path) for p in self.store.patients]
+        
+        results = run_parallel(_scan_patient_worker, worker_args, desc="Scanning PHI")
+        
+        all_findings = []
+        for findings in results:
             all_findings.extend(findings)
+            
+        # Rehydrate Entities!
+        # The entities in `all_findings` are copies from other processes.
+        # We need to link them back to `self.store` objects so that Remediation works on the live session.
+        self._rehydrate_findings(all_findings)
             
         get_logger().info(f"PHI Scan Complete. Found {len(all_findings)} issues.")
             
         return PhiReport(all_findings)
+
+    def _rehydrate_findings(self, findings):
+        """
+        Updates findings in-place to point to live objects in self.store
+        instead of the unpickled copies from workers.
+        """
+        # Create lookup maps
+        # Assuming entity_uid is unique per type.
+        # Patient
+        patient_map = {p.patient_id: p for p in self.store.patients}
+        
+        # Since traversing deep would be slow for every finding, we can do lazy or smart lookup
+        # Or just traverse once if needed.
+        # Most findings are on Patient or Study.
+        
+        # Let's map Studies
+        study_map = {}
+        for p in self.store.patients:
+            for s in p.studies:
+                study_map[s.study_instance_uid] = s
+        
+        for f in findings:
+            if f.entity_type == "Patient":
+                if f.entity_uid in patient_map:
+                    f.entity = patient_map[f.entity_uid]
+            elif f.entity_type == "Study":
+                if f.entity_uid in study_map:
+                    f.entity = study_map[f.entity_uid]
+            # Add Series/Instance rehydration if needed?
+            # Start simple. scan_patient mainly checks Patient/Study attributes.
+
     def recover_patient_identity(self, patient_id: str):
         """
         Attempts to decrypt and read original identity from the first instance found.

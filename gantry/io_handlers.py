@@ -54,6 +54,16 @@ class DicomStore:
             return pickle.load(f)
 
 
+from .parallel import run_parallel
+
+def load_dicom_worker(fp):
+    """Worker function to read DICOM metadata."""
+    try:
+        ds = pydicom.dcmread(fp, stop_before_pixels=True, force=True)
+        return (ds, fp, None)
+    except Exception as e:
+        return (None, fp, str(e))
+
 class DicomImporter:
     """
     Handles scanning of folders/files and ingesting them into the Object Graph.
@@ -84,18 +94,22 @@ class DicomImporter:
         if skipped_count > 0:
             logger.info(f"Skipping {skipped_count} already imported files.")
             
-        print("Importing DICOM files...")
-        with tqdm(total=len(new_files), unit="file") as pbar:
-            for fp in new_files:
+        logger.info(f"Importing {len(new_files)} files (Parallel)...")
+        
+        # Parallel Execution
+        results = run_parallel(load_dicom_worker, new_files, desc="Importing", chunksize=10)
+        
+        # Aggregation (Main Thread)
+        for ds, fp, err in results:
+            if err:
+                 logger.error(f"Import Failed {fp}: {err}")
+                 continue
+            if ds:
                 try:
-                    # read metadata only
-                    ds = pydicom.dcmread(fp, stop_before_pixels=True, force=True)
                     DicomImporter._ingest(ds, store, fp)
-                    logger.info(f"Indexed: {os.path.basename(fp)}")
+                    # logger.info(f"Indexed: {os.path.basename(fp)}") # Too verbose for big imports?
                 except Exception as e:
-                    logger.error(f"Import Failed {fp}: {e}")
-                finally:
-                    pbar.update(1)
+                    logger.error(f"Ingest Failed {fp}: {e}")
 
     @staticmethod
     def _ingest(ds, store, filepath):

@@ -57,11 +57,16 @@ app.inventory()
 #  - GE Revolution (S/N: SN-SCANNER-01)
 #  - Siemens Prisma (S/N: SN-SCANNER-02)
 
-# 4. Save State
-# (Happens automatically on import/export operations)
+# 4. Detect Metadata PHI
+findings = app.scan_for_phi()
+# Output: Found 5 potential PHI issues.
 
-# 5. Explore De-Identification Workflow (PHI Remediation & Pixel Redaction)
-# See the "De-Identification Workflow" section below for details.
+# 5. Bootstrap Pixel Redaction
+# Generates a JSON config for all text-burn locations based on machine inventory
+app.scaffold_config("redaction_rules.json")
+
+# 6. Save State
+# (Happens automatically on import/export operations)
 ```
 
 ## 🛡️ De-Identification Workflow
@@ -94,8 +99,13 @@ Need to recover the original identity later? Gantry can securely encrypt the ori
 app.enable_reversible_anonymization("gantry.key")
 
 # Preserve Identity (Call BEFORE anonymizing)
+# Option A: Single Patient
 app.preserve_patient_identity("PATIENT_123")
-# -> Encrypts original identity and embeds it into Private Tag (0099, 1001)
+
+# Option B: Batch for all findings (Recommended)
+findings = app.scan_for_phi()
+app.preserve_identities(findings)
+# -> Encrypts original identity for all patients in the report
 
 # Now safe to anonymize
 app.apply_remediation(...)

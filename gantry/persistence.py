@@ -67,6 +67,7 @@ class SqliteStore:
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
+            conn.execute("PRAGMA journal_mode=WAL;")
             conn.executescript(self.SCHEMA)
 
     def log_audit(self, action_type: str, entity_uid: str, details: str):
