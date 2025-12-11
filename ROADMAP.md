@@ -2,7 +2,7 @@
 
 This document outlines the development plan for **Gantry**. We welcome contributions from the community to help us achieve these milestones!
 
-## 📍 Current Status: v0.3.0
+## 📍 Current Status: v0.4.0
 - [x] Core Object Model (`Patient` -> `Study` -> `Series` -> `Instance`)
 - [x] Basic Facade (`DicomSession`)
 - [x] Lazy Loading Pixel Data
@@ -20,22 +20,18 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 - [x] Robust Persistence Strategy (SQLite + Audit Trail)
 - [x] Robust JSON Persistence (Support for Bytes/Private Tags)
 - [x] Reversible Anonymization (Pseudonymization with Encrypted Private Tags)
+- [x] Parallel Processing (Multiprocessing for Import & PHI Scan)
+- [x] Optimized Batch UX (Deferred Persistence + Feedback)
 
 ---
 
 ## 🚀 Upcoming Milestones
 
-### v0.4.0 - Data Integrity & Performance
-Focus: Validating data integrity and scaling for large datasets.
+### v0.5.0 - Data Integrity & Advanced Redaction
+Focus: Validating data integrity and expanding redaction capabilities.
 - [ ] **Pixel Integrity Tests**: Verify that zeroed-out pixels are truly zero (not just concealed by LUTs).
 - [ ] **Pixel Integrity Tests**: Add unit tests to verify `PhotometricInterpretation` and `SamplesPerPixel` are preserved after modification.
 - [ ] **UID Regeneration**: (Optional) Add a strategy to automatically regenerate SOP Instance UIDs for anonymized files to prevent ID conflicts with original data.
-- [ ] **Parallel Processing**: Investigate using `concurrent.futures` in `RedactionService` to process multiple images simultaneously.
-- [ ] **Memory Profiling**: Optimize `MachinePixelIndex` to handle massive datasets without excessive RAM usage.
-
-### v0.4.0 - Performance Optimization
-Focus: Scaling Gantry to handle dataset sizes of 1,000+ images efficiently.
-- [ ] **Parallel Processing**: Investigate using `concurrent.futures` in `RedactionService` to process multiple images simultaneously.
 - [ ] **Memory Profiling**: Optimize `MachinePixelIndex` to handle massive datasets without excessive RAM usage.
 
 ### v1.0.0 - Production Release

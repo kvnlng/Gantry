@@ -24,6 +24,8 @@ It features a **Lazy-Loading Proxy** architecture, allowing you to index thousan
 * **IOD Validation**: Built-in checks ensure your exported files comply with DICOM standards (Type 1/Type 2 attributes).
 * **Session Persistence**: Save your workspace state to a robust **SQLite database** (`gantry.db`) to handle large datasets.
 * **Audit Trail**: Automatically logs all sensitive actions (Redaction, Anonymization) to an internal audit log for compliance.
+* **Parallel Processing**: Multi-process architecture speeds up data import and PHI scanning for large directories.
+* **Optimized Batch Operations**: Efficiently handles bulk operations with deferred persistence and clear user feedback.
 * **Comprehensive Logging**: Detailed file-based logs (`gantry.log`) with user-friendly progress bars.
 
 ---

@@ -57,24 +57,27 @@ class DicomSession:
         self.reversibility_service = ReversibilityService(self.key_manager)
         get_logger().info(f"Reversible anonymization enabled. Key: {key_path}")
 
-    def preserve_patient_identity(self, patient_id: str):
+    def preserve_patient_identity(self, patient_id: str, persist: bool = True) -> List["Instance"]:
         """
         Securely embeds the original patient name/ID into a private DICOM tag
         for all instances belonging to the specified patient.
         Must be called BEFORE anonymization.
+        
+        Args:
+            patient_id: The ID of the patient to preserve.
+            persist: If True, writes changes to DB immediately. If False, returns instances for batch persistence.
         """
         if not self.reversibility_service:
             raise RuntimeError("Reversible anonymization not enabled. Call enable_reversible_anonymization() first.")
             
-        get_logger().info(f"Preserving identity for {patient_id}...")
+        get_logger().debug(f"Preserving identity for {patient_id}...") # Debug level in batch? Info is fine.
         
-        # Optimize: Collect modified instances and perform bulk update
         modified_instances = []
         patient = next((p for p in self.store.patients if p.patient_id == patient_id), None)
         
         if not patient:
             get_logger().error(f"Patient {patient_id} not found.")
-            return
+            return []
 
         cnt = 0
         original_attrs = {
@@ -90,9 +93,11 @@ class DicomSession:
                     modified_instances.append(inst)
                     cnt += 1
         
-        # Use optimized persistence
-        self.store_backend.update_attributes(modified_instances)
-        get_logger().info(f"Secured identity in {cnt} instances.")
+        if persist and modified_instances:
+            self.store_backend.update_attributes(modified_instances)
+            get_logger().info(f"Secured identity in {cnt} instances for {patient_id}.")
+            
+        return modified_instances
 
     def preserve_identities(self, input_data: list):
         """
@@ -124,24 +129,16 @@ class DicomSession:
         
         from tqdm import tqdm
         for pid in tqdm(patient_ids, desc="Preserving Identities", unit="patient"):
-            patient = next((p for p in self.store.patients if p.patient_id == pid), None)
-            if not patient: continue
-            
-            original_attrs = {
-                "PatientName": patient.patient_name,
-                "PatientID": patient.patient_id
-            }
-            
-            for st in patient.studies:
-                for se in st.series:
-                    for inst in se.instances:
-                        self.reversibility_service.embed_original_data(inst, original_attrs)
-                        modified_instances.append(inst)
+            res = self.preserve_patient_identity(pid, persist=False)
+            modified_instances.extend(res)
             count_patients += 1
             
         if modified_instances:
-             get_logger().info(f"Persisting changes for {len(modified_instances)} instances...")
+             msg = f"Persisting changes for {len(modified_instances)} instances..."
+             print(f"\n{msg}") # Force newline after tqdm
+             get_logger().info(msg)
              self.store_backend.update_attributes(modified_instances)
+             print("Persistence complete.")
              
         get_logger().info(f"Batch preserved identity for {count_patients} patients ({len(modified_instances)} instances).")
 
