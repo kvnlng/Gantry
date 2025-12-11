@@ -72,7 +72,9 @@
 <li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.DicomExporter"><code class="docutils literal notranslate"><span class="pre">DicomExporter</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.DicomImporter"><code class="docutils literal notranslate"><span class="pre">DicomImporter</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.DicomStore"><code class="docutils literal notranslate"><span class="pre">DicomStore</span></code></a></li>
-<li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.load_dicom_worker"><code class="docutils literal notranslate"><span class="pre">load_dicom_worker()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.ingest_worker"><code class="docutils literal notranslate"><span class="pre">ingest_worker()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.populate_attrs"><code class="docutils literal notranslate"><span class="pre">populate_attrs()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.process_sequence"><code class="docutils literal notranslate"><span class="pre">process_sequence()</span></code></a></li>
 </ul>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="#module-gantry.services">gantry.services module</a><ul>
@@ -465,13 +467,11 @@ Performs IOD Validation before saving.</p>
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.io_handlers.</span></span><span class="sig-name descname"><span class="pre">DicomImporter</span></span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomImporter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomImporter" title="Link to this definition"></a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
 <p>Handles scanning of folders/files and ingesting them into the Object Graph.
-Reads metadata only (lazy loading) for performance.</p>
+optimized for parallel processing.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="gantry.io_handlers.DicomImporter.import_files">
 <em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">import_files</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">file_paths</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">store</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#gantry.io_handlers.DicomStore" title="gantry.io_handlers.DicomStore"><span class="pre">DicomStore</span></a></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomImporter.import_files"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomImporter.import_files" title="Link to this definition"></a></dt>
-<dd><p>Parses a list of files or directories. Recurses into directories to find all files.
-Skips those already in the store.
-Builds the Patient -&gt; Study -&gt; Series -&gt; Instance hierarchy.</p>
+<dd><p>Parses a list of files or directories. Recurses into directories to find all files.</p>
 </dd></dl>
 
 </dd></dl>
@@ -506,9 +506,23 @@ Builds the Patient -&gt; Study -&gt; Series -&gt; Instance hierarchy.</p>
 </dd></dl>
 
 <dl class="py function">
-<dt class="sig sig-object py" id="gantry.io_handlers.load_dicom_worker">
-<span class="sig-prename descclassname"><span class="pre">gantry.io_handlers.</span></span><span class="sig-name descname"><span class="pre">load_dicom_worker</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">fp</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#load_dicom_worker"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.load_dicom_worker" title="Link to this definition"></a></dt>
-<dd><p>Worker function to read DICOM metadata.</p>
+<dt class="sig sig-object py" id="gantry.io_handlers.ingest_worker">
+<span class="sig-prename descclassname"><span class="pre">gantry.io_handlers.</span></span><span class="sig-name descname"><span class="pre">ingest_worker</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">fp</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#ingest_worker"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.ingest_worker" title="Link to this definition"></a></dt>
+<dd><p>Worker function to read DICOM and construct Instance object.
+Returns: (metadata_dict, instance_object, error_string)
+metadata_dict contains keys for linking: ‘pid’, ‘pname’, ‘sid’, ‘ser_id’, etc.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="gantry.io_handlers.populate_attrs">
+<span class="sig-prename descclassname"><span class="pre">gantry.io_handlers.</span></span><span class="sig-name descname"><span class="pre">populate_attrs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ds</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">item</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#populate_attrs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.populate_attrs" title="Link to this definition"></a></dt>
+<dd><p>Standalone function to populate attributes for pickle-compatibility in workers.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="gantry.io_handlers.process_sequence">
+<span class="sig-prename descclassname"><span class="pre">gantry.io_handlers.</span></span><span class="sig-name descname"><span class="pre">process_sequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tag</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">elem</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parent_item</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#process_sequence"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.process_sequence" title="Link to this definition"></a></dt>
+<dd><p>Recursively parses Sequence (SQ) items.</p>
 </dd></dl>
 
 </section>

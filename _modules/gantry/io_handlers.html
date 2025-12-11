@@ -142,15 +142,66 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.parallel</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_parallel</span>
 
-<div class="viewcode-block" id="load_dicom_worker">
-<a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.load_dicom_worker">[docs]</a>
-<span class="k">def</span><span class="w"> </span><span class="nf">load_dicom_worker</span><span class="p">(</span><span class="n">fp</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Worker function to read DICOM metadata.&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="populate_attrs">
+<a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.populate_attrs">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">populate_attrs</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">item</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Standalone function to populate attributes for pickle-compatibility in workers.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">elem</span> <span class="ow">in</span> <span class="n">ds</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">elem</span><span class="o">.</span><span class="n">tag</span><span class="o">.</span><span class="n">group</span> <span class="o">==</span> <span class="mh">0x7fe0</span><span class="p">:</span> <span class="k">continue</span>  <span class="c1"># Skip pixels</span>
+        <span class="n">tag</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">elem</span><span class="o">.</span><span class="n">tag</span><span class="o">.</span><span class="n">group</span><span class="si">:</span><span class="s2">04x</span><span class="si">}</span><span class="s2">,</span><span class="si">{</span><span class="n">elem</span><span class="o">.</span><span class="n">tag</span><span class="o">.</span><span class="n">element</span><span class="si">:</span><span class="s2">04x</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">if</span> <span class="n">elem</span><span class="o">.</span><span class="n">VR</span> <span class="o">==</span> <span class="s1">&#39;SQ&#39;</span><span class="p">:</span>
+            <span class="n">process_sequence</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">elem</span><span class="p">,</span> <span class="n">item</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">elem</span><span class="o">.</span><span class="n">VR</span> <span class="o">==</span> <span class="s1">&#39;PN&#39;</span><span class="p">:</span>
+            <span class="c1"># Sanitize PersonName for pickle safety</span>
+            <span class="n">item</span><span class="o">.</span><span class="n">set_attr</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">elem</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">item</span><span class="o">.</span><span class="n">set_attr</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">elem</span><span class="o">.</span><span class="n">value</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="process_sequence">
+<a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.process_sequence">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">process_sequence</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">elem</span><span class="p">,</span> <span class="n">parent_item</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Recursively parses Sequence (SQ) items.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">ds_item</span> <span class="ow">in</span> <span class="n">elem</span><span class="p">:</span>
+        <span class="n">seq_item</span> <span class="o">=</span> <span class="n">DicomItem</span><span class="p">()</span>
+        <span class="n">populate_attrs</span><span class="p">(</span><span class="n">ds_item</span><span class="p">,</span> <span class="n">seq_item</span><span class="p">)</span>
+        <span class="n">parent_item</span><span class="o">.</span><span class="n">add_sequence_item</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">seq_item</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="ingest_worker">
+<a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.ingest_worker">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">ingest_worker</span><span class="p">(</span><span class="n">fp</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Worker function to read DICOM and construct Instance object.</span>
+<span class="sd">    Returns: (metadata_dict, instance_object, error_string)</span>
+<span class="sd">    metadata_dict contains keys for linking: &#39;pid&#39;, &#39;pname&#39;, &#39;sid&#39;, &#39;ser_id&#39;, etc.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">try</span><span class="p">:</span>
         <span class="n">ds</span> <span class="o">=</span> <span class="n">pydicom</span><span class="o">.</span><span class="n">dcmread</span><span class="p">(</span><span class="n">fp</span><span class="p">,</span> <span class="n">stop_before_pixels</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">force</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-        <span class="k">return</span> <span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">fp</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        
+        <span class="c1"># Extract Linking Metadata</span>
+        <span class="n">meta</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s1">&#39;pid&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PatientID&quot;</span><span class="p">,</span> <span class="s2">&quot;UNKNOWN&quot;</span><span class="p">)),</span>
+            <span class="s1">&#39;pname&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PatientName&quot;</span><span class="p">,</span> <span class="s2">&quot;Unknown&quot;</span><span class="p">)),</span>
+            <span class="s1">&#39;sid&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;StudyInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
+            <span class="s1">&#39;sdate&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;StudyDate&quot;</span><span class="p">,</span> <span class="s2">&quot;19000101&quot;</span><span class="p">)),</span>
+            <span class="s1">&#39;ser_id&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SeriesInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
+            <span class="s1">&#39;modality&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Modality&quot;</span><span class="p">,</span> <span class="s2">&quot;OT&quot;</span><span class="p">)),</span>
+            <span class="s1">&#39;sop&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SOPInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
+            <span class="s1">&#39;sop_class&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SOPClassUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
+            <span class="s1">&#39;man&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Manufacturer&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
+            <span class="s1">&#39;model&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;ManufacturerModelName&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
+            <span class="s1">&#39;dev_sn&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;DeviceSerialNumber&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
+        <span class="p">}</span>
+        
+        <span class="c1"># Construct Instance</span>
+        <span class="n">inst</span> <span class="o">=</span> <span class="n">Instance</span><span class="p">(</span><span class="n">meta</span><span class="p">[</span><span class="s1">&#39;sop&#39;</span><span class="p">],</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;sop_class&#39;</span><span class="p">],</span> <span class="mi">0</span><span class="p">,</span> <span class="n">file_path</span><span class="o">=</span><span class="n">fp</span><span class="p">)</span>
+        <span class="n">populate_attrs</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">inst</span><span class="p">)</span>
+        
+        <span class="k">return</span> <span class="p">(</span><span class="n">meta</span><span class="p">,</span> <span class="n">inst</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
     <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-        <span class="k">return</span> <span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">fp</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span></div>
+        <span class="k">return</span> <span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span></div>
 
 
 <div class="viewcode-block" id="DicomImporter">
@@ -158,7 +209,7 @@
 <span class="k">class</span><span class="w"> </span><span class="nc">DicomImporter</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Handles scanning of folders/files and ingesting them into the Object Graph.</span>
-<span class="sd">    Reads metadata only (lazy loading) for performance.</span>
+<span class="sd">    optimized for parallel processing.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 <div class="viewcode-block" id="DicomImporter.import_files">
 <a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.DicomImporter.import_files">[docs]</a>
@@ -166,8 +217,6 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">import_files</span><span class="p">(</span><span class="n">file_paths</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">store</span><span class="p">:</span> <span class="n">DicomStore</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Parses a list of files or directories. Recurses into directories to find all files.</span>
-<span class="sd">        Skips those already in the store.</span>
-<span class="sd">        Builds the Patient -&gt; Study -&gt; Series -&gt; Instance hierarchy.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">all_files</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">file_paths</span><span class="p">:</span>
@@ -182,85 +231,81 @@
         <span class="n">new_files</span> <span class="o">=</span> <span class="p">[</span><span class="n">fp</span> <span class="k">for</span> <span class="n">fp</span> <span class="ow">in</span> <span class="n">all_files</span> <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">fp</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">known_files</span><span class="p">]</span>
         
         <span class="n">logger</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
-        
         <span class="n">skipped_count</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">all_files</span><span class="p">)</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">new_files</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">skipped_count</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
             <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Skipping </span><span class="si">{</span><span class="n">skipped_count</span><span class="si">}</span><span class="s2"> already imported files.&quot;</span><span class="p">)</span>
             
-        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Importing </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">new_files</span><span class="p">)</span><span class="si">}</span><span class="s2"> files (Parallel)...&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">new_files</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Importing </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">new_files</span><span class="p">)</span><span class="si">}</span><span class="s2"> files (Parallel Ingest)...&quot;</span><span class="p">)</span>
         
-        <span class="c1"># Parallel Execution</span>
-        <span class="n">results</span> <span class="o">=</span> <span class="n">run_parallel</span><span class="p">(</span><span class="n">load_dicom_worker</span><span class="p">,</span> <span class="n">new_files</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Importing&quot;</span><span class="p">,</span> <span class="n">chunksize</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+        <span class="c1"># 1. Build Fast Lookup Maps (O(1))</span>
+        <span class="n">patient_map</span> <span class="o">=</span> <span class="p">{</span><span class="n">p</span><span class="o">.</span><span class="n">patient_id</span><span class="p">:</span> <span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">}</span>
+        <span class="n">study_map</span> <span class="o">=</span> <span class="p">{}</span> <span class="c1"># Key: study_uid -&gt; Study</span>
+        <span class="n">series_map</span> <span class="o">=</span> <span class="p">{}</span> <span class="c1"># Key: series_uid -&gt; Series</span>
         
-        <span class="c1"># Aggregation (Main Thread)</span>
-        <span class="k">for</span> <span class="n">ds</span><span class="p">,</span> <span class="n">fp</span><span class="p">,</span> <span class="n">err</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
+        <span class="c1"># Populate deep maps</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
+                <span class="n">study_map</span><span class="p">[</span><span class="n">st</span><span class="o">.</span><span class="n">study_instance_uid</span><span class="p">]</span> <span class="o">=</span> <span class="n">st</span>
+                <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">st</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
+                    <span class="n">series_map</span><span class="p">[</span><span class="n">se</span><span class="o">.</span><span class="n">series_instance_uid</span><span class="p">]</span> <span class="o">=</span> <span class="n">se</span>
+
+        <span class="c1"># 2. Parallel Execution</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="n">run_parallel</span><span class="p">(</span><span class="n">ingest_worker</span><span class="p">,</span> <span class="n">new_files</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Ingesting&quot;</span><span class="p">,</span> <span class="n">chunksize</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+        
+        <span class="c1"># 3. Aggregation (Main Thread)</span>
+        <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">meta</span><span class="p">,</span> <span class="n">inst</span><span class="p">,</span> <span class="n">err</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">err</span><span class="p">:</span>
-                 <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Import Failed </span><span class="si">{</span><span class="n">fp</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">err</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                 <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Import Failed: </span><span class="si">{</span><span class="n">err</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
                  <span class="k">continue</span>
-            <span class="k">if</span> <span class="n">ds</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">inst</span><span class="p">:</span>
                 <span class="k">try</span><span class="p">:</span>
-                    <span class="n">DicomImporter</span><span class="o">.</span><span class="n">_ingest</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">store</span><span class="p">,</span> <span class="n">fp</span><span class="p">)</span>
-                    <span class="c1"># logger.info(f&quot;Indexed: {os.path.basename(fp)}&quot;) # Too verbose for big imports?</span>
+                    <span class="c1"># Linkage Logic</span>
+                    <span class="n">pid</span> <span class="o">=</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;pid&#39;</span><span class="p">]</span>
+                    <span class="n">sid</span> <span class="o">=</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;sid&#39;</span><span class="p">]</span>
+                    <span class="n">ser_id</span> <span class="o">=</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;ser_id&#39;</span><span class="p">]</span>
+                    
+                    <span class="c1"># Patient</span>
+                    <span class="n">pat</span> <span class="o">=</span> <span class="n">patient_map</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pid</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="ow">not</span> <span class="n">pat</span><span class="p">:</span>
+                        <span class="n">pat</span> <span class="o">=</span> <span class="n">Patient</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;pname&#39;</span><span class="p">])</span>
+                        <span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span>
+                        <span class="n">patient_map</span><span class="p">[</span><span class="n">pid</span><span class="p">]</span> <span class="o">=</span> <span class="n">pat</span>
+                    
+                    <span class="c1"># Study</span>
+                    <span class="n">study</span> <span class="o">=</span> <span class="n">study_map</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">sid</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="ow">not</span> <span class="n">study</span><span class="p">:</span>
+                        <span class="c1"># Parse date carefully or use fallback</span>
+                        <span class="k">try</span><span class="p">:</span>
+                            <span class="n">sdate</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">strptime</span><span class="p">(</span><span class="n">meta</span><span class="p">[</span><span class="s1">&#39;sdate&#39;</span><span class="p">],</span> <span class="s2">&quot;%Y%m</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">date</span><span class="p">()</span>
+                        <span class="k">except</span><span class="p">:</span>
+                            <span class="n">sdate</span> <span class="o">=</span> <span class="n">date</span><span class="p">(</span><span class="mi">1900</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+                            
+                        <span class="n">study</span> <span class="o">=</span> <span class="n">Study</span><span class="p">(</span><span class="n">sid</span><span class="p">,</span> <span class="n">sdate</span><span class="p">)</span>
+                        <span class="n">pat</span><span class="o">.</span><span class="n">studies</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">study</span><span class="p">)</span>
+                        <span class="n">study_map</span><span class="p">[</span><span class="n">sid</span><span class="p">]</span> <span class="o">=</span> <span class="n">study</span>
+                    
+                    <span class="c1"># Series</span>
+                    <span class="n">series</span> <span class="o">=</span> <span class="n">series_map</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">ser_id</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="ow">not</span> <span class="n">series</span><span class="p">:</span>
+                        <span class="n">series</span> <span class="o">=</span> <span class="n">Series</span><span class="p">(</span><span class="n">ser_id</span><span class="p">,</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;modality&#39;</span><span class="p">],</span> <span class="mi">0</span><span class="p">)</span>
+                        <span class="k">if</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;man&#39;</span><span class="p">]</span> <span class="ow">or</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;model&#39;</span><span class="p">]:</span>
+                            <span class="n">series</span><span class="o">.</span><span class="n">equipment</span> <span class="o">=</span> <span class="n">Equipment</span><span class="p">(</span><span class="n">meta</span><span class="p">[</span><span class="s1">&#39;man&#39;</span><span class="p">],</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;model&#39;</span><span class="p">],</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;dev_sn&#39;</span><span class="p">])</span>
+                        <span class="n">study</span><span class="o">.</span><span class="n">series</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">series</span><span class="p">)</span>
+                        <span class="n">series_map</span><span class="p">[</span><span class="n">ser_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">series</span>
+                    
+                    <span class="c1"># Instance</span>
+                    <span class="n">series</span><span class="o">.</span><span class="n">instances</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
+                    <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
                 <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-                    <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Ingest Failed </span><span class="si">{</span><span class="n">fp</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Linkage Failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Successfully ingested </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2"> instances.&quot;</span><span class="p">)</span></div>
+</div>
 
-    <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">_ingest</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">store</span><span class="p">,</span> <span class="n">filepath</span><span class="p">):</span>
-        <span class="c1"># Extract IDs</span>
-        <span class="n">pid</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PatientID&quot;</span><span class="p">,</span> <span class="s2">&quot;UNKNOWN&quot;</span><span class="p">))</span>
-        <span class="n">pname</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PatientName&quot;</span><span class="p">,</span> <span class="s2">&quot;Unknown&quot;</span><span class="p">))</span>
-        <span class="n">sid</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;StudyInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
-        <span class="n">ser_id</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SeriesInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
-        <span class="n">sop</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SOPInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
-
-        <span class="c1"># Hierarchy Traversal</span>
-        <span class="n">pat</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">store</span><span class="o">.</span><span class="n">patients</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">patient_id</span> <span class="o">==</span> <span class="n">pid</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="n">pat</span><span class="p">:</span>
-            <span class="n">pat</span> <span class="o">=</span> <span class="n">Patient</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="n">pname</span><span class="p">)</span>
-            <span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span>
-
-        <span class="n">study</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">s</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">pat</span><span class="o">.</span><span class="n">studies</span> <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="n">study_instance_uid</span> <span class="o">==</span> <span class="n">sid</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="n">study</span><span class="p">:</span>
-            <span class="n">study</span> <span class="o">=</span> <span class="n">Study</span><span class="p">(</span><span class="n">sid</span><span class="p">,</span> <span class="n">date</span><span class="p">(</span><span class="mi">1900</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>  <span class="c1"># Simplified date parsing</span>
-            <span class="n">pat</span><span class="o">.</span><span class="n">studies</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">study</span><span class="p">)</span>
-
-        <span class="n">series</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">s</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">study</span><span class="o">.</span><span class="n">series</span> <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="n">series_instance_uid</span> <span class="o">==</span> <span class="n">ser_id</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="n">series</span><span class="p">:</span>
-            <span class="n">series</span> <span class="o">=</span> <span class="n">Series</span><span class="p">(</span><span class="n">ser_id</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Modality&quot;</span><span class="p">,</span> <span class="s2">&quot;OT&quot;</span><span class="p">)),</span> <span class="mi">0</span><span class="p">)</span>
-            <span class="c1"># Equipment</span>
-            <span class="n">man</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Manufacturer&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
-            <span class="n">mod</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;ManufacturerModelName&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
-            <span class="n">sn</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;DeviceSerialNumber&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
-            <span class="k">if</span> <span class="n">man</span> <span class="ow">or</span> <span class="n">mod</span><span class="p">:</span>
-                <span class="n">series</span><span class="o">.</span><span class="n">equipment</span> <span class="o">=</span> <span class="n">Equipment</span><span class="p">(</span><span class="n">man</span><span class="p">,</span> <span class="n">mod</span><span class="p">,</span> <span class="n">sn</span><span class="p">)</span>
-            <span class="n">study</span><span class="o">.</span><span class="n">series</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">series</span><span class="p">)</span>
-
-        <span class="c1"># Create Instance (Link file path for lazy loading)</span>
-        <span class="n">inst</span> <span class="o">=</span> <span class="n">Instance</span><span class="p">(</span><span class="n">sop</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SOPClassUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span> <span class="mi">0</span><span class="p">,</span> <span class="n">file_path</span><span class="o">=</span><span class="n">filepath</span><span class="p">)</span>
-        <span class="n">DicomImporter</span><span class="o">.</span><span class="n">_populate_attrs</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">inst</span><span class="p">)</span>
-        <span class="n">series</span><span class="o">.</span><span class="n">instances</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
-
-    <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">_populate_attrs</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">item</span><span class="p">):</span>
-        <span class="k">for</span> <span class="n">elem</span> <span class="ow">in</span> <span class="n">ds</span><span class="p">:</span>
-            <span class="k">if</span> <span class="n">elem</span><span class="o">.</span><span class="n">tag</span><span class="o">.</span><span class="n">group</span> <span class="o">==</span> <span class="mh">0x7fe0</span><span class="p">:</span> <span class="k">continue</span>  <span class="c1"># Skip pixels</span>
-            <span class="n">tag</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">elem</span><span class="o">.</span><span class="n">tag</span><span class="o">.</span><span class="n">group</span><span class="si">:</span><span class="s2">04x</span><span class="si">}</span><span class="s2">,</span><span class="si">{</span><span class="n">elem</span><span class="o">.</span><span class="n">tag</span><span class="o">.</span><span class="n">element</span><span class="si">:</span><span class="s2">04x</span><span class="si">}</span><span class="s2">&quot;</span>
-            <span class="k">if</span> <span class="n">elem</span><span class="o">.</span><span class="n">VR</span> <span class="o">==</span> <span class="s1">&#39;SQ&#39;</span><span class="p">:</span>
-                <span class="n">DicomImporter</span><span class="o">.</span><span class="n">_process_sequence</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">elem</span><span class="p">,</span> <span class="n">item</span><span class="p">)</span>
-            <span class="k">elif</span> <span class="n">elem</span><span class="o">.</span><span class="n">VR</span> <span class="o">==</span> <span class="s1">&#39;PN&#39;</span><span class="p">:</span>
-                <span class="c1"># Sanitize PersonName for pickle safety</span>
-                <span class="n">item</span><span class="o">.</span><span class="n">set_attr</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">elem</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
-            <span class="k">else</span><span class="p">:</span>
-                <span class="n">item</span><span class="o">.</span><span class="n">set_attr</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">elem</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
-
-    <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">_process_sequence</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">elem</span><span class="p">,</span> <span class="n">parent_item</span><span class="p">):</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Recursively parses Sequence (SQ) items.&quot;&quot;&quot;</span>
-        <span class="k">for</span> <span class="n">ds_item</span> <span class="ow">in</span> <span class="n">elem</span><span class="p">:</span>
-            <span class="n">seq_item</span> <span class="o">=</span> <span class="n">DicomItem</span><span class="p">()</span>
-            <span class="n">DicomImporter</span><span class="o">.</span><span class="n">_populate_attrs</span><span class="p">(</span><span class="n">ds_item</span><span class="p">,</span> <span class="n">seq_item</span><span class="p">)</span>
-            <span class="n">parent_item</span><span class="o">.</span><span class="n">add_sequence_item</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">seq_item</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="DicomExporter">
