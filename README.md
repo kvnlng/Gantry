@@ -29,7 +29,13 @@ It features a **Lazy-Loading Proxy** architecture, allowing you to index thousan
 ---
 
 ## 📦 Installation
-# ... (Installation section unchanged) ...
+Clone the repository and install in editable mode:
+
+```bash
+git clone https://github.com/kvnlng/gantry.git
+cd gantry
+pip install -e .
+```
 
 ## 🛡️ De-Identification Workflow
 
