@@ -135,24 +135,27 @@
 
 <div class="viewcode-block" id="DicomSession.preserve_patient_identity">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.preserve_patient_identity">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">preserve_patient_identity</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">preserve_patient_identity</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">persist</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="s2">&quot;Instance&quot;</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Securely embeds the original patient name/ID into a private DICOM tag</span>
 <span class="sd">        for all instances belonging to the specified patient.</span>
 <span class="sd">        Must be called BEFORE anonymization.</span>
+<span class="sd">        </span>
+<span class="sd">        Args:</span>
+<span class="sd">            patient_id: The ID of the patient to preserve.</span>
+<span class="sd">            persist: If True, writes changes to DB immediately. If False, returns instances for batch persistence.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">reversibility_service</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;Reversible anonymization not enabled. Call enable_reversible_anonymization() first.&quot;</span><span class="p">)</span>
             
-        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Preserving identity for </span><span class="si">{</span><span class="n">patient_id</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span>
+        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Preserving identity for </span><span class="si">{</span><span class="n">patient_id</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span> <span class="c1"># Debug level in batch? Info is fine.</span>
         
-        <span class="c1"># Optimize: Collect modified instances and perform bulk update</span>
         <span class="n">modified_instances</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="n">patient</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">patient_id</span> <span class="o">==</span> <span class="n">patient_id</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
         
         <span class="k">if</span> <span class="ow">not</span> <span class="n">patient</span><span class="p">:</span>
             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Patient </span><span class="si">{</span><span class="n">patient_id</span><span class="si">}</span><span class="s2"> not found.&quot;</span><span class="p">)</span>
-            <span class="k">return</span>
+            <span class="k">return</span> <span class="p">[]</span>
 
         <span class="n">cnt</span> <span class="o">=</span> <span class="mi">0</span>
         <span class="n">original_attrs</span> <span class="o">=</span> <span class="p">{</span>
@@ -168,9 +171,11 @@
                     <span class="n">modified_instances</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
                     <span class="n">cnt</span> <span class="o">+=</span> <span class="mi">1</span>
         
-        <span class="c1"># Use optimized persistence</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="o">.</span><span class="n">update_attributes</span><span class="p">(</span><span class="n">modified_instances</span><span class="p">)</span>
-        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Secured identity in </span><span class="si">{</span><span class="n">cnt</span><span class="si">}</span><span class="s2"> instances.&quot;</span><span class="p">)</span></div>
+        <span class="k">if</span> <span class="n">persist</span> <span class="ow">and</span> <span class="n">modified_instances</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="o">.</span><span class="n">update_attributes</span><span class="p">(</span><span class="n">modified_instances</span><span class="p">)</span>
+            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Secured identity in </span><span class="si">{</span><span class="n">cnt</span><span class="si">}</span><span class="s2"> instances for </span><span class="si">{</span><span class="n">patient_id</span><span class="si">}</span><span class="s2">.&quot;</span><span class="p">)</span>
+            
+        <span class="k">return</span> <span class="n">modified_instances</span></div>
 
 
 <div class="viewcode-block" id="DicomSession.preserve_identities">
@@ -205,24 +210,16 @@
         
         <span class="kn">from</span><span class="w"> </span><span class="nn">tqdm</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
         <span class="k">for</span> <span class="n">pid</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">patient_ids</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Preserving Identities&quot;</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">&quot;patient&quot;</span><span class="p">):</span>
-            <span class="n">patient</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">patient_id</span> <span class="o">==</span> <span class="n">pid</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
-            <span class="k">if</span> <span class="ow">not</span> <span class="n">patient</span><span class="p">:</span> <span class="k">continue</span>
-            
-            <span class="n">original_attrs</span> <span class="o">=</span> <span class="p">{</span>
-                <span class="s2">&quot;PatientName&quot;</span><span class="p">:</span> <span class="n">patient</span><span class="o">.</span><span class="n">patient_name</span><span class="p">,</span>
-                <span class="s2">&quot;PatientID&quot;</span><span class="p">:</span> <span class="n">patient</span><span class="o">.</span><span class="n">patient_id</span>
-            <span class="p">}</span>
-            
-            <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">patient</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
-                <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">st</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
-                    <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">:</span>
-                        <span class="bp">self</span><span class="o">.</span><span class="n">reversibility_service</span><span class="o">.</span><span class="n">embed_original_data</span><span class="p">(</span><span class="n">inst</span><span class="p">,</span> <span class="n">original_attrs</span><span class="p">)</span>
-                        <span class="n">modified_instances</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
+            <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">preserve_patient_identity</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="n">persist</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="n">modified_instances</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">res</span><span class="p">)</span>
             <span class="n">count_patients</span> <span class="o">+=</span> <span class="mi">1</span>
             
         <span class="k">if</span> <span class="n">modified_instances</span><span class="p">:</span>
-             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Persisting changes for </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">modified_instances</span><span class="p">)</span><span class="si">}</span><span class="s2"> instances...&quot;</span><span class="p">)</span>
+             <span class="n">msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Persisting changes for </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">modified_instances</span><span class="p">)</span><span class="si">}</span><span class="s2"> instances...&quot;</span>
+             <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span> <span class="c1"># Force newline after tqdm</span>
+             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
              <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="o">.</span><span class="n">update_attributes</span><span class="p">(</span><span class="n">modified_instances</span><span class="p">)</span>
+             <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Persistence complete.&quot;</span><span class="p">)</span>
              
         <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Batch preserved identity for </span><span class="si">{</span><span class="n">count_patients</span><span class="si">}</span><span class="s2"> patients (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">modified_instances</span><span class="p">)</span><span class="si">}</span><span class="s2"> instances).&quot;</span><span class="p">)</span></div>
 
