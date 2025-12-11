@@ -11,7 +11,7 @@ def test_session_persistence(tmp_path, dummy_patient):
     # 1. Create Session
     session = DicomSession(str(db_file))
     session.store.patients.append(dummy_patient)
-    session._save()
+    session.save()
 
     # 2. Load into Session
     # 2. Reload Session

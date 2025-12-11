@@ -13,7 +13,7 @@ def test_phi_report_analysis(tmp_path):
     # Setup data with PHI
     p = Patient("P_PHI", "John Doe")
     session.store.patients.append(p)
-    session._save()
+    session.save()
     
     # Scan
     report = session.scan_for_phi()
@@ -50,7 +50,7 @@ def test_batch_preserve_from_report(tmp_path):
     st.series.append(se)
     p.studies.append(st)
     session.store.patients.append(p)
-    session._save()
+    session.save()
     
     # Scan
     report = session.scan_for_phi()

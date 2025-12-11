@@ -76,7 +76,8 @@ def test_session_integration(tmp_path):
     sess.store.patients.append(p)
     
     # Save
-    sess._save()
+    sess.save()
+    sess.persistence_manager.shutdown()
     
     # Verify DB
     with sqlite3.connect(str(db_path)) as conn:

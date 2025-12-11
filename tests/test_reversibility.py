@@ -36,7 +36,7 @@ def test_reversible_anonymization_flow(tmp_path):
     st.series.append(se)
     p.studies.append(st)
     session.store.patients.append(p)
-    session._save()
+    session.save()
     
     # 2. Preserve Identity
     session.preserve_patient_identity(pid)
@@ -49,7 +49,7 @@ def test_reversible_anonymization_flow(tmp_path):
     
     # 3. Simulate Anonymization (Change Name)
     p.patient_name = "ANONYMIZED"
-    session._save()
+    session.save()
     
     # 4. Recover Identity
     # We capture stdout or just check return from service directly, 

@@ -29,7 +29,7 @@ def test_optimization_preservation(tmp_path):
     st.series.append(se)
     p.studies.append(st)
     session.store.patients.append(p)
-    session._save()
+    session.save()
     
     # 2. Monitor SQL to verify update_attributes is used
     # We will hook into sqlite3 to check calls or just verify data is updated without full re-insert
@@ -71,7 +71,7 @@ def test_batch_reversibility(tmp_path):
         p.studies.append(st)
         session.store.patients.append(p)
         
-    session._save()
+    session.save()
     
     # Batch Preserve
     session.preserve_identities(ids)
