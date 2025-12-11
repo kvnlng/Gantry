@@ -300,6 +300,11 @@ class DicomExporter:
                 continue
 
             g, e = map(lambda x: int(x, 16), t.split(','))
+            
+            # Skip Command Set elements (Group 0000) which are illegal for file persistence
+            if g == 0x0000:
+                continue
+
             try:
                 vr = dictionary_VR(Tag(g, e))
                 ds.add_new(Tag(g, e), vr, v)

@@ -1,0 +1,37 @@
+
+import pytest
+import os
+from gantry.entities import Patient, Study, Series, Instance
+from gantry.io_handlers import DicomExporter
+
+def test_export_command_set_error(tmp_path):
+    # Setup Patient Hierarchy
+    p = Patient("P_CMD", "Command Set Test")
+    st = Study("S1", None) # None date handles by exporter logic
+    se = Series("SE1", "OT", 1)
+    
+    # Create instance and inject illegal 0000 group tag
+    inst = Instance("I1", "1.2.840.10008.5.1.4.1.1.2", 1)
+    # 0000,0010 is CommandGroupLength, definitely illegal for file write
+    inst.attributes["0000,0010"] = 100 
+    
+    # Add Mandatory IOD Tags to pass validation
+    inst.attributes["0008,0020"] = "20230101" # Study Date
+    inst.attributes["0008,0030"] = "120000"   # Study Time
+    inst.attributes["0018,0050"] = "1.0"      # Slice Thickness
+    inst.attributes["0018,0060"] = "120"      # KVP
+    inst.attributes["0020,0032"] = ["0","0","0"] # Position
+    inst.attributes["0020,0037"] = ["1","0","0","0","1","0"] # Orientation
+    inst.attributes["0028,0030"] = ["0.5", "0.5"] # Pixel Spacing 
+    
+    se.instances.append(inst)
+    st.series.append(se)
+    p.studies.append(st)
+    
+    out_dir = tmp_path / "export_bad"
+    
+    # Act: This should NOW SUCCEED (Command tags ignored)
+    DicomExporter.save_patient(p, str(out_dir))
+    
+    # Verify file exists
+    assert (out_dir / f"{inst.sop_instance_uid}.dcm").exists()
