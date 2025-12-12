@@ -584,6 +584,13 @@ Includes safety checks for image bounds.</p>
 <p>The Main Facade for the Gantry library.
 Manages the lifecycle of the DicomStore (Load/Import/Redact/Export/Save).</p>
 <dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.anonymize_metadata">
+<span class="sig-name descname"><span class="pre">anonymize_metadata</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">findings</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">PhiFinding</span><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.anonymize_metadata"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.anonymize_metadata" title="Link to this definition"></a></dt>
+<dd><p>Alias for apply_remediation.
+Checkpoint 6: Anonymize.</p>
+</dd></dl>
+
+<dl class="py method">
 <dt class="sig sig-object py" id="gantry.session.DicomSession.apply_remediation">
 <span class="sig-name descname"><span class="pre">apply_remediation</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">findings</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">PhiFinding</span><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.apply_remediation"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.apply_remediation" title="Link to this definition"></a></dt>
 <dd><p>Applies remediation to the current session based on findings.
@@ -591,9 +598,30 @@ Auto-logs to Audit Trail.</p>
 </dd></dl>
 
 <dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.audit">
+<span class="sig-name descname"><span class="pre">audit</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">PhiReport</span></span></span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.audit"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.audit" title="Link to this definition"></a></dt>
+<dd><p>Alias for scan_for_phi.
+Checkpoint 4: Target.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.backup_identities">
+<span class="sig-name descname"><span class="pre">backup_identities</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_data</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.backup_identities"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.backup_identities" title="Link to this definition"></a></dt>
+<dd><p>Alias for preserve_identities.
+Checkpoint 5: Backup.</p>
+</dd></dl>
+
+<dl class="py method">
 <dt class="sig sig-object py" id="gantry.session.DicomSession.enable_reversible_anonymization">
 <span class="sig-name descname"><span class="pre">enable_reversible_anonymization</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">key_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'gantry.key'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.enable_reversible_anonymization"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.enable_reversible_anonymization" title="Link to this definition"></a></dt>
 <dd><p>Initializes the encryption subsystem.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.examine">
+<span class="sig-name descname"><span class="pre">examine</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.examine"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.examine" title="Link to this definition"></a></dt>
+<dd><p>Alias for inventory.
+Checkpoint 2: Examine.</p>
 </dd></dl>
 
 <dl class="py method">
@@ -610,9 +638,23 @@ If safe=True, performs a fresh PHI scan and ONLY exports clean data.</p>
 </dd></dl>
 
 <dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.export_data">
+<span class="sig-name descname"><span class="pre">export_data</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">folder</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">safe</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.export_data"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.export_data" title="Link to this definition"></a></dt>
+<dd><p>Alias for export.
+Checkpoint 9: Export.</p>
+</dd></dl>
+
+<dl class="py method">
 <dt class="sig sig-object py" id="gantry.session.DicomSession.import_folder">
 <span class="sig-name descname"><span class="pre">import_folder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">folder_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.import_folder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.import_folder" title="Link to this definition"></a></dt>
 <dd><p>Scans a folder for .dcm files (recursively) and imports them into the session.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.ingest">
+<span class="sig-name descname"><span class="pre">ingest</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">folder_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.ingest"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.ingest" title="Link to this definition"></a></dt>
+<dd><p>Alias for import_folder.
+Checkpoint 1: Ingest.</p>
 </dd></dl>
 
 <dl class="py method">
@@ -674,6 +716,13 @@ roi: (r1, r2, c1, c2)</p>
 </dd></dl>
 
 <dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.redact_pixels">
+<span class="sig-name descname"><span class="pre">redact_pixels</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.redact_pixels"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.redact_pixels" title="Link to this definition"></a></dt>
+<dd><p>Alias for execute_config.
+Checkpoint 7: Redact.</p>
+</dd></dl>
+
+<dl class="py method">
 <dt class="sig sig-object py" id="gantry.session.DicomSession.save">
 <span class="sig-name descname"><span class="pre">save</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.save"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.save" title="Link to this definition"></a></dt>
 <dd><p>Persists the current session state to the database in the background.
@@ -699,6 +748,20 @@ that are NOT covered by the currently loaded rules.</p>
 <span class="sig-name descname"><span class="pre">scan_for_phi</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">PhiReport</span></span></span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.scan_for_phi"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.scan_for_phi" title="Link to this definition"></a></dt>
 <dd><p>Scans all patients in the session for potential PHI.
 Returns a PhiReport object (iterable, and convertible to DataFrame).</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.setup_config">
+<span class="sig-name descname"><span class="pre">setup_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">output_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.setup_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.setup_config" title="Link to this definition"></a></dt>
+<dd><p>Alias for scaffold_config.
+Checkpoint 3: Configure.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.verify">
+<span class="sig-name descname"><span class="pre">verify</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">PhiReport</span></span></span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.verify"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.verify" title="Link to this definition"></a></dt>
+<dd><p>Alias for scan_for_phi.
+Checkpoint 8: Verify.</p>
 </dd></dl>
 
 </dd></dl>

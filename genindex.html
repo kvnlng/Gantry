@@ -97,13 +97,17 @@
 </li>
       <li><a href="gantry.html#gantry.builders.StudyBuilder.add_series">add_series() (gantry.builders.StudyBuilder method)</a>
 </li>
+      <li><a href="gantry.html#gantry.builders.PatientBuilder.add_study">add_study() (gantry.builders.PatientBuilder method)</a>
+</li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="gantry.html#gantry.builders.PatientBuilder.add_study">add_study() (gantry.builders.PatientBuilder method)</a>
+      <li><a href="gantry.html#gantry.session.DicomSession.anonymize_metadata">anonymize_metadata() (gantry.session.DicomSession method)</a>
 </li>
       <li><a href="gantry.html#gantry.session.DicomSession.apply_remediation">apply_remediation() (gantry.session.DicomSession method)</a>
 </li>
       <li><a href="gantry.html#gantry.entities.DicomItem.attributes">attributes (gantry.entities.DicomItem attribute)</a>
+</li>
+      <li><a href="gantry.html#gantry.session.DicomSession.audit">audit() (gantry.session.DicomSession method)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -111,10 +115,12 @@
 <h2 id="B">B</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="gantry.html#gantry.builders.PatientBuilder.build">build() (gantry.builders.PatientBuilder method)</a>
+      <li><a href="gantry.html#gantry.session.DicomSession.backup_identities">backup_identities() (gantry.session.DicomSession method)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="gantry.html#gantry.builders.PatientBuilder.build">build() (gantry.builders.PatientBuilder method)</a>
+</li>
       <li><a href="gantry.html#gantry.Builder">Builder (in module gantry)</a>
 </li>
   </ul></td>
@@ -167,19 +173,23 @@
 </li>
       <li><a href="gantry.html#gantry.builders.StudyBuilder.end_study">end_study() (gantry.builders.StudyBuilder method)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="gantry.html#gantry.Equipment">Equipment (class in gantry)</a>
 
       <ul>
         <li><a href="gantry.html#gantry.entities.Equipment">(class in gantry.entities)</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="gantry.html#gantry.entities.Series.equipment">equipment (gantry.entities.Series attribute)</a>
+</li>
+      <li><a href="gantry.html#gantry.session.DicomSession.examine">examine() (gantry.session.DicomSession method)</a>
 </li>
       <li><a href="gantry.html#gantry.session.DicomSession.execute_config">execute_config() (gantry.session.DicomSession method)</a>
 </li>
       <li><a href="gantry.html#gantry.session.DicomSession.export">export() (gantry.session.DicomSession method)</a>
+</li>
+      <li><a href="gantry.html#gantry.session.DicomSession.export_data">export_data() (gantry.session.DicomSession method)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -272,6 +282,8 @@
       <li><a href="gantry.html#gantry.session.DicomSession.import_folder">import_folder() (gantry.session.DicomSession method)</a>
 </li>
       <li><a href="gantry.html#gantry.services.MachinePixelIndex.index_store">index_store() (gantry.services.MachinePixelIndex method)</a>
+</li>
+      <li><a href="gantry.html#gantry.session.DicomSession.ingest">ingest() (gantry.session.DicomSession method)</a>
 </li>
       <li><a href="gantry.html#gantry.io_handlers.ingest_worker">ingest_worker() (in module gantry.io_handlers)</a>
 </li>
@@ -390,9 +402,11 @@
 </li>
       <li><a href="gantry.html#gantry.session.DicomSession.redact_by_machine">redact_by_machine() (gantry.session.DicomSession method)</a>
 </li>
+      <li><a href="gantry.html#gantry.services.RedactionService.redact_machine_region">redact_machine_region() (gantry.services.RedactionService method)</a>
+</li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="gantry.html#gantry.services.RedactionService.redact_machine_region">redact_machine_region() (gantry.services.RedactionService method)</a>
+      <li><a href="gantry.html#gantry.session.DicomSession.redact_pixels">redact_pixels() (gantry.session.DicomSession method)</a>
 </li>
       <li><a href="gantry.html#gantry.services.RedactionService">RedactionService (class in gantry.services)</a>
 </li>
@@ -448,6 +462,8 @@
         <li><a href="gantry.html#gantry.entities.Instance.set_pixel_data">(gantry.entities.Instance method)</a>
 </li>
       </ul></li>
+      <li><a href="gantry.html#gantry.session.DicomSession.setup_config">setup_config() (gantry.session.DicomSession method)</a>
+</li>
       <li><a href="gantry.html#gantry.entities.Instance.sop_class_uid">sop_class_uid (gantry.entities.Instance attribute)</a>
 </li>
       <li><a href="gantry.html#gantry.entities.Instance.sop_instance_uid">sop_instance_uid (gantry.entities.Instance attribute)</a>
@@ -479,6 +495,10 @@
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="gantry.html#gantry.validation.IODValidator.validate">validate() (gantry.validation.IODValidator static method)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="gantry.html#gantry.session.DicomSession.verify">verify() (gantry.session.DicomSession method)</a>
 </li>
   </ul></td>
 </tr></table>
