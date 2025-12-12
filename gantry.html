@@ -230,14 +230,21 @@
 <dl class="py method">
 <dt class="sig sig-object py" id="gantry.config_manager.ConfigLoader.load_phi_config">
 <em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">load_phi_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="_modules/gantry/config_manager.html#ConfigLoader.load_phi_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.config_manager.ConfigLoader.load_phi_config" title="Link to this definition"></a></dt>
-<dd><p>Loads PHI tags from a JSON file.
-If filepath is None, loads the default ‘resources/phi_tags.json’ from the package.</p>
+<dd><p>Legacy/Convenience support.</p>
 </dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="gantry.config_manager.ConfigLoader.load_redaction_rules">
 <em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">load_redaction_rules</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="_modules/gantry/config_manager.html#ConfigLoader.load_redaction_rules"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.config_manager.ConfigLoader.load_redaction_rules" title="Link to this definition"></a></dt>
-<dd><p>Parses the JSON config and returns a list of machine rules.</p>
+<dd><p>Legacy/Convenience support.
+If v2 file, extracts ‘machines’. If v1 file (list or dict), tries to parse.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.config_manager.ConfigLoader.load_unified_config">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">load_unified_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="_modules/gantry/config_manager.html#ConfigLoader.load_unified_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.config_manager.ConfigLoader.load_unified_config" title="Link to this definition"></a></dt>
+<dd><p>Parses the unified JSON config (v2.0).
+Returns: (phi_tags, machine_rules)</p>
 </dd></dl>
 
 </dd></dl>
@@ -739,14 +746,15 @@ report: PhiReport or List[PhiFinding]</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="gantry.session.DicomSession.scaffold_config">
 <span class="sig-name descname"><span class="pre">scaffold_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">output_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.scaffold_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.scaffold_config" title="Link to this definition"></a></dt>
-<dd><p>Generates a skeleton configuration file for machines found in the inventory
-that are NOT covered by the currently loaded rules.</p>
+<dd><p>Generates a unified v2 configuration file.
+Includes default PHI tags + Auto-detected machine inventory.</p>
 </dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="gantry.session.DicomSession.scan_for_phi">
 <span class="sig-name descname"><span class="pre">scan_for_phi</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">PhiReport</span></span></span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.scan_for_phi"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.scan_for_phi" title="Link to this definition"></a></dt>
 <dd><p>Scans all patients in the session for potential PHI.
+Uses cached <cite>active_phi_tags</cite> if config_path matches or is None, otherwise loads fresh.
 Returns a PhiReport object (iterable, and convertible to DataFrame).</p>
 </dd></dl>
 
@@ -770,7 +778,7 @@ Checkpoint 8: Verify.</p>
 <dt class="sig sig-object py" id="gantry.session.scan_worker">
 <span class="sig-prename descclassname"><span class="pre">gantry.session.</span></span><span class="sig-name descname"><span class="pre">scan_worker</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">args</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#scan_worker"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.scan_worker" title="Link to this definition"></a></dt>
 <dd><p>Worker to scan a single patient.
-args: (patient_copy, config_path)
+args: (patient_copy, config_source)
 Returns: List[PhiFinding] (WITHOUT entities, lightweight)</p>
 </dd></dl>
 

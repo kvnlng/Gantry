@@ -92,12 +92,20 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">scan_worker</span><span class="p">(</span><span class="n">args</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Worker to scan a single patient.</span>
-<span class="sd">    args: (patient_copy, config_path)</span>
+<span class="sd">    args: (patient_copy, config_source)</span>
 <span class="sd">    Returns: List[PhiFinding] (WITHOUT entities, lightweight)</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">patient</span><span class="p">,</span> <span class="n">config_path</span> <span class="o">=</span> <span class="n">args</span>
+    <span class="n">patient</span><span class="p">,</span> <span class="n">config_source</span> <span class="o">=</span> <span class="n">args</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">.privacy</span><span class="w"> </span><span class="kn">import</span> <span class="n">PhiInspector</span> <span class="c1"># Import inside worker</span>
-    <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span>
+    
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">config_source</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+        <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_tags</span><span class="o">=</span><span class="n">config_source</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">config_source</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">or</span> <span class="n">config_source</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_path</span><span class="o">=</span><span class="n">config_source</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Fallback</span>
+        <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">()</span>
+
     <span class="n">findings</span> <span class="o">=</span> <span class="n">inspector</span><span class="o">.</span><span class="n">scan_patient</span><span class="p">(</span><span class="n">patient</span><span class="p">)</span>
     
     <span class="c1"># Strip heavy entity objects before returning across process boundary</span>
@@ -128,6 +136,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="o">.</span><span class="n">load_all</span><span class="p">()</span>
         
         <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
         
         <span class="c1"># Reversibility</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">key_manager</span> <span class="o">=</span> <span class="kc">None</span>
@@ -269,11 +278,22 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">scan_for_phi</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;PhiReport&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Scans all patients in the session for potential PHI.</span>
+<span class="sd">        Uses cached `active_phi_tags` if config_path matches or is None, otherwise loads fresh.</span>
 <span class="sd">        Returns a PhiReport object (iterable, and convertible to DataFrame).</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">.privacy</span><span class="w"> </span><span class="kn">import</span> <span class="n">PhiReport</span>
         
-        <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span>
+        <span class="c1"># Logic: If config_path is provided, we should probably load it temporarily for this scan?</span>
+        <span class="c1"># OR if config_path is None, use self.active_phi_tags</span>
+        
+        <span class="n">tags_to_use</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span>
+        
+        <span class="k">if</span> <span class="n">config_path</span><span class="p">:</span>
+             <span class="c1"># Just load tags for this run, don&#39;t overwrite session state unless load_config called?</span>
+             <span class="c1"># Actually, if user says audit(&quot;file.json&quot;), they expect that file to control.</span>
+             <span class="n">tags_to_use</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_phi_config</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span>
+
+        <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_tags</span><span class="o">=</span><span class="n">tags_to_use</span><span class="p">)</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">inspector</span><span class="o">.</span><span class="n">phi_tags</span><span class="p">:</span>
             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.&quot;</span><span class="p">)</span>
         
@@ -284,7 +304,16 @@
         <span class="c1"># Note: Large object graphs might be slow to pickle.</span>
         <span class="c1"># But Patients are usually metadata only (pixels lazy loaded).</span>
         <span class="c1"># We rely on lazy loading NOT triggering pixel reads during pickle, which `store` proxy helps with.</span>
-        <span class="n">worker_args</span> <span class="o">=</span> <span class="p">[(</span><span class="n">p</span><span class="p">,</span> <span class="n">config_path</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">]</span>
+        
+        <span class="c1"># !! WORKER ARGS CHANGE !!</span>
+        <span class="c1"># scan_worker expects (patient, config_path). </span>
+        <span class="c1"># But now we might be passing raw tags.</span>
+        <span class="c1"># We should update scan_worker to accept (patient, tags_dict) or (patient, path).</span>
+        <span class="c1"># For parallelism with `active_phi_tags`, we MUST pass the dict, because the worker</span>
+        <span class="c1"># can&#39;t read `self.active_phi_tags` from the parent process memory directly easily (unless passed).</span>
+        <span class="c1"># So let&#39;s pass the dictionary.</span>
+        
+        <span class="n">worker_args</span> <span class="o">=</span> <span class="p">[(</span><span class="n">p</span><span class="p">,</span> <span class="n">tags_to_use</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">]</span>
         
         <span class="n">results</span> <span class="o">=</span> <span class="n">run_parallel</span><span class="p">(</span><span class="n">scan_worker</span><span class="p">,</span> <span class="n">worker_args</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Scanning PHI&quot;</span><span class="p">)</span>
         
@@ -496,14 +525,21 @@
         <span class="k">try</span><span class="p">:</span>
             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loading configuration from </span><span class="si">{</span><span class="n">config_file</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span>
             <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loading configuration from </span><span class="si">{</span><span class="n">config_file</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_redaction_rules</span><span class="p">(</span><span class="n">config_file</span><span class="p">)</span>
-            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loaded </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">)</span><span class="si">}</span><span class="s2"> machine rule definitions.&quot;</span><span class="p">)</span>
-            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loaded </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">)</span><span class="si">}</span><span class="s2"> machine rule definitions.&quot;</span><span class="p">)</span>
-            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Tip: Run .preview_config() to see matches, or .execute_config() to apply.&quot;</span><span class="p">)</span>
+            
+            <span class="c1"># UNIFIED LOAD (v2)</span>
+            <span class="n">tags</span><span class="p">,</span> <span class="n">rules</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_unified_config</span><span class="p">(</span><span class="n">config_file</span><span class="p">)</span>
+            
+            <span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span> <span class="o">=</span> <span class="n">tags</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span> <span class="o">=</span> <span class="n">rules</span>
+            
+            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loaded </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">)</span><span class="si">}</span><span class="s2"> machine rules and </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span><span class="p">)</span><span class="si">}</span><span class="s2"> PHI tags.&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Configuration Loaded:</span><span class="se">\n</span><span class="s2"> - </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">)</span><span class="si">}</span><span class="s2"> Machine Redaction Rules</span><span class="se">\n</span><span class="s2"> - </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span><span class="p">)</span><span class="si">}</span><span class="s2"> PHI Tags&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Tip: Run .audit() to check PHI, or .redact_pixels() to apply redaction.&quot;</span><span class="p">)</span>
         <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Load failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
             <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Load failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span> <span class="o">=</span> <span class="p">[]</span></div>
+            <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span> <span class="o">=</span> <span class="p">{}</span></div>
 
 
 <div class="viewcode-block" id="DicomSession.preview_config">
@@ -584,18 +620,18 @@
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.scaffold_config">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">scaffold_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">output_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Generates a skeleton configuration file for machines found in the inventory</span>
-<span class="sd">        that are NOT covered by the currently loaded rules.</span>
+<span class="sd">        Generates a unified v2 configuration file.</span>
+<span class="sd">        Includes default PHI tags + Auto-detected machine inventory.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
         
         <span class="c1"># 1. Identify what we have</span>
         <span class="n">all_equipment</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">get_unique_equipment</span><span class="p">()</span>
         
-        <span class="c1"># 2. Identify what is already configured</span>
+        <span class="c1"># 2. Identify what is already configured (Pixel Rules)</span>
         <span class="n">configured_serials</span> <span class="o">=</span> <span class="p">{</span><span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;serial_number&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">}</span>
         
-        <span class="c1"># 3. Find the gap</span>
+        <span class="c1"># 3. Find missing machines</span>
         <span class="n">missing_configs</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">eq</span> <span class="ow">in</span> <span class="n">all_equipment</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span> <span class="ow">and</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">configured_serials</span><span class="p">:</span>
@@ -607,25 +643,29 @@
                     <span class="s2">&quot;redaction_zones&quot;</span><span class="p">:</span> <span class="p">[]</span>
                 <span class="p">})</span>
         
-        <span class="k">if</span> <span class="ow">not</span> <span class="n">missing_configs</span><span class="p">:</span>
-            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;All detected machines are already configured. Nothing to scaffold.&quot;</span><span class="p">)</span>
-            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;All detected machines are already configured. Nothing to scaffold.&quot;</span><span class="p">)</span>
-            <span class="k">return</span>
-
-        <span class="c1"># 4. Write to disk</span>
+        <span class="c1"># 4. Include Default PHI Tags</span>
+        <span class="c1"># Use whatever is active, or load default</span>
+        <span class="n">tags</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span> <span class="k">else</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_phi_config</span><span class="p">()</span>
+        
+        <span class="c1"># 5. Construct Unified Data</span>
         <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;1.0&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;machines&quot;</span><span class="p">:</span> <span class="n">missing_configs</span>
+            <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;2.0&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;phi_tags&quot;</span><span class="p">:</span> <span class="n">tags</span><span class="p">,</span>
+            <span class="s2">&quot;machines&quot;</span><span class="p">:</span> <span class="n">missing_configs</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span> <span class="c1"># Include existing rules too? Or just scaffold new?</span>
+                                                            <span class="c1"># Scaffold typically means &quot;create new&quot;, but for a unified file</span>
+                                                            <span class="c1"># we probably want to dump everything so user has a complete file.</span>
         <span class="p">}</span>
+        
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">missing_configs</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">:</span>
+             <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;No machines detected to scaffold.&quot;</span><span class="p">)</span>
         
         <span class="k">try</span><span class="p">:</span>
             <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">output_path</span><span class="p">,</span> <span class="s1">&#39;w&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
                 <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
-            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Scaffolded configuration for </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">missing_configs</span><span class="p">)</span><span class="si">}</span><span class="s2"> new machines to </span><span class="si">{</span><span class="n">output_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Scaffolded configuration for </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">missing_configs</span><span class="p">)</span><span class="si">}</span><span class="s2"> new machines to </span><span class="si">{</span><span class="n">output_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Scaffolded Unified Config to </span><span class="si">{</span><span class="n">output_path</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">missing_configs</span><span class="p">)</span><span class="si">}</span><span class="s2"> new machines)&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Scaffolded Unified Config to </span><span class="si">{</span><span class="n">output_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to write scaffold: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to write scaffold: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to write scaffold: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
 
 
     <span class="c1"># =========================================================================</span>

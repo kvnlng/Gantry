@@ -78,21 +78,47 @@
 <div class="viewcode-block" id="ConfigLoader">
 <a class="viewcode-back" href="../../gantry.html#gantry.config_manager.ConfigLoader">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">ConfigLoader</span><span class="p">:</span>
+<div class="viewcode-block" id="ConfigLoader.load_unified_config">
+<a class="viewcode-back" href="../../gantry.html#gantry.config_manager.ConfigLoader.load_unified_config">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_unified_config</span><span class="p">(</span><span class="n">filepath</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Parses the unified JSON config (v2.0).</span>
+<span class="sd">        Returns: (phi_tags, machine_rules)</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">_load_json</span><span class="p">(</span><span class="n">filepath</span><span class="p">)</span>
+        
+        <span class="c1"># v2.0 check</span>
+        <span class="c1"># if &quot;version&quot; in data and data[&quot;version&quot;] == &quot;2.0&quot;: ... (optional strict check)</span>
+        
+        <span class="n">phi_tags</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;phi_tags&quot;</span><span class="p">,</span> <span class="p">{})</span>
+        <span class="n">machine_rules</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;machines&quot;</span><span class="p">,</span> <span class="p">[])</span>
+        
+        <span class="c1"># Validate machines</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">rule</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">machine_rules</span><span class="p">):</span>
+            <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">_validate_rule</span><span class="p">(</span><span class="n">rule</span><span class="p">,</span> <span class="n">i</span><span class="p">)</span>
+            
+        <span class="k">return</span> <span class="n">phi_tags</span><span class="p">,</span> <span class="n">machine_rules</span></div>
+
+
 <div class="viewcode-block" id="ConfigLoader.load_redaction_rules">
 <a class="viewcode-back" href="../../gantry.html#gantry.config_manager.ConfigLoader.load_redaction_rules">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">load_redaction_rules</span><span class="p">(</span><span class="n">filepath</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Parses the JSON config and returns a list of machine rules.</span>
+<span class="sd">        Legacy/Convenience support. </span>
+<span class="sd">        If v2 file, extracts &#39;machines&#39;. If v1 file (list or dict), tries to parse.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">data</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">_load_json</span><span class="p">(</span><span class="n">filepath</span><span class="p">)</span>
         
-        <span class="c1"># Basic Validation</span>
-        <span class="k">if</span> <span class="s2">&quot;machines&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
-            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Config warning: &#39;machines&#39; key missing.&quot;</span><span class="p">)</span>
-            <span class="k">return</span> <span class="p">[]</span>
-        
-        <span class="n">rules</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;machines&quot;</span><span class="p">]</span>
+        <span class="n">rules</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+            <span class="n">rules</span> <span class="o">=</span> <span class="n">data</span> <span class="c1"># Old v0 list?</span>
+        <span class="k">elif</span> <span class="s2">&quot;machines&quot;</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+            <span class="n">rules</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;machines&quot;</span><span class="p">]</span> <span class="c1"># v1 or v2</span>
+        <span class="k">else</span><span class="p">:</span>
+             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Config Warning: Could not find &#39;machines&#39; list.&quot;</span><span class="p">)</span>
+
         <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">rule</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">rules</span><span class="p">):</span>
             <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">_validate_rule</span><span class="p">(</span><span class="n">rule</span><span class="p">,</span> <span class="n">i</span><span class="p">)</span>
             
@@ -104,11 +130,14 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">load_phi_config</span><span class="p">(</span><span class="n">filepath</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Loads PHI tags from a JSON file.</span>
-<span class="sd">        If filepath is None, loads the default &#39;resources/phi_tags.json&#39; from the package.</span>
+<span class="sd">        Legacy/Convenience support.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="n">filepath</span><span class="p">:</span>
             <span class="n">data</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">_load_json</span><span class="p">(</span><span class="n">filepath</span><span class="p">)</span>
+            <span class="c1"># Support v2 unified file used as simple PHI config</span>
+            <span class="k">if</span> <span class="s2">&quot;phi_tags&quot;</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;phi_tags&quot;</span><span class="p">]</span>
+            <span class="k">return</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;phi_tags&quot;</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span> <span class="c1"># Fallback to assumes root dict is tags if no key</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="c1"># Load default from package resources</span>
             <span class="n">base</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">))</span>
@@ -117,8 +146,7 @@
                  <span class="n">data</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">_load_json</span><span class="p">(</span><span class="n">filepath</span><span class="p">)</span>
             <span class="k">else</span><span class="p">:</span>
                  <span class="n">data</span> <span class="o">=</span> <span class="p">{}</span>
-
-        <span class="k">return</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;phi_tags&quot;</span><span class="p">,</span> <span class="p">{})</span></div>
+            <span class="k">return</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;phi_tags&quot;</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span></div>
 
 
     <span class="nd">@staticmethod</span>
