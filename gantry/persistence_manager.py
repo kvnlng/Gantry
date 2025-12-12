@@ -69,10 +69,12 @@ class PersistenceManager:
         """
         Stops the worker and waits for potential pending saves.
         """
+        # Avoid double shutdown or shutdown if never started
         if not self.thread.is_alive():
             return
 
         get_logger().info("Shutting down PersistenceManager...")
+        print("\nShutting down Gantry Persistence Manager...")
         
         # Determine if we have pending work
         pending = self.queue.qsize()
@@ -87,3 +89,4 @@ class PersistenceManager:
         
         self.thread.join(timeout=30)
         get_logger().info("PersistenceManager stopped.")
+        print("Persistence Manager Stopped.")
