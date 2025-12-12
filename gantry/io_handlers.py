@@ -232,6 +232,10 @@ class DicomExporter:
             for se in st.series:
                 for inst in se.instances:
                     ds = DicomExporter._create_ds(inst)
+                    
+                    # 0. Base Attributes (Generic)
+                    # We merge these FIRST so that High-Level Model overrides (below) take precedence.
+                    DicomExporter._merge(ds, inst.attributes)
 
                     # 1. Patient Level
                     ds.PatientName = patient.patient_name
@@ -257,7 +261,7 @@ class DicomExporter:
                         ds.ManufacturerModelName = se.equipment.model_name
 
                     # 4. Instance Level and recursive sequences
-                    DicomExporter._merge(ds, inst.attributes)
+                    # Merged at step 0 to allow overrides.
 
                     # Merge Pixels
                     # Merge Pixels

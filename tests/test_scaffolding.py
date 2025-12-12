@@ -65,3 +65,7 @@ def test_scaffold_config_creates_new_entries(tmp_path):
     assert new_machine["model_name"] == "ModelB"
     assert new_machine["manufacturer"] == "MfgB"
     assert new_machine["redaction_zones"] == []
+
+    # Ensure instructions are present (v2 enhancement)
+    assert "_instructions" in new_conf
+    assert "advanced_actions" in new_conf["_instructions"]

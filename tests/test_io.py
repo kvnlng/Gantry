@@ -1,5 +1,8 @@
 import os
 import pydicom
+import numpy as np
+from unittest.mock import patch
+from gantry.entities import Instance, Study, Series, Patient
 from gantry.builders import DicomBuilder
 from gantry.io_handlers import DicomExporter, DicomImporter, DicomStore
 
@@ -22,3 +25,36 @@ def test_export_import_roundtrip(tmp_path, dummy_patient):
     # Check if file path was captured (for lazy loading)
     assert imported_inst.file_path is not None
     assert str(export_dir) in imported_inst.file_path
+
+def test_persistence_priority(tmp_path):
+    """
+    Ensure that explicit Object Model fields (e.g. StudyDate) take precedence 
+    over legacy attributes in DicomExporter.
+    """
+    # 1. Create dummy instance
+    inst = Instance("1.2.3.4", "1.2.840.10008.5.1.4.1.1.2", 1)
+    inst.attributes["0008,0020"] = "20000101" # Stale date
+    inst.set_pixel_data(np.zeros((10,10), dtype=np.uint8)) # Valid pixels
+    
+    study = Study("1.2.3.99", "20230101") # New/Remediated date
+    series = Series("1.2.3.98", "OT", 1)
+    
+    study.series.append(series)
+    series.instances.append(inst)
+    
+    pat = Patient("P1", "Test")
+    pat.studies.append(study)
+    
+    # 2. Export
+    out_dir = tmp_path / "export_prio"
+    
+    # Mock validator to accept sparse dummy data
+    with patch('gantry.validation.IODValidator.validate', return_value=[]):
+        DicomExporter.save_patient(pat, str(out_dir))
+    
+    # 3. Read back
+    exported_file = list(out_dir.glob("*.dcm"))[0]
+    ds = pydicom.dcmread(exported_file)
+    
+    # 4. Assert
+    assert ds.StudyDate == "20230101", "Export should prioritize Study object field over attributes dict"

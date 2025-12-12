@@ -538,6 +538,11 @@ class DicomSession:
         # 5. Construct Unified Data
         data = {
             "version": "2.0",
+            "_instructions": {
+                "phi_tags": "Map DICOM Tag (GGGG,EEEE) to a Description String OR an Object.",
+                "advanced_actions": "Use Object format for actions: {'name': 'Desc', 'action': 'REMOVE' | 'EMPTY' | 'REPLACE'}",
+                "defaults": "String format implies {'action': 'REPLACE'} (Anonymize)."
+            },
             "phi_tags": tags,
             "machines": missing_configs + self.active_rules # Include existing rules too? Or just scaffold new?
                                                             # Scaffold typically means "create new", but for a unified file

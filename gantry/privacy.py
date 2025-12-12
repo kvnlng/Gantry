@@ -157,28 +157,53 @@ class PhiInspector:
         if not self.phi_tags:
             return findings
 
-        for tag, description in self.phi_tags.items():
+        for tag, config_val in self.phi_tags.items():
+            # Parse config
+            if isinstance(config_val, dict):
+                description = config_val.get("name", "Unknown Tag")
+                action_code = config_val.get("action", "REPLACE").upper()
+            else:
+                description = str(config_val)
+                action_code = "REPLACE"
+
             # Check if tag exists in instance attributes
             val = instance.attributes.get(tag)
             
-            # Simple check: If value exists and is not already anonymized
-            # (Note: "ANONYMIZED" check is heuristic, might need refinement)
-            if val and val != "ANONYMIZED" and val != "":
-                # For Generic Tags, we propose replacing with "ANONYMIZED"
-                # If specialized logic is needed (like Date Shifting), it requires mapped logic.
-                # For now, Unified Config assumes Redaction/Replacement.
-                
+            if val is None:
+                continue
+            
+            # Determine if remediation is needed
+            needs_remediation = False
+            remediation_action = "REPLACE_TAG"
+            new_val = None
+            
+            if action_code == "REMOVE":
+                 # If user wants it gone, and it exists (val is not None), finding!
+                 needs_remediation = True
+                 remediation_action = "REMOVE_TAG"
+            elif action_code == "EMPTY":
+                 if val != "":
+                     needs_remediation = True
+                     remediation_action = "REPLACE_TAG"
+                     new_val = ""
+            else: # REPLACE (Default)
+                 if val != "ANONYMIZED":
+                     needs_remediation = True
+                     remediation_action = "REPLACE_TAG"
+                     new_val = "ANONYMIZED"
+
+            if needs_remediation:
                 proposal = PhiRemediation(
-                     action_type="REPLACE_TAG",
-                     target_attr=tag, # The generic tag ID
-                     new_value="ANONYMIZED", # Default safe value
+                     action_type=remediation_action,
+                     target_attr=tag,
+                     new_value=new_val,
                      original_value=val
                 )
                 
                 findings.append(PhiFinding(
                      entity_uid=instance.sop_instance_uid,
                      entity_type="Instance",
-                     field_name=description, # Use the user-friendly name from config
+                     field_name=description,
                      value=val,
                      reason=f"Matched PHI Tag {tag} ({description})",
                      tag=tag,

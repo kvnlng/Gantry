@@ -90,6 +90,19 @@ class RemediationService:
                  self.logger.warning(f"Invalid date format for {finding.entity_uid}: {proposal.original_value}")
                  return
 
+        elif proposal.action_type == "REMOVE_TAG":
+            # 1. Generic DicomItem support
+            if hasattr(entity, "attributes") and isinstance(entity.attributes, dict):
+                if proposal.target_attr in entity.attributes:
+                    del entity.attributes[proposal.target_attr]
+                    details = f"Removed Tag {proposal.target_attr} from {finding.entity_uid}"
+                    action_type = "REMEDIATION_REMOVE"
+            # 2. Python Object Attribute
+            elif hasattr(entity, proposal.target_attr):
+                 setattr(entity, proposal.target_attr, None)
+                 details = f"Cleared Attribute {proposal.target_attr} on {finding.entity_uid}"
+                 action_type = "REMEDIATION_REMOVE"
+
         # Logging & Auditing
         if action_type:
             self.logger.info(details)
