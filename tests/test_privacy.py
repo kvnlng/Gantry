@@ -22,6 +22,13 @@ def test_phi_detection():
     # Validate reason
     name_finding = next(f for f in findings if f.field_name == "patient_name")
     assert "Names are PHI" in name_finding.reason
+    assert name_finding.tag == "0010,0010"
+    
+    id_finding = next(f for f in findings if f.field_name == "patient_id")
+    assert id_finding.tag == "0010,0020"
+    
+    date_finding = next(f for f in findings if f.field_name == "study_date")
+    assert date_finding.tag == "0008,0020"
 
 def test_no_phi():
     # Setup a patient with no PHI (sanitized)

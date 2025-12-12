@@ -20,6 +20,7 @@ class PhiFinding:
     field_name: str
     value: Any
     reason: str
+    tag: Optional[str] = None # specific DICOM tag if applicable
     patient_id: Optional[str] = None # Added for linkage
     entity: Any = None # Reference to the actual object (Patient, Study, etc.)
     remediation_proposal: Optional[PhiRemediation] = None
@@ -47,6 +48,7 @@ class PhiReport:
                 "patient_id": f.patient_id,
                 "entity_type": f.entity_type,
                 "entity_uid": f.entity_uid,
+                "tag": f.tag,
                 "field": f.field_name,
                 "value": str(f.value),
                 "reason": f.reason,
@@ -112,6 +114,7 @@ class PhiInspector:
                  field_name="patient_name", 
                  value=patient.patient_name, 
                  reason="Names are PHI",
+                 tag="0010,0010",
                  patient_id=patient.patient_id,
                  entity=patient,
                  remediation_proposal=proposal
@@ -133,6 +136,7 @@ class PhiInspector:
                  field_name="patient_id", 
                  value=patient.patient_id, 
                  reason="Medical Record Numbers are PHI",
+                 tag="0010,0020",
                  patient_id=patient.patient_id,
                  entity=patient,
                  remediation_proposal=proposal
@@ -177,6 +181,7 @@ class PhiInspector:
                      field_name=description, # Use the user-friendly name from config
                      value=val,
                      reason=f"Matched PHI Tag {tag} ({description})",
+                     tag=tag,
                      patient_id=patient_id,
                      entity=instance,
                      remediation_proposal=proposal
@@ -200,6 +205,7 @@ class PhiInspector:
                 field_name="study_date", 
                 value=study.study_date, 
                 reason="Dates are Safe Harbor restricted",
+                tag="0008,0020",
                 patient_id=patient_id,
                 entity=study,
                 remediation_proposal=proposal
