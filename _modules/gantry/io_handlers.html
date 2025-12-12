@@ -340,6 +340,10 @@
             <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">st</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
                 <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">:</span>
                     <span class="n">ds</span> <span class="o">=</span> <span class="n">DicomExporter</span><span class="o">.</span><span class="n">_create_ds</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
+                    
+                    <span class="c1"># 0. Base Attributes (Generic)</span>
+                    <span class="c1"># We merge these FIRST so that High-Level Model overrides (below) take precedence.</span>
+                    <span class="n">DicomExporter</span><span class="o">.</span><span class="n">_merge</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">)</span>
 
                     <span class="c1"># 1. Patient Level</span>
                     <span class="n">ds</span><span class="o">.</span><span class="n">PatientName</span> <span class="o">=</span> <span class="n">patient</span><span class="o">.</span><span class="n">patient_name</span>
@@ -365,7 +369,7 @@
                         <span class="n">ds</span><span class="o">.</span><span class="n">ManufacturerModelName</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="o">.</span><span class="n">model_name</span>
 
                     <span class="c1"># 4. Instance Level and recursive sequences</span>
-                    <span class="n">DicomExporter</span><span class="o">.</span><span class="n">_merge</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">)</span>
+                    <span class="c1"># Merged at step 0 to allow overrides.</span>
 
                     <span class="c1"># Merge Pixels</span>
                     <span class="c1"># Merge Pixels</span>
