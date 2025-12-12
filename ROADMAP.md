@@ -2,7 +2,7 @@
 
 This document outlines the development plan for **Gantry**. We welcome contributions from the community to help us achieve these milestones!
 
-## 📍 Current Status: v0.4.0
+## 📍 Current Status: v0.4.1
 - [x] Core Object Model (`Patient` -> `Study` -> `Series` -> `Instance`)
 - [x] Basic Facade (`DicomSession`)
 - [x] Lazy Loading Pixel Data
@@ -22,6 +22,7 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 - [x] Reversible Anonymization (Pseudonymization with Encrypted Private Tags)
 - [x] Parallel Processing (Multiprocessing for Import & PHI Scan)
 - [x] Optimized Batch UX (Deferred Persistence + Feedback)
+- [x] Advanced Configuration Actions (REMOVE / EMPTY)
 
 ---
 

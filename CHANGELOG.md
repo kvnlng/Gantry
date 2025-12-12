@@ -5,6 +5,17 @@ All notable changes to the "Gantry" project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2025-12-12
+
+### Added
+- **Configuration Actions**: Support for `REMOVE` and `EMPTY` actions in `privacy_config.json` for precise tag handling.
+- **Ingest Summary**: `ingest` command now provides a detailed count of imported objects.
+
+### Fixed
+- **Persistence Priority**: Fixed "Split Brain" issue where remediated `Study`/`Series` metadata was overwritten by original file attributes during export.
+- **Export Error**: Fixed validation strictness to allow export of files with stripped Command Set (Group 0000) tags.
+- **API Consistency**: Unified `scan_for_phi` and `audit` methods.
+
 ## [0.4.0] - 2025-12-11
 
 ### Added

@@ -68,6 +68,7 @@ session.examine()
 # 3. Configure (Define Rules)
 session.setup_config("privacy_config.json")
 # [User edits json file...]
+# Advanced: {"0010,0010": {"name": "PatientName", "action": "REMOVE"}}
 
 # 4. Target (Audit for PHI)
 risk_report = session.audit("privacy_config.json")
