@@ -109,43 +109,42 @@ You must call `.save()` after operations like `import_folder`, `apply_remediatio
 
 ---
 
-## 🕵️ Privacy Inspector
+## 🕵️ Privacy Analysis & Audit
 
-Ensure your data is HIPAA Safe Harbor compliant by scanning for common PHI identifiers directly from your session.
+The **Target** checkpoint allows you to actively measure privacy risks before applying any remediation. Gantry generates a `risk_report` that you can analyze iteratively.
 
-### Basic Scan
+### 1. Generate Risk Report
 
 ```python
-# Scan all patients in the session
-findings = app.scan_for_phi()
+# Scan based on your "privacy_config.json"
+risk_report = session.audit("privacy_config.json")
 ```
 
-### Analyzing Findings
+### 2. Analyze Findings
 
-The `findings` object consists of `PhiFinding` records. You can iterate through them or convert them to a Pandas DataFrame for complex analysis.
+The `risk_report` is an iterable collection of `PhiFinding` objects, but its real power comes from integration with **Pandas**.
 
 ```python
-# 1. Iterate findings
-for f in findings:
-    print(f"[{f.entity_type}] {f.field_name}: {f.value} ({f.reason})")
+# Convert to DataFrame
+df = risk_report.to_dataframe()
 
-# 2. Convert to DataFrame (Requires pandas)
-df = findings.to_dataframe()
-
-# Example: Count issues by type
+# A. High-Level Summary
 print(df["reason"].value_counts())
 # Output:
 # Dates are Safe Harbor restricted    120
 # Names are PHI                        45
+# Custom Tag Flagged (ProtocolName)    10
+
+# B. Drill Down into Specific Risks
+names = df[df["field"] == "PatientName"]
+print(f"Found {len(names)} unique names exposed.")
+
+# C. pivot analysis (e.g., Which modalities have the most issues?)
+# (Assuming you joined with series metadata, or just check entity types)
+print(df.groupby(["entity_type", "reason"]).size())
 ```
 
-### Custom Verification Rules
-
-You can customize which tags are flagged by providing a JSON rule file.
-
-```python
-app.scan_for_phi("my_custom_phi_rules.json")
-```
+This analysis helps you refine your `privacy_config.json` (e.g., ignoring false positives) before you commit to anonymization.
 
 ---
 

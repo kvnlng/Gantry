@@ -48,9 +48,29 @@ def test_unified_workflow(session_db, tmp_path, dummy_patient):
     assert len(session.active_rules) >= 1
     assert "0018,1030" in session.active_phi_tags
     
-    # 5. Verify Audit runs without error using the new config structure
-    # (Note: Inspector currently checks hardcoded attributes, so we just verify the call works)
+    # SETUP: Inject a value for the custom tag
+    # The dummy patient provided by fixture might need this set specifically on the Instance
+    inst = dummy_patient.studies[0].series[0].instances[0]
+    inst.set_attr("0018,1030", "SensitiveProtocol")
+    
+    # 5. Verify Audit (Target)
     report = session.audit() 
     assert report is not None
     
-    print("\nUnified Config Workflow Verified.")
+    # Check for the custom finding
+    found_custom = False
+    for f in report:
+        if f.entity_type == "Instance" and f.field_name == "Protocol Name":
+            found_custom = True
+            assert f.value == "SensitiveProtocol"
+            break
+            
+    assert found_custom, "Audit failed to find the custom 'Protocol Name' tag on the instance."
+    
+    # 6. Verify Remediation (Anonymize)
+    session.anonymize_metadata(report)
+    
+    # Verify the instance in memory is updated
+    assert inst.attributes["0018,1030"] == "ANONYMIZED"
+    
+    print("\nUnified Config Workflow Verified: Custom Tag found and remediated.")

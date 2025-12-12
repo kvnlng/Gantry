@@ -44,10 +44,23 @@ class RemediationService:
 
         if proposal.action_type == "REPLACE_TAG":
             # Direct replacement
-            # entity must support 'set_attr' or direct assignment. 
-            # Our entities (Patient/Study) have attributes, so we need to be careful.
-            # Ideally they should have a common interface or we use setattr for attributes.
-            if hasattr(entity, proposal.target_attr):
+            
+            # 1. Generic DicomItem support (Instance, Series, etc.)
+            if hasattr(entity, "set_attr"):
+                # Tag ID is expected in proposal.target_attr (e.g. "0010,0010")
+                entity.set_attr(proposal.target_attr, proposal.new_value)
+                msg = f"Remediated {finding.entity_uid} (Tag {proposal.target_attr}) -> {proposal.new_value}"
+                self.logger.info(msg)
+                 
+                if self.store_backend:
+                    self.store_backend.log_audit(
+                        action_type="REMEDIATION_REPLACE", 
+                        entity_uid=finding.entity_uid, 
+                        details=msg
+                    )
+
+            # 2. Python Object Attribute support (Patient.patient_name)
+            elif hasattr(entity, proposal.target_attr):
                 setattr(entity, proposal.target_attr, proposal.new_value)
                 msg = f"Remediated {finding.entity_uid}: {proposal.target_attr} -> {proposal.new_value}"
                 self.logger.info(msg)
@@ -59,7 +72,7 @@ class RemediationService:
                         details=msg
                     )
             else:
-                self.logger.warning(f"Entity {finding.entity_uid} has no attribute {proposal.target_attr}")
+                self.logger.warning(f"Entity {finding.entity_uid} (Type: {type(entity).__name__}) has no attribute or setter for {proposal.target_attr}")
 
         elif proposal.action_type == "SHIFT_DATE":
             # Deterministic Date Shifting

@@ -185,11 +185,12 @@ class DicomSession:
     # ... skip to scan_for_phi ...
 
 
-    def scan_for_phi(self, config_path: str = None) -> "PhiReport":
+    def audit(self, config_path: str = None) -> "PhiReport":
         """
         Scans all patients in the session for potential PHI.
         Uses cached `active_phi_tags` if config_path matches or is None, otherwise loads fresh.
         Returns a PhiReport object (iterable, and convertible to DataFrame).
+        Checkpoint 4: Target.
         """
         from .privacy import PhiReport
         
@@ -209,20 +210,6 @@ class DicomSession:
         
         get_logger().info("Scanning for PHI (Parallel)...")
         
-        # Prepare args
-        # We pass copies of patients (Pickle does this).
-        # Note: Large object graphs might be slow to pickle.
-        # But Patients are usually metadata only (pixels lazy loaded).
-        # We rely on lazy loading NOT triggering pixel reads during pickle, which `store` proxy helps with.
-        
-        # !! WORKER ARGS CHANGE !!
-        # scan_worker expects (patient, config_path). 
-        # But now we might be passing raw tags.
-        # We should update scan_worker to accept (patient, tags_dict) or (patient, path).
-        # For parallelism with `active_phi_tags`, we MUST pass the dict, because the worker
-        # can't read `self.active_phi_tags` from the parent process memory directly easily (unless passed).
-        # So let's pass the dictionary.
-        
         worker_args = [(p, tags_to_use) for p in self.store.patients]
         
         results = run_parallel(scan_worker, worker_args, desc="Scanning PHI")
@@ -232,13 +219,19 @@ class DicomSession:
             all_findings.extend(findings)
             
         # Rehydrate Entities!
-        # The entities in `all_findings` are copies from other processes.
-        # We need to link them back to `self.store` objects so that Remediation works on the live session.
         self._rehydrate_findings(all_findings)
             
         get_logger().info(f"PHI Scan Complete. Found {len(all_findings)} issues.")
             
         return PhiReport(all_findings)
+
+    def scan_for_phi(self, config_path: str = None) -> "PhiReport":
+        """
+        DEPRECATED: Use audit() instead.
+        Alias for audit.
+        """
+        get_logger().warning("DeprecationWarning: scan_for_phi() is deprecated. Please use audit() instead.")
+        return self.audit(config_path)
 
     def save_analysis(self, report):
         """
@@ -267,9 +260,14 @@ class DicomSession:
         
         # Let's map Studies
         study_map = {}
+        instance_map = {}
+        
         for p in self.store.patients:
             for s in p.studies:
                 study_map[s.study_instance_uid] = s
+                for se in s.series:
+                    for i in se.instances:
+                        instance_map[i.sop_instance_uid] = i
         
         for f in findings:
             if f.entity_type == "Patient":
@@ -278,8 +276,9 @@ class DicomSession:
             elif f.entity_type == "Study":
                 if f.entity_uid in study_map:
                     f.entity = study_map[f.entity_uid]
-            # Add Series/Instance rehydration if needed?
-            # Start simple. scan_patient mainly checks Patient/Study attributes.
+            elif f.entity_type == "Instance":
+                if f.entity_uid in instance_map:
+                    f.entity = instance_map[f.entity_uid]
 
     def recover_patient_identity(self, patient_id: str):
         """
@@ -568,13 +567,6 @@ class DicomSession:
         Checkpoint 3: Configure.
         """
         return self.scaffold_config(output_path)
-
-    def audit(self, config_path: str = None) -> "PhiReport":
-        """
-        Alias for scan_for_phi.
-        Checkpoint 4: Target.
-        """
-        return self.scan_for_phi(config_path)
 
     def backup_identities(self, input_data: list):
         """

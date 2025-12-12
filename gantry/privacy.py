@@ -138,10 +138,49 @@ class PhiInspector:
                  remediation_proposal=proposal
              ))
 
-        # 2. Traverse Children
+        # 2. Traverse Children & Scan Instances (Generic Unified Config)
         for study in patient.studies:
             findings.extend(self._scan_study(study, patient.patient_id))
             
+            for series in study.series:
+                for instance in series.instances:
+                    findings.extend(self._scan_instance(instance, patient.patient_id))
+            
+        return findings
+
+    def _scan_instance(self, instance: Instance, patient_id: str) -> List[PhiFinding]:
+        findings = []
+        if not self.phi_tags:
+            return findings
+
+        for tag, description in self.phi_tags.items():
+            # Check if tag exists in instance attributes
+            val = instance.attributes.get(tag)
+            
+            # Simple check: If value exists and is not already anonymized
+            # (Note: "ANONYMIZED" check is heuristic, might need refinement)
+            if val and val != "ANONYMIZED" and val != "":
+                # For Generic Tags, we propose replacing with "ANONYMIZED"
+                # If specialized logic is needed (like Date Shifting), it requires mapped logic.
+                # For now, Unified Config assumes Redaction/Replacement.
+                
+                proposal = PhiRemediation(
+                     action_type="REPLACE_TAG",
+                     target_attr=tag, # The generic tag ID
+                     new_value="ANONYMIZED", # Default safe value
+                     original_value=val
+                )
+                
+                findings.append(PhiFinding(
+                     entity_uid=instance.sop_instance_uid,
+                     entity_type="Instance",
+                     field_name=description, # Use the user-friendly name from config
+                     value=val,
+                     reason=f"Matched PHI Tag {tag} ({description})",
+                     patient_id=patient_id,
+                     entity=instance,
+                     remediation_proposal=proposal
+                ))
         return findings
 
     def _scan_study(self, study: Study, patient_id: str = None) -> List[PhiFinding]:
