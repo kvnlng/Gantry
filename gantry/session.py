@@ -315,10 +315,22 @@ class DicomSession:
         """
         Scans a folder for .dcm files (recursively) and imports them into the session.
         """
+        print(f"Ingesting from '{folder_path}'...")
         DicomImporter.import_files([folder_path], self.store)
-        print("\nImport complete. Remember to call .save() to persist changes.")
-        # self._save()
-        print("Done.")
+        
+        # Calculate stats
+        n_p = len(self.store.patients)
+        n_st = sum(len(p.studies) for p in self.store.patients)
+        n_se = sum(len(st.series) for p in self.store.patients for st in p.studies)
+        n_i = sum(len(se.instances) for p in self.store.patients for st in p.studies for se in st.series)
+        
+        print("\nIngestion Complete.")
+        print("Summary:")
+        print(f"  - {n_p} Patients")
+        print(f"  - {n_st} Studies")
+        print(f"  - {n_se} Series")
+        print(f"  - {n_i} Instances")
+        print("Remember to call .save() to persist changes.\n")
 
     def inventory(self):
         get_logger().info("Generating inventory report.")
