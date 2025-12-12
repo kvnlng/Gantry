@@ -273,13 +273,14 @@
     <span class="c1"># ... skip to scan_for_phi ...</span>
 
 
-<div class="viewcode-block" id="DicomSession.scan_for_phi">
-<a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.scan_for_phi">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">scan_for_phi</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;PhiReport&quot;</span><span class="p">:</span>
+<div class="viewcode-block" id="DicomSession.audit">
+<a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.audit">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">audit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;PhiReport&quot;</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Scans all patients in the session for potential PHI.</span>
 <span class="sd">        Uses cached `active_phi_tags` if config_path matches or is None, otherwise loads fresh.</span>
 <span class="sd">        Returns a PhiReport object (iterable, and convertible to DataFrame).</span>
+<span class="sd">        Checkpoint 4: Target.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">.privacy</span><span class="w"> </span><span class="kn">import</span> <span class="n">PhiReport</span>
         
@@ -299,20 +300,6 @@
         
         <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Scanning for PHI (Parallel)...&quot;</span><span class="p">)</span>
         
-        <span class="c1"># Prepare args</span>
-        <span class="c1"># We pass copies of patients (Pickle does this).</span>
-        <span class="c1"># Note: Large object graphs might be slow to pickle.</span>
-        <span class="c1"># But Patients are usually metadata only (pixels lazy loaded).</span>
-        <span class="c1"># We rely on lazy loading NOT triggering pixel reads during pickle, which `store` proxy helps with.</span>
-        
-        <span class="c1"># !! WORKER ARGS CHANGE !!</span>
-        <span class="c1"># scan_worker expects (patient, config_path). </span>
-        <span class="c1"># But now we might be passing raw tags.</span>
-        <span class="c1"># We should update scan_worker to accept (patient, tags_dict) or (patient, path).</span>
-        <span class="c1"># For parallelism with `active_phi_tags`, we MUST pass the dict, because the worker</span>
-        <span class="c1"># can&#39;t read `self.active_phi_tags` from the parent process memory directly easily (unless passed).</span>
-        <span class="c1"># So let&#39;s pass the dictionary.</span>
-        
         <span class="n">worker_args</span> <span class="o">=</span> <span class="p">[(</span><span class="n">p</span><span class="p">,</span> <span class="n">tags_to_use</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">]</span>
         
         <span class="n">results</span> <span class="o">=</span> <span class="n">run_parallel</span><span class="p">(</span><span class="n">scan_worker</span><span class="p">,</span> <span class="n">worker_args</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Scanning PHI&quot;</span><span class="p">)</span>
@@ -322,13 +309,22 @@
             <span class="n">all_findings</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">findings</span><span class="p">)</span>
             
         <span class="c1"># Rehydrate Entities!</span>
-        <span class="c1"># The entities in `all_findings` are copies from other processes.</span>
-        <span class="c1"># We need to link them back to `self.store` objects so that Remediation works on the live session.</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_rehydrate_findings</span><span class="p">(</span><span class="n">all_findings</span><span class="p">)</span>
             
         <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;PHI Scan Complete. Found </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">all_findings</span><span class="p">)</span><span class="si">}</span><span class="s2"> issues.&quot;</span><span class="p">)</span>
             
         <span class="k">return</span> <span class="n">PhiReport</span><span class="p">(</span><span class="n">all_findings</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="DicomSession.scan_for_phi">
+<a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.scan_for_phi">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">scan_for_phi</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;PhiReport&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        DEPRECATED: Use audit() instead.</span>
+<span class="sd">        Alias for audit.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;DeprecationWarning: scan_for_phi() is deprecated. Please use audit() instead.&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">audit</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="DicomSession.save_analysis">
@@ -361,9 +357,14 @@
         
         <span class="c1"># Let&#39;s map Studies</span>
         <span class="n">study_map</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">instance_map</span> <span class="o">=</span> <span class="p">{}</span>
+        
         <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">:</span>
             <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
                 <span class="n">study_map</span><span class="p">[</span><span class="n">s</span><span class="o">.</span><span class="n">study_instance_uid</span><span class="p">]</span> <span class="o">=</span> <span class="n">s</span>
+                <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">s</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
+                    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">:</span>
+                        <span class="n">instance_map</span><span class="p">[</span><span class="n">i</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="p">]</span> <span class="o">=</span> <span class="n">i</span>
         
         <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">findings</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">entity_type</span> <span class="o">==</span> <span class="s2">&quot;Patient&quot;</span><span class="p">:</span>
@@ -372,8 +373,9 @@
             <span class="k">elif</span> <span class="n">f</span><span class="o">.</span><span class="n">entity_type</span> <span class="o">==</span> <span class="s2">&quot;Study&quot;</span><span class="p">:</span>
                 <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">entity_uid</span> <span class="ow">in</span> <span class="n">study_map</span><span class="p">:</span>
                     <span class="n">f</span><span class="o">.</span><span class="n">entity</span> <span class="o">=</span> <span class="n">study_map</span><span class="p">[</span><span class="n">f</span><span class="o">.</span><span class="n">entity_uid</span><span class="p">]</span>
-            <span class="c1"># Add Series/Instance rehydration if needed?</span>
-            <span class="c1"># Start simple. scan_patient mainly checks Patient/Study attributes.</span>
+            <span class="k">elif</span> <span class="n">f</span><span class="o">.</span><span class="n">entity_type</span> <span class="o">==</span> <span class="s2">&quot;Instance&quot;</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">entity_uid</span> <span class="ow">in</span> <span class="n">instance_map</span><span class="p">:</span>
+                    <span class="n">f</span><span class="o">.</span><span class="n">entity</span> <span class="o">=</span> <span class="n">instance_map</span><span class="p">[</span><span class="n">f</span><span class="o">.</span><span class="n">entity_uid</span><span class="p">]</span>
 
 <div class="viewcode-block" id="DicomSession.recover_patient_identity">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.recover_patient_identity">[docs]</a>
@@ -700,16 +702,6 @@
 <span class="sd">        Checkpoint 3: Configure.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">scaffold_config</span><span class="p">(</span><span class="n">output_path</span><span class="p">)</span></div>
-
-
-<div class="viewcode-block" id="DicomSession.audit">
-<a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.audit">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">audit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;PhiReport&quot;</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Alias for scan_for_phi.</span>
-<span class="sd">        Checkpoint 4: Target.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">scan_for_phi</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="DicomSession.backup_identities">
