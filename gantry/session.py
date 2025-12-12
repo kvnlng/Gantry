@@ -60,7 +60,7 @@ class DicomSession:
         self.store.patients = self.store_backend.load_all()
         
         self.active_rules: List[Dict[str, Any]] = []
-        self.active_phi_tags: Dict[str, str] = {}
+        self.active_phi_tags: Dict[str, str] = None
         
         # Reversibility
         self.key_manager = None
