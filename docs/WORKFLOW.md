@@ -1,0 +1,116 @@
+# The Gantry Safety Pipeline: 8 Checkpoints for Secure Data Curation
+
+This guide outlines the standard operating procedure for Curating, Anonymizing, and Redacting DICOM data using Gantry. It maps the user's intent ("Modes") to specific Gantry API capabilities ("Checkpoints").
+
+---
+
+## 🏗️ The 8 Checkpoints
+
+| # | User Mode | Action | Gantry API / Feature |
+| :--- | :--- | :--- | :--- |
+| **1** | **Ingest** | Load & Index Data | `ingest` |
+| **2** | **Examine** | Inventory & Query | `examine` |
+| **3** | **Configure** | Define Rules | `setup_config` |
+| **4** | **Target** | Identify Risks | `audit` |
+| **5** | **Backup** | Secure Identity | `backup_identities` |
+| **6** | **Anonymize** | Metadata Remediation | `anonymize_metadata` |
+| **7** | **Redact** | Pixel Cleaning | `redact_pixels` |
+| **8** | **Verify** | Safety Check | `verify` |
+| **9** | **Export** | Release Data | `export_data` |
+
+---
+
+## 1. Checkpoint: Ingest
+**Goal**: Bring raw data into the managed session.
+
+```python
+session.ingest("./raw_hospital_dump/2023_Q1")
+```
+
+## 2. Checkpoint: Examine
+**Goal**: Understand what you have.
+
+```python
+session.examine()
+```
+
+## 3. Checkpoint: Configure (Define Rules)
+**Goal**: Initialize your control files.
+Before you can measure risk or redact pixels, you need to define the rules.
+
+```python
+# Generate a starter config based on your inventory
+session.setup_config("redaction_plan.json")
+
+# USER ACTION: Edit 'redaction_plan.json' in your text editor.
+# Define ROIs, add PHI tags to look for, etc.
+```
+
+## 4. Checkpoint: Target (Audit)
+**Goal**: Define and measure your privacy strategy.
+This is an **active** checkpoint. You will iteratively refine your configuration tags and "measure" the accuracy of your definitions against the ingested metadata.
+
+```python
+# A. Audit Metadata (Measure Accuracy)
+# returns a PhiReport to measure against your expectations
+risk_report = session.audit("my_privacy_config.json")
+# ... Review report, edit config, repeat ...
+
+# B. Pixel Strategy
+session.scaffold_config("redaction_plan.json")
+```
+
+## 4. Checkpoint: Backup (Identity preservation)
+**Goal**: Secure the link between the Real World and the Research Data.
+Before destroying identifiers, cryptographically seal them so authorized personnel can recover them later (Pseudonymization).
+
+```python
+# Initialize encryption key
+session.enable_reversible_anonymization("master_key.key")
+
+# "Backup" the identities of the targeted patients
+session.preserve_identities(phi_findings)
+```
+
+## 5. Checkpoint: Anonymize (Metadata)
+**Definition**: "Anonymize" refers strictly to **Tagging Data** (Metadata).
+We clean the object graph attributes (PatientName, PatientID, etc.) using the **Target Findings** identified in the Audit (Checkpoint 3).
+
+```python
+# Use the findings from the Audit step
+# risk_report = session.audit(...)
+session.anonymize_metadata(risk_report)
+```
+
+## 6. Checkpoint: Redact (Pixels)
+**Definition**: "Redact" refers strictly to **Imaging Data** (Pixels).
+We remove burned-in text from the pixel matrix using the configured ROIs.
+
+```python
+# Load the plan
+session.load_config("redaction_plan.json")
+
+# Execute: Process pixel data
+session.redact_pixels()
+```
+
+## 7. Checkpoint: Verify (Double Check)
+**Goal**: Ensure nothing was missed.
+Re-run the scans on the *modified* in-memory session.
+
+```python
+final_check = session.scan_for_phi()
+if final_check:
+    print("WARNING: Residual PHI detected!")
+else:
+    print("Verification Passed: Metadata is clean.")
+```
+
+## 8. Checkpoint: Export
+**Goal**: Finalize and Release.
+Write the clean objects to new DICOM files. The `safe=True` flag enforces a final "Gatekeeper" check.
+
+```python
+# Safe Export: Will fail/skip if any PHI remains
+session.export("./clean_dataset_v1", safe=True)
+```

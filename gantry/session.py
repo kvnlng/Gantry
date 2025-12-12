@@ -504,5 +504,71 @@ class DicomSession:
             get_logger().error(f"Failed to write scaffold: {e}")
             print(f"Failed to write scaffold: {e}")
 
+    # =========================================================================
+    # WORKFLOW ALIASES (Ref: docs/WORKFLOW.md)
+    # =========================================================================
+
+    def ingest(self, folder_path: str):
+        """
+        Alias for import_folder.
+        Checkpoint 1: Ingest.
+        """
+        return self.import_folder(folder_path)
+
+    def examine(self):
+        """
+        Alias for inventory.
+        Checkpoint 2: Examine.
+        """
+        return self.inventory()
+
+    def setup_config(self, output_path: str):
+        """
+        Alias for scaffold_config.
+        Checkpoint 3: Configure.
+        """
+        return self.scaffold_config(output_path)
+
+    def audit(self, config_path: str = None) -> "PhiReport":
+        """
+        Alias for scan_for_phi.
+        Checkpoint 4: Target.
+        """
+        return self.scan_for_phi(config_path)
+
+    def backup_identities(self, input_data: list):
+        """
+        Alias for preserve_identities.
+        Checkpoint 5: Backup.
+        """
+        return self.preserve_identities(input_data)
+
+    def anonymize_metadata(self, findings: List[PhiFinding]):
+        """
+        Alias for apply_remediation.
+        Checkpoint 6: Anonymize.
+        """
+        return self.apply_remediation(findings)
+
+    def redact_pixels(self):
+        """
+        Alias for execute_config.
+        Checkpoint 7: Redact.
+        """
+        return self.execute_config()
+
+    def verify(self, config_path: str = None) -> "PhiReport":
+        """
+        Alias for scan_for_phi.
+        Checkpoint 8: Verify.
+        """
+        return self.scan_for_phi(config_path)
+
+    def export_data(self, folder: str, safe: bool = False):
+        """
+        Alias for export.
+        Checkpoint 9: Export.
+        """
+        return self.export(folder, safe=safe)
 
 

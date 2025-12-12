@@ -5,9 +5,11 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Gantry** is a high-level Python library designed to simplify the complexity of DICOM data management. Unlike low-level libraries that treat DICOM files as flat dictionaries of tags, Gantry constructs a **semantic object graph** (`Patient` → `Study` → `Series` → `Instance`).
+**Gantry** is a high-level framework for curating, anonymizing, and redacting medical imaging data. It transforms raw DICOM files into safe, research-ready datasets.
 
-It features a **Lazy-Loading Proxy** architecture, allowing you to index thousands of files with minimal memory footprint while retaining the ability to modify pixel data on demand.
+Instead of treating files as flat dictionaries, Gantry provides a semantic interface (`Patient` → `Study`) to automate critical tasks like **PHI Scanning**, **Reversible Anonymization**, **Pixel Redaction**, and **Compliance Auditing**.
+
+Built for scale, its **Lazy-Loading** engine handles large cohorts with minimal memory overhead, allowing you to modify and export gigabytes of pixel data on demand.
 
 ---
 
@@ -48,66 +50,46 @@ pip install -e .
 
 ## ⚡ Quick Start: End-to-End Workflow
 
-This guide takes you through a complete de-identification pipeline: **Import → Analyze → Remediate → Export**.
+This guide takes you through a complete de-identification pipeline. For a detailed breakdown of the **8 Safety Checkpoints** (Ingest, Examine, Target, Backup, etc.), see the [Gantry Safety Pipeline](docs/WORKFLOW.md).
 
 The `gantry.Session` Facade is your primary entry point.
 
 ```python
 import gantry
 
-# 1. Initialize & Import
-# ----------------------
-# Loads previous state from 'gantry.db' if it exists.
+# 1. Ingest
 session = gantry.Session("gantry.db")
-session.import_folder("./raw_dicom_data")
+session.ingest("./raw_dicom_data")
 
-# 2. Inventory Check
-# ------------------
-session.inventory()
-# Output:
-# Inventory: 3 Devices
-#  - GE Revolution (S/N: SN-SCANNER-01)
-#  - Siemens Prisma (S/N: SN-SCANNER-02)
+# 2. Examine (Inventory)
+session.examine()
+# Output: Inventory: 3 Devices...
 
-# 3. Analyze for PHI (Metadata)
-# -----------------------------
-# Scans names, IDs, dates, and other identifiers.
-findings = session.scan_for_phi()
-# Output: Found 5 potential PHI issues.
+# 3. Configure (Define Rules)
+session.setup_config("redaction_rules.json")
+# [User edits json file...]
 
-# (Optional) Persist findings for audit
-session.save_analysis(findings)
+# 4. Target (Audit for PHI)
+risk_report = session.audit("redaction_rules.json")
 
-# 4. Reversible Anonymization (Optional)
-# --------------------------------------
-# Securely encrypt original identity before anonymizing.
+# 5. Backup (Identity Preservation)
 session.enable_reversible_anonymization("gantry.key")
-session.preserve_identities(findings)
+session.backup_identities(risk_report)
 
-# 5. Apply Remediation (Metadata Fixes)
-# -------------------------------------
-# Automatically anonymizes names/IDs and shifts dates based on rules.
-session.apply_remediation(findings)
+# 6. Anonymize (Metadata)
+session.anonymize_metadata(risk_report)
 
-# 6. Redaction (Burned-In Pixels)
-# -------------------------------
-# A. Generate a config skeleton for your machines
-session.scaffold_config("redaction_rules.json")
-
-# B. (User Action) Edit 'redaction_rules.json' to define ROIs
-# ...
-
-# C. Apply the Rules
+# 7. Redact (Pixels)
 session.load_config("redaction_rules.json")
-session.execute_config()
+session.redact_pixels()
 
-# 7. Safe Export
-# --------------
-# Exports only clean data. Fails if any PHI remains.
-session.export("./clean_dicoms", safe=True)
+# 8. Verify
+session.verify()
 
-# 8. Save Session State
-# ---------------------
+# 9. Export (Safe)
+session.export_data("./clean_dicoms", safe=True)
+
+# Save Session
 session.save()
 ```
 
