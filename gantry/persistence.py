@@ -86,12 +86,28 @@ class SqliteStore:
 
     def log_audit(self, action_type: str, entity_uid: str, details: str):
         """Records an action in the audit log."""
+        self.log_audit_batch([(action_type, entity_uid, details)])
+
+    def log_audit_batch(self, entries: List[tuple]):
+        """
+        Batch inserts audit logs. 
+        entries: List of (action_type, entity_uid, details)
+        """
+        if not entries: return
+        
         timestamp = datetime.now().isoformat()
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "INSERT INTO audit_log (timestamp, action_type, entity_uid, details) VALUES (?, ?, ?, ?)",
-                (timestamp, action_type, entity_uid, details)
-            )
+        # Prepare data with timestamp: (timestamp, action, uid, details)
+        data = [(timestamp, e[0], e[1], e[2]) for e in entries]
+        
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.executemany(
+                    "INSERT INTO audit_log (timestamp, action_type, entity_uid, details) VALUES (?, ?, ?, ?)",
+                    data
+                )
+                conn.commit()
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to batch log audit: {e}")
 
     def load_all(self) -> List[Patient]:
         """

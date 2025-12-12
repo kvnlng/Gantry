@@ -19,6 +19,7 @@ class RemediationService:
         Iterates through the findings and applies valid remediation proposals.
         """
         processed_entities = set() # To avoid double-processing if multiple findings point to same entity/attr
+        audit_buffer = []
 
         for finding in tqdm(findings, desc="Anonymizing Metadata", unit="finding"):
             if not finding.remediation_proposal:
@@ -30,18 +31,26 @@ class RemediationService:
                 continue
             
             try:
-                self._apply_single_remediation(finding)
+                self._apply_single_remediation(finding, audit_buffer)
                 processed_entities.add(key)
             except Exception as e:
                 self.logger.error(f"Failed to apply remediation for {finding.entity_uid} ({finding.field_name}): {e}")
+        
+        # Flush audit logs
+        if self.store_backend and audit_buffer:
+            self.logger.info(f"Flushing {len(audit_buffer)} audit logs...")
+            self.store_backend.log_audit_batch(audit_buffer)
 
-    def _apply_single_remediation(self, finding: PhiFinding):
+    def _apply_single_remediation(self, finding: PhiFinding, audit_buffer: list = None):
         proposal = finding.remediation_proposal
         entity = finding.entity
         
         if not entity:
              self.logger.warning(f"Finding for {finding.entity_uid} has no entity reference. Skipping.")
              return
+
+        action_type = ""
+        details = ""
 
         if proposal.action_type == "REPLACE_TAG":
             # Direct replacement
@@ -50,34 +59,21 @@ class RemediationService:
             if hasattr(entity, "set_attr"):
                 # Tag ID is expected in proposal.target_attr (e.g. "0010,0010")
                 entity.set_attr(proposal.target_attr, proposal.new_value)
-                msg = f"Remediated {finding.entity_uid} (Tag {proposal.target_attr}) -> {proposal.new_value}"
-                self.logger.info(msg)
-                 
-                if self.store_backend:
-                    self.store_backend.log_audit(
-                        action_type="REMEDIATION_REPLACE", 
-                        entity_uid=finding.entity_uid, 
-                        details=msg
-                    )
-
+                details = f"Remediated {finding.entity_uid} (Tag {proposal.target_attr}) -> {proposal.new_value}"
+                action_type = "REMEDIATION_REPLACE"
+                
             # 2. Python Object Attribute support (Patient.patient_name)
             elif hasattr(entity, proposal.target_attr):
                 setattr(entity, proposal.target_attr, proposal.new_value)
-                msg = f"Remediated {finding.entity_uid}: {proposal.target_attr} -> {proposal.new_value}"
-                self.logger.info(msg)
-                
-                if self.store_backend:
-                    self.store_backend.log_audit(
-                        action_type="REMEDIATION_REPLACE", 
-                        entity_uid=finding.entity_uid, 
-                        details=msg
-                    )
+                details = f"Remediated {finding.entity_uid}: {proposal.target_attr} -> {proposal.new_value}"
+                action_type = "REMEDIATION_REPLACE"
+
             else:
                 self.logger.warning(f"Entity {finding.entity_uid} (Type: {type(entity).__name__}) has no attribute or setter for {proposal.target_attr}")
+                return
 
         elif proposal.action_type == "SHIFT_DATE":
             # Deterministic Date Shifting
-            # We need the PatientID to calculate the shift
             patient_id = self._resolve_patient_id(entity, proposal)
             if not patient_id:
                 self.logger.warning(f"Could not resolve PatientID for {finding.entity_uid}. Skipping date shift.")
@@ -88,17 +84,20 @@ class RemediationService:
             
             if new_date:
                 setattr(entity, proposal.target_attr, new_date)
-                msg = f"Date Shifted {finding.entity_uid}: {proposal.target_attr} ({shift_days} days)"
-                self.logger.info(msg)
-                
-                if self.store_backend:
-                     self.store_backend.log_audit(
-                        action_type="REMEDIATION_SHIFT_DATE", 
-                        entity_uid=finding.entity_uid, 
-                        details=msg
-                    )
+                details = f"Date Shifted {finding.entity_uid}: {proposal.target_attr} ({shift_days} days)"
+                action_type = "REMEDIATION_SHIFT_DATE"
             else:
                  self.logger.warning(f"Invalid date format for {finding.entity_uid}: {proposal.original_value}")
+                 return
+
+        # Logging & Auditing
+        if action_type:
+            self.logger.info(details)
+            if self.store_backend:
+                if audit_buffer is not None:
+                    audit_buffer.append((action_type, finding.entity_uid, details))
+                else:
+                    self.store_backend.log_audit(action_type, finding.entity_uid, details)
 
     def _resolve_patient_id(self, entity, proposal: PhiRemediation = None) -> Optional[str]:
         # 1. Check metadata in proposal (Best for Date Shifting logic)

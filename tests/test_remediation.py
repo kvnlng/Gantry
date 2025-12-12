@@ -117,3 +117,52 @@ def test_date_object_remediation():
         
     assert study.study_date != study_date
 
+from unittest.mock import MagicMock
+from gantry.entities import Patient, Study
+from gantry.privacy import PhiInspector, PhiFinding, PhiRemediation
+from gantry.remediation import RemediationService
+
+# ... existing tests ...
+
+def test_audit_batching():
+    """
+    Verifies that applying remediation uses batch storage logging (performance optimization).
+    """
+    # Setup Mock Store
+    mock_store = MagicMock()
+    service = RemediationService(store_backend=mock_store)
+    
+    # Create dummy findings
+    findings = []
+    patient = Patient("P1", "Test")
+    for i in range(10):
+        # Create fake finding
+        f = PhiFinding(
+            entity_uid=f"e_{i}",
+            entity_type="Test",
+            field_name=f"field_{i}",
+            value="sensitive",
+            reason="testing",
+            patient_id="P1",
+            entity=patient,
+            remediation_proposal=PhiRemediation(
+                action_type="REPLACE_TAG",
+                target_attr="patient_name", # target existing attr
+                new_value="REDACTED"
+            )
+        )
+        findings.append(f)
+        
+    # Act
+    service.apply_remediation(findings)
+    
+    # Assert
+    # Should call batch ONCE
+    mock_store.log_audit_batch.assert_called_once()
+    
+    # Verify content of batch
+    batch_args = mock_store.log_audit_batch.call_args[0][0] # First arg of first call
+    assert len(batch_args) == 10
+    
+    # Should NOT call single log
+    mock_store.log_audit.assert_not_called()
