@@ -1,6 +1,7 @@
 import hashlib
 from typing import List, Optional
 from datetime import datetime, timedelta
+from tqdm import tqdm
 from .privacy import PhiFinding, PhiRemediation
 from .logger import get_logger
 
@@ -19,7 +20,7 @@ class RemediationService:
         """
         processed_entities = set() # To avoid double-processing if multiple findings point to same entity/attr
 
-        for finding in findings:
+        for finding in tqdm(findings, desc="Anonymizing Metadata", unit="finding"):
             if not finding.remediation_proposal:
                 continue
             
