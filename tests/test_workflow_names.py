@@ -60,16 +60,16 @@ def test_workflow_aliases(clean_session_path, tmp_path):
     session.scaffold_config = original_scaffold
 
     # 4. Target (Audit)
-    original_scan = session.scan_for_phi
+    original_audit = session.audit
     called = []
-    def mock_scan(config):
-        called.append(f"scan_{config}")
+    def mock_audit(config=None):
+        called.append(f"audit_{config}")
         return [] # Empty report
-    session.scan_for_phi = mock_scan
+    session.audit = mock_audit
     
     session.audit("config.json")
-    assert "scan_config.json" in called
-    session.scan_for_phi = original_scan
+    assert "audit_config.json" in called
+    session.audit = original_audit
 
     # 5. Backup
     original_preserve = session.preserve_identities
@@ -105,11 +105,11 @@ def test_workflow_aliases(clean_session_path, tmp_path):
     session.execute_config = original_exec
     
     # 8. Verify
-    # uses scan_for_phi again
-    session.scan_for_phi = mock_scan # Reuse mock
+    # uses audit again
+    session.audit = mock_audit # Reuse mock
     session.verify()
-    assert "scan_None" in called # called with None if no config passed
-    session.scan_for_phi = original_scan
+    assert "audit_None" in called # called with None if no config passed
+    session.audit = original_audit
 
     # 9. Export
     original_export = session.export

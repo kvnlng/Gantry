@@ -69,5 +69,6 @@ def test_full_logging_coverage(tmp_path):
     assert "PHI Scan Complete" in log_content
     assert "Loading configuration from" in log_content
     assert "Exporting session to" in log_content
-    assert "Exported:" in log_content # From DicomExporter
-    assert "Scaffolded configuration" in log_content
+    assert "Exported:" in log_content
+    # Check specifically for the scaffold message
+    assert "Scaffolded Unified Config" in log_content

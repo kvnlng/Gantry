@@ -54,8 +54,13 @@ def test_scaffold_config_creates_new_entries(tmp_path):
     with open(out_file, "r") as f:
         new_conf = json.load(f)
         
-    assert len(new_conf["machines"]) == 1
-    new_machine = new_conf["machines"][0]
+    # The unified config scaffold keeps existing rules AND adds new ones.
+    # So we expect 2 machines (SN-OLD and SN-NEW).
+    assert len(new_conf["machines"]) == 2
+    
+    # Extract just the new one for validation
+    new_machine = next(m for m in new_conf["machines"] if m["serial_number"] == "SN-NEW")
+    
     assert new_machine["serial_number"] == "SN-NEW"
     assert new_machine["model_name"] == "ModelB"
     assert new_machine["manufacturer"] == "MfgB"
