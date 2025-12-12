@@ -34,6 +34,12 @@ Focus: Validating data integrity and expanding redaction capabilities.
 - [ ] **UID Regeneration**: (Optional) Add a strategy to automatically regenerate SOP Instance UIDs for anonymized files to prevent ID conflicts with original data.
 - [ ] **Memory Profiling**: Optimize `MachinePixelIndex` to handle massive datasets without excessive RAM usage.
 
+### v0.6.0 - Analytics & Reporting
+Focus: Empowering users to understand their data through deep inspection on the object graph.
+- [ ] **Object Graph to DataFrame**: Expose a method to flatten `Patient -> Study -> Series -> Instance` hierarchy into a comprehensive Pandas DataFrame.
+- [ ] **Metadata Querying**: Enable SQL-like querying on the dataframe (e.g., "Find all scans with `SliceThickness < 1.0` acquired by 'GE' scanners").
+- [ ] **Audit Reporting**: Export comprehensive CSV reports of the session inventory, including details on what was redacted or modified.
+
 ### v1.0.0 - Production Release
 - [ ] **API Freeze**: Lock down the `DicomSession` interface.
 - [ ] **Documentation**: Complete API reference and tutorials on ReadTheDocs or Wiki.

@@ -48,7 +48,7 @@ def test_import_with_progress(tmp_path, monkeypatch):
     session.import_folder(str(dcm_dir))
     
     # 5. Verify Logger created file
-    log_file = "gantry.log" 
+    log_file = os.getenv("GANTRY_LOG_FILE", "gantry.log")
     assert os.path.exists(log_file)
     with open(log_file, "r") as f:
         content = f.read()

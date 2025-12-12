@@ -1,12 +1,17 @@
 import logging
 import sys
 
-def configure_logger(log_file="gantry.log"):
+import os
+
+def configure_logger(log_file=None):
     """
     Configures the root logger:
     - File Handler: DEBUG level (All details go here)
     - Console Handler: WARNING level (Only errors/warnings go to screen, to keep tqdm clean)
     """
+    if log_file is None:
+        log_file = os.getenv("GANTRY_LOG_FILE", "gantry.log")
+        
     logger = logging.getLogger("gantry")
     logger.setLevel(logging.DEBUG)
     

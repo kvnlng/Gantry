@@ -5,6 +5,27 @@ All notable changes to the "Gantry" project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-12-11
+
+### Added
+- **Features**:
+    - **Safe Export**: New `export(safe=True)` mode ensuring no PHI leaves the system.
+    - **Reversible Anonymization**: Securely embed encrypted original identities (`gantry.key`).
+    - **Manual Persistence**: Changed default behavior to manual `.save()` for better user control.
+    - **Background Persistence**: Non-blocking saves via `PersistenceManager`.
+    - **PHI Analysis Reports**: `scan_for_phi` now returns a rich `PhiReport` object with Pandas DataFrame support.
+    - **Parallel Processing**: Multi-process support for Import and PHI Scanning.
+- **Improvements**:
+    - **Console Output**: Suppressed noisy `pydicom` warnings and improved `tqdm` progress bars.
+    - **Batch UX**: Better feedback during long-running operations.
+    - **Test Coverage**: specific tests for `crypto`, `config`, and `safe_export`.
+
+### Fixed
+- **Regression**: Addressed silent failure in pixel export when source files are missing.
+- **Bug**: Fixed `TypeError` in Remediation Date Shifting.
+- **Bug**: Fixed `MultiValue` JSON serialization error in persistence.
+- **Bug**: Fixed `ValueError` regarding Group 0000 elements during export.
+
 ## [0.3.0] - 2025-12-11
 
 ### Added

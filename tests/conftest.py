@@ -11,6 +11,14 @@ from datetime import date
 from gantry.entities import Patient, Study, Series, Instance, Equipment
 from gantry.builders import DicomBuilder
 
+@pytest.fixture(autouse=True)
+def redirect_logging(tmp_path):
+    """Redirects gantry.log to a temp file for all tests."""
+    log_file = tmp_path / "gantry.log"
+    os.environ["GANTRY_LOG_FILE"] = str(log_file)
+    yield
+    if "GANTRY_LOG_FILE" in os.environ:
+        del os.environ["GANTRY_LOG_FILE"]
 
 @pytest.fixture
 def dummy_pixel_array_2d():

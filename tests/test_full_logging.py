@@ -8,7 +8,7 @@ import numpy as np
 
 def test_full_logging_coverage(tmp_path):
     # 1. Setup
-    log_file = "gantry.log"
+    log_file = os.getenv("GANTRY_LOG_FILE", "gantry.log")
     if os.path.exists(log_file):
         os.remove(log_file)
         
