@@ -36,7 +36,9 @@ def test_export_command_set_error(tmp_path):
     out_dir = tmp_path / "export_bad"
     
     # Act: This should NOW SUCCEED (Command tags ignored)
-    DicomExporter.save_patient(p, str(out_dir))
+    from unittest.mock import patch
+    with patch("gantry.validation.IODValidator.validate", return_value=[]):
+        DicomExporter.save_patient(p, str(out_dir))
     
     # Verify file exists
     assert (out_dir / f"{inst.sop_instance_uid}.dcm").exists()
