@@ -4,13 +4,13 @@ import shutil
 from gantry import Session
 
 @pytest.fixture
-def clean_session_path():
-    db_path = "test_workflow.db"
-    if os.path.exists(db_path):
-        os.remove(db_path)
-    yield db_path
-    if os.path.exists(db_path):
-        os.remove(db_path)
+def clean_session_path(tmp_path):
+    """
+    Returns a path to a temporary database file.
+    Pytest handles directory cleanup (including WAL/SHM files).
+    """
+    db_path = tmp_path / "test_workflow.db"
+    return str(db_path)
 
 def test_workflow_aliases(clean_session_path, tmp_path):
     """

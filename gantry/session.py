@@ -19,12 +19,20 @@ from .parallel import run_parallel
 def scan_worker(args):
     """
     Worker to scan a single patient.
-    args: (patient_copy, config_path)
+    args: (patient_copy, config_source)
     Returns: List[PhiFinding] (WITHOUT entities, lightweight)
     """
-    patient, config_path = args
+    patient, config_source = args
     from .privacy import PhiInspector # Import inside worker
-    inspector = PhiInspector(config_path)
+    
+    if isinstance(config_source, dict):
+        inspector = PhiInspector(config_tags=config_source)
+    elif isinstance(config_source, str) or config_source is None:
+        inspector = PhiInspector(config_path=config_source)
+    else:
+        # Fallback
+        inspector = PhiInspector()
+
     findings = inspector.scan_patient(patient)
     
     # Strip heavy entity objects before returning across process boundary
@@ -52,6 +60,7 @@ class DicomSession:
         self.store.patients = self.store_backend.load_all()
         
         self.active_rules: List[Dict[str, Any]] = []
+        self.active_phi_tags: Dict[str, str] = {}
         
         # Reversibility
         self.key_manager = None
@@ -179,11 +188,22 @@ class DicomSession:
     def scan_for_phi(self, config_path: str = None) -> "PhiReport":
         """
         Scans all patients in the session for potential PHI.
+        Uses cached `active_phi_tags` if config_path matches or is None, otherwise loads fresh.
         Returns a PhiReport object (iterable, and convertible to DataFrame).
         """
         from .privacy import PhiReport
         
-        inspector = PhiInspector(config_path)
+        # Logic: If config_path is provided, we should probably load it temporarily for this scan?
+        # OR if config_path is None, use self.active_phi_tags
+        
+        tags_to_use = self.active_phi_tags
+        
+        if config_path:
+             # Just load tags for this run, don't overwrite session state unless load_config called?
+             # Actually, if user says audit("file.json"), they expect that file to control.
+             tags_to_use = ConfigLoader.load_phi_config(config_path)
+
+        inspector = PhiInspector(config_tags=tags_to_use)
         if not inspector.phi_tags:
             get_logger().warning("PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
         
@@ -194,7 +214,16 @@ class DicomSession:
         # Note: Large object graphs might be slow to pickle.
         # But Patients are usually metadata only (pixels lazy loaded).
         # We rely on lazy loading NOT triggering pixel reads during pickle, which `store` proxy helps with.
-        worker_args = [(p, config_path) for p in self.store.patients]
+        
+        # !! WORKER ARGS CHANGE !!
+        # scan_worker expects (patient, config_path). 
+        # But now we might be passing raw tags.
+        # We should update scan_worker to accept (patient, tags_dict) or (patient, path).
+        # For parallelism with `active_phi_tags`, we MUST pass the dict, because the worker
+        # can't read `self.active_phi_tags` from the parent process memory directly easily (unless passed).
+        # So let's pass the dictionary.
+        
+        worker_args = [(p, tags_to_use) for p in self.store.patients]
         
         results = run_parallel(scan_worker, worker_args, desc="Scanning PHI")
         
@@ -382,14 +411,21 @@ class DicomSession:
         try:
             get_logger().info(f"Loading configuration from {config_file}...")
             print(f"Loading configuration from {config_file}...")
-            self.active_rules = ConfigLoader.load_redaction_rules(config_file)
-            get_logger().info(f"Loaded {len(self.active_rules)} machine rule definitions.")
-            print(f"Loaded {len(self.active_rules)} machine rule definitions.")
-            print("Tip: Run .preview_config() to see matches, or .execute_config() to apply.")
+            
+            # UNIFIED LOAD (v2)
+            tags, rules = ConfigLoader.load_unified_config(config_file)
+            
+            self.active_phi_tags = tags
+            self.active_rules = rules
+            
+            get_logger().info(f"Loaded {len(self.active_rules)} machine rules and {len(self.active_phi_tags)} PHI tags.")
+            print(f"Configuration Loaded:\n - {len(self.active_rules)} Machine Redaction Rules\n - {len(self.active_phi_tags)} PHI Tags")
+            print("Tip: Run .audit() to check PHI, or .redact_pixels() to apply redaction.")
         except Exception as e:
             get_logger().error(f"Load failed: {e}")
             print(f"Load failed: {e}")
             self.active_rules = []
+            self.active_phi_tags = {}
 
     def preview_config(self):
         """
@@ -461,18 +497,18 @@ class DicomSession:
 
     def scaffold_config(self, output_path: str):
         """
-        Generates a skeleton configuration file for machines found in the inventory
-        that are NOT covered by the currently loaded rules.
+        Generates a unified v2 configuration file.
+        Includes default PHI tags + Auto-detected machine inventory.
         """
         import json
         
         # 1. Identify what we have
         all_equipment = self.store.get_unique_equipment()
         
-        # 2. Identify what is already configured
+        # 2. Identify what is already configured (Pixel Rules)
         configured_serials = {rule.get("serial_number") for rule in self.active_rules}
         
-        # 3. Find the gap
+        # 3. Find missing machines
         missing_configs = []
         for eq in all_equipment:
             if eq.device_serial_number and eq.device_serial_number not in configured_serials:
@@ -484,25 +520,29 @@ class DicomSession:
                     "redaction_zones": []
                 })
         
-        if not missing_configs:
-            get_logger().info("All detected machines are already configured. Nothing to scaffold.")
-            print("All detected machines are already configured. Nothing to scaffold.")
-            return
-
-        # 4. Write to disk
+        # 4. Include Default PHI Tags
+        # Use whatever is active, or load default
+        tags = self.active_phi_tags if self.active_phi_tags else ConfigLoader.load_phi_config()
+        
+        # 5. Construct Unified Data
         data = {
-            "version": "1.0",
-            "machines": missing_configs
+            "version": "2.0",
+            "phi_tags": tags,
+            "machines": missing_configs + self.active_rules # Include existing rules too? Or just scaffold new?
+                                                            # Scaffold typically means "create new", but for a unified file
+                                                            # we probably want to dump everything so user has a complete file.
         }
+        
+        if not missing_configs and not self.active_rules:
+             print("No machines detected to scaffold.")
         
         try:
             with open(output_path, 'w') as f:
                 json.dump(data, f, indent=4)
-            get_logger().info(f"Scaffolded configuration for {len(missing_configs)} new machines to {output_path}")
-            print(f"Scaffolded configuration for {len(missing_configs)} new machines to {output_path}")
+            get_logger().info(f"Scaffolded Unified Config to {output_path} ({len(missing_configs)} new machines)")
+            print(f"Scaffolded Unified Config to {output_path}")
         except Exception as e:
             get_logger().error(f"Failed to write scaffold: {e}")
-            print(f"Failed to write scaffold: {e}")
 
     # =========================================================================
     # WORKFLOW ALIASES (Ref: docs/WORKFLOW.md)

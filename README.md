@@ -66,11 +66,11 @@ session.examine()
 # Output: Inventory: 3 Devices...
 
 # 3. Configure (Define Rules)
-session.setup_config("redaction_rules.json")
+session.setup_config("privacy_config.json")
 # [User edits json file...]
 
 # 4. Target (Audit for PHI)
-risk_report = session.audit("redaction_rules.json")
+risk_report = session.audit("privacy_config.json")
 
 # 5. Backup (Identity Preservation)
 session.enable_reversible_anonymization("gantry.key")
@@ -80,7 +80,7 @@ session.backup_identities(risk_report)
 session.anonymize_metadata(risk_report)
 
 # 7. Redact (Pixels)
-session.load_config("redaction_rules.json")
+session.load_config("privacy_config.json")
 session.redact_pixels()
 
 # 8. Verify

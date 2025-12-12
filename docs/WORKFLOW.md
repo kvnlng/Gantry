@@ -36,14 +36,17 @@ session.examine()
 
 ## 3. Checkpoint: Configure (Define Rules)
 **Goal**: Initialize your control files.
-Before you can measure risk or redact pixels, you need to define the rules.
+Gantry uses a **Unified Configuration** (v2.0) that defines both:
+1. **PHI Tags**: Which metadata attributes to anonymize/hash (e.g., `PatientName`, `StudyDate`).
+2. **Redaction Checkpoints**: Which machines need pixel-level redaction and where.
 
 ```python
-# Generate a starter config based on your inventory
-session.setup_config("redaction_plan.json")
+# Generate a unified config skeleton based on your inventory
+session.setup_config("privacy_config.json")
 
-# USER ACTION: Edit 'redaction_plan.json' in your text editor.
-# Define ROIs, add PHI tags to look for, etc.
+# USER ACTION: Edit 'privacy_config.json' in your text editor.
+# - Add specific PHI tags to custom list
+# - Define ROIs for detected machines
 ```
 
 ## 4. Checkpoint: Target (Audit)
@@ -52,12 +55,9 @@ This is an **active** checkpoint. You will iteratively refine your configuration
 
 ```python
 # A. Audit Metadata (Measure Accuracy)
-# returns a PhiReport to measure against your expectations
-risk_report = session.audit("my_privacy_config.json")
+# Uses the 'phi_tags' defined in your unified config
+risk_report = session.audit("privacy_config.json")
 # ... Review report, edit config, repeat ...
-
-# B. Pixel Strategy
-session.scaffold_config("redaction_plan.json")
 ```
 
 ## 4. Checkpoint: Backup (Identity preservation)

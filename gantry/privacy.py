@@ -72,9 +72,25 @@ class PhiInspector:
     Scans the Object Graph for attributes that are known to contain Protected Health Information (PHI).
     Based on HIPAA Safe Harbor identifier rules.
     """
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, config_tags: Dict[str, str] = None):
+        """
+        Initializes the inspector.
+        Args:
+            config_path: Path to a JSON config file (Legacy or Unified).
+            config_tags: Direct dictionary of PHI tags (Preferred for Unified flow).
+        
+        If config_tags is provided, it takes precedence.
+        If config_path is provided, it loads from file.
+        If neither, loads defaults.
+        """
         from .config_manager import ConfigLoader
-        self.phi_tags = ConfigLoader.load_phi_config(config_path)
+        
+        if config_tags is not None:
+             self.phi_tags = config_tags
+        elif config_path:
+             self.phi_tags = ConfigLoader.load_phi_config(config_path)
+        else:
+             self.phi_tags = ConfigLoader.load_phi_config()
 
     def scan_patient(self, patient: Patient) -> List[PhiFinding]:
         """

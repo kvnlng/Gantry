@@ -6,18 +6,41 @@ from .logger import get_logger
 
 class ConfigLoader:
     @staticmethod
-    def load_redaction_rules(filepath: str) -> List[Dict[str, Any]]:
+    def load_unified_config(filepath: str) -> tuple[Dict[str, str], List[Dict[str, Any]]]:
         """
-        Parses the JSON config and returns a list of machine rules.
+        Parses the unified JSON config (v2.0).
+        Returns: (phi_tags, machine_rules)
         """
         data = ConfigLoader._load_json(filepath)
         
-        # Basic Validation
-        if "machines" not in data:
-            get_logger().warning("Config warning: 'machines' key missing.")
-            return []
+        # v2.0 check
+        # if "version" in data and data["version"] == "2.0": ... (optional strict check)
         
-        rules = data["machines"]
+        phi_tags = data.get("phi_tags", {})
+        machine_rules = data.get("machines", [])
+        
+        # Validate machines
+        for i, rule in enumerate(machine_rules):
+            ConfigLoader._validate_rule(rule, i)
+            
+        return phi_tags, machine_rules
+
+    @staticmethod
+    def load_redaction_rules(filepath: str) -> List[Dict[str, Any]]:
+        """
+        Legacy/Convenience support. 
+        If v2 file, extracts 'machines'. If v1 file (list or dict), tries to parse.
+        """
+        data = ConfigLoader._load_json(filepath)
+        
+        rules = []
+        if isinstance(data, list):
+            rules = data # Old v0 list?
+        elif "machines" in data:
+            rules = data["machines"] # v1 or v2
+        else:
+             get_logger().warning("Config Warning: Could not find 'machines' list.")
+
         for i, rule in enumerate(rules):
             ConfigLoader._validate_rule(rule, i)
             
@@ -26,11 +49,14 @@ class ConfigLoader:
     @staticmethod
     def load_phi_config(filepath: str = None) -> Dict[str, str]:
         """
-        Loads PHI tags from a JSON file.
-        If filepath is None, loads the default 'resources/phi_tags.json' from the package.
+        Legacy/Convenience support.
         """
         if filepath:
             data = ConfigLoader._load_json(filepath)
+            # Support v2 unified file used as simple PHI config
+            if "phi_tags" in data:
+                return data["phi_tags"]
+            return data.get("phi_tags", data) # Fallback to assumes root dict is tags if no key
         else:
             # Load default from package resources
             base = os.path.dirname(os.path.abspath(__file__))
@@ -39,8 +65,7 @@ class ConfigLoader:
                  data = ConfigLoader._load_json(filepath)
             else:
                  data = {}
-
-        return data.get("phi_tags", {})
+            return data.get("phi_tags", data)
 
     @staticmethod
     def _load_json(filepath: str) -> Dict[str, Any]:
