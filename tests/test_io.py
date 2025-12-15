@@ -51,7 +51,9 @@ def test_persistence_priority(tmp_path):
     out_dir = tmp_path / "export_prio"
     
     # Mock validator to accept sparse dummy data
-    with patch('gantry.validation.IODValidator.validate', return_value=[]):
+    # AND Mock run_parallel to run synchronously so the patch applies!
+    with patch('gantry.validation.IODValidator.validate', return_value=[]), \
+         patch('gantry.io_handlers.run_parallel', side_effect=lambda func, items, *a, **k: [func(i) for i in items]):
         DicomExporter.save_patient(pat, str(out_dir))
     
     # 3. Read back

@@ -28,8 +28,8 @@ def mock_patient(tmp_path):
         "0028,0011": 512,              # Cols
     }
     # Mock pixel data
-    # We need to monkeypath get_pixel_data because exporters call it
-    inst.get_pixel_data = lambda: np.zeros((512, 512), dtype=np.uint16)
+    # Set pixel_array explicitly (supported by parallel export for in-memory objects)
+    inst.pixel_array = np.zeros((512, 512), dtype=np.uint16)
     
     se.instances.append(inst)
     
@@ -45,7 +45,11 @@ def test_structured_export(mock_patient, mock_validator, tmp_path):
     out_dir = tmp_path / "export_test"
     
     # Run export
-    DicomExporter.save_patient(mock_patient, str(out_dir))
+    # Run export
+    # Mock run_parallel to run synchronously so the IODValidator patch applies!
+    from unittest.mock import patch
+    with patch('gantry.io_handlers.run_parallel', side_effect=lambda func, items, *a, **k: [func(i) for i in items]):
+        DicomExporter.save_patient(mock_patient, str(out_dir))
     
     # Expected Structure:
     # out_dir / Subject_PID_001 / Study_20250101_Chest_CT / Series_1_Axial_3mm / 0010.dcm

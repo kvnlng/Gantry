@@ -7,9 +7,12 @@ from pydicom.uid import ImplicitVRLittleEndian
 from pydicom.tag import Tag
 from pydicom.datadict import dictionary_VR
 from datetime import datetime, date
-from typing import List, Set
+from typing import List, Set, Dict, Any, Optional, Tuple, NamedTuple
+import shutil
 from .entities import Patient, Study, Series, Instance, Equipment, DicomItem
 from .logger import get_logger
+from .parallel import run_parallel
+from .validation import IODValidator
 from tqdm import tqdm
 
 
@@ -88,17 +91,18 @@ def ingest_worker(fp):
         
         # Extract Linking Metadata
         meta = {
-            'pid': str(ds.get("PatientID", "UNKNOWN")),
-            'pname': str(ds.get("PatientName", "Unknown")),
-            'sid': str(ds.get("StudyInstanceUID", "")),
-            'sdate': str(ds.get("StudyDate", "19000101")),
-            'ser_id': str(ds.get("SeriesInstanceUID", "")),
-            'modality': str(ds.get("Modality", "OT")),
-            'sop': str(ds.get("SOPInstanceUID", "")),
-            'sop_class': str(ds.get("SOPClassUID", "")),
-            'man': str(ds.get("Manufacturer", "")),
-            'model': str(ds.get("ManufacturerModelName", "")),
-            'dev_sn': str(ds.get("DeviceSerialNumber", ""))
+            'pid': ds.get("PatientID", "UnknownPatient"),
+            'pname': str(ds.get("PatientName", "Unknown")), # Kept original pname
+            'sid': ds.get("StudyInstanceUID", "UnknownStudy"),
+            'sdate': str(ds.get("StudyDate", "19000101")), # Kept original sdate
+            'ser_id': ds.get("SeriesInstanceUID", "UnknownSeries"),
+            'modality': ds.get("Modality", "OT"),
+            'sop': ds.SOPInstanceUID,
+            'sop_class': str(ds.get("SOPClassUID", "")), # Kept original sop_class
+            'man': ds.get("Manufacturer", ""),
+            'model': ds.get("ManufacturerModelName", ""),
+            'dev_sn': ds.get("DeviceSerialNumber", ""),
+            'series_num': ds.get("SeriesNumber", 0) # Added SeriesNumber
         }
         
         if not meta['sop']:
@@ -195,7 +199,7 @@ class DicomImporter:
                     # Series
                     series = series_map.get(ser_id)
                     if not series:
-                        series = Series(ser_id, meta['modality'], 0)
+                        series = Series(ser_id, meta['modality'], meta['series_num'])
                         if meta['man'] or meta['model']:
                             series.equipment = Equipment(meta['man'], meta['model'], meta['dev_sn'])
                         study.series.append(series)
@@ -208,6 +212,83 @@ class DicomImporter:
                     logger.error(f"Linkage Failed: {e}")
 
         logger.info(f"Successfully ingested {count} instances.")
+
+
+
+
+class ExportContext(NamedTuple):
+    instance: Instance
+    output_path: str
+    patient_attributes: Dict[str, Any]
+    study_attributes: Dict[str, Any]
+    series_attributes: Dict[str, Any]
+    pixel_array: Optional[Any] = None # Numpy array or None
+
+def _export_instance_worker(ctx: ExportContext) -> str:
+    """
+    Worker function to export a single instance.
+    Returns the output path on success, raises Exception on failure.
+    """
+    try:
+        inst = ctx.instance
+        ds = DicomExporter._create_ds(inst)
+        
+        # 0. Base Attributes
+        DicomExporter._merge(ds, inst.attributes)
+        
+        # 1. Patient Level
+        ds.PatientName = ctx.patient_attributes.get("PatientName", "")
+        ds.PatientID = ctx.patient_attributes.get("PatientID", "")
+        
+        # 2. Study Level
+        ds.StudyInstanceUID = ctx.study_attributes.get("StudyInstanceUID", "")
+        ds.StudyDate = ctx.study_attributes.get("StudyDate", "")
+        ds.StudyTime = ctx.study_attributes.get("StudyTime", "")
+        
+        # 3. Series Level
+        ds.SeriesInstanceUID = ctx.series_attributes.get("SeriesInstanceUID", "")
+        ds.Modality = ctx.series_attributes.get("Modality", "")
+        ds.SeriesNumber = ctx.series_attributes.get("SeriesNumber", None)
+        if ctx.series_attributes.get("Manufacturer"):
+            ds.Manufacturer = ctx.series_attributes["Manufacturer"]
+        if ctx.series_attributes.get("ManufacturerModelName"):
+            ds.ManufacturerModelName = ctx.series_attributes["ManufacturerModelName"]
+
+        # 4. Pixel Data
+        # Use context-provided pixels (for in-memory objects) or load from file
+        arr = ctx.pixel_array
+        if arr is None:
+             arr = inst.get_pixel_data()
+             
+        if arr is not None:
+            ds.PixelData = arr.tobytes()
+            ds.Rows, ds.Columns = arr.shape[-2], arr.shape[-1]
+            ds.SamplesPerPixel = inst.attributes.get("0028,0002", 1)
+            ds.PhotometricInterpretation = inst.attributes.get("0028,0004", "MONOCHROME2")
+            
+            if arr.itemsize == 1:
+                default_bits = 8
+            else:
+                default_bits = 16
+
+            ds.BitsAllocated = inst.attributes.get("0028,0100", default_bits)
+            ds.BitsStored = inst.attributes.get("0028,0101", default_bits)
+            ds.HighBit = inst.attributes.get("0028,0102", default_bits - 1)
+            ds.PixelRepresentation = inst.attributes.get("0028,0103", 0)
+
+        # Validate & Save
+        errs = IODValidator.validate(ds)
+        if not errs:
+            # Ensure dir exists (race safe)
+            os.makedirs(os.path.dirname(ctx.output_path), exist_ok=True)
+            ds.save_as(ctx.output_path)
+            return ctx.output_path
+        else:
+            return None
+            
+    except Exception as e:
+        # Re-raise to be caught by parallel wrapper or handled
+        raise RuntimeError(f"Export failed for {ctx.output_path}: {e}")
 
 
 class DicomExporter:
@@ -224,123 +305,106 @@ class DicomExporter:
     @staticmethod
     def save_studies(patient: Patient, studies: List[Study], out_dir: str):
         """
-        Exports a specific list of studies for a patient.
-        Useful for partial exports or filtering.
+        Exports a specific list of studies for a patient using parallel workers.
         """
         if not os.path.exists(out_dir): os.makedirs(out_dir)
-        from gantry.validation import IODValidator
         logger = get_logger()
-
+        
+        export_tasks: List[ExportContext] = []
+        
+        # Planning Phase: Generate Contexts
         for st in studies:
             for se in st.series:
                 for inst in se.instances:
-                    ds = DicomExporter._create_ds(inst)
+                    # Prepare Metadata used for directory structure AND overrides
                     
-                    # 0. Base Attributes (Generic)
-                    # We merge these FIRST so that High-Level Model overrides (below) take precedence.
-                    DicomExporter._merge(ds, inst.attributes)
-
-                    # 1. Patient Level
-                    ds.PatientName = patient.patient_name
-                    ds.PatientID = patient.patient_id
-
-                    # 2. Study Level
-                    ds.StudyInstanceUID = st.study_instance_uid
+                    # Patient Attributes
+                    pat_attrs = {
+                        "PatientName": patient.patient_name,
+                        "PatientID": patient.patient_id
+                    }
+                    
+                    # Study Attributes
+                    s_date_str = ""
                     if st.study_date:
                         if hasattr(st.study_date, 'strftime'):
-                             ds.StudyDate = st.study_date.strftime("%Y%m%d")
+                            s_date_str = st.study_date.strftime("%Y%m%d")
                         else:
-                             ds.StudyDate = str(st.study_date)
-                    else:
-                        ds.StudyDate = ""
-                    ds.StudyTime = "120000"  # Dummy time to satisfy Type 1
-
-                    # 3. Series Level
-                    ds.SeriesInstanceUID = se.series_instance_uid
-                    ds.Modality = se.modality
-                    ds.SeriesNumber = se.series_number
-                    if se.equipment:
-                        ds.Manufacturer = se.equipment.manufacturer
-                        ds.ManufacturerModelName = se.equipment.model_name
-
-                    # 4. Instance Level and recursive sequences
-                    # Merged at step 0 to allow overrides.
-
-                    # Merge Pixels
-                    # Merge Pixels
-                    # CRITICAL: Do not swallow errors here. If pixels are missing, we want to know.
-                    arr = inst.get_pixel_data()
+                            s_date_str = str(st.study_date)
+                            
+                    study_attrs = {
+                        "StudyInstanceUID": st.study_instance_uid,
+                        "StudyDate": s_date_str,
+                        "StudyTime": "120000"
+                    }
                     
-                    if arr is not None:
-                        ds.PixelData = arr.tobytes()
-                        ds.Rows, ds.Columns = arr.shape[-2], arr.shape[-1]
-                        ds.SamplesPerPixel = inst.attributes.get("0028,0002", 1)
-                        # Ensure Photometric Interpretation is present (Type 1)
-                        ds.PhotometricInterpretation = inst.attributes.get("0028,0004", "MONOCHROME2")
-                        # Infer depth from numpy array
-                        if arr.itemsize == 1:
-                            default_bits = 8
-                        else:
-                            default_bits = 16
-    
-                        ds.BitsAllocated = inst.attributes.get("0028,0100", default_bits)
-                        ds.BitsStored = inst.attributes.get("0028,0101", default_bits)
-                        ds.HighBit = inst.attributes.get("0028,0102", default_bits - 1)
-                        ds.PixelRepresentation = inst.attributes.get("0028,0103", 0)
+                    # Series Attributes
+                    series_attrs = {
+                        "SeriesInstanceUID": se.series_instance_uid,
+                        "Modality": se.modality,
+                        "SeriesNumber": se.series_number
+                    }
+                    if se.equipment:
+                        series_attrs["Manufacturer"] = se.equipment.manufacturer
+                        series_attrs["ManufacturerModelName"] = se.equipment.model_name
+                        
+                    # Calculate Output Path
+                    # 1. Subject Folder
+                    subj_name = f"Subject_{DicomExporter._sanitize(patient.patient_id)}"
+                    
+                    # 2. Study Folder
+                    s_date_clean = s_date_str.replace("-", "") or "UnknownDate"
+                    
+                    s_desc = "Study"
+                    if "0008,1030" in inst.attributes:
+                        s_desc = inst.attributes["0008,1030"]
+                    study_folder = f"Study_{s_date_clean}_{DicomExporter._sanitize(s_desc)}"
+                    
+                    # 3. Series Folder
+                    ser_num = se.series_number if se.series_number is not None else "0"
+                    ser_desc = "Series"
+                    if "0008,103E" in inst.attributes:
+                        ser_desc = inst.attributes["0008,103E"]
+                    series_folder = f"Series_{ser_num}_{DicomExporter._sanitize(ser_desc)}"
+                    
+                    # 4. Filename
+                    fname = f"{inst.sop_instance_uid}.dcm"
+                    if "0020,0013" in inst.attributes:
+                        try:
+                            inum = int(inst.attributes["0020,0013"])
+                            fname = f"{inum:04d}.dcm"
+                        except: pass
+                        
+                    full_out_path = os.path.join(out_dir, subj_name, study_folder, series_folder, fname)
+                    
+                    # Handle In-Memory Pixels (e.g. Remediated/Detached instances)
+                    # If file_path is None, worker cannot load pixels. send them.
+                    p_array = None
+                    if inst.file_path is None and inst.pixel_array is not None:
+                        p_array = inst.pixel_array
 
-                    # Validate & Save
-                    errs = IODValidator.validate(ds)
-                    if not errs:
-                        # Structured Export Logic
-                        # 1. Subject Folder
-                        subj_name = f"Subject_{DicomExporter._sanitize(patient.patient_id)}"
-                        
-                        # 2. Study Folder
-                        s_date = "UnknownDate"
-                        if st.study_date:
-                            s_date = str(st.study_date).replace("-", "")
-                            if hasattr(st.study_date, 'strftime'):
-                                s_date = st.study_date.strftime("%Y%m%d")
-                        
-                        # Apply naive lookup for Description if not in object model explicitly yet
-                        # In the future, Study object should have 'description' field.
-                        # For now, we rely on what was populated or use a default.
-                        s_desc = "Study" # Placeholder if we don't track it on the Study object easily without looking at instance
-                        # Let's try to grab it from the instance attributes if available for better naming
-                        if "0008,1030" in inst.attributes:
-                            s_desc = inst.attributes["0008,1030"]
-                        
-                        study_folder = f"Study_{s_date}_{DicomExporter._sanitize(s_desc)}"
-                        
-                        # 3. Series Folder
-                        ser_num = se.series_number if se.series_number is not None else "0"
-                        ser_desc = "Series"
-                        if "0008,103E" in inst.attributes:
-                            ser_desc = inst.attributes["0008,103E"]
-                            
-                        series_folder = f"Series_{ser_num}_{DicomExporter._sanitize(ser_desc)}"
-                        
-                        # 4. Save
-                        full_out_dir = os.path.join(out_dir, subj_name, study_folder, series_folder)
-                        if not os.path.exists(full_out_dir):
-                            os.makedirs(full_out_dir)
-                            
-                        # Use Instance Number if available, else UID
-                        fname = f"{inst.sop_instance_uid}.dcm"
-                        if "0020,0013" in inst.attributes:
-                            try:
-                                # Pad to 4 digits for sorting
-                                inum = int(inst.attributes["0020,0013"])
-                                fname = f"{inum:04d}.dcm"
-                            except: pass
-                            
-                        fp = os.path.join(full_out_dir, fname)
-                        ds.save_as(fp)
-                        logger.info(f"Exported: {fp}")
-                    else:
-                        # This print statement is why you saw 0 files!
-                        logger.warning(f"Skipped Invalid {inst.sop_instance_uid}: {errs}")
+                    # Add to queue
+                    ctx = ExportContext(
+                        instance=inst, 
+                        output_path=full_out_path,
+                        patient_attributes=pat_attrs,
+                        study_attributes=study_attrs,
+                        series_attributes=series_attrs,
+                        pixel_array=p_array
+                    )
+                    export_tasks.append(ctx)
 
+        # Execution Phase
+        if not export_tasks:
+            logger.warning("No instances found to export.")
+            return
+
+        logger.info(f"Starting parallel export of {len(export_tasks)} instances...")
+        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=10)
+        
+        # results contains paths or Nones
+        success_count = sum(1 for r in results if r is not None)
+        logger.info(f"Export Complete. Success: {success_count}/{len(export_tasks)}")
     @staticmethod
     def _create_ds(inst):
         meta = FileMetaDataset()
