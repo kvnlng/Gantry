@@ -165,10 +165,13 @@ class RemediationService:
         # We process them in order of specificity
         formats = [
             "%Y%m%d",                # DA: 20230515
+            "%Y-%m-%d",              # ISO DA: 2024-05-11
             "%Y%m%d%H%M%S",          # DT: 20230515104822
             "%Y%m%d.%H%M%S",         # DT: 20230515.104822
             "%Y%m%d%H%M%S.%f",       # DT: 20230515104822.123456
-            "%Y%m%d.%H%M%S.%f"       # DT: 20230515.104822.123456
+            "%Y%m%d.%H%M%S.%f",      # DT: 20230515.104822.123456
+            "%Y-%m-%d %H:%M:%S",     # ISO DT: 2024-05-11 10:48:22
+            "%Y-%m-%dT%H:%M:%S"      # ISO T DT: 2024-05-11T10:48:22
         ]
 
         # Handle DICOM's potential for variable millisecond precision if needed

@@ -45,6 +45,12 @@ class TestDateShifting:
         for original, days, expected in cases:
             assert service._shift_date_string(original, days) == expected
 
+    def test_shift_date_iso_format(self, service):
+        """Test ISO format (YYYY-MM-DD)"""
+        # 2024-05-11 + 10 days = 2024-05-21
+        result = service._shift_date_string("2024-05-11", days=10)
+        assert result == "2024-05-21"
+
     def test_shift_date_invalid(self, service):
         assert service._shift_date_string("", 10) is None
         assert service._shift_date_string(None, 10) is None
