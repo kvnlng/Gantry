@@ -110,6 +110,24 @@ By default, research configurations enable strict private tag removal. This remo
 "remove_private_tags": true
 ```
 
+### Standard Privacy Profiles
+To simplify configuration, Gantry includes built-in privacy profiles based on industry standards.
+
+**Basic Profile (`privacy_profile": "basic"`)**:
+Based on the **DICOM PS3.15 Annex E (Basic Profile)**, this profile provides a safe baseline for de-identification by removing or cleaning 18+ common identifiers (e.g., `PatientName`, `PatientID`, `BirthDate`, `OperatorsName`).
+
+Using a standard profile ensures you are compliant with best practices without manually specifying every tag. You can still override specific tags in your `phi_tags` config.
+
+```json
+{
+    "version": "2.0",
+    "privacy_profile": "basic",
+    "phi_tags": {
+        "0010,0010": { "action": "KEEP", "name": "Patient Name (Exception)" } 
+    }
+}
+```
+
 ---
 
 ## 🧩 Architecture

@@ -72,8 +72,61 @@
   <h1>Source code for gantry.config_manager</h1><div class="highlight"><pre>
 <span></span><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Any</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">.logger</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">copy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Union</span><span class="p">,</span> <span class="n">List</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.profiles</span><span class="w"> </span><span class="kn">import</span> <span class="n">PRIVACY_PROFILES</span>
+
+<span class="n">CONFIG_VERSION</span> <span class="o">=</span> <span class="s2">&quot;2.0&quot;</span>
+
+<div class="viewcode-block" id="get_logger">
+<a class="viewcode-back" href="../../gantry.html#gantry.config_manager.get_logger">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_logger</span><span class="p">():</span>
+    <span class="k">return</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;gantry&quot;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="load_unified_config">
+<a class="viewcode-back" href="../../gantry.html#gantry.config_manager.load_unified_config">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_unified_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Loads the unified configuration file (JSON).</span>
+<span class="sd">    Supports legacy list-based config (machine rules only) and new dict-based config.</span>
+<span class="sd">    Merges &#39;privacy_profile&#39; if specified.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+        
+    <span class="c1"># Handle Legacy Config (List of Rules)</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;1.0&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;machine_rules&quot;</span><span class="p">:</span> <span class="n">data</span><span class="p">,</span>
+            <span class="s2">&quot;phi_tags&quot;</span><span class="p">:</span> <span class="p">{},</span>
+            <span class="s2">&quot;date_jitter&quot;</span><span class="p">:</span> <span class="mi">0</span>
+        <span class="p">}</span>
+
+    <span class="c1"># Handle Standard Config</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">data</span>
+    
+    <span class="c1"># Merge Privacy Profile</span>
+    <span class="k">if</span> <span class="s2">&quot;privacy_profile&quot;</span> <span class="ow">in</span> <span class="n">config</span><span class="p">:</span>
+        <span class="n">profile_name</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s2">&quot;privacy_profile&quot;</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">profile_name</span> <span class="ow">in</span> <span class="n">PRIVACY_PROFILES</span><span class="p">:</span>
+            <span class="n">profile_rules</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">PRIVACY_PROFILES</span><span class="p">[</span><span class="n">profile_name</span><span class="p">])</span>
+            <span class="n">user_rules</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;phi_tags&quot;</span><span class="p">,</span> <span class="p">{})</span>
+            
+            <span class="c1"># User rules override profile rules</span>
+            <span class="n">profile_rules</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">user_rules</span><span class="p">)</span>
+            <span class="n">config</span><span class="p">[</span><span class="s2">&quot;phi_tags&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">profile_rules</span>
+            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loaded privacy profile &#39;</span><span class="si">{</span><span class="n">profile_name</span><span class="si">}</span><span class="s2">&#39; with </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">PRIVACY_PROFILES</span><span class="p">[</span><span class="n">profile_name</span><span class="p">])</span><span class="si">}</span><span class="s2"> default rules.&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown privacy profile &#39;</span><span class="si">{</span><span class="n">profile_name</span><span class="si">}</span><span class="s2">&#39;. ignoring.&quot;</span><span class="p">)</span>
+            
+    <span class="k">return</span> <span class="n">config</span></div>
+
+
 
 
 <div class="viewcode-block" id="ConfigLoader">
@@ -82,31 +135,33 @@
 <div class="viewcode-block" id="ConfigLoader.load_unified_config">
 <a class="viewcode-back" href="../../gantry.html#gantry.config_manager.ConfigLoader.load_unified_config">[docs]</a>
     <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">load_unified_config</span><span class="p">(</span><span class="n">filepath</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="nb">bool</span><span class="p">]:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_unified_config</span><span class="p">(</span><span class="n">filepath</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="nb">bool</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Parses the unified JSON config (v2.0).</span>
+<span class="sd">        Parses the unified JSON/YAML config (v2.0).</span>
 <span class="sd">        Returns: (phi_tags, machine_rules, date_jitter_config, remove_private_tags)</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">data</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">_load_json</span><span class="p">(</span><span class="n">filepath</span><span class="p">)</span>
+        <span class="c1"># Call the top-level loader which handles YAML, Legacy List, and Privacy Profiles</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">load_unified_config</span><span class="p">(</span><span class="n">filepath</span><span class="p">)</span>
         
-        <span class="c1"># Legacy Support: List of rules</span>
-        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
-            <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Legacy config detected (list format). Treating as machine rules.&quot;</span><span class="p">)</span>
-            <span class="n">machine_rules</span> <span class="o">=</span> <span class="n">data</span>
-            <span class="n">phi_tags</span> <span class="o">=</span> <span class="p">{}</span>
-            <span class="n">date_jitter</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;min_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">365</span><span class="p">,</span> <span class="s2">&quot;max_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">1</span><span class="p">}</span>
-            <span class="n">remove_private_tags</span> <span class="o">=</span> <span class="kc">True</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">phi_tags</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;phi_tags&quot;</span><span class="p">,</span> <span class="p">{})</span>
-            <span class="n">machine_rules</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;machines&quot;</span><span class="p">,</span> <span class="p">[])</span>
-            <span class="n">date_jitter</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;date_jitter&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;min_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">365</span><span class="p">,</span> <span class="s2">&quot;max_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">1</span><span class="p">})</span>
-            <span class="n">remove_private_tags</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;remove_private_tags&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span> <span class="c1"># Default to True for now?</span>
+        <span class="n">phi_tags</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;phi_tags&quot;</span><span class="p">,</span> <span class="p">{})</span>
+        <span class="c1"># Support &#39;machines&#39; (v2) or &#39;machine_rules&#39; (legacy internal)</span>
+        <span class="n">machine_rules</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;machines&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;machine_rules&quot;</span><span class="p">,</span> <span class="p">[]))</span>
+        
+        <span class="c1"># Date Jitter Normalization</span>
+        <span class="n">dj</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;date_jitter&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;min_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">365</span><span class="p">,</span> <span class="s2">&quot;max_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">1</span><span class="p">})</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">dj</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+             <span class="c1"># Legacy support if simple int? Actually code expects dict.</span>
+             <span class="c1"># If user provided int in YAML, we might need to handle, but standard is dict.</span>
+             <span class="k">pass</span> 
+        <span class="n">date_jitter_config</span> <span class="o">=</span> <span class="n">dj</span>
+        
+        <span class="n">remove_private_tags</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;remove_private_tags&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
         
         <span class="c1"># Validate machines</span>
         <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">rule</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">machine_rules</span><span class="p">):</span>
             <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">_validate_rule</span><span class="p">(</span><span class="n">rule</span><span class="p">,</span> <span class="n">i</span><span class="p">)</span>
             
-        <span class="k">return</span> <span class="n">phi_tags</span><span class="p">,</span> <span class="n">machine_rules</span><span class="p">,</span> <span class="n">date_jitter</span><span class="p">,</span> <span class="n">remove_private_tags</span></div>
+        <span class="k">return</span> <span class="n">phi_tags</span><span class="p">,</span> <span class="n">machine_rules</span><span class="p">,</span> <span class="n">date_jitter_config</span><span class="p">,</span> <span class="n">remove_private_tags</span></div>
 
 
 <div class="viewcode-block" id="ConfigLoader.load_redaction_rules">

@@ -845,27 +845,32 @@
                         <span class="s2">&quot;redaction_zones&quot;</span><span class="p">:</span> <span class="p">[]</span>
                     <span class="p">})</span>
         
-        <span class="c1"># 4. Include Default set of tags (Research + Default)</span>
-        <span class="c1"># Load default</span>
-        <span class="n">defaults</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_phi_config</span><span class="p">()</span>
-        <span class="c1"># Load research</span>
+        <span class="c1"># 4. Include Default set of tags (Research Overrides Only)</span>
+        <span class="c1"># We now leverage the &quot;basic&quot; privacy profile for the heavy lifting.</span>
+        <span class="c1"># We only inject the research-specific overrides (e.g. KEEP Age/Sex, JIT Dates).</span>
+        
+        <span class="n">phi_tags</span> <span class="o">=</span> <span class="p">{}</span>
         <span class="n">res_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="s2">&quot;resources&quot;</span><span class="p">,</span> <span class="s2">&quot;research_tags.json&quot;</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">res_path</span><span class="p">):</span>
-             <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">res_path</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-                 <span class="n">res_data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
-                 <span class="n">res_tags</span> <span class="o">=</span> <span class="n">res_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;research_tags&quot;</span><span class="p">,</span> <span class="p">{})</span>
-                 <span class="n">defaults</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">res_tags</span><span class="p">)</span>
+             <span class="k">try</span><span class="p">:</span>
+                 <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">res_path</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                     <span class="n">res_data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+                     <span class="n">phi_tags</span> <span class="o">=</span> <span class="n">res_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;research_tags&quot;</span><span class="p">,</span> <span class="p">{})</span>
+             <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                 <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to load research tags: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
         <span class="c1"># 5. Construct Unified Data</span>
         <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
             <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;2.0&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;privacy_profile&quot;</span><span class="p">:</span> <span class="s2">&quot;basic&quot;</span><span class="p">,</span>
             <span class="s2">&quot;_instructions&quot;</span><span class="p">:</span> <span class="p">{</span>
-                <span class="s2">&quot;phi_tags&quot;</span><span class="p">:</span> <span class="s2">&quot;Map DICOM Tag (GGGG,EEEE) to a Description String OR an Object.&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;privacy_profile&quot;</span><span class="p">:</span> <span class="s2">&quot;Standard profile (basic) handles common PHI (Name, ID, etc).&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;phi_tags&quot;</span><span class="p">:</span> <span class="s2">&quot;Define overrides here. &#39;JITTER&#39; shifts dates based on config.&quot;</span><span class="p">,</span>
                 <span class="s2">&quot;advanced_actions&quot;</span><span class="p">:</span> <span class="s2">&quot;Actions: REMOVE, EMPTY, REPLACE, KEEP, JITTER (SHIFT)&quot;</span><span class="p">,</span>
                 <span class="s2">&quot;date_jitter&quot;</span><span class="p">:</span> <span class="s2">&quot;Range of days to shift dates by (negative = past).&quot;</span><span class="p">,</span>
-                <span class="s2">&quot;remove_private_tags&quot;</span><span class="p">:</span> <span class="s2">&quot;If true, removes all odd-group tags except Gantry secure tags.&quot;</span>
+                <span class="s2">&quot;remove_private_tags&quot;</span><span class="p">:</span> <span class="s2">&quot;If true, removes all odd-group tags except Gantry Metadata.&quot;</span>
             <span class="p">},</span>
-            <span class="s2">&quot;phi_tags&quot;</span><span class="p">:</span> <span class="n">defaults</span><span class="p">,</span>
+            <span class="s2">&quot;phi_tags&quot;</span><span class="p">:</span> <span class="n">phi_tags</span><span class="p">,</span>
             <span class="s2">&quot;date_jitter&quot;</span><span class="p">:</span> <span class="p">{</span>
                 <span class="s2">&quot;min_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">365</span><span class="p">,</span>
                 <span class="s2">&quot;max_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">1</span>
