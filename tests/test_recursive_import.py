@@ -33,6 +33,7 @@ def test_recursive_import(tmp_path):
         ds = FileDataset(str(path), {}, file_meta=meta, preamble=b"\0" * 128)
         ds.PatientID = pid
         ds.PatientName = f"Patient^{pid}"
+        ds.SOPInstanceUID = f"1.2.3.{pid}"
         ds.is_little_endian = True
         ds.is_implicit_VR = True
         ds.save_as(str(path))
