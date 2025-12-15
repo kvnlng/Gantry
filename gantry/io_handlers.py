@@ -101,6 +101,9 @@ def ingest_worker(fp):
             'dev_sn': str(ds.get("DeviceSerialNumber", ""))
         }
         
+        if not meta['sop']:
+             raise ValueError("Missing SOPInstanceUID. Likely not a valid DICOM file.")
+
         # Construct Instance
         inst = Instance(meta['sop'], meta['sop_class'], 0, file_path=fp)
         populate_attrs(ds, inst)
