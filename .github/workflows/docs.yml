@@ -21,8 +21,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install sphinx sphinx-rtd-theme
-        pip install -e .  # Install Gantry so autodoc can import it
+        pip install -e .[docs]  # Install Gantry with docs extras (includes sphinx, myst-parser)
 
     - name: Build Sphinx Docs
       run: |
