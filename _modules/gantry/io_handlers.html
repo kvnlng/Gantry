@@ -395,7 +395,50 @@
                     <span class="c1"># Validate &amp; Save</span>
                     <span class="n">errs</span> <span class="o">=</span> <span class="n">IODValidator</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span><span class="n">ds</span><span class="p">)</span>
                     <span class="k">if</span> <span class="ow">not</span> <span class="n">errs</span><span class="p">:</span>
-                        <span class="n">fp</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">out_dir</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">.dcm&quot;</span><span class="p">)</span>
+                        <span class="c1"># Structured Export Logic</span>
+                        <span class="c1"># 1. Subject Folder</span>
+                        <span class="n">subj_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Subject_</span><span class="si">{</span><span class="n">DicomExporter</span><span class="o">.</span><span class="n">_sanitize</span><span class="p">(</span><span class="n">patient</span><span class="o">.</span><span class="n">patient_id</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+                        
+                        <span class="c1"># 2. Study Folder</span>
+                        <span class="n">s_date</span> <span class="o">=</span> <span class="s2">&quot;UnknownDate&quot;</span>
+                        <span class="k">if</span> <span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">:</span>
+                            <span class="n">s_date</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;-&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+                            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">,</span> <span class="s1">&#39;strftime&#39;</span><span class="p">):</span>
+                                <span class="n">s_date</span> <span class="o">=</span> <span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y%m</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span>
+                        
+                        <span class="c1"># Apply naive lookup for Description if not in object model explicitly yet</span>
+                        <span class="c1"># In the future, Study object should have &#39;description&#39; field.</span>
+                        <span class="c1"># For now, we rely on what was populated or use a default.</span>
+                        <span class="n">s_desc</span> <span class="o">=</span> <span class="s2">&quot;Study&quot;</span> <span class="c1"># Placeholder if we don&#39;t track it on the Study object easily without looking at instance</span>
+                        <span class="c1"># Let&#39;s try to grab it from the instance attributes if available for better naming</span>
+                        <span class="k">if</span> <span class="s2">&quot;0008,1030&quot;</span> <span class="ow">in</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">:</span>
+                            <span class="n">s_desc</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="s2">&quot;0008,1030&quot;</span><span class="p">]</span>
+                        
+                        <span class="n">study_folder</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Study_</span><span class="si">{</span><span class="n">s_date</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">DicomExporter</span><span class="o">.</span><span class="n">_sanitize</span><span class="p">(</span><span class="n">s_desc</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+                        
+                        <span class="c1"># 3. Series Folder</span>
+                        <span class="n">ser_num</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">series_number</span> <span class="k">if</span> <span class="n">se</span><span class="o">.</span><span class="n">series_number</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">&quot;0&quot;</span>
+                        <span class="n">ser_desc</span> <span class="o">=</span> <span class="s2">&quot;Series&quot;</span>
+                        <span class="k">if</span> <span class="s2">&quot;0008,103E&quot;</span> <span class="ow">in</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">:</span>
+                            <span class="n">ser_desc</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="s2">&quot;0008,103E&quot;</span><span class="p">]</span>
+                            
+                        <span class="n">series_folder</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Series_</span><span class="si">{</span><span class="n">ser_num</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">DicomExporter</span><span class="o">.</span><span class="n">_sanitize</span><span class="p">(</span><span class="n">ser_desc</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+                        
+                        <span class="c1"># 4. Save</span>
+                        <span class="n">full_out_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">out_dir</span><span class="p">,</span> <span class="n">subj_name</span><span class="p">,</span> <span class="n">study_folder</span><span class="p">,</span> <span class="n">series_folder</span><span class="p">)</span>
+                        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">full_out_dir</span><span class="p">):</span>
+                            <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">full_out_dir</span><span class="p">)</span>
+                            
+                        <span class="c1"># Use Instance Number if available, else UID</span>
+                        <span class="n">fname</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">.dcm&quot;</span>
+                        <span class="k">if</span> <span class="s2">&quot;0020,0013&quot;</span> <span class="ow">in</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">:</span>
+                            <span class="k">try</span><span class="p">:</span>
+                                <span class="c1"># Pad to 4 digits for sorting</span>
+                                <span class="n">inum</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="s2">&quot;0020,0013&quot;</span><span class="p">])</span>
+                                <span class="n">fname</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">inum</span><span class="si">:</span><span class="s2">04d</span><span class="si">}</span><span class="s2">.dcm&quot;</span>
+                            <span class="k">except</span><span class="p">:</span> <span class="k">pass</span>
+                            
+                        <span class="n">fp</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">full_out_dir</span><span class="p">,</span> <span class="n">fname</span><span class="p">)</span>
                         <span class="n">ds</span><span class="o">.</span><span class="n">save_as</span><span class="p">(</span><span class="n">fp</span><span class="p">)</span>
                         <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Exported: </span><span class="si">{</span><span class="n">fp</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
                     <span class="k">else</span><span class="p">:</span>
@@ -435,7 +478,19 @@
                 <span class="n">vr</span> <span class="o">=</span> <span class="n">dictionary_VR</span><span class="p">(</span><span class="n">Tag</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">e</span><span class="p">))</span>
                 <span class="n">ds</span><span class="o">.</span><span class="n">add_new</span><span class="p">(</span><span class="n">Tag</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">e</span><span class="p">),</span> <span class="n">vr</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
             <span class="k">except</span><span class="p">:</span>
-                <span class="k">pass</span></div>
+                <span class="k">pass</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_sanitize</span><span class="p">(</span><span class="n">filename</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Removes illegal characters from filenames.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">filename</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s2">&quot;Unknown&quot;</span>
+        <span class="c1"># Keep alphanumeric, dashes, underscores, spaces (maybe replace spaces with underscores?)</span>
+        <span class="c1"># For strictness:</span>
+        <span class="n">safe</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">filename</span><span class="p">)</span> <span class="k">if</span> <span class="n">c</span><span class="o">.</span><span class="n">isalnum</span><span class="p">()</span> <span class="ow">or</span> <span class="n">c</span> <span class="ow">in</span> <span class="p">(</span><span class="s1">&#39; &#39;</span><span class="p">,</span> <span class="s1">&#39;.&#39;</span><span class="p">,</span> <span class="s1">&#39;-&#39;</span><span class="p">,</span> <span class="s1">&#39;_&#39;</span><span class="p">)])</span>
+        <span class="k">return</span> <span class="n">safe</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="p">,</span> <span class="s2">&quot;_&quot;</span><span class="p">)</span></div>
 
 </pre></div>
 
