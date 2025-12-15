@@ -196,6 +196,9 @@
             <span class="s1">&#39;dev_sn&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;DeviceSerialNumber&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
         <span class="p">}</span>
         
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;sop&#39;</span><span class="p">]:</span>
+             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Missing SOPInstanceUID. Likely not a valid DICOM file.&quot;</span><span class="p">)</span>
+
         <span class="c1"># Construct Instance</span>
         <span class="n">inst</span> <span class="o">=</span> <span class="n">Instance</span><span class="p">(</span><span class="n">meta</span><span class="p">[</span><span class="s1">&#39;sop&#39;</span><span class="p">],</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;sop_class&#39;</span><span class="p">],</span> <span class="mi">0</span><span class="p">,</span> <span class="n">file_path</span><span class="o">=</span><span class="n">fp</span><span class="p">)</span>
         <span class="n">populate_attrs</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">inst</span><span class="p">)</span>
