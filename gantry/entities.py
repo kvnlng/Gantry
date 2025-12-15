@@ -180,6 +180,7 @@ class Study:
     study_instance_uid: str
     study_date: Any
     series: List[Series] = field(default_factory=list)
+    date_shifted: bool = False
 
 
 @dataclass

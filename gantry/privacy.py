@@ -261,6 +261,10 @@ class PhiInspector:
         findings = []
         uid = study.study_instance_uid
         
+        # If successfully remediated (shifted), do not flag as PHI again
+        if hasattr(study, "date_shifted") and study.date_shifted:
+            return findings
+
         if study.study_date:
             proposal = PhiRemediation(
                 action_type="SHIFT_DATE", # Special action for the Service to handle

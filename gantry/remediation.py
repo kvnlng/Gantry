@@ -85,6 +85,11 @@ class RemediationService:
             
             if new_date:
                 setattr(entity, proposal.target_attr, new_date)
+                
+                # Update tracking flag if it's a Study
+                if hasattr(entity, "date_shifted"):
+                    entity.date_shifted = True
+                    
                 details = f"Date Shifted {finding.entity_uid}: {proposal.target_attr} ({shift_days} days)"
                 action_type = "REMEDIATION_SHIFT_DATE"
             else:
