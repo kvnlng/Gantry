@@ -262,9 +262,37 @@ def _export_instance_worker(ctx: ExportContext) -> str:
              
         if arr is not None:
             ds.PixelData = arr.tobytes()
-            ds.Rows, ds.Columns = arr.shape[-2], arr.shape[-1]
+            
+            # Recalculate dimensions based on array shape
+            # Logic mirrored from Instance.set_pixel_data
+            shape = arr.shape
+            ndim = len(shape)
+            
+            rows, cols = 0, 0
+            # defaults
+            if ndim == 2:
+                rows, cols = shape
+            elif ndim == 3:
+                if shape[-1] in [3, 4]:
+                    rows, cols, _ = shape
+                else:
+                    _, rows, cols = shape
+            elif ndim == 4:
+                _, rows, cols, _ = shape # frames, rows, cols, samples
+            
+            if rows > 0 and cols > 0:
+                ds.Rows = rows
+                ds.Columns = cols
+
             ds.SamplesPerPixel = inst.attributes.get("0028,0002", 1)
             ds.PhotometricInterpretation = inst.attributes.get("0028,0004", "MONOCHROME2")
+            
+            # Fix for Planar Configuration Mismatch:
+            # numpy.tobytes() produces C-contiguous interleaved data (PlanarConfig=0).
+            # If the original metadata had PlanarConfig=1, we must override it to 0
+            # to match the data we are writing.
+            if ds.SamplesPerPixel > 1:
+                ds.PlanarConfiguration = 0
             
             if arr.itemsize == 1:
                 default_bits = 8
