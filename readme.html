@@ -1,0 +1,291 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gantry &mdash; Gantry 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=01f34227"></script>
+      <script src="_static/doctools.js?v=9a2dae69"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="gantry" href="modules.html" />
+    <link rel="prev" title="Welcome to Gantry’s documentation!" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            Gantry
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Gantry</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#key-features">🚀 Key Features</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#privacy-security">🛡️ Privacy &amp; Security</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#performance-scale">⚡ Performance &amp; Scale</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#intelligent-data-management">🧠 Intelligent Data Management</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#installation">📦 Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#quick-start-research-workflow">⚡ Quick Start: Research Workflow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#advanced-configuration">🕵️ Advanced Configuration</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#date-jittering">Date Jittering</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#private-tag-removal">Private Tag Removal</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#architecture">🧩 Architecture</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#running-tests">🧪 Running Tests</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#license">License</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="modules.html">gantry</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">Gantry</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Gantry</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/readme.md.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="gantry">
+<h1>Gantry<a class="headerlink" href="#gantry" title="Link to this heading"></a></h1>
+<p><strong>A Robust, Object-Oriented DICOM Management &amp; Redaction Toolkit.</strong></p>
+<p><a class="reference external" href="https://www.python.org/downloads/"><img alt="Python 3.9+" src="https://img.shields.io/badge/python-3.9+-blue.svg" /></a>
+<a class="reference external" href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a></p>
+<p><strong>Gantry</strong> is a high-level framework for curating, anonymizing, and redacting medical imaging data. It transforms raw DICOM files into safe, research-ready datasets.</p>
+<p>Instead of treating files as flat dictionaries, Gantry provides a semantic interface (<code class="docutils literal notranslate"><span class="pre">Patient</span></code> → <code class="docutils literal notranslate"><span class="pre">Study</span></code>) to automate critical tasks like <strong>PHI Scanning</strong>, <strong>Reversible Anonymization</strong>, <strong>Pixel Redaction</strong>, <strong>Date Jittering</strong>, and <strong>Compliance Auditing</strong>.</p>
+<hr class="docutils" />
+<section id="key-features">
+<h2>🚀 Key Features<a class="headerlink" href="#key-features" title="Link to this heading"></a></h2>
+<section id="privacy-security">
+<h3>🛡️ Privacy &amp; Security<a class="headerlink" href="#privacy-security" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p><strong>Smart Remediation</strong>: Detects and fixes PHI in metadata (Anonymization &amp; Configurable Date Shifting).</p></li>
+<li><p><strong>Research-Ready Configuration</strong>: Built-in support for research datasets (keeping demographics, jittering dates).</p></li>
+<li><p><strong>Strict De-Identification</strong>: Optional “Nuclear” mode to remove all private tags except those required for reversibility.</p></li>
+<li><p><strong>Reversible Anonymization</strong>: Securely embeds encrypted original identities for authorized recovery (pseudonymization).</p></li>
+<li><p><strong>Pixel Redaction</strong>: Rules-based engine to redact burned-in PHI from pixel data, with auto-detection for known machine models.</p></li>
+</ul>
+</section>
+<section id="performance-scale">
+<h3>⚡ Performance &amp; Scale<a class="headerlink" href="#performance-scale" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p><strong>Parallel Processing</strong>: Multi-process architecture for high-speed import and PHI scanning.</p></li>
+<li><p><strong>Lazy Loading</strong>: Minimal memory footprint; loads pixel data only when needed.</p></li>
+<li><p><strong>Robust Persistence</strong>: Powered by <strong>SQLite</strong> (<code class="docutils literal notranslate"><span class="pre">gantry.db</span></code>) to handle large-scale datasets with ACID guarantees.</p></li>
+</ul>
+</section>
+<section id="intelligent-data-management">
+<h3>🧠 Intelligent Data Management<a class="headerlink" href="#intelligent-data-management" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p><strong>Hierarchical Object Model</strong>: Work with semantic entities (<code class="docutils literal notranslate"><span class="pre">Patient</span></code> → <code class="docutils literal notranslate"><span class="pre">Study</span></code>) instead of raw tags.</p></li>
+<li><p><strong>Machine-Centric Indexing</strong>: Automatically groups images by equipment signature (Model &amp; Serial).</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="installation">
+<h2>📦 Installation<a class="headerlink" href="#installation" title="Link to this heading"></a></h2>
+<p>Clone the repository and install in editable mode:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/kvnlng/gantry.git
+<span class="nb">cd</span><span class="w"> </span>gantry
+pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
+</pre></div>
+</div>
+</section>
+<hr class="docutils" />
+<section id="quick-start-research-workflow">
+<h2>⚡ Quick Start: Research Workflow<a class="headerlink" href="#quick-start-research-workflow" title="Link to this heading"></a></h2>
+<p>Gantry makes it easy to prepare data for research.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">gantry</span>
+
+<span class="c1"># 1. Ingest Data</span>
+<span class="n">session</span> <span class="o">=</span> <span class="n">gantry</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="s2">&quot;research_cohort.db&quot;</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">ingest</span><span class="p">(</span><span class="s2">&quot;./raw_dicom_data&quot;</span><span class="p">)</span>
+
+<span class="c1"># 2. Inventory Equipment</span>
+<span class="n">session</span><span class="o">.</span><span class="n">examine</span><span class="p">()</span> 
+<span class="c1"># Output: Found 3 Devices (GE Rev CT, Siemens Vida...)</span>
+
+<span class="c1"># 3. Create Research Config</span>
+<span class="c1"># Generates a JSON file with safe defaults for research:</span>
+<span class="c1"># - Dates: JITTER (-365 to -1 days)</span>
+<span class="c1"># - Demographics: KEEP (Age, Sex)</span>
+<span class="c1"># - Private Tags: REMOVE (Strict)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">scaffold_config</span><span class="p">(</span><span class="s2">&quot;research_config.json&quot;</span><span class="p">)</span>
+
+<span class="c1"># 4. (Optional) Customize Data Jitter</span>
+<span class="c1"># Edit &quot;research_config.json&quot;:</span>
+<span class="c1"># &quot;date_jitter&quot;: { &quot;min_days&quot;: -10, &quot;max_days&quot;: -10 }</span>
+
+<span class="c1"># 5. Backup Original Identities (Pseudonymization)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">enable_reversible_anonymization</span><span class="p">(</span><span class="s2">&quot;gantry.key&quot;</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">backup_identities</span><span class="p">(</span><span class="n">session</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">)</span>
+
+<span class="c1"># 6. Apply De-Identification</span>
+<span class="c1"># This applies metadata anonymization, date shifting, and private tag removal</span>
+<span class="n">session</span><span class="o">.</span><span class="n">load_config</span><span class="p">(</span><span class="s2">&quot;research_config.json&quot;</span><span class="p">)</span>
+<span class="n">risk_report</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">audit</span><span class="p">()</span>
+<span class="n">session</span><span class="o">.</span><span class="n">apply_remediation</span><span class="p">(</span><span class="n">risk_report</span><span class="p">)</span>
+
+<span class="c1"># 7. Redact Pixels (if needed)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">redact_pixels</span><span class="p">()</span>
+
+<span class="c1"># 8. Safe Export</span>
+<span class="n">session</span><span class="o">.</span><span class="n">export_data</span><span class="p">(</span><span class="s2">&quot;./clean_research_data&quot;</span><span class="p">,</span> <span class="n">safe</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Save Session</span>
+<span class="n">session</span><span class="o">.</span><span class="n">save</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+<hr class="docutils" />
+<section id="advanced-configuration">
+<h2>🕵️ Advanced Configuration<a class="headerlink" href="#advanced-configuration" title="Link to this heading"></a></h2>
+<section id="date-jittering">
+<h3>Date Jittering<a class="headerlink" href="#date-jittering" title="Link to this heading"></a></h3>
+<p>Gantry supports deterministic date shifting based on a hash of the PatientID. You can configure the range in your config file:</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="nt">&quot;date_jitter&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;min_days&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">-365</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;max_days&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">-1</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="private-tag-removal">
+<h3>Private Tag Removal<a class="headerlink" href="#private-tag-removal" title="Link to this heading"></a></h3>
+<p>By default, research configurations enable strict private tag removal. This removes <em>all</em> odd-group tags, ensuring no hidden PHI leaks, while automatically whitelisting Gantry’s own security tags (<code class="docutils literal notranslate"><span class="pre">0099,0010</span></code>) used for reversible anonymization.</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="nt">&quot;remove_private_tags&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+</pre></div>
+</div>
+</section>
+</section>
+<hr class="docutils" />
+<section id="architecture">
+<h2>🧩 Architecture<a class="headerlink" href="#architecture" title="Link to this heading"></a></h2>
+<p>Gantry uses a <strong>Layered Architecture</strong> accessed via a central Facade.</p>
+<div class="highlight-mermaid notranslate"><div class="highlight"><pre><span></span>graph TD
+    User([User]) --&gt; Session
+    
+    subgraph Core [Gantry Codebase]
+        direction TB
+        Session[DicomSession Facade]
+        
+        subgraph Logic [Services Layer]
+            Privacy[PhiInspector]
+            Remediation[RemediationService]
+            Indexer[MachinePixelIndex]
+        end
+
+        subgraph Model [Object Graph]
+            Patient --&gt; Study
+            Study --&gt; Series
+            Series --&gt; Instance
+        end
+
+        subgraph Storage [Persistence Layer]
+            Sqlite[(SqliteStore)]
+        end
+    end
+
+    FS[File System]
+
+    Session --&gt;|Delegates| Logic
+    Session --&gt;|Manages| Model
+    Session --&gt;|Persists| Storage
+    
+    Logic --&gt;|Scans/Modifies| Model
+    Instance -.-&gt;|Lazy Load| FS
+    Sqlite &lt;--&gt;|Hydrate/Save| Model
+</pre></div>
+</div>
+</section>
+<hr class="docutils" />
+<section id="running-tests">
+<h2>🧪 Running Tests<a class="headerlink" href="#running-tests" title="Link to this heading"></a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pytest<span class="w"> </span>-v
+</pre></div>
+</div>
+</section>
+<hr class="docutils" />
+<section id="license">
+<h2>License<a class="headerlink" href="#license" title="Link to this heading"></a></h2>
+<p>This project is licensed under the MIT License - see the LICENSE file for details.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="index.html" class="btn btn-neutral float-left" title="Welcome to Gantry’s documentation!" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="modules.html" class="btn btn-neutral float-right" title="gantry" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Kevin Long.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

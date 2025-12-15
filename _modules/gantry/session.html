@@ -41,6 +41,7 @@
         </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="../../readme.html">Gantry</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../modules.html">gantry</a></li>
 </ul>
 
@@ -92,16 +93,21 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">scan_worker</span><span class="p">(</span><span class="n">args</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Worker to scan a single patient.</span>
-<span class="sd">    args: (patient_copy, config_source)</span>
+<span class="sd">    args: (patient_copy, config_source, remove_private)</span>
 <span class="sd">    Returns: List[PhiFinding] (WITHOUT entities, lightweight)</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">patient</span><span class="p">,</span> <span class="n">config_source</span> <span class="o">=</span> <span class="n">args</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="n">patient</span><span class="p">,</span> <span class="n">config_source</span><span class="p">,</span> <span class="n">remove_private</span> <span class="o">=</span> <span class="n">args</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">patient</span><span class="p">,</span> <span class="n">config_source</span> <span class="o">=</span> <span class="n">args</span>
+        <span class="n">remove_private</span> <span class="o">=</span> <span class="kc">True</span> <span class="c1"># Default</span>
+
     <span class="kn">from</span><span class="w"> </span><span class="nn">.privacy</span><span class="w"> </span><span class="kn">import</span> <span class="n">PhiInspector</span> <span class="c1"># Import inside worker</span>
     
     <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">config_source</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
-        <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_tags</span><span class="o">=</span><span class="n">config_source</span><span class="p">)</span>
+        <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_tags</span><span class="o">=</span><span class="n">config_source</span><span class="p">,</span> <span class="n">remove_private_tags</span><span class="o">=</span><span class="n">remove_private</span><span class="p">)</span>
     <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">config_source</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">or</span> <span class="n">config_source</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_path</span><span class="o">=</span><span class="n">config_source</span><span class="p">)</span>
+        <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_path</span><span class="o">=</span><span class="n">config_source</span><span class="p">,</span> <span class="n">remove_private_tags</span><span class="o">=</span><span class="n">remove_private</span><span class="p">)</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="c1"># Fallback</span>
         <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">()</span>
@@ -137,6 +143,8 @@
         
         <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">active_date_jitter</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;min_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">365</span><span class="p">,</span> <span class="s2">&quot;max_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">1</span><span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">active_remove_private_tags</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
         
         <span class="c1"># Reversibility</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">key_manager</span> <span class="o">=</span> <span class="kc">None</span>
@@ -293,14 +301,31 @@
              <span class="c1"># Just load tags for this run, don&#39;t overwrite session state unless load_config called?</span>
              <span class="c1"># Actually, if user says audit(&quot;file.json&quot;), they expect that file to control.</span>
              <span class="n">tags_to_use</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_phi_config</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span>
+             <span class="c1"># NOTE: If passing a config PATH to audit(), we might be missing the other unified settings </span>
+             <span class="c1"># (date_jitter, etc.) unless we load them too.</span>
+             <span class="c1"># For now, audit() focuses on finding things based on TAGS.</span>
+             <span class="c1"># If the inspector needs to know about date jitter or private tags to Flag them correctly?</span>
+             <span class="c1"># Private tags -&gt; YES. Jitter -&gt; Maybe not for detection, but definitely for Remediation proposal.</span>
+             
+             <span class="c1"># Better approach: If config_path is Unified, load it all.</span>
+             <span class="k">try</span><span class="p">:</span>
+                 <span class="n">t</span><span class="p">,</span> <span class="n">r</span><span class="p">,</span> <span class="n">dj</span><span class="p">,</span> <span class="n">rpt</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_unified_config</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span>
+                 <span class="n">tags_to_use</span> <span class="o">=</span> <span class="n">t</span>
+                 <span class="c1"># We probably shouldn&#39;t overwrite session state side-effects here, </span>
+                 <span class="c1"># but for the worker arguments we need to pass them.</span>
+                 <span class="c1"># Let&#39;s create a transient config object or just pass args.</span>
+                 <span class="c1"># For simplicity in this function, we&#39;ll stick to tags, but we should fix inspector init.</span>
+             <span class="k">except</span><span class="p">:</span>
+                 <span class="c1"># Fallback to simple tags load</span>
+                 <span class="n">tags_to_use</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_phi_config</span><span class="p">(</span><span class="n">config_path</span><span class="p">)</span>
 
-        <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_tags</span><span class="o">=</span><span class="n">tags_to_use</span><span class="p">)</span>
+        <span class="n">inspector</span> <span class="o">=</span> <span class="n">PhiInspector</span><span class="p">(</span><span class="n">config_tags</span><span class="o">=</span><span class="n">tags_to_use</span><span class="p">,</span> <span class="n">remove_private_tags</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">active_remove_private_tags</span><span class="p">)</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">inspector</span><span class="o">.</span><span class="n">phi_tags</span><span class="p">:</span>
             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.&quot;</span><span class="p">)</span>
         
         <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Scanning for PHI (Parallel)...&quot;</span><span class="p">)</span>
         
-        <span class="n">worker_args</span> <span class="o">=</span> <span class="p">[(</span><span class="n">p</span><span class="p">,</span> <span class="n">tags_to_use</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">]</span>
+        <span class="n">worker_args</span> <span class="o">=</span> <span class="p">[(</span><span class="n">p</span><span class="p">,</span> <span class="n">tags_to_use</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_remove_private_tags</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">]</span>
         
         <span class="n">results</span> <span class="o">=</span> <span class="n">run_parallel</span><span class="p">(</span><span class="n">scan_worker</span><span class="p">,</span> <span class="n">worker_args</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Scanning PHI&quot;</span><span class="p">)</span>
         
@@ -464,7 +489,7 @@
 <span class="sd">        Applies remediation to the current session based on findings.</span>
 <span class="sd">        Auto-logs to Audit Trail.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">svc</span> <span class="o">=</span> <span class="n">RemediationService</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="p">)</span>
+        <span class="n">svc</span> <span class="o">=</span> <span class="n">RemediationService</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="p">,</span> <span class="n">date_jitter_config</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">active_date_jitter</span><span class="p">)</span>
         <span class="n">svc</span><span class="o">.</span><span class="n">apply_remediation</span><span class="p">(</span><span class="n">findings</span><span class="p">)</span></div>
 
 
@@ -541,13 +566,17 @@
             <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loading configuration from </span><span class="si">{</span><span class="n">config_file</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span>
             
             <span class="c1"># UNIFIED LOAD (v2)</span>
-            <span class="n">tags</span><span class="p">,</span> <span class="n">rules</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_unified_config</span><span class="p">(</span><span class="n">config_file</span><span class="p">)</span>
+            <span class="n">tags</span><span class="p">,</span> <span class="n">rules</span><span class="p">,</span> <span class="n">jitter</span><span class="p">,</span> <span class="n">remove_private</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_unified_config</span><span class="p">(</span><span class="n">config_file</span><span class="p">)</span>
             
             <span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span> <span class="o">=</span> <span class="n">tags</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span> <span class="o">=</span> <span class="n">rules</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">active_date_jitter</span> <span class="o">=</span> <span class="n">jitter</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">active_remove_private_tags</span> <span class="o">=</span> <span class="n">remove_private</span>
             
             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Loaded </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">)</span><span class="si">}</span><span class="s2"> machine rules and </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span><span class="p">)</span><span class="si">}</span><span class="s2"> PHI tags.&quot;</span><span class="p">)</span>
             <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Configuration Loaded:</span><span class="se">\n</span><span class="s2"> - </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">)</span><span class="si">}</span><span class="s2"> Machine Redaction Rules</span><span class="se">\n</span><span class="s2"> - </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span><span class="p">)</span><span class="si">}</span><span class="s2"> PHI Tags&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; - Date Jitter: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">active_date_jitter</span><span class="p">[</span><span class="s1">&#39;min_days&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> to </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">active_date_jitter</span><span class="p">[</span><span class="s1">&#39;max_days&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> days&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; - Remove Private Tags: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">active_remove_private_tags</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
             <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Tip: Run .audit() to check PHI, or .redact_pixels() to apply redaction.&quot;</span><span class="p">)</span>
         <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Load failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
@@ -638,6 +667,7 @@
 <span class="sd">        Includes default PHI tags + Auto-detected machine inventory.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
         
         <span class="c1"># 1. Identify what we have</span>
         <span class="n">all_equipment</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">get_unique_equipment</span><span class="p">()</span>
@@ -645,34 +675,78 @@
         <span class="c1"># 2. Identify what is already configured (Pixel Rules)</span>
         <span class="n">configured_serials</span> <span class="o">=</span> <span class="p">{</span><span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;serial_number&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">}</span>
         
-        <span class="c1"># 3. Find missing machines</span>
+        <span class="c1"># Load Knowledge Base for Machines</span>
+        <span class="n">kb_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="s2">&quot;resources&quot;</span><span class="p">,</span> <span class="s2">&quot;redaction_rules.json&quot;</span><span class="p">)</span>
+        <span class="n">kb_machines</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">kb_path</span><span class="p">):</span>
+             <span class="k">try</span><span class="p">:</span>
+                 <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">kb_path</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                     <span class="n">kb_data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+                     <span class="n">kb_machines</span> <span class="o">=</span> <span class="n">kb_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;machines&quot;</span><span class="p">,</span> <span class="p">[])</span>
+             <span class="k">except</span><span class="p">:</span> <span class="k">pass</span>
+
+        <span class="c1"># 3. Find missing machines and try to pre-fill</span>
         <span class="n">missing_configs</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">eq</span> <span class="ow">in</span> <span class="n">all_equipment</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span> <span class="ow">and</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">configured_serials</span><span class="p">:</span>
-                <span class="n">missing_configs</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
-                    <span class="s2">&quot;serial_number&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span><span class="p">,</span>
-                    <span class="s2">&quot;model_name&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">model_name</span><span class="p">,</span>
-                    <span class="s2">&quot;manufacturer&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">manufacturer</span><span class="p">,</span>
-                    <span class="s2">&quot;comment&quot;</span><span class="p">:</span> <span class="s2">&quot;Auto-detected. Please define redaction zones.&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;redaction_zones&quot;</span><span class="p">:</span> <span class="p">[]</span>
-                <span class="p">})</span>
+                
+                <span class="c1"># Check KB</span>
+                <span class="n">matched_rule</span> <span class="o">=</span> <span class="kc">None</span>
+                <span class="c1"># Primary: Serial Match</span>
+                <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="n">kb_machines</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;serial_number&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span><span class="p">:</span>
+                        <span class="n">matched_rule</span> <span class="o">=</span> <span class="n">rule</span>
+                        <span class="k">break</span>
+                
+                <span class="c1"># Secondary: Model Match</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">matched_rule</span><span class="p">:</span>
+                    <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="n">kb_machines</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model_name&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="n">eq</span><span class="o">.</span><span class="n">model_name</span><span class="p">:</span>
+                             <span class="c1"># It&#39;s a model match, so we should probably copy the zones </span>
+                             <span class="c1"># but keep the specific serial of the detected device.</span>
+                             <span class="n">matched_rule</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+                             <span class="n">matched_rule</span><span class="p">[</span><span class="s2">&quot;serial_number&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span>
+                             <span class="n">matched_rule</span><span class="p">[</span><span class="s2">&quot;comment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Auto-matched from Model </span><span class="si">{</span><span class="n">eq</span><span class="o">.</span><span class="n">model_name</span><span class="si">}</span><span class="s2">&quot;</span>
+                             <span class="k">break</span>
+
+                <span class="k">if</span> <span class="n">matched_rule</span><span class="p">:</span>
+                    <span class="n">missing_configs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">matched_rule</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">missing_configs</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+                        <span class="s2">&quot;serial_number&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span><span class="p">,</span>
+                        <span class="s2">&quot;model_name&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">model_name</span><span class="p">,</span>
+                        <span class="s2">&quot;manufacturer&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">manufacturer</span><span class="p">,</span>
+                        <span class="s2">&quot;comment&quot;</span><span class="p">:</span> <span class="s2">&quot;Auto-detected. Please define redaction zones.&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;redaction_zones&quot;</span><span class="p">:</span> <span class="p">[]</span>
+                    <span class="p">})</span>
         
-        <span class="c1"># 4. Include Default PHI Tags</span>
-        <span class="c1"># Use whatever is active, or load default</span>
-        <span class="n">tags</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span> <span class="k">else</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_phi_config</span><span class="p">()</span>
-        
+        <span class="c1"># 4. Include Default set of tags (Research + Default)</span>
+        <span class="c1"># Load default</span>
+        <span class="n">defaults</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_phi_config</span><span class="p">()</span>
+        <span class="c1"># Load research</span>
+        <span class="n">res_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="s2">&quot;resources&quot;</span><span class="p">,</span> <span class="s2">&quot;research_tags.json&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">res_path</span><span class="p">):</span>
+             <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">res_path</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                 <span class="n">res_data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+                 <span class="n">res_tags</span> <span class="o">=</span> <span class="n">res_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;research_tags&quot;</span><span class="p">,</span> <span class="p">{})</span>
+                 <span class="n">defaults</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">res_tags</span><span class="p">)</span>
+
         <span class="c1"># 5. Construct Unified Data</span>
         <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
             <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;2.0&quot;</span><span class="p">,</span>
             <span class="s2">&quot;_instructions&quot;</span><span class="p">:</span> <span class="p">{</span>
                 <span class="s2">&quot;phi_tags&quot;</span><span class="p">:</span> <span class="s2">&quot;Map DICOM Tag (GGGG,EEEE) to a Description String OR an Object.&quot;</span><span class="p">,</span>
-                <span class="s2">&quot;advanced_actions&quot;</span><span class="p">:</span> <span class="s2">&quot;Use Object format for actions: {&#39;name&#39;: &#39;Desc&#39;, &#39;action&#39;: &#39;REMOVE&#39; | &#39;EMPTY&#39; | &#39;REPLACE&#39;}&quot;</span><span class="p">,</span>
-                <span class="s2">&quot;defaults&quot;</span><span class="p">:</span> <span class="s2">&quot;String format implies {&#39;action&#39;: &#39;REPLACE&#39;} (Anonymize).&quot;</span>
+                <span class="s2">&quot;advanced_actions&quot;</span><span class="p">:</span> <span class="s2">&quot;Actions: REMOVE, EMPTY, REPLACE, KEEP, JITTER (SHIFT)&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;date_jitter&quot;</span><span class="p">:</span> <span class="s2">&quot;Range of days to shift dates by (negative = past).&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;remove_private_tags&quot;</span><span class="p">:</span> <span class="s2">&quot;If true, removes all odd-group tags except Gantry secure tags.&quot;</span>
             <span class="p">},</span>
-            <span class="s2">&quot;phi_tags&quot;</span><span class="p">:</span> <span class="n">tags</span><span class="p">,</span>
-            <span class="s2">&quot;machines&quot;</span><span class="p">:</span> <span class="n">missing_configs</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span> <span class="c1"># Include existing rules too? Or just scaffold new?</span>
-                                                            <span class="c1"># Scaffold typically means &quot;create new&quot;, but for a unified file</span>
-                                                            <span class="c1"># we probably want to dump everything so user has a complete file.</span>
+            <span class="s2">&quot;phi_tags&quot;</span><span class="p">:</span> <span class="n">defaults</span><span class="p">,</span>
+            <span class="s2">&quot;date_jitter&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;min_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">365</span><span class="p">,</span>
+                <span class="s2">&quot;max_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">1</span>
+            <span class="p">},</span>
+            <span class="s2">&quot;remove_private_tags&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+            <span class="s2">&quot;machines&quot;</span><span class="p">:</span> <span class="n">missing_configs</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span>
         <span class="p">}</span>
         
         <span class="k">if</span> <span class="ow">not</span> <span class="n">missing_configs</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">:</span>
