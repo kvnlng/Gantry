@@ -660,6 +660,13 @@ Checkpoint 9: Export.</p>
 </dd></dl>
 
 <dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.get_cohort_report">
+<span class="sig-name descname"><span class="pre">get_cohort_report</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">pd.DataFrame</span></span></span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.get_cohort_report"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.get_cohort_report" title="Link to this definition"></a></dt>
+<dd><p>Returns a Pandas DataFrame containing flattened metadata for the current cohort.
+Useful for analysis and QA.</p>
+</dd></dl>
+
+<dl class="py method">
 <dt class="sig sig-object py" id="gantry.session.DicomSession.import_folder">
 <span class="sig-name descname"><span class="pre">import_folder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">folder_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.import_folder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.import_folder" title="Link to this definition"></a></dt>
 <dd><p>Scans a folder for .dcm files (recursively) and imports them into the session.</p>
@@ -675,7 +682,8 @@ Checkpoint 1: Ingest.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="gantry.session.DicomSession.inventory">
 <span class="sig-name descname"><span class="pre">inventory</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.inventory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.inventory" title="Link to this definition"></a></dt>
-<dd></dd></dl>
+<dd><p>Prints a summary of the session contents and equipment.</p>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="gantry.session.DicomSession.load_config">

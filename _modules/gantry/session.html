@@ -463,12 +463,76 @@
 <div class="viewcode-block" id="DicomSession.inventory">
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.inventory">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">inventory</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Prints a summary of the session contents and equipment.&quot;&quot;&quot;</span>
         <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Generating inventory report.&quot;</span><span class="p">)</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Prints a summary of devices (Manufacturers/Models) found in the current session.&quot;&quot;&quot;</span>
-        <span class="n">eqs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">get_unique_equipment</span><span class="p">()</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Inventory: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">eqs</span><span class="p">)</span><span class="si">}</span><span class="s2"> Devices&quot;</span><span class="p">)</span>
-        <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">eqs</span><span class="p">:</span>
-            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; - </span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">manufacturer</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">model_name</span><span class="si">}</span><span class="s2"> (S/N: </span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">device_serial_number</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span></div>
+        
+        <span class="c1"># 1. Object Counts</span>
+        <span class="n">n_p</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">)</span>
+        <span class="n">n_st</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">n_se</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">n_i</span> <span class="o">=</span> <span class="mi">0</span>
+        
+        <span class="c1"># 2. Equipment Grouping</span>
+        <span class="n">eq_counts</span> <span class="o">=</span> <span class="p">{}</span> <span class="c1"># (man, model) -&gt; count</span>
+        
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">:</span>
+            <span class="n">n_st</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
+                <span class="n">n_se</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">series</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">s</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
+                    <span class="n">n_i</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="p">:</span>
+                        <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="o">.</span><span class="n">manufacturer</span><span class="p">,</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="o">.</span><span class="n">model_name</span><span class="p">)</span>
+                        <span class="n">eq_counts</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">eq_counts</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Inventory Summary:&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; Patients:  </span><span class="si">{</span><span class="n">n_p</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; Studies:   </span><span class="si">{</span><span class="n">n_st</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; Series:    </span><span class="si">{</span><span class="n">n_se</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; Instances: </span><span class="si">{</span><span class="n">n_i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Equipment Inventory:&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">eq_counts</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot; No equipment metadata found.&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">for</span> <span class="p">(</span><span class="n">man</span><span class="p">,</span> <span class="n">mod</span><span class="p">),</span> <span class="n">count</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">eq_counts</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; - </span><span class="si">{</span><span class="n">man</span><span class="si">}</span><span class="s2"> - </span><span class="si">{</span><span class="n">mod</span><span class="si">}</span><span class="s2"> (Count: </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="DicomSession.get_cohort_report">
+<a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.get_cohort_report">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_cohort_report</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">&#39;pd.DataFrame&#39;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Returns a Pandas DataFrame containing flattened metadata for the current cohort.</span>
+<span class="sd">        Useful for analysis and QA.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+        <span class="n">rows</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">s</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
+                    <span class="c1"># Basic row info</span>
+                    <span class="n">row</span> <span class="o">=</span> <span class="p">{</span>
+                        <span class="s2">&quot;PatientID&quot;</span><span class="p">:</span> <span class="n">p</span><span class="o">.</span><span class="n">patient_id</span><span class="p">,</span>
+                        <span class="s2">&quot;PatientName&quot;</span><span class="p">:</span> <span class="n">p</span><span class="o">.</span><span class="n">patient_name</span><span class="p">,</span>
+                        <span class="s2">&quot;StudyInstanceUID&quot;</span><span class="p">:</span> <span class="n">s</span><span class="o">.</span><span class="n">study_instance_uid</span><span class="p">,</span>
+                        <span class="s2">&quot;StudyDate&quot;</span><span class="p">:</span> <span class="n">s</span><span class="o">.</span><span class="n">study_date</span><span class="p">,</span>
+                        <span class="s2">&quot;SeriesInstanceUID&quot;</span><span class="p">:</span> <span class="n">se</span><span class="o">.</span><span class="n">series_instance_uid</span><span class="p">,</span>
+                        <span class="s2">&quot;Modality&quot;</span><span class="p">:</span> <span class="n">se</span><span class="o">.</span><span class="n">modality</span><span class="p">,</span>
+                        <span class="s2">&quot;InstanceCount&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">)</span>
+                    <span class="p">}</span>
+                    <span class="k">if</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="p">:</span>
+                        <span class="n">row</span><span class="p">[</span><span class="s2">&quot;Manufacturer&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="o">.</span><span class="n">manufacturer</span>
+                        <span class="n">row</span><span class="p">[</span><span class="s2">&quot;Model&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="o">.</span><span class="n">model_name</span>
+                        <span class="n">row</span><span class="p">[</span><span class="s2">&quot;DeviceSerial&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="o">.</span><span class="n">device_serial_number</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">row</span><span class="p">[</span><span class="s2">&quot;Manufacturer&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+                        <span class="n">row</span><span class="p">[</span><span class="s2">&quot;Model&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+                        <span class="n">row</span><span class="p">[</span><span class="s2">&quot;DeviceSerial&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+                        
+                    <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">row</span><span class="p">)</span>
+        
+        <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">rows</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="DicomSession.redact_by_machine">
