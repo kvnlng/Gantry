@@ -461,8 +461,10 @@ class DicomSession:
             print(f" - Remove Private Tags: {self.active_remove_private_tags}")
             print("Tip: Run .audit() to check PHI, or .redact_pixels() to apply redaction.")
         except Exception as e:
+            import traceback
             get_logger().error(f"Load failed: {e}")
             print(f"Load failed: {e}")
+            print(traceback.format_exc())
             self.active_rules = []
             self.active_phi_tags = {}
 
