@@ -286,7 +286,50 @@ class DicomExporter:
                     # Validate & Save
                     errs = IODValidator.validate(ds)
                     if not errs:
-                        fp = os.path.join(out_dir, f"{inst.sop_instance_uid}.dcm")
+                        # Structured Export Logic
+                        # 1. Subject Folder
+                        subj_name = f"Subject_{DicomExporter._sanitize(patient.patient_id)}"
+                        
+                        # 2. Study Folder
+                        s_date = "UnknownDate"
+                        if st.study_date:
+                            s_date = str(st.study_date).replace("-", "")
+                            if hasattr(st.study_date, 'strftime'):
+                                s_date = st.study_date.strftime("%Y%m%d")
+                        
+                        # Apply naive lookup for Description if not in object model explicitly yet
+                        # In the future, Study object should have 'description' field.
+                        # For now, we rely on what was populated or use a default.
+                        s_desc = "Study" # Placeholder if we don't track it on the Study object easily without looking at instance
+                        # Let's try to grab it from the instance attributes if available for better naming
+                        if "0008,1030" in inst.attributes:
+                            s_desc = inst.attributes["0008,1030"]
+                        
+                        study_folder = f"Study_{s_date}_{DicomExporter._sanitize(s_desc)}"
+                        
+                        # 3. Series Folder
+                        ser_num = se.series_number if se.series_number is not None else "0"
+                        ser_desc = "Series"
+                        if "0008,103E" in inst.attributes:
+                            ser_desc = inst.attributes["0008,103E"]
+                            
+                        series_folder = f"Series_{ser_num}_{DicomExporter._sanitize(ser_desc)}"
+                        
+                        # 4. Save
+                        full_out_dir = os.path.join(out_dir, subj_name, study_folder, series_folder)
+                        if not os.path.exists(full_out_dir):
+                            os.makedirs(full_out_dir)
+                            
+                        # Use Instance Number if available, else UID
+                        fname = f"{inst.sop_instance_uid}.dcm"
+                        if "0020,0013" in inst.attributes:
+                            try:
+                                # Pad to 4 digits for sorting
+                                inum = int(inst.attributes["0020,0013"])
+                                fname = f"{inum:04d}.dcm"
+                            except: pass
+                            
+                        fp = os.path.join(full_out_dir, fname)
                         ds.save_as(fp)
                         logger.info(f"Exported: {fp}")
                     else:
@@ -326,3 +369,15 @@ class DicomExporter:
                 ds.add_new(Tag(g, e), vr, v)
             except:
                 pass
+
+    @staticmethod
+    def _sanitize(filename: str) -> str:
+        """
+        Removes illegal characters from filenames.
+        """
+        if not filename:
+            return "Unknown"
+        # Keep alphanumeric, dashes, underscores, spaces (maybe replace spaces with underscores?)
+        # For strictness:
+        safe = "".join([c for c in str(filename) if c.isalnum() or c in (' ', '.', '-', '_')])
+        return safe.strip().replace(" ", "_")
