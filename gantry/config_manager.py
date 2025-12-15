@@ -13,10 +13,20 @@ class ConfigLoader:
         """
         data = ConfigLoader._load_json(filepath)
         
-        phi_tags = data.get("phi_tags", {})
-        machine_rules = data.get("machines", [])
-        date_jitter = data.get("date_jitter", {"min_days": -365, "max_days": -1})
-        remove_private_tags = data.get("remove_private_tags", True) # Default to True for now?
+        data = ConfigLoader._load_json(filepath)
+        
+        # Legacy Support: List of rules
+        if isinstance(data, list):
+            get_logger().info("Legacy config detected (list format). Treating as machine rules.")
+            machine_rules = data
+            phi_tags = {}
+            date_jitter = {"min_days": -365, "max_days": -1}
+            remove_private_tags = True
+        else:
+            phi_tags = data.get("phi_tags", {})
+            machine_rules = data.get("machines", [])
+            date_jitter = data.get("date_jitter", {"min_days": -365, "max_days": -1})
+            remove_private_tags = data.get("remove_private_tags", True) # Default to True for now?
         
         # Validate machines
         for i, rule in enumerate(machine_rules):
