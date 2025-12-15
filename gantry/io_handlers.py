@@ -270,21 +270,23 @@ class DicomExporter:
                     # Merge Pixels
                     # CRITICAL: Do not swallow errors here. If pixels are missing, we want to know.
                     arr = inst.get_pixel_data()
-                    ds.PixelData = arr.tobytes()
-                    ds.Rows, ds.Columns = arr.shape[-2], arr.shape[-1]
-                    ds.SamplesPerPixel = inst.attributes.get("0028,0002", 1)
-                    # Ensure Photometric Interpretation is present (Type 1)
-                    ds.PhotometricInterpretation = inst.attributes.get("0028,0004", "MONOCHROME2")
-                    # Infer depth from numpy array
-                    if arr.itemsize == 1:
-                        default_bits = 8
-                    else:
-                        default_bits = 16
-
-                    ds.BitsAllocated = inst.attributes.get("0028,0100", default_bits)
-                    ds.BitsStored = inst.attributes.get("0028,0101", default_bits)
-                    ds.HighBit = inst.attributes.get("0028,0102", default_bits - 1)
-                    ds.PixelRepresentation = inst.attributes.get("0028,0103", 0)
+                    
+                    if arr is not None:
+                        ds.PixelData = arr.tobytes()
+                        ds.Rows, ds.Columns = arr.shape[-2], arr.shape[-1]
+                        ds.SamplesPerPixel = inst.attributes.get("0028,0002", 1)
+                        # Ensure Photometric Interpretation is present (Type 1)
+                        ds.PhotometricInterpretation = inst.attributes.get("0028,0004", "MONOCHROME2")
+                        # Infer depth from numpy array
+                        if arr.itemsize == 1:
+                            default_bits = 8
+                        else:
+                            default_bits = 16
+    
+                        ds.BitsAllocated = inst.attributes.get("0028,0100", default_bits)
+                        ds.BitsStored = inst.attributes.get("0028,0101", default_bits)
+                        ds.HighBit = inst.attributes.get("0028,0102", default_bits - 1)
+                        ds.PixelRepresentation = inst.attributes.get("0028,0103", 0)
 
                     # Validate & Save
                     errs = IODValidator.validate(ds)

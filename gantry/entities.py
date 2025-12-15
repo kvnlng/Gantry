@@ -107,9 +107,10 @@ class Instance(DicomItem):
         
         print(f"  -> Identity regenerated: {new_uid}")
 
-    def get_pixel_data(self) -> np.ndarray:
+    def get_pixel_data(self) -> Optional[np.ndarray]:
         """
         Returns pixel_array. Loads from disk if not in memory.
+        Returns None if no pixel data is present.
         """
         if self.pixel_array is not None:
             return self.pixel_array
@@ -118,14 +119,26 @@ class Instance(DicomItem):
             try:
                 # Read pixel data on demand
                 ds = pydicom.dcmread(self.file_path)
-                self.set_pixel_data(ds.pixel_array)  # Cache it in memory
-                return self.pixel_array
+                try:
+                    self.set_pixel_data(ds.pixel_array)  # Cache it in memory
+                    return self.pixel_array
+                except (AttributeError, TypeError):
+                    # No pixel data element
+                    return None
+                except Exception as e:
+                    if "no pixel data" in str(e).lower():
+                        return None
+                    raise e
+                    
             except Exception as e:
                 if "missing dependencies" in str(e) or "decompress" in str(e):
                     raise RuntimeError(
                         f"Failed to decompress pixel data for {os.path.basename(self.file_path)}. "
                         "Missing image codecs. Please install them with: pip install \"gantry[images]\""
                     ) from e
+                
+                # If we just caught the re-raised "no pixel data" exception, it would be handled above, 
+                # but if dcmread fails completely or something else happens:
                 raise RuntimeError(f"Lazy load failed for {self.file_path}: {e}")
 
         raise FileNotFoundError(f"Pixels missing and file not found: {self.file_path}")
