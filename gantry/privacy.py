@@ -74,12 +74,13 @@ class PhiInspector:
     Scans the Object Graph for attributes that are known to contain Protected Health Information (PHI).
     Based on HIPAA Safe Harbor identifier rules.
     """
-    def __init__(self, config_path: str = None, config_tags: Dict[str, str] = None):
+    def __init__(self, config_path: str = None, config_tags: Dict[str, str] = None, remove_private_tags: bool = False):
         """
         Initializes the inspector.
         Args:
             config_path: Path to a JSON config file (Legacy or Unified).
             config_tags: Direct dictionary of PHI tags (Preferred for Unified flow).
+            remove_private_tags: If True, scans all attributes for non-whitelisted private tags.
         
         If config_tags is provided, it takes precedence.
         If config_path is provided, it loads from file.
@@ -87,6 +88,8 @@ class PhiInspector:
         """
         from .config_manager import ConfigLoader
         
+        self.remove_private_tags = remove_private_tags
+
         if config_tags is not None:
              self.phi_tags = config_tags
         elif config_path:
@@ -154,6 +157,40 @@ class PhiInspector:
 
     def _scan_instance(self, instance: Instance, patient_id: str) -> List[PhiFinding]:
         findings = []
+        
+        # 1. Private Tag Removal Logic
+        if self.remove_private_tags:
+            # Gantry Whitelist for Reversibility
+            WHITELIST_CREATORS = ["GANTRY_SECURE"] # Usually checking value, but here we check tag if possible?
+            # Actually, per DICOM, Private Tags are odd groups.
+            # We want to remove ALL private tags except our own reversibility ones.
+            # Our Reversibility Service uses "0099,0010" (Creator) and "0099,1001" (Data)
+            WHITELIST_TAGS = {"0099,0010", "0099,1001"}
+            
+            for tag, val in instance.attributes.items():
+                try:
+                    group_str, element_str = tag.split(',')
+                    group = int(group_str, 16)
+                    if group % 2 != 0: # Odd group = Private
+                        if tag not in WHITELIST_TAGS:
+                            findings.append(PhiFinding(
+                                entity_uid=instance.sop_instance_uid,
+                                entity_type="Instance",
+                                field_name=f"Private Tag {tag}",
+                                value="<PRIVATE>",
+                                reason="Private Tag Removal Requested",
+                                tag=tag,
+                                patient_id=patient_id,
+                                entity=instance,
+                                remediation_proposal=PhiRemediation(
+                                    action_type="REMOVE_TAG",
+                                    target_attr=tag
+                                )
+                            ))
+                except ValueError:
+                    pass # Malformed tag?
+
+        # 2. Configured PHI Tags
         if not self.phi_tags:
             return findings
 
@@ -186,6 +223,12 @@ class PhiInspector:
                      needs_remediation = True
                      remediation_action = "REPLACE_TAG"
                      new_val = ""
+            elif action_code in ["SHIFT", "JITTER"]:
+                 # Date Shifting
+                 needs_remediation = True
+                 remediation_action = "SHIFT_DATE"
+            elif action_code == "KEEP":
+                 needs_remediation = False
             else: # REPLACE (Default)
                  if val != "ANONYMIZED":
                      needs_remediation = True
@@ -197,7 +240,8 @@ class PhiInspector:
                      action_type=remediation_action,
                      target_attr=tag,
                      new_value=new_val,
-                     original_value=val
+                     original_value=val,
+                     metadata={"patient_id": patient_id} if remediation_action == "SHIFT_DATE" else {}
                 )
                 
                 findings.append(PhiFinding(

@@ -10,9 +10,10 @@ class RemediationService:
     Applies remediation proposals found by the PhiInspector.
     Handles data anonymization and date shifting.
     """
-    def __init__(self, store_backend=None):
+    def __init__(self, store_backend=None, date_jitter_config: Optional[dict] = None):
         self.logger = get_logger()
         self.store_backend = store_backend
+        self.jitter_config = date_jitter_config or {"min_days": -365, "max_days": -1}
 
     def apply_remediation(self, findings: List[PhiFinding]):
         """
@@ -128,20 +129,27 @@ class RemediationService:
 
     def _get_date_shift(self, patient_id: str) -> int:
         """
-        Generates a deterministic shift between -365 and -1 days based on PatientID.
+        Generates a deterministic shift between min_days and max_days based on PatientID.
         """
         # Create a hash of the PatientID
         hash_obj = hashlib.sha256(patient_id.encode())
         # Convert first 8 bytes to int
         val = int(hash_obj.hexdigest()[:8], 16)
         
-        # Modulo 365 to get 0..364, then subtract 365 to get -365..-1
-        # range: [0, 364] -> [-365, -1]
-        # offset = (val % 365) + 1  -> 1..365
-        # return -offset
+        min_days = self.jitter_config.get("min_days", -365)
+        max_days = self.jitter_config.get("max_days", -1)
         
-        offset = (val % 365) + 1
-        return -offset
+        # Ensure correct order
+        if min_days > max_days:
+            min_days, max_days = max_days, min_days
+            
+        span = max_days - min_days + 1
+        if span < 1: 
+            span = 1
+            
+        # Modulo span to get 0..span-1, then add min_days
+        offset = (val % span) + min_days
+        return offset
 
     def _shift_date_string(self, date_val, days: int) -> Optional[str]:
         """

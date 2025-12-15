@@ -1,0 +1,36 @@
+{
+    "research_tags": {
+        "0010,0040": {
+            "name": "Patient Sex",
+            "action": "KEEP"
+        },
+        "0010,1010": {
+            "name": "Patient Age",
+            "action": "KEEP"
+        },
+        "0008,0020": {
+            "name": "Study Date",
+            "action": "JITTER"
+        },
+        "0008,0021": {
+            "name": "Series Date",
+            "action": "JITTER"
+        },
+        "0008,0022": {
+            "name": "Acquisition Date",
+            "action": "JITTER"
+        },
+        "0008,0023": {
+            "name": "Content Date",
+            "action": "JITTER"
+        },
+        "0008,0030": {
+            "name": "Study Time",
+            "action": "REMOVE"
+        },
+        "0010,0030": {
+            "name": "Patient Birth Date",
+            "action": "JITTER"
+        }
+    }
+}

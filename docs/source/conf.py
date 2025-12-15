@@ -13,6 +13,7 @@ extensions = [
     'sphinx.ext.napoleon',     # Support Google-style docstrings
     'sphinx.ext.viewcode',     # Add links to source code
     'sphinx.ext.githubpages',  # Create .nojekyll file for GitHub
+    'myst_parser',             # Parse Markdown (README)
 ]
 
 templates_path = ['_templates']

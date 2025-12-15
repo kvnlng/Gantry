@@ -15,4 +15,11 @@ setup(
         # "pylibjpeg==2.1.0"
     ],
     python_requires=">=3.9",
+    extras_require={
+        "docs": [
+            "sphinx>=7.0.0",
+            "sphinx_rtd_theme>=2.0.0",
+            "myst_parser>=2.0.0",
+        ]
+    }
 )

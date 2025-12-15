@@ -6,24 +6,23 @@ from .logger import get_logger
 
 class ConfigLoader:
     @staticmethod
-    def load_unified_config(filepath: str) -> tuple[Dict[str, str], List[Dict[str, Any]]]:
+    def load_unified_config(filepath: str) -> tuple[Dict[str, str], List[Dict[str, Any]], Dict[str, Any], bool]:
         """
         Parses the unified JSON config (v2.0).
-        Returns: (phi_tags, machine_rules)
+        Returns: (phi_tags, machine_rules, date_jitter_config, remove_private_tags)
         """
         data = ConfigLoader._load_json(filepath)
         
-        # v2.0 check
-        # if "version" in data and data["version"] == "2.0": ... (optional strict check)
-        
         phi_tags = data.get("phi_tags", {})
         machine_rules = data.get("machines", [])
+        date_jitter = data.get("date_jitter", {"min_days": -365, "max_days": -1})
+        remove_private_tags = data.get("remove_private_tags", True) # Default to True for now?
         
         # Validate machines
         for i, rule in enumerate(machine_rules):
             ConfigLoader._validate_rule(rule, i)
             
-        return phi_tags, machine_rules
+        return phi_tags, machine_rules, date_jitter, remove_private_tags
 
     @staticmethod
     def load_redaction_rules(filepath: str) -> List[Dict[str, Any]]:

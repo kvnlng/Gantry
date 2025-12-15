@@ -7,39 +7,32 @@
 
 **Gantry** is a high-level framework for curating, anonymizing, and redacting medical imaging data. It transforms raw DICOM files into safe, research-ready datasets.
 
-Instead of treating files as flat dictionaries, Gantry provides a semantic interface (`Patient` → `Study`) to automate critical tasks like **PHI Scanning**, **Reversible Anonymization**, **Pixel Redaction**, and **Compliance Auditing**.
-
-Built for scale, its **Lazy-Loading** engine handles large cohorts with minimal memory overhead, allowing you to modify and export gigabytes of pixel data on demand.
+Instead of treating files as flat dictionaries, Gantry provides a semantic interface (`Patient` → `Study`) to automate critical tasks like **PHI Scanning**, **Reversible Anonymization**, **Pixel Redaction**, **Date Jittering**, and **Compliance Auditing**.
 
 ---
 
 ## 🚀 Key Features
 
 ### 🛡️ Privacy & Security
-*   **Automated PHI Remediation**: Detects and fixes PHI in metadata (Anonymization & Date Shifting).
+*   **Smart Remediation**: Detects and fixes PHI in metadata (Anonymization & Configurable Date Shifting).
+*   **Research-Ready Configuration**: Built-in support for research datasets (keeping demographics, jittering dates).
+*   **Strict De-Identification**: Optional "Nuclear" mode to remove all private tags except those required for reversibility.
 *   **Reversible Anonymization**: Securely embeds encrypted original identities for authorized recovery (pseudonymization).
-*   **Pixel Redaction**: Rules-based engine to redact burned-in PHI from pixel data.
-*   **Safe Export**: Just-in-time scanning ensures no "dirty" data is ever written to disk.
-*   **Audit Trail**: Logs all sensitive actions to an internal SQLite audit log for compliance.
+*   **Pixel Redaction**: Rules-based engine to redact burned-in PHI from pixel data, with auto-detection for known machine models.
 
 ### ⚡ Performance & Scale
 *   **Parallel Processing**: Multi-process architecture for high-speed import and PHI scanning.
 *   **Lazy Loading**: Minimal memory footprint; loads pixel data only when needed.
 *   **Robust Persistence**: Powered by **SQLite** (`gantry.db`) to handle large-scale datasets with ACID guarantees.
-*   **Optimized Batch Operations**: Efficiently processes thousands of files with deferred execution and non-blocking I/O.
 
 ### 🧠 Intelligent Data Management
 *   **Hierarchical Object Model**: Work with semantic entities (`Patient` → `Study`) instead of raw tags.
 *   **Machine-Centric Indexing**: Automatically groups images by equipment signature (Model & Serial).
-*   **IOD Validation**: Built-in checks to ensure DICOM standard compliance (Type 1/2 tags).
-
-### 🛠️ Developer Tools
-*   **Fluent Builder API**: Programmatically construct valid DICOM datasets for testing.
-*   **Comprehensive Logging**: Detailed file-based logs with environment-variable support.
 
 ---
 
 ## 📦 Installation
+
 Clone the repository and install in editable mode:
 
 ```bash
@@ -48,47 +41,49 @@ cd gantry
 pip install -e .
 ```
 
-## ⚡ Quick Start: End-to-End Workflow
+---
 
-This guide takes you through a complete de-identification pipeline. For a detailed breakdown of the **8 Safety Checkpoints** (Ingest, Examine, Target, Backup, etc.), see the [Gantry Safety Pipeline](docs/WORKFLOW.md).
+## ⚡ Quick Start: Research Workflow
 
-The `gantry.Session` Facade is your primary entry point.
+Gantry makes it easy to prepare data for research.
 
 ```python
 import gantry
 
-# 1. Ingest
-session = gantry.Session("gantry.db")
+# 1. Ingest Data
+session = gantry.Session("research_cohort.db")
 session.ingest("./raw_dicom_data")
 
-# 2. Examine (Inventory)
-session.examine()
-# Output: Inventory: 3 Devices...
+# 2. Inventory Equipment
+session.examine() 
+# Output: Found 3 Devices (GE Rev CT, Siemens Vida...)
 
-# 3. Configure (Define Rules)
-session.setup_config("privacy_config.json")
-# [User edits json file...]
-# Advanced: {"0010,0010": {"name": "PatientName", "action": "REMOVE"}}
+# 3. Create Research Config
+# Generates a JSON file with safe defaults for research:
+# - Dates: JITTER (-365 to -1 days)
+# - Demographics: KEEP (Age, Sex)
+# - Private Tags: REMOVE (Strict)
+session.scaffold_config("research_config.json")
 
-# 4. Target (Audit for PHI)
-risk_report = session.audit("privacy_config.json")
+# 4. (Optional) Customize Data Jitter
+# Edit "research_config.json":
+# "date_jitter": { "min_days": -10, "max_days": -10 }
 
-# 5. Backup (Identity Preservation)
+# 5. Backup Original Identities (Pseudonymization)
 session.enable_reversible_anonymization("gantry.key")
-session.backup_identities(risk_report)
+session.backup_identities(session.store.patients)
 
-# 6. Anonymize (Metadata)
-session.anonymize_metadata(risk_report)
+# 6. Apply De-Identification
+# This applies metadata anonymization, date shifting, and private tag removal
+session.load_config("research_config.json")
+risk_report = session.audit()
+session.apply_remediation(risk_report)
 
-# 7. Redact (Pixels)
-session.load_config("privacy_config.json")
+# 7. Redact Pixels (if needed)
 session.redact_pixels()
 
-# 8. Verify
-session.verify()
-
-# 9. Export (Safe)
-session.export_data("./clean_dicoms", safe=True)
+# 8. Safe Export
+session.export_data("./clean_research_data", safe=True)
 
 # Save Session
 session.save()
@@ -96,65 +91,29 @@ session.save()
 
 ---
 
-## 💾 Persistence & State Management
+## 🕵️ Advanced Configuration
 
-Gantry uses a robust SQLite backend (`gantry.db`) to handle large datasets. Persistence is **manual** to give you control over when to write to disk.
+### Date Jittering
+Gantry supports deterministic date shifting based on a hash of the PatientID. You can configure the range in your config file:
 
-```python
-# Save your session state to the database
-app.save()  # Writes changes in the background
+```json
+"date_jitter": {
+    "min_days": -365,
+    "max_days": -1
+}
 ```
 
-You must call `.save()` after operations like `import_folder`, `apply_remediation`, or `execute_config` if you want to keep the changes.
+### Private Tag Removal
+By default, research configurations enable strict private tag removal. This removes *all* odd-group tags, ensuring no hidden PHI leaks, while automatically whitelisting Gantry's own security tags (`0099,0010`) used for reversible anonymization.
 
-
----
-
-## 🕵️ Privacy Analysis & Audit
-
-The **Target** checkpoint allows you to actively measure privacy risks before applying any remediation. Gantry generates a `risk_report` that you can analyze iteratively.
-
-### 1. Generate Risk Report
-
-```python
-# Scan based on your "privacy_config.json"
-risk_report = session.audit("privacy_config.json")
+```json
+"remove_private_tags": true
 ```
-
-### 2. Analyze Findings
-
-The `risk_report` is an iterable collection of `PhiFinding` objects, but its real power comes from integration with **Pandas**.
-
-```python
-# Convert to DataFrame
-df = risk_report.to_dataframe()
-
-# A. High-Level Summary
-print(df["reason"].value_counts())
-# Output:
-# Dates are Safe Harbor restricted    120
-# Names are PHI                        45
-# Custom Tag Flagged (ProtocolName)    10
-
-# B. Drill Down into Specific Risks
-names = df[df["field"] == "PatientName"]
-print(f"Found {len(names)} unique names exposed.")
-
-# C. pivot analysis (e.g., Which modalities have the most issues?)
-# (Assuming you joined with series metadata, or just check entity types)
-print(df.groupby(["entity_type", "reason"]).size())
-```
-
-This analysis helps you refine your `privacy_config.json` (e.g., ignoring false positives) before you commit to anonymization.
 
 ---
 
 ## 🧩 Architecture
 
-Gantry is modularized into the following components:
-
-| Module | Description |
-| :--- | :--- |
 Gantry uses a **Layered Architecture** accessed via a central Facade.
 
 ```mermaid
@@ -193,32 +152,13 @@ graph TD
     Sqlite <-->|Hydrate/Save| Model
 ```
 
-### Components
-
-*   **Facade (`gantry.session`)**: The single entry point for all user interactions. It orchestrates the flow components.
-*   **Object Graph (`gantry.entities`)**: A hierarchical, in-memory representation of DICOM data (`Patient` → `Study` → `Series` → `Instance`). It uses a **Proxy Pattern** to lazy-load pixel data from disk only when accessed, keeping memory usage low.
-*   **Storage (`gantry.persistence`)**: A **SQLite** backend that handles metadata persistence, query optimization, and the **Audit Trail**.
-*   **Services (`gantry.services`, `gantry.privacy`)**: encapsulation of business logic (Indexing, Redaction, PHI Scanning, Anonymization).
-*   **I/O (`gantry.io_handlers`)**: Low-level wrappers around `pydicom` for robust file reading/writing.
-
 ---
 
 ## 🧪 Running Tests
 
-Gantry uses `pytest` for comprehensive unit and integration testing.
-
 ```bash
-# Run the full suite
 pytest -v
 ```
-
----
-
-## 🗺️ Roadmap
-
-Interested in where Gantry is heading? Check out our [Roadmap](ROADMAP.md).
-
-We welcome contributions! If you'd like to help with any items, please open a Pull Request.
 
 ---
 

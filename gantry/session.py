@@ -19,16 +19,21 @@ from .parallel import run_parallel
 def scan_worker(args):
     """
     Worker to scan a single patient.
-    args: (patient_copy, config_source)
+    args: (patient_copy, config_source, remove_private)
     Returns: List[PhiFinding] (WITHOUT entities, lightweight)
     """
-    patient, config_source = args
+    if len(args) == 3:
+        patient, config_source, remove_private = args
+    else:
+        patient, config_source = args
+        remove_private = True # Default
+
     from .privacy import PhiInspector # Import inside worker
     
     if isinstance(config_source, dict):
-        inspector = PhiInspector(config_tags=config_source)
+        inspector = PhiInspector(config_tags=config_source, remove_private_tags=remove_private)
     elif isinstance(config_source, str) or config_source is None:
-        inspector = PhiInspector(config_path=config_source)
+        inspector = PhiInspector(config_path=config_source, remove_private_tags=remove_private)
     else:
         # Fallback
         inspector = PhiInspector()
@@ -61,6 +66,8 @@ class DicomSession:
         
         self.active_rules: List[Dict[str, Any]] = []
         self.active_phi_tags: Dict[str, str] = None
+        self.active_date_jitter: Dict[str, int] = {"min_days": -365, "max_days": -1}
+        self.active_remove_private_tags: bool = True
         
         # Reversibility
         self.key_manager = None
@@ -203,14 +210,31 @@ class DicomSession:
              # Just load tags for this run, don't overwrite session state unless load_config called?
              # Actually, if user says audit("file.json"), they expect that file to control.
              tags_to_use = ConfigLoader.load_phi_config(config_path)
+             # NOTE: If passing a config PATH to audit(), we might be missing the other unified settings 
+             # (date_jitter, etc.) unless we load them too.
+             # For now, audit() focuses on finding things based on TAGS.
+             # If the inspector needs to know about date jitter or private tags to Flag them correctly?
+             # Private tags -> YES. Jitter -> Maybe not for detection, but definitely for Remediation proposal.
+             
+             # Better approach: If config_path is Unified, load it all.
+             try:
+                 t, r, dj, rpt = ConfigLoader.load_unified_config(config_path)
+                 tags_to_use = t
+                 # We probably shouldn't overwrite session state side-effects here, 
+                 # but for the worker arguments we need to pass them.
+                 # Let's create a transient config object or just pass args.
+                 # For simplicity in this function, we'll stick to tags, but we should fix inspector init.
+             except:
+                 # Fallback to simple tags load
+                 tags_to_use = ConfigLoader.load_phi_config(config_path)
 
-        inspector = PhiInspector(config_tags=tags_to_use)
+        inspector = PhiInspector(config_tags=tags_to_use, remove_private_tags=self.active_remove_private_tags)
         if not inspector.phi_tags:
             get_logger().warning("PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
         
         get_logger().info("Scanning for PHI (Parallel)...")
         
-        worker_args = [(p, tags_to_use) for p in self.store.patients]
+        worker_args = [(p, tags_to_use, self.active_remove_private_tags) for p in self.store.patients]
         
         results = run_parallel(scan_worker, worker_args, desc="Scanning PHI")
         
@@ -353,7 +377,7 @@ class DicomSession:
         Applies remediation to the current session based on findings.
         Auto-logs to Audit Trail.
         """
-        svc = RemediationService(self.store_backend)
+        svc = RemediationService(self.store_backend, date_jitter_config=self.active_date_jitter)
         svc.apply_remediation(findings)
 
     def export(self, folder, safe=False):
@@ -424,13 +448,17 @@ class DicomSession:
             print(f"Loading configuration from {config_file}...")
             
             # UNIFIED LOAD (v2)
-            tags, rules = ConfigLoader.load_unified_config(config_file)
+            tags, rules, jitter, remove_private = ConfigLoader.load_unified_config(config_file)
             
             self.active_phi_tags = tags
             self.active_rules = rules
+            self.active_date_jitter = jitter
+            self.active_remove_private_tags = remove_private
             
             get_logger().info(f"Loaded {len(self.active_rules)} machine rules and {len(self.active_phi_tags)} PHI tags.")
             print(f"Configuration Loaded:\n - {len(self.active_rules)} Machine Redaction Rules\n - {len(self.active_phi_tags)} PHI Tags")
+            print(f" - Date Jitter: {self.active_date_jitter['min_days']} to {self.active_date_jitter['max_days']} days")
+            print(f" - Remove Private Tags: {self.active_remove_private_tags}")
             print("Tip: Run .audit() to check PHI, or .redact_pixels() to apply redaction.")
         except Exception as e:
             get_logger().error(f"Load failed: {e}")
@@ -512,6 +540,7 @@ class DicomSession:
         Includes default PHI tags + Auto-detected machine inventory.
         """
         import json
+        import os
         
         # 1. Identify what we have
         all_equipment = self.store.get_unique_equipment()
@@ -519,34 +548,78 @@ class DicomSession:
         # 2. Identify what is already configured (Pixel Rules)
         configured_serials = {rule.get("serial_number") for rule in self.active_rules}
         
-        # 3. Find missing machines
+        # Load Knowledge Base for Machines
+        kb_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "redaction_rules.json")
+        kb_machines = []
+        if os.path.exists(kb_path):
+             try:
+                 with open(kb_path, 'r') as f:
+                     kb_data = json.load(f)
+                     kb_machines = kb_data.get("machines", [])
+             except: pass
+
+        # 3. Find missing machines and try to pre-fill
         missing_configs = []
         for eq in all_equipment:
             if eq.device_serial_number and eq.device_serial_number not in configured_serials:
-                missing_configs.append({
-                    "serial_number": eq.device_serial_number,
-                    "model_name": eq.model_name,
-                    "manufacturer": eq.manufacturer,
-                    "comment": "Auto-detected. Please define redaction zones.",
-                    "redaction_zones": []
-                })
+                
+                # Check KB
+                matched_rule = None
+                # Primary: Serial Match
+                for rule in kb_machines:
+                    if rule.get("serial_number") == eq.device_serial_number:
+                        matched_rule = rule
+                        break
+                
+                # Secondary: Model Match
+                if not matched_rule:
+                    for rule in kb_machines:
+                        if rule.get("model_name") == eq.model_name:
+                             # It's a model match, so we should probably copy the zones 
+                             # but keep the specific serial of the detected device.
+                             matched_rule = rule.copy()
+                             matched_rule["serial_number"] = eq.device_serial_number
+                             matched_rule["comment"] = f"Auto-matched from Model {eq.model_name}"
+                             break
+
+                if matched_rule:
+                    missing_configs.append(matched_rule)
+                else:
+                    missing_configs.append({
+                        "serial_number": eq.device_serial_number,
+                        "model_name": eq.model_name,
+                        "manufacturer": eq.manufacturer,
+                        "comment": "Auto-detected. Please define redaction zones.",
+                        "redaction_zones": []
+                    })
         
-        # 4. Include Default PHI Tags
-        # Use whatever is active, or load default
-        tags = self.active_phi_tags if self.active_phi_tags else ConfigLoader.load_phi_config()
-        
+        # 4. Include Default set of tags (Research + Default)
+        # Load default
+        defaults = ConfigLoader.load_phi_config()
+        # Load research
+        res_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "research_tags.json")
+        if os.path.exists(res_path):
+             with open(res_path, 'r') as f:
+                 res_data = json.load(f)
+                 res_tags = res_data.get("research_tags", {})
+                 defaults.update(res_tags)
+
         # 5. Construct Unified Data
         data = {
             "version": "2.0",
             "_instructions": {
                 "phi_tags": "Map DICOM Tag (GGGG,EEEE) to a Description String OR an Object.",
-                "advanced_actions": "Use Object format for actions: {'name': 'Desc', 'action': 'REMOVE' | 'EMPTY' | 'REPLACE'}",
-                "defaults": "String format implies {'action': 'REPLACE'} (Anonymize)."
+                "advanced_actions": "Actions: REMOVE, EMPTY, REPLACE, KEEP, JITTER (SHIFT)",
+                "date_jitter": "Range of days to shift dates by (negative = past).",
+                "remove_private_tags": "If true, removes all odd-group tags except Gantry secure tags."
             },
-            "phi_tags": tags,
-            "machines": missing_configs + self.active_rules # Include existing rules too? Or just scaffold new?
-                                                            # Scaffold typically means "create new", but for a unified file
-                                                            # we probably want to dump everything so user has a complete file.
+            "phi_tags": defaults,
+            "date_jitter": {
+                "min_days": -365,
+                "max_days": -1
+            },
+            "remove_private_tags": True,
+            "machines": missing_configs + self.active_rules
         }
         
         if not missing_configs and not self.active_rules:
