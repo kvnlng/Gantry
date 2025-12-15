@@ -47,7 +47,14 @@
 <li class="toctree-l1 current"><a class="reference internal" href="modules.html">gantry</a><ul class="current">
 <li class="toctree-l2 current"><a class="current reference internal" href="#">gantry package</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#submodules">Submodules</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#gantry-builders-module">gantry.builders module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#module-gantry.builders">gantry.builders module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.builders.DicomBuilder"><code class="docutils literal notranslate"><span class="pre">DicomBuilder</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.builders.InstanceContextBuilder"><code class="docutils literal notranslate"><span class="pre">InstanceContextBuilder</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.builders.PatientBuilder"><code class="docutils literal notranslate"><span class="pre">PatientBuilder</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.builders.SeriesBuilder"><code class="docutils literal notranslate"><span class="pre">SeriesBuilder</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.builders.StudyBuilder"><code class="docutils literal notranslate"><span class="pre">StudyBuilder</span></code></a></li>
+</ul>
+</li>
 <li class="toctree-l3"><a class="reference internal" href="#module-gantry.config_manager">gantry.config_manager module</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="#gantry.config_manager.ConfigLoader"><code class="docutils literal notranslate"><span class="pre">ConfigLoader</span></code></a></li>
 </ul>
@@ -76,9 +83,21 @@
 <li class="toctree-l4"><a class="reference internal" href="#gantry.services.RedactionService"><code class="docutils literal notranslate"><span class="pre">RedactionService</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l3"><a class="reference internal" href="#gantry-session-module">gantry.session module</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#gantry-validation-module">gantry.validation module</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#module-contents">Module contents</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#module-gantry.session">gantry.session module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.session.DicomSession"><code class="docutils literal notranslate"><span class="pre">DicomSession</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.session.scan_worker"><code class="docutils literal notranslate"><span class="pre">scan_worker()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-gantry.validation">gantry.validation module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.validation.IODValidator"><code class="docutils literal notranslate"><span class="pre">IODValidator</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#module-gantry">Module contents</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.Builder"><code class="docutils literal notranslate"><span class="pre">Builder</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.Equipment"><code class="docutils literal notranslate"><span class="pre">Equipment</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.Session"><code class="docutils literal notranslate"><span class="pre">Session</span></code></a></li>
+</ul>
+</li>
 </ul>
 </li>
 </ul>
@@ -115,8 +134,93 @@
 <section id="submodules">
 <h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading"></a></h2>
 </section>
-<section id="gantry-builders-module">
-<h2>gantry.builders module<a class="headerlink" href="#gantry-builders-module" title="Link to this heading"></a></h2>
+<section id="module-gantry.builders">
+<span id="gantry-builders-module"></span><h2>gantry.builders module<a class="headerlink" href="#module-gantry.builders" title="Link to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.builders.DicomBuilder">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.builders.</span></span><span class="sig-name descname"><span class="pre">DicomBuilder</span></span><a class="reference internal" href="_modules/gantry/builders.html#DicomBuilder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.DicomBuilder" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.DicomBuilder.start_patient">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">start_patient</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#DicomBuilder.start_patient"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.DicomBuilder.start_patient" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.builders.InstanceContextBuilder">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.builders.</span></span><span class="sig-name descname"><span class="pre">InstanceContextBuilder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parent</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">instance</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#InstanceContextBuilder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.InstanceContextBuilder" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.InstanceContextBuilder.end_instance">
+<span class="sig-name descname"><span class="pre">end_instance</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#InstanceContextBuilder.end_instance"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.InstanceContextBuilder.end_instance" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.InstanceContextBuilder.set_attribute">
+<span class="sig-name descname"><span class="pre">set_attribute</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tag</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">val</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#InstanceContextBuilder.set_attribute"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.InstanceContextBuilder.set_attribute" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.InstanceContextBuilder.set_pixel_data">
+<span class="sig-name descname"><span class="pre">set_pixel_data</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">arr</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#InstanceContextBuilder.set_pixel_data"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.InstanceContextBuilder.set_pixel_data" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.builders.PatientBuilder">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.builders.</span></span><span class="sig-name descname"><span class="pre">PatientBuilder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#PatientBuilder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.PatientBuilder" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.PatientBuilder.add_study">
+<span class="sig-name descname"><span class="pre">add_study</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">date</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#PatientBuilder.add_study"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.PatientBuilder.add_study" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.PatientBuilder.build">
+<span class="sig-name descname"><span class="pre">build</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#PatientBuilder.build"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.PatientBuilder.build" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.builders.SeriesBuilder">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.builders.</span></span><span class="sig-name descname"><span class="pre">SeriesBuilder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parent</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">series</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#SeriesBuilder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.SeriesBuilder" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.SeriesBuilder.add_instance">
+<span class="sig-name descname"><span class="pre">add_instance</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cls</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#SeriesBuilder.add_instance"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.SeriesBuilder.add_instance" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.SeriesBuilder.end_series">
+<span class="sig-name descname"><span class="pre">end_series</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#SeriesBuilder.end_series"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.SeriesBuilder.end_series" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.SeriesBuilder.set_equipment">
+<span class="sig-name descname"><span class="pre">set_equipment</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">man</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mod</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sn</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#SeriesBuilder.set_equipment"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.SeriesBuilder.set_equipment" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.builders.StudyBuilder">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.builders.</span></span><span class="sig-name descname"><span class="pre">StudyBuilder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parent</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">study</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#StudyBuilder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.StudyBuilder" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.StudyBuilder.add_series">
+<span class="sig-name descname"><span class="pre">add_series</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">uid</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mod</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#StudyBuilder.add_series"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.StudyBuilder.add_series" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.builders.StudyBuilder.end_study">
+<span class="sig-name descname"><span class="pre">end_study</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/builders.html#StudyBuilder.end_study"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.builders.StudyBuilder.end_study" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
 </section>
 <section id="module-gantry.config_manager">
 <span id="gantry-config-manager-module"></span><h2>gantry.config_manager module<a class="headerlink" href="#module-gantry.config_manager" title="Link to this heading"></a></h2>
@@ -484,14 +588,259 @@ Includes safety checks for image bounds.</p>
 </dd></dl>
 
 </section>
-<section id="gantry-session-module">
-<h2>gantry.session module<a class="headerlink" href="#gantry-session-module" title="Link to this heading"></a></h2>
+<section id="module-gantry.session">
+<span id="gantry-session-module"></span><h2>gantry.session module<a class="headerlink" href="#module-gantry.session" title="Link to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.session.DicomSession">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.session.</span></span><span class="sig-name descname"><span class="pre">DicomSession</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">persistence_file</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'gantry.db'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>The Main Facade for the Gantry library.
+Manages the lifecycle of the DicomStore (Load/Import/Redact/Export/Save).</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.anonymize_metadata">
+<span class="sig-name descname"><span class="pre">anonymize_metadata</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">findings</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">PhiFinding</span><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.anonymize_metadata"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.anonymize_metadata" title="Link to this definition"></a></dt>
+<dd><p>Alias for apply_remediation.
+Checkpoint 6: Anonymize.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.apply_remediation">
+<span class="sig-name descname"><span class="pre">apply_remediation</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">findings</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">PhiFinding</span><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.apply_remediation"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.apply_remediation" title="Link to this definition"></a></dt>
+<dd><p>Applies remediation to the current session based on findings.
+Auto-logs to Audit Trail.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.audit">
+<span class="sig-name descname"><span class="pre">audit</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">PhiReport</span></span></span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.audit"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.audit" title="Link to this definition"></a></dt>
+<dd><p>Scans all patients in the session for potential PHI.
+Uses cached <cite>active_phi_tags</cite> if config_path matches or is None, otherwise loads fresh.
+Returns a PhiReport object (iterable, and convertible to DataFrame).
+Checkpoint 4: Target.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.backup_identities">
+<span class="sig-name descname"><span class="pre">backup_identities</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_data</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.backup_identities"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.backup_identities" title="Link to this definition"></a></dt>
+<dd><p>Alias for preserve_identities.
+Checkpoint 5: Backup.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.enable_reversible_anonymization">
+<span class="sig-name descname"><span class="pre">enable_reversible_anonymization</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">key_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'gantry.key'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.enable_reversible_anonymization"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.enable_reversible_anonymization" title="Link to this definition"></a></dt>
+<dd><p>Initializes the encryption subsystem.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.examine">
+<span class="sig-name descname"><span class="pre">examine</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.examine"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.examine" title="Link to this definition"></a></dt>
+<dd><p>Alias for inventory.
+Checkpoint 2: Examine.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.execute_config">
+<span class="sig-name descname"><span class="pre">execute_config</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.execute_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.execute_config" title="Link to this definition"></a></dt>
+<dd><p>User Action: ‘Apply the currently loaded rules to the pixel data.’</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.export">
+<span class="sig-name descname"><span class="pre">export</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">folder</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">safe</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.export"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.export" title="Link to this definition"></a></dt>
+<dd><p>Exports the current state of all patients to a folder.
+If safe=True, performs a fresh PHI scan and ONLY exports clean data.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.export_data">
+<span class="sig-name descname"><span class="pre">export_data</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">folder</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">safe</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.export_data"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.export_data" title="Link to this definition"></a></dt>
+<dd><p>Alias for export.
+Checkpoint 9: Export.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.import_folder">
+<span class="sig-name descname"><span class="pre">import_folder</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">folder_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.import_folder"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.import_folder" title="Link to this definition"></a></dt>
+<dd><p>Scans a folder for .dcm files (recursively) and imports them into the session.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.ingest">
+<span class="sig-name descname"><span class="pre">ingest</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">folder_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.ingest"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.ingest" title="Link to this definition"></a></dt>
+<dd><p>Alias for import_folder.
+Checkpoint 1: Ingest.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.inventory">
+<span class="sig-name descname"><span class="pre">inventory</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.inventory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.inventory" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.load_config">
+<span class="sig-name descname"><span class="pre">load_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_file</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.load_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.load_config" title="Link to this definition"></a></dt>
+<dd><p>User Action: ‘Load these rules into memory, but DO NOT run them yet.’
+Useful for validation or previewing what will happen.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.preserve_identities">
+<span class="sig-name descname"><span class="pre">preserve_identities</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_data</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.preserve_identities"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.preserve_identities" title="Link to this definition"></a></dt>
+<dd><p>Batch preservation for multiple patients.
+input_data can be:
+- List[str]: List of Patient IDs
+- PhiReport: Result from scan_for_phi
+- List[PhiFinding]: List of findings</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.preserve_patient_identity">
+<span class="sig-name descname"><span class="pre">preserve_patient_identity</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">patient_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">persist</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#gantry.entities.Instance" title="gantry.entities.Instance"><span class="pre">Instance</span></a><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.preserve_patient_identity"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.preserve_patient_identity" title="Link to this definition"></a></dt>
+<dd><p>Securely embeds the original patient name/ID into a private DICOM tag
+for all instances belonging to the specified patient.
+Must be called BEFORE anonymization.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>patient_id</strong> – The ID of the patient to preserve.</p></li>
+<li><p><strong>persist</strong> – If True, writes changes to DB immediately. If False, returns instances for batch persistence.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.preview_config">
+<span class="sig-name descname"><span class="pre">preview_config</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.preview_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.preview_config" title="Link to this definition"></a></dt>
+<dd><p>User Action: ‘Tell me what WOULD happen if I ran these rules.’
+checks the loaded rules against the current Store inventory.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.recover_patient_identity">
+<span class="sig-name descname"><span class="pre">recover_patient_identity</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">patient_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.recover_patient_identity"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.recover_patient_identity" title="Link to this definition"></a></dt>
+<dd><p>Attempts to decrypt and read original identity from the first instance found.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.redact_by_machine">
+<span class="sig-name descname"><span class="pre">redact_by_machine</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">serial_number</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">roi</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.redact_by_machine"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.redact_by_machine" title="Link to this definition"></a></dt>
+<dd><p>Manually triggers redaction for a machine.
+roi: (r1, r2, c1, c2)</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.redact_pixels">
+<span class="sig-name descname"><span class="pre">redact_pixels</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.redact_pixels"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.redact_pixels" title="Link to this definition"></a></dt>
+<dd><p>Alias for execute_config.
+Checkpoint 7: Redact.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.save">
+<span class="sig-name descname"><span class="pre">save</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.save"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.save" title="Link to this definition"></a></dt>
+<dd><p>Persists the current session state to the database in the background.
+User must call this manually to save changes.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.save_analysis">
+<span class="sig-name descname"><span class="pre">save_analysis</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">report</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.save_analysis"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.save_analysis" title="Link to this definition"></a></dt>
+<dd><p>Persists the results of a PHI analysis to the database.
+report: PhiReport or List[PhiFinding]</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.scaffold_config">
+<span class="sig-name descname"><span class="pre">scaffold_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">output_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.scaffold_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.scaffold_config" title="Link to this definition"></a></dt>
+<dd><p>Generates a unified v2 configuration file.
+Includes default PHI tags + Auto-detected machine inventory.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.scan_for_phi">
+<span class="sig-name descname"><span class="pre">scan_for_phi</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">PhiReport</span></span></span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.scan_for_phi"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.scan_for_phi" title="Link to this definition"></a></dt>
+<dd><p>DEPRECATED: Use audit() instead.
+Alias for audit.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.setup_config">
+<span class="sig-name descname"><span class="pre">setup_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">output_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.setup_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.setup_config" title="Link to this definition"></a></dt>
+<dd><p>Alias for scaffold_config.
+Checkpoint 3: Configure.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.session.DicomSession.verify">
+<span class="sig-name descname"><span class="pre">verify</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">PhiReport</span></span></span><a class="reference internal" href="_modules/gantry/session.html#DicomSession.verify"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.DicomSession.verify" title="Link to this definition"></a></dt>
+<dd><p>Alias for scan_for_phi.
+Checkpoint 8: Verify.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="gantry.session.scan_worker">
+<span class="sig-prename descclassname"><span class="pre">gantry.session.</span></span><span class="sig-name descname"><span class="pre">scan_worker</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">args</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/session.html#scan_worker"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.session.scan_worker" title="Link to this definition"></a></dt>
+<dd><p>Worker to scan a single patient.
+args: (patient_copy, config_source, remove_private)
+Returns: List[PhiFinding] (WITHOUT entities, lightweight)</p>
+</dd></dl>
+
 </section>
-<section id="gantry-validation-module">
-<h2>gantry.validation module<a class="headerlink" href="#gantry-validation-module" title="Link to this heading"></a></h2>
+<section id="module-gantry.validation">
+<span id="gantry-validation-module"></span><h2>gantry.validation module<a class="headerlink" href="#module-gantry.validation" title="Link to this heading"></a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.validation.IODValidator">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.validation.</span></span><span class="sig-name descname"><span class="pre">IODValidator</span></span><a class="reference internal" href="_modules/gantry/validation.html#IODValidator"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.validation.IODValidator" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.validation.IODValidator.validate">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">validate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ds</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dataset</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="_modules/gantry/validation.html#IODValidator.validate"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.validation.IODValidator.validate" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
 </section>
-<section id="module-contents">
-<h2>Module contents<a class="headerlink" href="#module-contents" title="Link to this heading"></a></h2>
+<section id="module-gantry">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-gantry" title="Link to this heading"></a></h2>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.Builder">
+<span class="sig-prename descclassname"><span class="pre">gantry.</span></span><span class="sig-name descname"><span class="pre">Builder</span></span><a class="headerlink" href="#gantry.Builder" title="Link to this definition"></a></dt>
+<dd><p>alias of <a class="reference internal" href="#gantry.builders.DicomBuilder" title="gantry.builders.DicomBuilder"><code class="xref py py-class docutils literal notranslate"><span class="pre">DicomBuilder</span></code></a></p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.Equipment">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.</span></span><span class="sig-name descname"><span class="pre">Equipment</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">manufacturer</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device_serial_number</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">''</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/entities.html#Equipment"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.Equipment" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Immutable Equipment definition.
+Frozen=True allows hashing, enabling unique set generation.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.Equipment.device_serial_number">
+<span class="sig-name descname"><span class="pre">device_serial_number</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">''</span></em><a class="headerlink" href="#gantry.Equipment.device_serial_number" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.Equipment.manufacturer">
+<span class="sig-name descname"><span class="pre">manufacturer</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.Equipment.manufacturer" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.Equipment.model_name">
+<span class="sig-name descname"><span class="pre">model_name</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.Equipment.model_name" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.Session">
+<span class="sig-prename descclassname"><span class="pre">gantry.</span></span><span class="sig-name descname"><span class="pre">Session</span></span><a class="headerlink" href="#gantry.Session" title="Link to this definition"></a></dt>
+<dd><p>alias of <a class="reference internal" href="#gantry.session.DicomSession" title="gantry.session.DicomSession"><code class="xref py py-class docutils literal notranslate"><span class="pre">DicomSession</span></code></a></p>
+</dd></dl>
+
 </section>
 </section>
 
