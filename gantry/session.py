@@ -462,7 +462,39 @@ class DicomSession:
                     dirty_studies.add(finding.entity_uid)
             
             if dirty_patients or dirty_studies:
-                msg = f"Safety Scan Found Issues: {len(dirty_patients)} Patients, {len(dirty_studies)} Studies will be skipped."
+                # Group findings by Tag
+                tag_summary = {} # tag -> {desc, count, example_val}
+                for finding in report:
+                    if finding.tag not in tag_summary:
+                        tag_summary[finding.tag] = {
+                            "desc": finding.field_name, 
+                            "count": 0, 
+                            "examples": set()
+                        }
+                    tag_summary[finding.tag]["count"] += 1
+                    if len(tag_summary[finding.tag]["examples"]) < 3:
+                        tag_summary[finding.tag]["examples"].add(str(finding.value))
+
+                msg = f"\nSafety Scan Found Issues: {len(dirty_patients)} Patients, {len(dirty_studies)} Studies contain PHI."
+                msg += "\nThe following tags were flagged as dirty:\n"
+                msg += f"{'Tag':<15} {'Description':<30} {'Count':<10} {'Examples'}\n"
+                msg += "-" * 80 + "\n"
+                
+                config_suggestion = {}
+                
+                for tag, info in tag_summary.items():
+                    examples = ", ".join(info['examples'])
+                    msg += f"{tag:<15} {info['desc']:<30} {info['count']:<10} {examples}\n"
+                    
+                    # Suggest REMOVE or KEEP based on ... usually REMOVE for PHI
+                    config_suggestion[tag] = {"action": "REMOVE", "name": info['desc']}
+
+                msg += "\nTo allow export, you must either REMOVE these tags or mark them as KEEP in your configuration.\n"
+                msg += "Suggested Config Update:\n"
+                import json
+                msg += json.dumps({"phi_tags": config_suggestion}, indent=4)
+                msg += "\n"
+
                 get_logger().warning(msg)
                 print(msg)
 
