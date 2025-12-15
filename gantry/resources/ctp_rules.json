@@ -1,0 +1,662 @@
+{
+    "source": "CTP DicomPixelAnonymizer",
+    "url": "https://raw.githubusercontent.com/johnperry/CTP/master/source/files/scripts/DicomPixelAnonymizer.script",
+    "rules": [
+        {
+            "manufacturer": "GE MEDICAL",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: Manufacturer.containsIgnoreCase(\"GE MEDICAL\") *\n    CommentsOnRadiationDose.containsIgnoreCase(\"DLP\"...",
+            "redaction_zones": [
+                [
+                    0,
+                    110,
+                    0,
+                    512
+                ]
+            ],
+            "_ctp_condition": "Manufacturer.containsIgnoreCase(\"GE MEDICAL\") *\n    CommentsOnRadiationDose.containsIgnoreCase(\"DLP\")"
+        },
+        {
+            "manufacturer": "GE MEDICAL",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: BurnedInAnnotation.containsIgnoreCase(\"YES\") * \n    Manufacturer.containsIgnoreCase(\"GE MEDICAL\") *\n...",
+            "redaction_zones": [
+                [
+                    0,
+                    80,
+                    0,
+                    512
+                ]
+            ],
+            "_ctp_condition": "BurnedInAnnotation.containsIgnoreCase(\"YES\") * \n    Manufacturer.containsIgnoreCase(\"GE MEDICAL\") *\n    SeriesDescription.containsIgnoreCase(\"AW electronic film\")"
+        },
+        {
+            "manufacturer": "GE MEDICAL",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: BurnedInAnnotation.containsIgnoreCase(\"YES\") * \n    Manufacturer.containsIgnoreCase(\"GE MEDICAL\") *\n...",
+            "redaction_zones": [
+                [
+                    0,
+                    25,
+                    0,
+                    512
+                ]
+            ],
+            "_ctp_condition": "BurnedInAnnotation.containsIgnoreCase(\"YES\") * \n    Manufacturer.containsIgnoreCase(\"GE MEDICAL\") *\n    Rows.equals(\"512\")"
+        },
+        {
+            "manufacturer": "GE MEDICAL",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: BurnedInAnnotation.containsIgnoreCase(\"YES\") * \n    Manufacturer.containsIgnoreCase(\"GE MEDICAL\") *\n...",
+            "redaction_zones": [
+                [
+                    0,
+                    250,
+                    0,
+                    200
+                ]
+            ],
+            "_ctp_condition": "BurnedInAnnotation.containsIgnoreCase(\"YES\") * \n    Manufacturer.containsIgnoreCase(\"GE MEDICAL\") *\n    SeriesDescription.containsIgnoreCase(\"AVA Report\") *\n    Rows.equals(\"512\")"
+        },
+        {
+            "manufacturer": "GE MEDICAL",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: BurnedInAnnotation.containsIgnoreCase(\"YES\") * \n    Manufacturer.containsIgnoreCase(\"GE MEDICAL\") *\n...",
+            "redaction_zones": [
+                [
+                    0,
+                    150,
+                    0,
+                    300
+                ],
+                [
+                    0,
+                    150,
+                    724,
+                    1024
+                ]
+            ],
+            "_ctp_condition": "BurnedInAnnotation.containsIgnoreCase(\"YES\") * \n    Manufacturer.containsIgnoreCase(\"GE MEDICAL\") *\n    Rows.equals(\"1024\")"
+        },
+        {
+            "manufacturer": "VITAL Images",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: Manufacturer.containsIgnoreCase(\"VITAL Images\") *\n    ( SeriesDescription.containsIgnoreCase(\"AAA\") ...",
+            "redaction_zones": [
+                [
+                    0,
+                    150,
+                    0,
+                    795
+                ]
+            ],
+            "_ctp_condition": "Manufacturer.containsIgnoreCase(\"VITAL Images\") *\n    ( SeriesDescription.containsIgnoreCase(\"AAA\") + SeriesDescription.containsIgnoreCase(\"Report\") ) *\n    Rows.equals(\"1041\")"
+        },
+        {
+            "manufacturer": "SIEMENS",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: ImageType.containsIgnoreCase(\"SECONDARY\") * \n    Modality.containsIgnoreCase(\"CT\") * \n    Manufactur...",
+            "redaction_zones": [
+                [
+                    0,
+                    60,
+                    0,
+                    1132
+                ]
+            ],
+            "_ctp_condition": "ImageType.containsIgnoreCase(\"SECONDARY\") * \n    Modality.containsIgnoreCase(\"CT\") * \n    Manufacturer.containsIgnoreCase(\"SIEMENS\") * \n    Rows.equals(\"860\")"
+        },
+        {
+            "manufacturer": "PHILIPS",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: Manufacturer.containsIgnoreCase(\"PHILIPS\") *\n    ImageType.containsIgnoreCase(\"DOSE\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    135,
+                    0,
+                    512
+                ]
+            ],
+            "_ctp_condition": "Manufacturer.containsIgnoreCase(\"PHILIPS\") *\n    ImageType.containsIgnoreCase(\"DOSE\")"
+        },
+        {
+            "manufacturer": "TOSHIBA",
+            "model_name": "Aquilion ONE",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"CT\") *\n    Manufacturer.containsIgnoreCase(\"TOSHIBA\") *\n    ManufacturerModelName.c...",
+            "redaction_zones": [
+                [
+                    0,
+                    240,
+                    0,
+                    410
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"CT\") *\n    Manufacturer.containsIgnoreCase(\"TOSHIBA\") *\n    ManufacturerModelName.containsIgnoreCase(\"Aquilion ONE\") *\n    ImageType.containsIgnoreCase(\"SECONDARY\") *\n    Columns.equals(\"512\") *\n    Rows.equals(\"512\") *\n    WindowWidth.equals(\"1\")"
+        },
+        {
+            "manufacturer": "Unknown",
+            "model_name": "LOGIQ9",
+            "comment": "Imported from CTP. Condition: ManufacturerModelName.containsIgnoreCase(\"LOGIQ9\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    40,
+                    0,
+                    640
+                ]
+            ],
+            "_ctp_condition": "ManufacturerModelName.containsIgnoreCase(\"LOGIQ9\")"
+        },
+        {
+            "manufacturer": "Unknown",
+            "model_name": "LOGIQE9",
+            "comment": "Imported from CTP. Condition: ManufacturerModelName.containsIgnoreCase(\"LOGIQE9\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    70,
+                    0,
+                    960
+                ]
+            ],
+            "_ctp_condition": "ManufacturerModelName.containsIgnoreCase(\"LOGIQE9\")"
+        },
+        {
+            "manufacturer": "Unknown",
+            "model_name": "V830",
+            "comment": "Imported from CTP. Condition: ManufacturerModelName.containsIgnoreCase(\"V830\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    70,
+                    0,
+                    960
+                ]
+            ],
+            "_ctp_condition": "ManufacturerModelName.containsIgnoreCase(\"V830\")"
+        },
+        {
+            "manufacturer": "Unknown",
+            "model_name": "iU22",
+            "comment": "Imported from CTP. Condition: ManufacturerModelName.containsIgnoreCase(\"iU22\") *\n    Rows.equals(\"480\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    47,
+                    0,
+                    640
+                ]
+            ],
+            "_ctp_condition": "ManufacturerModelName.containsIgnoreCase(\"iU22\") *\n    Rows.equals(\"480\")"
+        },
+        {
+            "manufacturer": "Unknown",
+            "model_name": "iU22",
+            "comment": "Imported from CTP. Condition: ManufacturerModelName.containsIgnoreCase(\"iU22\") *\n    Rows.equals(\"768\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    75,
+                    0,
+                    1024
+                ]
+            ],
+            "_ctp_condition": "ManufacturerModelName.containsIgnoreCase(\"iU22\") *\n    Rows.equals(\"768\")"
+        },
+        {
+            "manufacturer": "Unknown",
+            "model_name": "iU22",
+            "comment": "Imported from CTP. Condition: ManufacturerModelName.containsIgnoreCase(\"iU22\") *\n    Rows.equals(\"600\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    59,
+                    0,
+                    800
+                ]
+            ],
+            "_ctp_condition": "ManufacturerModelName.containsIgnoreCase(\"iU22\") *\n    Rows.equals(\"600\")"
+        },
+        {
+            "manufacturer": "Unknown",
+            "model_name": "EPIQ",
+            "comment": "Imported from CTP. Condition: ManufacturerModelName.containsIgnoreCase(\"EPIQ\") *\n    Rows.equals(\"600\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    49,
+                    0,
+                    1024
+                ]
+            ],
+            "_ctp_condition": "ManufacturerModelName.containsIgnoreCase(\"EPIQ\") *\n    Rows.equals(\"600\")"
+        },
+        {
+            "manufacturer": "Unknown",
+            "model_name": "EPIQ",
+            "comment": "Imported from CTP. Condition: ManufacturerModelName.containsIgnoreCase(\"EPIQ\") *\n    Rows.equals(\"768\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    49,
+                    0,
+                    1024
+                ]
+            ],
+            "_ctp_condition": "ManufacturerModelName.containsIgnoreCase(\"EPIQ\") *\n    Rows.equals(\"768\")"
+        },
+        {
+            "manufacturer": "Unknown",
+            "model_name": "CX50",
+            "comment": "Imported from CTP. Condition: ManufacturerModelName.containsIgnoreCase(\"CX50\") *\n    Rows.equals(\"600\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    59,
+                    0,
+                    800
+                ]
+            ],
+            "_ctp_condition": "ManufacturerModelName.containsIgnoreCase(\"CX50\") *\n    Rows.equals(\"600\")"
+        },
+        {
+            "manufacturer": "Philips",
+            "model_name": "Sparq",
+            "comment": "Imported from CTP. Condition: ManufacturerModelName.containsIgnoreCase(\"Sparq\") *\n     Manufacturer.containsIgnoreCase(\"Philips\") ...",
+            "redaction_zones": [
+                [
+                    0,
+                    55,
+                    80,
+                    800
+                ]
+            ],
+            "_ctp_condition": "ManufacturerModelName.containsIgnoreCase(\"Sparq\") *\n     Manufacturer.containsIgnoreCase(\"Philips\") *\n    Rows.equals(\"600\")"
+        },
+        {
+            "manufacturer": "Philips",
+            "model_name": "Lumify",
+            "comment": "Imported from CTP. Condition: ManufacturerModelName.containsIgnoreCase(\"Lumify\") *\n     Manufacturer.containsIgnoreCase(\"Philips\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    35,
+                    0,
+                    768
+                ]
+            ],
+            "_ctp_condition": "ManufacturerModelName.containsIgnoreCase(\"Lumify\") *\n     Manufacturer.containsIgnoreCase(\"Philips\") *\n    Rows.equals(\"768\")"
+        },
+        {
+            "manufacturer": "Unknown",
+            "model_name": "Z_ONE",
+            "comment": "Imported from CTP. Condition: ManufacturerModelName.containsIgnoreCase(\"Z_ONE\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    65,
+                    0,
+                    800
+                ]
+            ],
+            "_ctp_condition": "ManufacturerModelName.containsIgnoreCase(\"Z_ONE\")"
+        },
+        {
+            "manufacturer": "ATL",
+            "model_name": "HDI 5000",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"ATL\") *\n    ManufacturerModelName.conta...",
+            "redaction_zones": [
+                [
+                    0,
+                    40,
+                    40,
+                    240
+                ],
+                [
+                    0,
+                    16,
+                    240,
+                    430
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"ATL\") *\n    ManufacturerModelName.containsIgnoreCase(\"HDI 5000\") *\n    Rows.equals(\"476\") *\n    Columns.equals(\"640\")"
+        },
+        {
+            "manufacturer": "SIEMENS",
+            "model_name": "SC2000",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SIEMENS\") *\n    ManufacturerModelName.c...",
+            "redaction_zones": [
+                [
+                    50,
+                    420,
+                    230,
+                    490
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SIEMENS\") *\n    ManufacturerModelName.containsIgnoreCase(\"SC2000\") *\n    ImageType.containsIgnoreCase(\"SECONDARY\") *\n    Rows.equals(\"768\") *\n    Columns.equals(\"1024\")"
+        },
+        {
+            "manufacturer": "SIEMENS",
+            "model_name": "ANTARES",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SIEMENS\") *\n    ManufacturerModelName.c...",
+            "redaction_zones": [
+                [
+                    0,
+                    60,
+                    0,
+                    1024
+                ],
+                [
+                    60,
+                    80,
+                    200,
+                    220
+                ],
+                [
+                    65,
+                    79,
+                    800,
+                    904
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SIEMENS\") *\n    ManufacturerModelName.containsIgnoreCase(\"ANTARES\") *\n    Rows.equals(\"768\") *\n    Columns.equals(\"1024\")"
+        },
+        {
+            "manufacturer": "SIEMENS",
+            "model_name": "ACUSON",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SIEMENS\") *\n    ManufacturerModelName.c...",
+            "redaction_zones": [
+                [
+                    0,
+                    43,
+                    0,
+                    800
+                ],
+                [
+                    56,
+                    72,
+                    128,
+                    144
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SIEMENS\") *\n    ManufacturerModelName.containsIgnoreCase(\"ACUSON\") *\n    Rows.equals(\"600\") *\n    Columns.equals(\"800\")"
+        },
+        {
+            "manufacturer": "SIEMENS",
+            "model_name": "S2000",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SIEMENS\") *\n    ManufacturerModelName.c...",
+            "redaction_zones": [
+                [
+                    0,
+                    60,
+                    0,
+                    1024
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SIEMENS\") *\n    ManufacturerModelName.containsIgnoreCase(\"S2000\") *\n    Rows.equals(\"768\") *\n    Columns.equals(\"1024\")"
+        },
+        {
+            "manufacturer": "ACUSON",
+            "model_name": "SEQUOIA",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"ACUSON\") *\n    ManufacturerModelName.co...",
+            "redaction_zones": [
+                [
+                    0,
+                    30,
+                    0,
+                    640
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"ACUSON\") *\n    ManufacturerModelName.containsIgnoreCase(\"SEQUOIA\") *\n    Rows.equals(\"480\") *\n    Columns.equals(\"640\")"
+        },
+        {
+            "manufacturer": "TOSHIBA",
+            "model_name": "A500",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"TOSHIBA\") *\n    ManufacturerModelName.c...",
+            "redaction_zones": [
+                [
+                    0,
+                    60,
+                    0,
+                    960
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"TOSHIBA\") *\n    ManufacturerModelName.containsIgnoreCase(\"A500\") *\n    Rows.equals(\"720\") *\n    Columns.equals(\"960\")"
+        },
+        {
+            "manufacturer": "TOSHIBA",
+            "model_name": "A400",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"TOSHIBA\") *\n    ManufacturerModelName.c...",
+            "redaction_zones": [
+                [
+                    0,
+                    60,
+                    0,
+                    960
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"TOSHIBA\") *\n    ManufacturerModelName.containsIgnoreCase(\"A400\") *\n    Rows.equals(\"720\") *\n    Columns.equals(\"960\")"
+        },
+        {
+            "manufacturer": "TOSHIBA",
+            "model_name": "AI600",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"TOSHIBA\") *\n    ManufacturerModelName.c...",
+            "redaction_zones": [
+                [
+                    0,
+                    60,
+                    0,
+                    1280
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"TOSHIBA\") *\n    ManufacturerModelName.containsIgnoreCase(\"AI600\") *\n    Rows.equals(\"960\") *\n    Columns.equals(\"1280\")"
+        },
+        {
+            "manufacturer": "TOSHIBA",
+            "model_name": "AI700",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"TOSHIBA\") *\n    ManufacturerModelName.c...",
+            "redaction_zones": [
+                [
+                    0,
+                    60,
+                    0,
+                    1280
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"TOSHIBA\") *\n    ManufacturerModelName.containsIgnoreCase(\"AI700\") *\n    Rows.equals(\"960\") *\n    Columns.equals(\"1280\")"
+        },
+        {
+            "manufacturer": "CANON",
+            "model_name": "AA000",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"CANON\") *\n    ManufacturerModelName.con...",
+            "redaction_zones": [
+                [
+                    0,
+                    70,
+                    0,
+                    1280
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"CANON\") *\n    ManufacturerModelName.containsIgnoreCase(\"AA000\") *\n    Rows.equals(\"960\") *\n    Columns.equals(\"1280\")"
+        },
+        {
+            "manufacturer": "SuperSonic Imagine SA",
+            "model_name": "Aixplorer",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SuperSonic Imagine SA\") *\n    Manufactu...",
+            "redaction_zones": [
+                [
+                    0,
+                    89,
+                    0,
+                    1400
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SuperSonic Imagine SA\") *\n    ManufacturerModelName.containsIgnoreCase(\"Aixplorer\") *\n    Rows.equals(\"1050\") *\n    Columns.equals(\"1400\")"
+        },
+        {
+            "manufacturer": "SENO",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SENO\") *\n    Rows.equals(\"1058\") *\n    ...",
+            "redaction_zones": [
+                [
+                    0,
+                    50,
+                    161,
+                    1793
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SENO\") *\n    Rows.equals(\"1058\") *\n    Columns.equals(\"1920\")"
+        },
+        {
+            "manufacturer": "SENO",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SENO\") *\n    Rows.equals(\"1056\") *\n    ...",
+            "redaction_zones": [
+                [
+                    0,
+                    50,
+                    161,
+                    1793
+                ]
+            ],
+            "_ctp_condition": "Modality.equals(\"US\") *\n    Manufacturer.containsIgnoreCase(\"SENO\") *\n    Rows.equals(\"1056\") *\n    Columns.equals(\"1920\")"
+        },
+        {
+            "manufacturer": "Volcano",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: Manufacturer.containsIgnoreCase(\"Volcano\") *\n    SeriesDescription.containsIgnoreCase (\"FFR\") *  \n  ...",
+            "redaction_zones": [
+                [
+                    9,
+                    49,
+                    404,
+                    984
+                ]
+            ],
+            "_ctp_condition": "Manufacturer.containsIgnoreCase(\"Volcano\") *\n    SeriesDescription.containsIgnoreCase (\"FFR\") *  \n    Rows.equals(\"1024\") *\n    Columns.equals(\"1280\")"
+        },
+        {
+            "manufacturer": "Philips",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: Manufacturer.containsIgnoreCase(\"Philips\") *\n    SeriesDescription.containsIgnoreCase (\"FFR\") *\n    ...",
+            "redaction_zones": [
+                [
+                    5,
+                    75,
+                    470,
+                    1070
+                ]
+            ],
+            "_ctp_condition": "Manufacturer.containsIgnoreCase(\"Philips\") *\n    SeriesDescription.containsIgnoreCase (\"FFR\") *\n    Rows.equals(\"1024\") *\n    Columns.equals(\"1280\")"
+        },
+        {
+            "manufacturer": "Canon",
+            "model_name": "CXDI",
+            "comment": "Imported from CTP. Condition: Manufacturer.containsIgnoreCase(\"Canon\") * \n    ManufacturerModelName.containsIgnoreCase(\"CXDI\") * \n...",
+            "redaction_zones": [
+                [
+                    0,
+                    80,
+                    0,
+                    2208
+                ],
+                [
+                    2512,
+                    2592,
+                    0,
+                    2208
+                ]
+            ],
+            "_ctp_condition": "Manufacturer.containsIgnoreCase(\"Canon\") * \n    ManufacturerModelName.containsIgnoreCase(\"CXDI\") * \n    Rows.equals(\"2592\")"
+        },
+        {
+            "manufacturer": "SIEMENS",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: ImageType.containsIgnoreCase(\"SECONDARY\") * \n    Modality.containsIgnoreCase(\"NM\") * \n    Manufactur...",
+            "redaction_zones": [
+                [
+                    0,
+                    90,
+                    0,
+                    1132
+                ],
+                [
+                    780,
+                    860,
+                    0,
+                    1132
+                ]
+            ],
+            "_ctp_condition": "ImageType.containsIgnoreCase(\"SECONDARY\") * \n    Modality.containsIgnoreCase(\"NM\") * \n    Manufacturer.containsIgnoreCase(\"SIEMENS\") * \n    Rows.equals(\"860\")"
+        },
+        {
+            "manufacturer": "SIEMENS",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: ImageType.containsIgnoreCase(\"SECONDARY\") *\n    Modality.containsIgnoreCase(\"NM\") *\n    Manufacturer...",
+            "redaction_zones": [
+                [
+                    0,
+                    35,
+                    0,
+                    1132
+                ]
+            ],
+            "_ctp_condition": "ImageType.containsIgnoreCase(\"SECONDARY\") *\n    Modality.containsIgnoreCase(\"NM\") *\n    Manufacturer.containsIgnoreCase(\"SIEMENS\") *\n    Rows.equals(\"865\")"
+        },
+        {
+            "manufacturer": "SIEMENS",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: ImageType.containsIgnoreCase(\"SECONDARY\") *\n    Modality.containsIgnoreCase(\"NM\") *\n    Manufacturer...",
+            "redaction_zones": [
+                [
+                    0,
+                    65,
+                    0,
+                    1132
+                ]
+            ],
+            "_ctp_condition": "ImageType.containsIgnoreCase(\"SECONDARY\") *\n    Modality.containsIgnoreCase(\"NM\") *\n    Manufacturer.containsIgnoreCase(\"SIEMENS\") *\n    Rows.equals(\"882\")"
+        },
+        {
+            "manufacturer": "ADAC",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: Manufacturer.containsIgnoreCase(\"ADAC\") *\n    Rows.equals(\"832\") *\n    Columns.equals(\"1024\")...",
+            "redaction_zones": [
+                [
+                    0,
+                    80,
+                    0,
+                    1024
+                ],
+                [
+                    762,
+                    842,
+                    0,
+                    1024
+                ]
+            ],
+            "_ctp_condition": "Manufacturer.containsIgnoreCase(\"ADAC\") *\n    Rows.equals(\"832\") *\n    Columns.equals(\"1024\")"
+        },
+        {
+            "manufacturer": "ADAC",
+            "model_name": "Unknown",
+            "comment": "Imported from CTP. Condition: Manufacturer.containsIgnoreCase(\"ADAC\") *\n    Rows.equals(\"832\") *\n    Columns.equals(\"1024\") *\n    ...",
+            "redaction_zones": [
+                [
+                    0,
+                    130,
+                    0,
+                    1024
+                ],
+                [
+                    762,
+                    842,
+                    0,
+                    1024
+                ]
+            ],
+            "_ctp_condition": "Manufacturer.containsIgnoreCase(\"ADAC\") *\n    Rows.equals(\"832\") *\n    Columns.equals(\"1024\") *\n    [0018,1030].containsIgnoreCase(\"DUAL DETEC\")"
+        }
+    ]
+}

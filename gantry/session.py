@@ -571,7 +571,34 @@ class DicomSession:
                         matched_rule = rule
                         break
                 
-                # Secondary: Model Match
+                # Check CTP Rules (Knowledge Base 2)
+                ctp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "ctp_rules.json")
+                if not matched_rule and os.path.exists(ctp_path):
+                     try:
+                         with open(ctp_path, 'r') as f:
+                             ctp_data = json.load(f)
+                             ctp_rules = ctp_data.get("rules", [])
+                             
+                             for rule in ctp_rules:
+                                 # Fuzzy matching on Manufacturer and Model
+                                 # CTP rules usually have "manufacturer" and "model_name"
+                                 r_man = rule.get("manufacturer", "").lower()
+                                 r_mod = rule.get("model_name", "").lower()
+                                 
+                                 eq_man = (eq.manufacturer or "").lower()
+                                 eq_mod = (eq.model_name or "").lower()
+                                 
+                                 # Simple containment check as per CTP style
+                                 if r_man and r_man in eq_man and r_mod and r_mod in eq_mod:
+                                      matched_rule = rule.copy()
+                                      matched_rule["serial_number"] = eq.device_serial_number
+                                      matched_rule["comment"] = f"Auto-matched from CTP Knowledge Base ({rule.get('manufacturer')} {rule.get('model_name')})"
+                                      # CTP doesn't have detailed comment in JSON usually, but we added it in parser
+                                      break
+                     except Exception as e:
+                         get_logger().warning(f"Failed to load CTP rules: {e}")
+
+                # Secondary: Model Match (Internal KB)
                 if not matched_rule:
                     for rule in kb_machines:
                         if rule.get("model_name") == eq.model_name:
