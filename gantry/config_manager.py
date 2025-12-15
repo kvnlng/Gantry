@@ -101,7 +101,13 @@ class ConfigLoader:
             raise ValueError(f"Rule #{index} ({sn}): 'redaction_zones' must be a list.")
 
         for z_idx, zone in enumerate(zones):
-            roi = zone.get("roi")
+            if isinstance(zone, list):
+                roi = zone
+            elif isinstance(zone, dict):
+                roi = zone.get("roi")
+            else:
+                raise ValueError(f"Rule #{index} ({sn}), Zone #{z_idx}: Invalid zone format (must be list or dict).")
+            
             if not roi or not isinstance(roi, list) or len(roi) != 4:
                 raise ValueError(f"Rule #{index} ({sn}), Zone #{z_idx}: ROI must be a list of 4 integers.")
             
