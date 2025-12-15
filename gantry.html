@@ -73,6 +73,7 @@
 <li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.DicomExporter"><code class="docutils literal notranslate"><span class="pre">DicomExporter</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.DicomImporter"><code class="docutils literal notranslate"><span class="pre">DicomImporter</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.DicomStore"><code class="docutils literal notranslate"><span class="pre">DicomStore</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.ExportContext"><code class="docutils literal notranslate"><span class="pre">ExportContext</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.ingest_worker"><code class="docutils literal notranslate"><span class="pre">ingest_worker()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.populate_attrs"><code class="docutils literal notranslate"><span class="pre">populate_attrs()</span></code></a></li>
 <li class="toctree-l4"><a class="reference internal" href="#gantry.io_handlers.process_sequence"><code class="docutils literal notranslate"><span class="pre">process_sequence()</span></code></a></li>
@@ -477,8 +478,7 @@ Represents a single patient visit or examination.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="gantry.io_handlers.DicomExporter.save_studies">
 <em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">save_studies</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">patient</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#gantry.entities.Patient" title="gantry.entities.Patient"><span class="pre">Patient</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">studies</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#gantry.entities.Study" title="gantry.entities.Study"><span class="pre">Study</span></a><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomExporter.save_studies"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomExporter.save_studies" title="Link to this definition"></a></dt>
-<dd><p>Exports a specific list of studies for a patient.
-Useful for partial exports or filtering.</p>
+<dd><p>Exports a specific list of studies for a patient using parallel workers.</p>
 </dd></dl>
 
 </dd></dl>
@@ -523,6 +523,48 @@ optimized for parallel processing.</p>
 <dt class="sig sig-object py" id="gantry.io_handlers.DicomStore.save_state">
 <span class="sig-name descname"><span class="pre">save_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filepath</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#DicomStore.save_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.DicomStore.save_state" title="Link to this definition"></a></dt>
 <dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="gantry.io_handlers.ExportContext">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">gantry.io_handlers.</span></span><span class="sig-name descname"><span class="pre">ExportContext</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">instance</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">patient_attributes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">study_attributes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">series_attributes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pixel_array</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/io_handlers.html#ExportContext"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.io_handlers.ExportContext" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">NamedTuple</span></code></p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.io_handlers.ExportContext.instance">
+<span class="sig-name descname"><span class="pre">instance</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference internal" href="#gantry.entities.Instance" title="gantry.entities.Instance"><span class="pre">Instance</span></a></em><a class="headerlink" href="#gantry.io_handlers.ExportContext.instance" title="Link to this definition"></a></dt>
+<dd><p>Alias for field number 0</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.io_handlers.ExportContext.output_path">
+<span class="sig-name descname"><span class="pre">output_path</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#gantry.io_handlers.ExportContext.output_path" title="Link to this definition"></a></dt>
+<dd><p>Alias for field number 1</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.io_handlers.ExportContext.patient_attributes">
+<span class="sig-name descname"><span class="pre">patient_attributes</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#gantry.io_handlers.ExportContext.patient_attributes" title="Link to this definition"></a></dt>
+<dd><p>Alias for field number 2</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.io_handlers.ExportContext.pixel_array">
+<span class="sig-name descname"><span class="pre">pixel_array</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Any</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#gantry.io_handlers.ExportContext.pixel_array" title="Link to this definition"></a></dt>
+<dd><p>Alias for field number 5</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.io_handlers.ExportContext.series_attributes">
+<span class="sig-name descname"><span class="pre">series_attributes</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#gantry.io_handlers.ExportContext.series_attributes" title="Link to this definition"></a></dt>
+<dd><p>Alias for field number 4</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="gantry.io_handlers.ExportContext.study_attributes">
+<span class="sig-name descname"><span class="pre">study_attributes</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#gantry.io_handlers.ExportContext.study_attributes" title="Link to this definition"></a></dt>
+<dd><p>Alias for field number 3</p>
+</dd></dl>
 
 </dd></dl>
 

@@ -79,9 +79,12 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">pydicom.tag</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tag</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pydicom.datadict</span><span class="w"> </span><span class="kn">import</span> <span class="n">dictionary_VR</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">date</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Set</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Set</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">NamedTuple</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">shutil</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.entities</span><span class="w"> </span><span class="kn">import</span> <span class="n">Patient</span><span class="p">,</span> <span class="n">Study</span><span class="p">,</span> <span class="n">Series</span><span class="p">,</span> <span class="n">Instance</span><span class="p">,</span> <span class="n">Equipment</span><span class="p">,</span> <span class="n">DicomItem</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.logger</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.parallel</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_parallel</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">IODValidator</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tqdm</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
 
 
@@ -183,17 +186,18 @@
         
         <span class="c1"># Extract Linking Metadata</span>
         <span class="n">meta</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="s1">&#39;pid&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PatientID&quot;</span><span class="p">,</span> <span class="s2">&quot;UNKNOWN&quot;</span><span class="p">)),</span>
-            <span class="s1">&#39;pname&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PatientName&quot;</span><span class="p">,</span> <span class="s2">&quot;Unknown&quot;</span><span class="p">)),</span>
-            <span class="s1">&#39;sid&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;StudyInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
-            <span class="s1">&#39;sdate&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;StudyDate&quot;</span><span class="p">,</span> <span class="s2">&quot;19000101&quot;</span><span class="p">)),</span>
-            <span class="s1">&#39;ser_id&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SeriesInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
-            <span class="s1">&#39;modality&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Modality&quot;</span><span class="p">,</span> <span class="s2">&quot;OT&quot;</span><span class="p">)),</span>
-            <span class="s1">&#39;sop&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SOPInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
-            <span class="s1">&#39;sop_class&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SOPClassUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
-            <span class="s1">&#39;man&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Manufacturer&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
-            <span class="s1">&#39;model&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;ManufacturerModelName&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
-            <span class="s1">&#39;dev_sn&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;DeviceSerialNumber&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
+            <span class="s1">&#39;pid&#39;</span><span class="p">:</span> <span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PatientID&quot;</span><span class="p">,</span> <span class="s2">&quot;UnknownPatient&quot;</span><span class="p">),</span>
+            <span class="s1">&#39;pname&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PatientName&quot;</span><span class="p">,</span> <span class="s2">&quot;Unknown&quot;</span><span class="p">)),</span> <span class="c1"># Kept original pname</span>
+            <span class="s1">&#39;sid&#39;</span><span class="p">:</span> <span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;StudyInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;UnknownStudy&quot;</span><span class="p">),</span>
+            <span class="s1">&#39;sdate&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;StudyDate&quot;</span><span class="p">,</span> <span class="s2">&quot;19000101&quot;</span><span class="p">)),</span> <span class="c1"># Kept original sdate</span>
+            <span class="s1">&#39;ser_id&#39;</span><span class="p">:</span> <span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SeriesInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;UnknownSeries&quot;</span><span class="p">),</span>
+            <span class="s1">&#39;modality&#39;</span><span class="p">:</span> <span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Modality&quot;</span><span class="p">,</span> <span class="s2">&quot;OT&quot;</span><span class="p">),</span>
+            <span class="s1">&#39;sop&#39;</span><span class="p">:</span> <span class="n">ds</span><span class="o">.</span><span class="n">SOPInstanceUID</span><span class="p">,</span>
+            <span class="s1">&#39;sop_class&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SOPClassUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span> <span class="c1"># Kept original sop_class</span>
+            <span class="s1">&#39;man&#39;</span><span class="p">:</span> <span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Manufacturer&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+            <span class="s1">&#39;model&#39;</span><span class="p">:</span> <span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;ManufacturerModelName&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+            <span class="s1">&#39;dev_sn&#39;</span><span class="p">:</span> <span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;DeviceSerialNumber&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+            <span class="s1">&#39;series_num&#39;</span><span class="p">:</span> <span class="n">ds</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SeriesNumber&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="c1"># Added SeriesNumber</span>
         <span class="p">}</span>
         
         <span class="k">if</span> <span class="ow">not</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;sop&#39;</span><span class="p">]:</span>
@@ -295,7 +299,7 @@
                     <span class="c1"># Series</span>
                     <span class="n">series</span> <span class="o">=</span> <span class="n">series_map</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">ser_id</span><span class="p">)</span>
                     <span class="k">if</span> <span class="ow">not</span> <span class="n">series</span><span class="p">:</span>
-                        <span class="n">series</span> <span class="o">=</span> <span class="n">Series</span><span class="p">(</span><span class="n">ser_id</span><span class="p">,</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;modality&#39;</span><span class="p">],</span> <span class="mi">0</span><span class="p">)</span>
+                        <span class="n">series</span> <span class="o">=</span> <span class="n">Series</span><span class="p">(</span><span class="n">ser_id</span><span class="p">,</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;modality&#39;</span><span class="p">],</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;series_num&#39;</span><span class="p">])</span>
                         <span class="k">if</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;man&#39;</span><span class="p">]</span> <span class="ow">or</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;model&#39;</span><span class="p">]:</span>
                             <span class="n">series</span><span class="o">.</span><span class="n">equipment</span> <span class="o">=</span> <span class="n">Equipment</span><span class="p">(</span><span class="n">meta</span><span class="p">[</span><span class="s1">&#39;man&#39;</span><span class="p">],</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;model&#39;</span><span class="p">],</span> <span class="n">meta</span><span class="p">[</span><span class="s1">&#39;dev_sn&#39;</span><span class="p">])</span>
                         <span class="n">study</span><span class="o">.</span><span class="n">series</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">series</span><span class="p">)</span>
@@ -310,6 +314,86 @@
         <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Successfully ingested </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2"> instances.&quot;</span><span class="p">)</span></div>
 </div>
 
+
+
+
+
+<div class="viewcode-block" id="ExportContext">
+<a class="viewcode-back" href="../../gantry.html#gantry.io_handlers.ExportContext">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ExportContext</span><span class="p">(</span><span class="n">NamedTuple</span><span class="p">):</span>
+    <span class="n">instance</span><span class="p">:</span> <span class="n">Instance</span>
+    <span class="n">output_path</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">patient_attributes</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+    <span class="n">study_attributes</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+    <span class="n">series_attributes</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+    <span class="n">pixel_array</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span> <span class="c1"># Numpy array or None</span></div>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_export_instance_worker</span><span class="p">(</span><span class="n">ctx</span><span class="p">:</span> <span class="n">ExportContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Worker function to export a single instance.</span>
+<span class="sd">    Returns the output path on success, raises Exception on failure.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">inst</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">instance</span>
+        <span class="n">ds</span> <span class="o">=</span> <span class="n">DicomExporter</span><span class="o">.</span><span class="n">_create_ds</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
+        
+        <span class="c1"># 0. Base Attributes</span>
+        <span class="n">DicomExporter</span><span class="o">.</span><span class="n">_merge</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">)</span>
+        
+        <span class="c1"># 1. Patient Level</span>
+        <span class="n">ds</span><span class="o">.</span><span class="n">PatientName</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">patient_attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PatientName&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">ds</span><span class="o">.</span><span class="n">PatientID</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">patient_attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PatientID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        
+        <span class="c1"># 2. Study Level</span>
+        <span class="n">ds</span><span class="o">.</span><span class="n">StudyInstanceUID</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">study_attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;StudyInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">ds</span><span class="o">.</span><span class="n">StudyDate</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">study_attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;StudyDate&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">ds</span><span class="o">.</span><span class="n">StudyTime</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">study_attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;StudyTime&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        
+        <span class="c1"># 3. Series Level</span>
+        <span class="n">ds</span><span class="o">.</span><span class="n">SeriesInstanceUID</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">series_attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SeriesInstanceUID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">ds</span><span class="o">.</span><span class="n">Modality</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">series_attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Modality&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">ds</span><span class="o">.</span><span class="n">SeriesNumber</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">series_attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;SeriesNumber&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">ctx</span><span class="o">.</span><span class="n">series_attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Manufacturer&quot;</span><span class="p">):</span>
+            <span class="n">ds</span><span class="o">.</span><span class="n">Manufacturer</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">series_attributes</span><span class="p">[</span><span class="s2">&quot;Manufacturer&quot;</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">ctx</span><span class="o">.</span><span class="n">series_attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;ManufacturerModelName&quot;</span><span class="p">):</span>
+            <span class="n">ds</span><span class="o">.</span><span class="n">ManufacturerModelName</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">series_attributes</span><span class="p">[</span><span class="s2">&quot;ManufacturerModelName&quot;</span><span class="p">]</span>
+
+        <span class="c1"># 4. Pixel Data</span>
+        <span class="c1"># Use context-provided pixels (for in-memory objects) or load from file</span>
+        <span class="n">arr</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">pixel_array</span>
+        <span class="k">if</span> <span class="n">arr</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+             <span class="n">arr</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">get_pixel_data</span><span class="p">()</span>
+             
+        <span class="k">if</span> <span class="n">arr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">ds</span><span class="o">.</span><span class="n">PixelData</span> <span class="o">=</span> <span class="n">arr</span><span class="o">.</span><span class="n">tobytes</span><span class="p">()</span>
+            <span class="n">ds</span><span class="o">.</span><span class="n">Rows</span><span class="p">,</span> <span class="n">ds</span><span class="o">.</span><span class="n">Columns</span> <span class="o">=</span> <span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">],</span> <span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">ds</span><span class="o">.</span><span class="n">SamplesPerPixel</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0002&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="n">ds</span><span class="o">.</span><span class="n">PhotometricInterpretation</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0004&quot;</span><span class="p">,</span> <span class="s2">&quot;MONOCHROME2&quot;</span><span class="p">)</span>
+            
+            <span class="k">if</span> <span class="n">arr</span><span class="o">.</span><span class="n">itemsize</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="n">default_bits</span> <span class="o">=</span> <span class="mi">8</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">default_bits</span> <span class="o">=</span> <span class="mi">16</span>
+
+            <span class="n">ds</span><span class="o">.</span><span class="n">BitsAllocated</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0100&quot;</span><span class="p">,</span> <span class="n">default_bits</span><span class="p">)</span>
+            <span class="n">ds</span><span class="o">.</span><span class="n">BitsStored</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0101&quot;</span><span class="p">,</span> <span class="n">default_bits</span><span class="p">)</span>
+            <span class="n">ds</span><span class="o">.</span><span class="n">HighBit</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0102&quot;</span><span class="p">,</span> <span class="n">default_bits</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="n">ds</span><span class="o">.</span><span class="n">PixelRepresentation</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0103&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+
+        <span class="c1"># Validate &amp; Save</span>
+        <span class="n">errs</span> <span class="o">=</span> <span class="n">IODValidator</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span><span class="n">ds</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">errs</span><span class="p">:</span>
+            <span class="c1"># Ensure dir exists (race safe)</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">output_path</span><span class="p">),</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="n">ds</span><span class="o">.</span><span class="n">save_as</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">output_path</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">ctx</span><span class="o">.</span><span class="n">output_path</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+            
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="c1"># Re-raise to be caught by parallel wrapper or handled</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Export failed for </span><span class="si">{</span><span class="n">ctx</span><span class="o">.</span><span class="n">output_path</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
 
 <div class="viewcode-block" id="DicomExporter">
@@ -333,123 +417,106 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">save_studies</span><span class="p">(</span><span class="n">patient</span><span class="p">:</span> <span class="n">Patient</span><span class="p">,</span> <span class="n">studies</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Study</span><span class="p">],</span> <span class="n">out_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Exports a specific list of studies for a patient.</span>
-<span class="sd">        Useful for partial exports or filtering.</span>
+<span class="sd">        Exports a specific list of studies for a patient using parallel workers.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">out_dir</span><span class="p">):</span> <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">out_dir</span><span class="p">)</span>
-        <span class="kn">from</span><span class="w"> </span><span class="nn">gantry.validation</span><span class="w"> </span><span class="kn">import</span> <span class="n">IODValidator</span>
         <span class="n">logger</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
-
+        
+        <span class="n">export_tasks</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">ExportContext</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        
+        <span class="c1"># Planning Phase: Generate Contexts</span>
         <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">studies</span><span class="p">:</span>
             <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">st</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
                 <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">:</span>
-                    <span class="n">ds</span> <span class="o">=</span> <span class="n">DicomExporter</span><span class="o">.</span><span class="n">_create_ds</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
+                    <span class="c1"># Prepare Metadata used for directory structure AND overrides</span>
                     
-                    <span class="c1"># 0. Base Attributes (Generic)</span>
-                    <span class="c1"># We merge these FIRST so that High-Level Model overrides (below) take precedence.</span>
-                    <span class="n">DicomExporter</span><span class="o">.</span><span class="n">_merge</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">)</span>
-
-                    <span class="c1"># 1. Patient Level</span>
-                    <span class="n">ds</span><span class="o">.</span><span class="n">PatientName</span> <span class="o">=</span> <span class="n">patient</span><span class="o">.</span><span class="n">patient_name</span>
-                    <span class="n">ds</span><span class="o">.</span><span class="n">PatientID</span> <span class="o">=</span> <span class="n">patient</span><span class="o">.</span><span class="n">patient_id</span>
-
-                    <span class="c1"># 2. Study Level</span>
-                    <span class="n">ds</span><span class="o">.</span><span class="n">StudyInstanceUID</span> <span class="o">=</span> <span class="n">st</span><span class="o">.</span><span class="n">study_instance_uid</span>
+                    <span class="c1"># Patient Attributes</span>
+                    <span class="n">pat_attrs</span> <span class="o">=</span> <span class="p">{</span>
+                        <span class="s2">&quot;PatientName&quot;</span><span class="p">:</span> <span class="n">patient</span><span class="o">.</span><span class="n">patient_name</span><span class="p">,</span>
+                        <span class="s2">&quot;PatientID&quot;</span><span class="p">:</span> <span class="n">patient</span><span class="o">.</span><span class="n">patient_id</span>
+                    <span class="p">}</span>
+                    
+                    <span class="c1"># Study Attributes</span>
+                    <span class="n">s_date_str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
                     <span class="k">if</span> <span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">:</span>
                         <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">,</span> <span class="s1">&#39;strftime&#39;</span><span class="p">):</span>
-                             <span class="n">ds</span><span class="o">.</span><span class="n">StudyDate</span> <span class="o">=</span> <span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y%m</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span>
+                            <span class="n">s_date_str</span> <span class="o">=</span> <span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y%m</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span>
                         <span class="k">else</span><span class="p">:</span>
-                             <span class="n">ds</span><span class="o">.</span><span class="n">StudyDate</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">)</span>
-                    <span class="k">else</span><span class="p">:</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">StudyDate</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-                    <span class="n">ds</span><span class="o">.</span><span class="n">StudyTime</span> <span class="o">=</span> <span class="s2">&quot;120000&quot;</span>  <span class="c1"># Dummy time to satisfy Type 1</span>
-
-                    <span class="c1"># 3. Series Level</span>
-                    <span class="n">ds</span><span class="o">.</span><span class="n">SeriesInstanceUID</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">series_instance_uid</span>
-                    <span class="n">ds</span><span class="o">.</span><span class="n">Modality</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">modality</span>
-                    <span class="n">ds</span><span class="o">.</span><span class="n">SeriesNumber</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">series_number</span>
-                    <span class="k">if</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="p">:</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">Manufacturer</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="o">.</span><span class="n">manufacturer</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">ManufacturerModelName</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="o">.</span><span class="n">model_name</span>
-
-                    <span class="c1"># 4. Instance Level and recursive sequences</span>
-                    <span class="c1"># Merged at step 0 to allow overrides.</span>
-
-                    <span class="c1"># Merge Pixels</span>
-                    <span class="c1"># Merge Pixels</span>
-                    <span class="c1"># CRITICAL: Do not swallow errors here. If pixels are missing, we want to know.</span>
-                    <span class="n">arr</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">get_pixel_data</span><span class="p">()</span>
+                            <span class="n">s_date_str</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">)</span>
+                            
+                    <span class="n">study_attrs</span> <span class="o">=</span> <span class="p">{</span>
+                        <span class="s2">&quot;StudyInstanceUID&quot;</span><span class="p">:</span> <span class="n">st</span><span class="o">.</span><span class="n">study_instance_uid</span><span class="p">,</span>
+                        <span class="s2">&quot;StudyDate&quot;</span><span class="p">:</span> <span class="n">s_date_str</span><span class="p">,</span>
+                        <span class="s2">&quot;StudyTime&quot;</span><span class="p">:</span> <span class="s2">&quot;120000&quot;</span>
+                    <span class="p">}</span>
                     
-                    <span class="k">if</span> <span class="n">arr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">PixelData</span> <span class="o">=</span> <span class="n">arr</span><span class="o">.</span><span class="n">tobytes</span><span class="p">()</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">Rows</span><span class="p">,</span> <span class="n">ds</span><span class="o">.</span><span class="n">Columns</span> <span class="o">=</span> <span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">],</span> <span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">SamplesPerPixel</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0002&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-                        <span class="c1"># Ensure Photometric Interpretation is present (Type 1)</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">PhotometricInterpretation</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0004&quot;</span><span class="p">,</span> <span class="s2">&quot;MONOCHROME2&quot;</span><span class="p">)</span>
-                        <span class="c1"># Infer depth from numpy array</span>
-                        <span class="k">if</span> <span class="n">arr</span><span class="o">.</span><span class="n">itemsize</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
-                            <span class="n">default_bits</span> <span class="o">=</span> <span class="mi">8</span>
-                        <span class="k">else</span><span class="p">:</span>
-                            <span class="n">default_bits</span> <span class="o">=</span> <span class="mi">16</span>
-    
-                        <span class="n">ds</span><span class="o">.</span><span class="n">BitsAllocated</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0100&quot;</span><span class="p">,</span> <span class="n">default_bits</span><span class="p">)</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">BitsStored</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0101&quot;</span><span class="p">,</span> <span class="n">default_bits</span><span class="p">)</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">HighBit</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0102&quot;</span><span class="p">,</span> <span class="n">default_bits</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">PixelRepresentation</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0103&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+                    <span class="c1"># Series Attributes</span>
+                    <span class="n">series_attrs</span> <span class="o">=</span> <span class="p">{</span>
+                        <span class="s2">&quot;SeriesInstanceUID&quot;</span><span class="p">:</span> <span class="n">se</span><span class="o">.</span><span class="n">series_instance_uid</span><span class="p">,</span>
+                        <span class="s2">&quot;Modality&quot;</span><span class="p">:</span> <span class="n">se</span><span class="o">.</span><span class="n">modality</span><span class="p">,</span>
+                        <span class="s2">&quot;SeriesNumber&quot;</span><span class="p">:</span> <span class="n">se</span><span class="o">.</span><span class="n">series_number</span>
+                    <span class="p">}</span>
+                    <span class="k">if</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="p">:</span>
+                        <span class="n">series_attrs</span><span class="p">[</span><span class="s2">&quot;Manufacturer&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="o">.</span><span class="n">manufacturer</span>
+                        <span class="n">series_attrs</span><span class="p">[</span><span class="s2">&quot;ManufacturerModelName&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="o">.</span><span class="n">model_name</span>
+                        
+                    <span class="c1"># Calculate Output Path</span>
+                    <span class="c1"># 1. Subject Folder</span>
+                    <span class="n">subj_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Subject_</span><span class="si">{</span><span class="n">DicomExporter</span><span class="o">.</span><span class="n">_sanitize</span><span class="p">(</span><span class="n">patient</span><span class="o">.</span><span class="n">patient_id</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+                    
+                    <span class="c1"># 2. Study Folder</span>
+                    <span class="n">s_date_clean</span> <span class="o">=</span> <span class="n">s_date_str</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;-&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;UnknownDate&quot;</span>
+                    
+                    <span class="n">s_desc</span> <span class="o">=</span> <span class="s2">&quot;Study&quot;</span>
+                    <span class="k">if</span> <span class="s2">&quot;0008,1030&quot;</span> <span class="ow">in</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">:</span>
+                        <span class="n">s_desc</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="s2">&quot;0008,1030&quot;</span><span class="p">]</span>
+                    <span class="n">study_folder</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Study_</span><span class="si">{</span><span class="n">s_date_clean</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">DicomExporter</span><span class="o">.</span><span class="n">_sanitize</span><span class="p">(</span><span class="n">s_desc</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+                    
+                    <span class="c1"># 3. Series Folder</span>
+                    <span class="n">ser_num</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">series_number</span> <span class="k">if</span> <span class="n">se</span><span class="o">.</span><span class="n">series_number</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">&quot;0&quot;</span>
+                    <span class="n">ser_desc</span> <span class="o">=</span> <span class="s2">&quot;Series&quot;</span>
+                    <span class="k">if</span> <span class="s2">&quot;0008,103E&quot;</span> <span class="ow">in</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">:</span>
+                        <span class="n">ser_desc</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="s2">&quot;0008,103E&quot;</span><span class="p">]</span>
+                    <span class="n">series_folder</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Series_</span><span class="si">{</span><span class="n">ser_num</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">DicomExporter</span><span class="o">.</span><span class="n">_sanitize</span><span class="p">(</span><span class="n">ser_desc</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+                    
+                    <span class="c1"># 4. Filename</span>
+                    <span class="n">fname</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">.dcm&quot;</span>
+                    <span class="k">if</span> <span class="s2">&quot;0020,0013&quot;</span> <span class="ow">in</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">:</span>
+                        <span class="k">try</span><span class="p">:</span>
+                            <span class="n">inum</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="s2">&quot;0020,0013&quot;</span><span class="p">])</span>
+                            <span class="n">fname</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">inum</span><span class="si">:</span><span class="s2">04d</span><span class="si">}</span><span class="s2">.dcm&quot;</span>
+                        <span class="k">except</span><span class="p">:</span> <span class="k">pass</span>
+                        
+                    <span class="n">full_out_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">out_dir</span><span class="p">,</span> <span class="n">subj_name</span><span class="p">,</span> <span class="n">study_folder</span><span class="p">,</span> <span class="n">series_folder</span><span class="p">,</span> <span class="n">fname</span><span class="p">)</span>
+                    
+                    <span class="c1"># Handle In-Memory Pixels (e.g. Remediated/Detached instances)</span>
+                    <span class="c1"># If file_path is None, worker cannot load pixels. send them.</span>
+                    <span class="n">p_array</span> <span class="o">=</span> <span class="kc">None</span>
+                    <span class="k">if</span> <span class="n">inst</span><span class="o">.</span><span class="n">file_path</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">inst</span><span class="o">.</span><span class="n">pixel_array</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                        <span class="n">p_array</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">pixel_array</span>
 
-                    <span class="c1"># Validate &amp; Save</span>
-                    <span class="n">errs</span> <span class="o">=</span> <span class="n">IODValidator</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span><span class="n">ds</span><span class="p">)</span>
-                    <span class="k">if</span> <span class="ow">not</span> <span class="n">errs</span><span class="p">:</span>
-                        <span class="c1"># Structured Export Logic</span>
-                        <span class="c1"># 1. Subject Folder</span>
-                        <span class="n">subj_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Subject_</span><span class="si">{</span><span class="n">DicomExporter</span><span class="o">.</span><span class="n">_sanitize</span><span class="p">(</span><span class="n">patient</span><span class="o">.</span><span class="n">patient_id</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
-                        
-                        <span class="c1"># 2. Study Folder</span>
-                        <span class="n">s_date</span> <span class="o">=</span> <span class="s2">&quot;UnknownDate&quot;</span>
-                        <span class="k">if</span> <span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">:</span>
-                            <span class="n">s_date</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;-&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
-                            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="p">,</span> <span class="s1">&#39;strftime&#39;</span><span class="p">):</span>
-                                <span class="n">s_date</span> <span class="o">=</span> <span class="n">st</span><span class="o">.</span><span class="n">study_date</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y%m</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span>
-                        
-                        <span class="c1"># Apply naive lookup for Description if not in object model explicitly yet</span>
-                        <span class="c1"># In the future, Study object should have &#39;description&#39; field.</span>
-                        <span class="c1"># For now, we rely on what was populated or use a default.</span>
-                        <span class="n">s_desc</span> <span class="o">=</span> <span class="s2">&quot;Study&quot;</span> <span class="c1"># Placeholder if we don&#39;t track it on the Study object easily without looking at instance</span>
-                        <span class="c1"># Let&#39;s try to grab it from the instance attributes if available for better naming</span>
-                        <span class="k">if</span> <span class="s2">&quot;0008,1030&quot;</span> <span class="ow">in</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">:</span>
-                            <span class="n">s_desc</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="s2">&quot;0008,1030&quot;</span><span class="p">]</span>
-                        
-                        <span class="n">study_folder</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Study_</span><span class="si">{</span><span class="n">s_date</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">DicomExporter</span><span class="o">.</span><span class="n">_sanitize</span><span class="p">(</span><span class="n">s_desc</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
-                        
-                        <span class="c1"># 3. Series Folder</span>
-                        <span class="n">ser_num</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">series_number</span> <span class="k">if</span> <span class="n">se</span><span class="o">.</span><span class="n">series_number</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">&quot;0&quot;</span>
-                        <span class="n">ser_desc</span> <span class="o">=</span> <span class="s2">&quot;Series&quot;</span>
-                        <span class="k">if</span> <span class="s2">&quot;0008,103E&quot;</span> <span class="ow">in</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">:</span>
-                            <span class="n">ser_desc</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="s2">&quot;0008,103E&quot;</span><span class="p">]</span>
-                            
-                        <span class="n">series_folder</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Series_</span><span class="si">{</span><span class="n">ser_num</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">DicomExporter</span><span class="o">.</span><span class="n">_sanitize</span><span class="p">(</span><span class="n">ser_desc</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
-                        
-                        <span class="c1"># 4. Save</span>
-                        <span class="n">full_out_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">out_dir</span><span class="p">,</span> <span class="n">subj_name</span><span class="p">,</span> <span class="n">study_folder</span><span class="p">,</span> <span class="n">series_folder</span><span class="p">)</span>
-                        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">full_out_dir</span><span class="p">):</span>
-                            <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">full_out_dir</span><span class="p">)</span>
-                            
-                        <span class="c1"># Use Instance Number if available, else UID</span>
-                        <span class="n">fname</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">.dcm&quot;</span>
-                        <span class="k">if</span> <span class="s2">&quot;0020,0013&quot;</span> <span class="ow">in</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">:</span>
-                            <span class="k">try</span><span class="p">:</span>
-                                <span class="c1"># Pad to 4 digits for sorting</span>
-                                <span class="n">inum</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="s2">&quot;0020,0013&quot;</span><span class="p">])</span>
-                                <span class="n">fname</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">inum</span><span class="si">:</span><span class="s2">04d</span><span class="si">}</span><span class="s2">.dcm&quot;</span>
-                            <span class="k">except</span><span class="p">:</span> <span class="k">pass</span>
-                            
-                        <span class="n">fp</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">full_out_dir</span><span class="p">,</span> <span class="n">fname</span><span class="p">)</span>
-                        <span class="n">ds</span><span class="o">.</span><span class="n">save_as</span><span class="p">(</span><span class="n">fp</span><span class="p">)</span>
-                        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Exported: </span><span class="si">{</span><span class="n">fp</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-                    <span class="k">else</span><span class="p">:</span>
-                        <span class="c1"># This print statement is why you saw 0 files!</span>
-                        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Skipped Invalid </span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">errs</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+                    <span class="c1"># Add to queue</span>
+                    <span class="n">ctx</span> <span class="o">=</span> <span class="n">ExportContext</span><span class="p">(</span>
+                        <span class="n">instance</span><span class="o">=</span><span class="n">inst</span><span class="p">,</span> 
+                        <span class="n">output_path</span><span class="o">=</span><span class="n">full_out_path</span><span class="p">,</span>
+                        <span class="n">patient_attributes</span><span class="o">=</span><span class="n">pat_attrs</span><span class="p">,</span>
+                        <span class="n">study_attributes</span><span class="o">=</span><span class="n">study_attrs</span><span class="p">,</span>
+                        <span class="n">series_attributes</span><span class="o">=</span><span class="n">series_attrs</span><span class="p">,</span>
+                        <span class="n">pixel_array</span><span class="o">=</span><span class="n">p_array</span>
+                    <span class="p">)</span>
+                    <span class="n">export_tasks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ctx</span><span class="p">)</span>
 
+        <span class="c1"># Execution Phase</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">export_tasks</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;No instances found to export.&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Starting parallel export of </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">export_tasks</span><span class="p">)</span><span class="si">}</span><span class="s2"> instances...&quot;</span><span class="p">)</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="n">run_parallel</span><span class="p">(</span><span class="n">_export_instance_worker</span><span class="p">,</span> <span class="n">export_tasks</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Exporting&quot;</span><span class="p">,</span> <span class="n">chunksize</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+        
+        <span class="c1"># results contains paths or Nones</span>
+        <span class="n">success_count</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">if</span> <span class="n">r</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Export Complete. Success: </span><span class="si">{</span><span class="n">success_count</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">export_tasks</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
 
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">_create_ds</span><span class="p">(</span><span class="n">inst</span><span class="p">):</span>
