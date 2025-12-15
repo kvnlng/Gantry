@@ -121,6 +121,11 @@ class Instance(DicomItem):
                 self.set_pixel_data(ds.pixel_array)  # Cache it in memory
                 return self.pixel_array
             except Exception as e:
+                if "missing dependencies" in str(e) or "decompress" in str(e):
+                    raise RuntimeError(
+                        f"Failed to decompress pixel data for {os.path.basename(self.file_path)}. "
+                        "Missing image codecs. Please install them with: pip install \"gantry[images]\""
+                    ) from e
                 raise RuntimeError(f"Lazy load failed for {self.file_path}: {e}")
 
         raise FileNotFoundError(f"Pixels missing and file not found: {self.file_path}")
