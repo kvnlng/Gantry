@@ -13,8 +13,6 @@ class ConfigLoader:
         """
         data = ConfigLoader._load_json(filepath)
         
-        data = ConfigLoader._load_json(filepath)
-        
         # Legacy Support: List of rules
         if isinstance(data, list):
             get_logger().info("Legacy config detected (list format). Treating as machine rules.")
