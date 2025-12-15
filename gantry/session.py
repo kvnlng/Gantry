@@ -357,12 +357,73 @@ class DicomSession:
         print("Remember to call .save() to persist changes.\n")
 
     def inventory(self):
+        """Prints a summary of the session contents and equipment."""
         get_logger().info("Generating inventory report.")
-        """Prints a summary of devices (Manufacturers/Models) found in the current session."""
-        eqs = self.store.get_unique_equipment()
-        print(f"\nInventory: {len(eqs)} Devices")
-        for e in eqs:
-            print(f" - {e.manufacturer} {e.model_name} (S/N: {e.device_serial_number})")
+        
+        # 1. Object Counts
+        n_p = len(self.store.patients)
+        n_st = 0
+        n_se = 0
+        n_i = 0
+        
+        # 2. Equipment Grouping
+        eq_counts = {} # (man, model) -> count
+        
+        for p in self.store.patients:
+            n_st += len(p.studies)
+            for s in p.studies:
+                n_se += len(s.series)
+                for se in s.series:
+                    n_i += len(se.instances)
+                    if se.equipment:
+                        key = (se.equipment.manufacturer, se.equipment.model_name)
+                        eq_counts[key] = eq_counts.get(key, 0) + 1
+
+        print(f"\nInventory Summary:")
+        print(f" Patients:  {n_p}")
+        print(f" Studies:   {n_st}")
+        print(f" Series:    {n_se}")
+        print(f" Instances: {n_i}")
+        
+        print(f"\nEquipment Inventory:")
+        if not eq_counts:
+            print(" No equipment metadata found.")
+        else:
+            for (man, mod), count in sorted(eq_counts.items()):
+                print(f" - {man} - {mod} (Count: {count})")
+
+    def get_cohort_report(self) -> 'pd.DataFrame':
+        """
+        Returns a Pandas DataFrame containing flattened metadata for the current cohort.
+        Useful for analysis and QA.
+        """
+        import pandas as pd
+        rows = []
+        for p in self.store.patients:
+            for s in p.studies:
+                for se in s.series:
+                    # Basic row info
+                    row = {
+                        "PatientID": p.patient_id,
+                        "PatientName": p.patient_name,
+                        "StudyInstanceUID": s.study_instance_uid,
+                        "StudyDate": s.study_date,
+                        "SeriesInstanceUID": se.series_instance_uid,
+                        "Modality": se.modality,
+                        "InstanceCount": len(se.instances)
+                    }
+                    if se.equipment:
+                        row["Manufacturer"] = se.equipment.manufacturer
+                        row["Model"] = se.equipment.model_name
+                        row["DeviceSerial"] = se.equipment.device_serial_number
+                    else:
+                        row["Manufacturer"] = ""
+                        row["Model"] = ""
+                        row["DeviceSerial"] = ""
+                        
+                    rows.append(row)
+        
+        return pd.DataFrame(rows)
 
     def redact_by_machine(self, serial_number, roi):
         """
