@@ -161,10 +161,66 @@ class RemediationService:
         if hasattr(date_val, 'strftime'): 
             return date_val + timedelta(days=days)
             
-        # Assume string
-        try:
-            dt = datetime.strptime(str(date_val), "%Y%m%d")
-            new_dt = dt + timedelta(days=days)
-            return new_dt.strftime("%Y%m%d")
-        except ValueError:
+        # Try parsing with multiple supported formats
+        # We process them in order of specificity
+        formats = [
+            "%Y%m%d",                # DA: 20230515
+            "%Y%m%d%H%M%S",          # DT: 20230515104822
+            "%Y%m%d.%H%M%S",         # DT: 20230515.104822
+            "%Y%m%d%H%M%S.%f",       # DT: 20230515104822.123456
+            "%Y%m%d.%H%M%S.%f"       # DT: 20230515.104822.123456
+        ]
+
+        # Handle DICOM's potential for variable millisecond precision if needed
+        # But for now let's try standard formats.
+        # If the input contains fractional seconds that don't match %f (6 digits),
+        # we might need to pad/truncate, but let's assume standard behavior first
+        # based on the user provided example.
+        # Pro-tip: 20230515.104822.677 is 3 digits. %f expects zero-padded to 6 usually in strict parsing,
+        # but let's see. If it fails, we can add a pre-processing step.
+        
+        # Actually, for robust DICOM DT handling with generic python strptime, 
+        # we might need to handle the .FFFFFF part manually if it varies.
+        # Let's try to match exactly what we can.
+        
+        date_str = str(date_val).strip()
+        if not date_str:
             return None
+
+        for fmt in formats:
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                new_dt = dt + timedelta(days=days)
+                return new_dt.strftime(fmt)
+            except ValueError:
+                continue
+                
+        # If we are here, we might have odd millisecond precision (e.g. .677)
+        # Attempt to handle flexible fractional seconds if a dot is present towards the end
+        if '.' in date_str:
+            # Try to separate main part and fractional part
+            # This is a basic fallback for proper DICOM DT like 20230515.104822.677
+            try:
+                # Naive check for the "dots" format
+                parts = date_str.split('.')
+                if len(parts) >= 3: # YYYYMMDD.HHMMSS.mmmmmm
+                   # Re-assemble without fraction to shift, then append fraction? 
+                   # No, shift might cross day boundary, so 'time' part doesn't change, 
+                   # but 'date' part changes. 
+                   # But if we cross DST? DICOM doesn't handle DST explicitly in DT usually, it's just local time.
+                   # Actually, simplest is:
+                   # 1. Parse just the date part (first 8 chars)
+                   # 2. Shift it
+                   # 3. Re-attach the rest? 
+                   # That preserves time exactly, which is what 'SHIFT_DATE' usually intends (days delta).
+                   # Let's limit this special handling to when we know it's a date+time string
+                   if len(parts[0]) == 8 and parts[0].isdigit():
+                        base_date = parts[0]
+                        rest = date_str[8:] # everything after YYYYMMDD
+                        dt = datetime.strptime(base_date, "%Y%m%d")
+                        new_dt = dt + timedelta(days=days)
+                        return new_dt.strftime("%Y%m%d") + rest
+            except ValueError:
+                pass
+                
+        return None
