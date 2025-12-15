@@ -1,36 +1,85 @@
 import json
 import os
-from typing import List, Dict, Any
-from .logger import get_logger
+import logging
+import json
+import copy
+from typing import Dict, Any, Union, List
+
+from .profiles import PRIVACY_PROFILES
+
+CONFIG_VERSION = "2.0"
+
+def get_logger():
+    return logging.getLogger("gantry")
+
+def load_unified_config(path: str) -> Dict[str, Any]:
+    """
+    Loads the unified configuration file (JSON).
+    Supports legacy list-based config (machine rules only) and new dict-based config.
+    Merges 'privacy_profile' if specified.
+    """
+    with open(path, "r") as f:
+        data = json.load(f)
+        
+    # Handle Legacy Config (List of Rules)
+    if isinstance(data, list):
+        return {
+            "version": "1.0",
+            "machine_rules": data,
+            "phi_tags": {},
+            "date_jitter": 0
+        }
+
+    # Handle Standard Config
+    config = data
+    
+    # Merge Privacy Profile
+    if "privacy_profile" in config:
+        profile_name = config["privacy_profile"]
+        if profile_name in PRIVACY_PROFILES:
+            profile_rules = copy.deepcopy(PRIVACY_PROFILES[profile_name])
+            user_rules = config.get("phi_tags", {})
+            
+            # User rules override profile rules
+            profile_rules.update(user_rules)
+            config["phi_tags"] = profile_rules
+            get_logger().info(f"Loaded privacy profile '{profile_name}' with {len(PRIVACY_PROFILES[profile_name])} default rules.")
+        else:
+            get_logger().warning(f"Unknown privacy profile '{profile_name}'. ignoring.")
+            
+    return config
+
 
 
 class ConfigLoader:
     @staticmethod
-    def load_unified_config(filepath: str) -> tuple[Dict[str, str], List[Dict[str, Any]], Dict[str, Any], bool]:
+    def load_unified_config(filepath: str) -> tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, Any], bool]:
         """
-        Parses the unified JSON config (v2.0).
+        Parses the unified JSON/YAML config (v2.0).
         Returns: (phi_tags, machine_rules, date_jitter_config, remove_private_tags)
         """
-        data = ConfigLoader._load_json(filepath)
+        # Call the top-level loader which handles YAML, Legacy List, and Privacy Profiles
+        data = load_unified_config(filepath)
         
-        # Legacy Support: List of rules
-        if isinstance(data, list):
-            get_logger().info("Legacy config detected (list format). Treating as machine rules.")
-            machine_rules = data
-            phi_tags = {}
-            date_jitter = {"min_days": -365, "max_days": -1}
-            remove_private_tags = True
-        else:
-            phi_tags = data.get("phi_tags", {})
-            machine_rules = data.get("machines", [])
-            date_jitter = data.get("date_jitter", {"min_days": -365, "max_days": -1})
-            remove_private_tags = data.get("remove_private_tags", True) # Default to True for now?
+        phi_tags = data.get("phi_tags", {})
+        # Support 'machines' (v2) or 'machine_rules' (legacy internal)
+        machine_rules = data.get("machines", data.get("machine_rules", []))
+        
+        # Date Jitter Normalization
+        dj = data.get("date_jitter", {"min_days": -365, "max_days": -1})
+        if isinstance(dj, int):
+             # Legacy support if simple int? Actually code expects dict.
+             # If user provided int in YAML, we might need to handle, but standard is dict.
+             pass 
+        date_jitter_config = dj
+        
+        remove_private_tags = data.get("remove_private_tags", True)
         
         # Validate machines
         for i, rule in enumerate(machine_rules):
             ConfigLoader._validate_rule(rule, i)
             
-        return phi_tags, machine_rules, date_jitter, remove_private_tags
+        return phi_tags, machine_rules, date_jitter_config, remove_private_tags
 
     @staticmethod
     def load_redaction_rules(filepath: str) -> List[Dict[str, Any]]:

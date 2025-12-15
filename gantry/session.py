@@ -715,27 +715,32 @@ class DicomSession:
                         "redaction_zones": []
                     })
         
-        # 4. Include Default set of tags (Research + Default)
-        # Load default
-        defaults = ConfigLoader.load_phi_config()
-        # Load research
+        # 4. Include Default set of tags (Research Overrides Only)
+        # We now leverage the "basic" privacy profile for the heavy lifting.
+        # We only inject the research-specific overrides (e.g. KEEP Age/Sex, JIT Dates).
+        
+        phi_tags = {}
         res_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "research_tags.json")
         if os.path.exists(res_path):
-             with open(res_path, 'r') as f:
-                 res_data = json.load(f)
-                 res_tags = res_data.get("research_tags", {})
-                 defaults.update(res_tags)
+             try:
+                 with open(res_path, 'r') as f:
+                     res_data = json.load(f)
+                     phi_tags = res_data.get("research_tags", {})
+             except Exception as e:
+                 get_logger().warning(f"Failed to load research tags: {e}")
 
         # 5. Construct Unified Data
         data = {
             "version": "2.0",
+            "privacy_profile": "basic",
             "_instructions": {
-                "phi_tags": "Map DICOM Tag (GGGG,EEEE) to a Description String OR an Object.",
+                "privacy_profile": "Standard profile (basic) handles common PHI (Name, ID, etc).",
+                "phi_tags": "Define overrides here. 'JITTER' shifts dates based on config.",
                 "advanced_actions": "Actions: REMOVE, EMPTY, REPLACE, KEEP, JITTER (SHIFT)",
                 "date_jitter": "Range of days to shift dates by (negative = past).",
-                "remove_private_tags": "If true, removes all odd-group tags except Gantry secure tags."
+                "remove_private_tags": "If true, removes all odd-group tags except Gantry Metadata."
             },
-            "phi_tags": defaults,
+            "phi_tags": phi_tags,
             "date_jitter": {
                 "min_days": -365,
                 "max_days": -1
