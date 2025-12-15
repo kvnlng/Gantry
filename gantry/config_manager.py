@@ -68,10 +68,10 @@ class ConfigLoader:
         # Date Jitter Normalization
         dj = data.get("date_jitter", {"min_days": -365, "max_days": -1})
         if isinstance(dj, int):
-             # Legacy support if simple int? Actually code expects dict.
-             # If user provided int in YAML, we might need to handle, but standard is dict.
-             pass 
-        date_jitter_config = dj
+             # Legacy support or user provided int. Convert to fixed shift.
+             date_jitter_config = {"min_days": dj, "max_days": dj}
+        else:
+             date_jitter_config = dj
         
         remove_private_tags = data.get("remove_private_tags", True)
         
