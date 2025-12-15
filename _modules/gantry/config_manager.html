@@ -89,8 +89,6 @@
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">data</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">_load_json</span><span class="p">(</span><span class="n">filepath</span><span class="p">)</span>
         
-        <span class="n">data</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">_load_json</span><span class="p">(</span><span class="n">filepath</span><span class="p">)</span>
-        
         <span class="c1"># Legacy Support: List of rules</span>
         <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Legacy config detected (list format). Treating as machine rules.&quot;</span><span class="p">)</span>
