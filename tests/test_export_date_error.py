@@ -34,4 +34,8 @@ def test_export_string_date_error(tmp_path):
     # This should now SUCCEED
     DicomExporter.save_patient(p, str(out_dir))
     
-    assert (out_dir / f"{inst.sop_instance_uid}.dcm").exists()
+    # Assert using rglob to support structured export
+    files = list(out_dir.rglob("*.dcm"))
+    assert len(files) == 1
+    # Instance Number is 1 -> 0001.dcm
+    assert files[0].name == "0001.dcm"

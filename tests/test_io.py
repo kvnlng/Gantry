@@ -12,7 +12,9 @@ def test_export_import_roundtrip(tmp_path, dummy_patient):
     export_dir = tmp_path / "export_test"
     DicomExporter.save_patient(dummy_patient, str(export_dir))
 
-    files = list(export_dir.glob("*.dcm"))
+    DicomExporter.save_patient(dummy_patient, str(export_dir))
+
+    files = list(export_dir.rglob("*.dcm"))
     assert len(files) == 1
 
     # 2. Import into new store
@@ -53,7 +55,9 @@ def test_persistence_priority(tmp_path):
         DicomExporter.save_patient(pat, str(out_dir))
     
     # 3. Read back
-    exported_file = list(out_dir.glob("*.dcm"))[0]
+    exported_files = list(out_dir.rglob("*.dcm"))
+    assert len(exported_files) > 0
+    exported_file = exported_files[0]
     ds = pydicom.dcmread(exported_file)
     
     # 4. Assert

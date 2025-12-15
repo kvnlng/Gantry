@@ -72,7 +72,15 @@ def test_reversible_anonymization_flow(tmp_path):
     
     session.export(export_dir)
     
-    exported_file = os.path.join(export_dir, "SOP_1.dcm")
+    session.export(export_dir)
+    
+    
+    # Find exported file recursively
+    from pathlib import Path
+    found_files = list(Path(export_dir).rglob("*.dcm"))
+    assert len(found_files) == 1
+    exported_file = str(found_files[0])
+    
     assert os.path.exists(exported_file)
     
     # Read back with pydicom
