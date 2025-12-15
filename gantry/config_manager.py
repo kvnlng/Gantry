@@ -62,6 +62,11 @@ class ConfigLoader:
         """
         if filepath:
             data = ConfigLoader._load_json(filepath)
+            
+            # If it's a list (Legacy Rules), it definitely doesn't have PHI tags
+            if isinstance(data, list):
+                return {}
+             
             # Support v2 unified file used as simple PHI config
             if "phi_tags" in data:
                 return data["phi_tags"]
