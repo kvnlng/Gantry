@@ -93,6 +93,11 @@ class RemediationService:
                 details = f"Date Shifted {finding.entity_uid}: {proposal.target_attr} ({shift_days} days)"
                 action_type = "REMEDIATION_SHIFT_DATE"
             else:
+                 val_str = str(proposal.original_value).strip() if proposal.original_value is not None else ""
+                 if not val_str:
+                     self.logger.info(f"Skipping jitter for empty date on {finding.entity_uid} (Tag: {proposal.target_attr})")
+                     return
+                 
                  self.logger.warning(f"Invalid date format for {finding.entity_uid} (Tag: {proposal.target_attr}): {proposal.original_value}")
                  return
 
