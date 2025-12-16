@@ -17,13 +17,14 @@ def test_unified_workflow(session_db, tmp_path, dummy_patient):
     session.save()
     
     # 2. Scaffold Config (Action: Setup)
-    config_path = tmp_path / "unified_config.json"
+    config_path = tmp_path / "unified_config.yaml"
     session.setup_config(str(config_path))
     
     assert os.path.exists(config_path)
     
     with open(config_path, 'r') as f:
-        data = json.load(f)
+        import yaml
+        data = yaml.safe_load(f)
         
     assert "version" in data and data["version"] == "2.0"
     assert "phi_tags" in data
@@ -43,7 +44,7 @@ def test_unified_workflow(session_db, tmp_path, dummy_patient):
     })
     
     with open(config_path, 'w') as f:
-        json.dump(data, f)
+        yaml.dump(data, f)
         
     # 4. Load Config
     session.load_config(str(config_path))

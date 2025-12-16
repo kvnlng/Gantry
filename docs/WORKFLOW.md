@@ -42,9 +42,9 @@ Gantry uses a **Unified Configuration** (v2.0) that defines both:
 
 ```python
 # Generate a unified config skeleton based on your inventory
-session.setup_config("privacy_config.json")
+session.setup_config("privacy_config.yaml")
 
-# USER ACTION: Edit 'privacy_config.json' in your text editor.
+# USER ACTION: Edit 'privacy_config.yaml' in your text editor.
 # - Add specific PHI tags to custom list
 # - Define ROIs for detected machines
 ```
@@ -56,7 +56,7 @@ This is an **active** checkpoint. You will iteratively refine your configuration
 ```python
 # A. Audit Metadata (Measure Accuracy)
 # Uses the 'phi_tags' defined in your unified config
-risk_report = session.audit("privacy_config.json")
+risk_report = session.audit("privacy_config.yaml")
 # ... Review report, edit config, repeat ...
 ```
 

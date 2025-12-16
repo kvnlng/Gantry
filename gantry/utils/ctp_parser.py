@@ -119,6 +119,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
+        import yaml
         with open(input_path, 'r') as f:
             content = f.read()
         
@@ -127,7 +128,7 @@ if __name__ == "__main__":
         output_data = {"rules": rules}
         
         with open(output_path, 'w') as f:
-            json.dump(output_data, f, indent=4)
+            yaml.dump(output_data, f, sort_keys=False, default_flow_style=False)
             
         print(f"Successfully converted {len(rules)} rules to {output_path}")
 

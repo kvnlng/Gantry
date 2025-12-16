@@ -12,6 +12,7 @@ setup(
         "tqdm>=4.65.0",
         "cryptography>=41.0.0",
         "pandas>=2.0.0",
+        "PyYAML>=6.0"
         # "pylibjpeg==2.1.0"
     ],
     python_requires=">=3.9",

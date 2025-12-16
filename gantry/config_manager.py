@@ -1,7 +1,6 @@
-import json
+import yaml
 import os
 import logging
-import json
 import copy
 from typing import Dict, Any, Union, List
 
@@ -14,12 +13,15 @@ def get_logger():
 
 def load_unified_config(path: str) -> Dict[str, Any]:
     """
-    Loads the unified configuration file (JSON).
+    Loads the unified configuration file (YAML).
     Supports legacy list-based config (machine rules only) and new dict-based config.
     Merges 'privacy_profile' if specified.
     """
+    if not (path.endswith('.yaml') or path.endswith('.yml')):
+        raise ValueError("Configuration file must be a YAML file (.yaml or .yml)")
+
     with open(path, "r") as f:
-        data = json.load(f)
+        data = yaml.safe_load(f)
         
     # Handle Legacy Config (List of Rules)
     if isinstance(data, list):
@@ -55,7 +57,7 @@ class ConfigLoader:
     @staticmethod
     def load_unified_config(filepath: str) -> tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, Any], bool]:
         """
-        Parses the unified JSON/YAML config (v2.0).
+        Parses the unified YAML config (v2.0).
         Returns: (phi_tags, machine_rules, date_jitter_config, remove_private_tags)
         """
         # Call the top-level loader which handles YAML, Legacy List, and Privacy Profiles
@@ -87,7 +89,7 @@ class ConfigLoader:
         Legacy/Convenience support. 
         If v2 file, extracts 'machines'. If v1 file (list or dict), tries to parse.
         """
-        data = ConfigLoader._load_json(filepath)
+        data = ConfigLoader._load_yaml(filepath)
         
         rules = []
         if isinstance(data, list):
@@ -108,7 +110,7 @@ class ConfigLoader:
         Legacy/Convenience support.
         """
         if filepath:
-            data = ConfigLoader._load_json(filepath)
+            data = ConfigLoader._load_yaml(filepath)
             
             # If it's a list (Legacy Rules), it definitely doesn't have PHI tags
             if isinstance(data, list):
@@ -123,21 +125,27 @@ class ConfigLoader:
             base = os.path.dirname(os.path.abspath(__file__))
             filepath = os.path.join(base, "resources", "phi_tags.json")
             if os.path.exists(filepath):
-                 data = ConfigLoader._load_json(filepath)
-            else:
-                 data = {}
-            return data.get("phi_tags", data)
+                 # Resource is likely still JSON for internal defaults unless we change it too. 
+                 # But sticking to JSON for internal resources is fine, OR we change helper to handle both?
+                 # User asked to drop JSON support for *config files*. 
+                 # Let's support JSON just for internal resources via simple json load if yaml fails or extension check?
+                 # Actually, clearer to migrate the resource to YAML too?
+                 # Or just use json.load here explicitly since it's internal.
+                 import json
+                 with open(filepath, 'r') as f:
+                     return json.load(f).get("phi_tags", {})
+            return {}
 
     @staticmethod
-    def _load_json(filepath: str) -> Dict[str, Any]:
+    def _load_yaml(filepath: str) -> Dict[str, Any]:
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Configuration file not found: {filepath}")
 
         try:
             with open(filepath, 'r') as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON format in {filepath}: {e}")
+                return yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML format in {filepath}: {e}")
 
     @staticmethod
     def _validate_rule(rule: Dict[str, Any], index: int):

@@ -631,11 +631,15 @@ class DicomSession:
 
     def scaffold_config(self, output_path: str):
         """
-        Generates a unified v2 configuration file.
+        Generates a unified v2 configuration file in YAML format.
         Includes default PHI tags + Auto-detected machine inventory.
         """
-        import json
+        import yaml
         import os
+        
+        if not (output_path.endswith(".yaml") or output_path.endswith(".yml")):
+            output_path += ".yaml"
+            print(f"Note: Appending .yaml extension -> {output_path}")
         
         # 1. Identify what we have
         all_equipment = self.store.get_unique_equipment()
@@ -648,6 +652,7 @@ class DicomSession:
         kb_machines = []
         if os.path.exists(kb_path):
              try:
+                 import json
                  with open(kb_path, 'r') as f:
                      kb_data = json.load(f)
                      kb_machines = kb_data.get("machines", [])
@@ -667,29 +672,41 @@ class DicomSession:
                         break
                 
                 # Check CTP Rules (Knowledge Base 2)
-                ctp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "ctp_rules.json")
+                ctp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "ctp_rules.yaml")
+                if not os.path.exists(ctp_path):
+                     # Fallback to JSON if YAML doesn't exist
+                     ctp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "ctp_rules.json")
+
                 if not matched_rule and os.path.exists(ctp_path):
                      try:
-                         with open(ctp_path, 'r') as f:
-                             ctp_data = json.load(f)
-                             ctp_rules = ctp_data.get("rules", [])
+                         if ctp_path.endswith('.yaml'):
+                             import yaml
+                             with open(ctp_path, 'r') as f:
+                                 ctp_data = yaml.safe_load(f)
+                         else:
+                             import json
+                             with open(ctp_path, 'r') as f:
+                                 ctp_data = json.load(f)
+                                 
+                         ctp_rules = ctp_data.get("rules", [])
+                         
+                         for rule in ctp_rules:
+                             # Fuzzy matching on Manufacturer and Model
+                             # CTP rules usually have "manufacturer" and "model_name"
+                             r_man = rule.get("manufacturer", "").lower()
+                             r_mod = rule.get("model_name", "").lower()
                              
-                             for rule in ctp_rules:
-                                 # Fuzzy matching on Manufacturer and Model
-                                 # CTP rules usually have "manufacturer" and "model_name"
-                                 r_man = rule.get("manufacturer", "").lower()
-                                 r_mod = rule.get("model_name", "").lower()
-                                 
-                                 eq_man = (eq.manufacturer or "").lower()
-                                 eq_mod = (eq.model_name or "").lower()
-                                 
-                                 # Simple containment check as per CTP style
-                                 if r_man and r_man in eq_man and r_mod and r_mod in eq_mod:
-                                      matched_rule = rule.copy()
-                                      matched_rule["serial_number"] = eq.device_serial_number
-                                      matched_rule["comment"] = f"Auto-matched from CTP Knowledge Base ({rule.get('manufacturer')} {rule.get('model_name')})"
-                                      # CTP doesn't have detailed comment in JSON usually, but we added it in parser
-                                      break
+                             eq_man = (eq.manufacturer or "").lower()
+                             eq_mod = (eq.model_name or "").lower()
+                             
+                             # Simple containment check as per CTP style
+                             if r_man and r_man in eq_man and r_mod and r_mod in eq_mod:
+                                  matched_rule = rule.copy()
+                                  matched_rule["serial_number"] = eq.device_serial_number
+                                  matched_rule["comment"] = f"Auto-matched from CTP Knowledge Base ({rule.get('manufacturer')} {rule.get('model_name')})"
+                                  # CTP doesn't have detailed comment in JSON usually, but we added it in parser
+                                  break
+
                      except Exception as e:
                          get_logger().warning(f"Failed to load CTP rules: {e}")
 
@@ -698,34 +715,32 @@ class DicomSession:
                     for rule in kb_machines:
                         if rule.get("model_name") == eq.model_name:
                              # It's a model match, so we should probably copy the zones 
-                             # but keep the specific serial of the detected device.
-                             matched_rule = rule.copy()
-                             matched_rule["serial_number"] = eq.device_serial_number
-                             matched_rule["comment"] = f"Auto-matched from Model {eq.model_name}"
-                             break
-
+                             matches_man = not rule.get("manufacturer") or (rule.get("manufacturer") == eq.manufacturer)
+                             if matches_man:
+                                 matched_rule = rule.copy()
+                                 matched_rule["serial_number"] = eq.device_serial_number
+                                 matched_rule["comment"] = f"Auto-matched from Model Knowledge Base ({eq.model_name})"
+                                 break
+                
                 if matched_rule:
+                    # Use the template
                     missing_configs.append(matched_rule)
                 else:
+                    # Create empty scaffold
                     missing_configs.append({
+                        "manufacturer": eq.manufacturer or "Unknown",
+                        "model_name": eq.model_name or "Unknown",
                         "serial_number": eq.device_serial_number,
-                        "model_name": eq.model_name,
-                        "manufacturer": eq.manufacturer,
-                        "comment": "Auto-detected. Please define redaction zones.",
-                        "redaction_zones": []
+                        "redaction_zones": [] 
                     })
-        
-        # 4. Include Default set of tags (Research Overrides Only)
-        # We now leverage the "basic" privacy profile for the heavy lifting.
-        # We only inject the research-specific overrides (e.g. KEEP Age/Sex, JIT Dates).
-        
-        phi_tags = {}
-        res_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "research_tags.json")
-        if os.path.exists(res_path):
+
+        # 4. Load PHI Tags Default (if not loaded)
+        phi_tags = self.active_phi_tags
+        if not phi_tags:
+             # Load default config for scaffold
              try:
-                 with open(res_path, 'r') as f:
-                     res_data = json.load(f)
-                     phi_tags = res_data.get("research_tags", {})
+                 from .config_manager import ConfigLoader
+                 phi_tags = ConfigLoader.load_phi_config() 
              except Exception as e:
                  get_logger().warning(f"Failed to load research tags: {e}")
 
@@ -733,13 +748,7 @@ class DicomSession:
         data = {
             "version": "2.0",
             "privacy_profile": "basic",
-            "_instructions": {
-                "privacy_profile": "Standard profile (basic) handles common PHI (Name, ID, etc).",
-                "phi_tags": "Define overrides here. 'JITTER' shifts dates based on config.",
-                "advanced_actions": "Actions: REMOVE, EMPTY, REPLACE, KEEP, JITTER (SHIFT)",
-                "date_jitter": "Range of days to shift dates by (negative = past).",
-                "remove_private_tags": "If true, removes all odd-group tags except Gantry Metadata."
-            },
+            # No _instructions dict anymore, we use comments!
             "phi_tags": phi_tags,
             "date_jitter": {
                 "min_days": -365,
@@ -753,8 +762,33 @@ class DicomSession:
              print("No machines detected to scaffold.")
         
         try:
+            # Generate YAML string
+            yaml_content = yaml.dump(data, sort_keys=False, default_flow_style=False)
+            
+            # Prepend Header Comments
+            header = """# Gantry Privacy Configuration (v2.0)
+# ==========================================
+#
+# privacy_profile: "basic"
+#   - Standard profile handling common PHI (Name, ID, etc).
+#   - Set to "none" for manual control.
+#
+# phi_tags:
+#   - Define custom overrides here.
+#   - Actions: KEEP, REMOVE, EMPTY, REPLACE, JITTER (SHIFT)
+#
+# date_jitter:
+#   - Range of days to shift dates by (negative = into past).
+#
+# remove_private_tags:
+#   - If true, removes all odd-group tags except Gantry Metadata.
+#
+"""
+            final_content = header + yaml_content
+
             with open(output_path, 'w') as f:
-                json.dump(data, f, indent=4)
+                f.write(final_content)
+                
             get_logger().info(f"Scaffolded Unified Config to {output_path} ({len(missing_configs)} new machines)")
             print(f"Scaffolded Unified Config to {output_path}")
         except Exception as e:

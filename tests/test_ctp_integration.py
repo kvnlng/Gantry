@@ -38,5 +38,35 @@ class TestCTPParser:
         path = "gantry/resources/ctp_rules.json"
         assert os.path.exists(path)
         with open(path, 'r') as f:
+            import json
             data = json.load(f)
             assert len(data.get("rules", [])) > 0
+
+    def test_cli_generates_yaml(self, tmp_path):
+        """
+        Runs the parser utility and expects a YAML file.
+        """
+        script_path = tmp_path / "test.script"
+        output_path = tmp_path / "val_rules.yaml"
+        
+        with open(script_path, "w") as f:
+            f.write(TEST_SCRIPT_CONTENT)
+            
+        # Simulate running the tool (invoking the main block logic or using subprocess)
+        # Using subprocess to be true to CLI
+        import subprocess
+        import sys
+        
+        cmd = [sys.executable, "-m", "gantry.utils.ctp_parser", str(script_path), str(output_path)]
+        subprocess.check_call(cmd)
+        
+        assert os.path.exists(output_path)
+        
+        # Verify content is YAML
+        import yaml
+        with open(output_path, "r") as f:
+            data = yaml.safe_load(f)
+            
+        assert "rules" in data
+        assert len(data["rules"]) == 1
+        assert data["rules"][0]["manufacturer"] == "GE MEDICAL"
