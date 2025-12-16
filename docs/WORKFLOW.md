@@ -72,6 +72,15 @@ session.enable_reversible_anonymization("master_key.key")
 session.preserve_identities(phi_findings)
 ```
 
+### Mechanism: Standard-Compliant Reversibility
+Gantry uses the **DICOM Standard Encrypted Attributes Sequence (0400,0500)** (per Part 15 E.1.2) to store original data.
+- **Interoperability**: Unlike private tags, this standard method allows other compliant DICOM systems to recognize that encrypted data is present (even if they cannot decrypt it without the key).
+- **Structure**:
+    - `(0400,0500) EncryptedAttributesSequence`: Container
+        - `(0400,0510) EncryptedContent`: The encrypted blob (AES-128-CBC)
+        - `(0400,0520) EncryptedContentTransferSyntaxUID`: Signals the payload format.
+
+
 ## 5. Checkpoint: Anonymize (Metadata)
 **Definition**: "Anonymize" refers strictly to **Tagging Data** (Metadata).
 We clean the object graph attributes (PatientName, PatientID, etc.) using the **Target Findings** identified in the Audit (Checkpoint 3).
