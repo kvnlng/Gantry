@@ -127,3 +127,42 @@ def test_scaffold_comments(tmp_path):
     assert "comment: This is a manual comment" not in content
     # Check that "# This is a manual comment" IS present
     assert "# This is a manual comment" in content
+
+def test_scaffold_multiline_comments(tmp_path):
+    """Verify that multiline comments (like from CTP) are handled correctly and don't break YAML."""
+    session = DicomSession(persistence_file=":memory:")
+    
+    # Inject a rule with a MULTILINE comment (simulating CTP condition)
+    # The snippet from user had explicit "\n" and extra spaces
+    multiline_text = 'Auto-matched from CTP. Condition: Modality.equals("US") *\n    Manufacturer.containsIgnoreCase("\n    SIEMENS")'
+    
+    session.active_rules.append({
+        "serial_number": "SN-MULTI",
+        "redaction_zones": [],
+        "comment": multiline_text
+    })
+    
+    output_path = tmp_path / "multiline_test.yaml"
+    session.scaffold_config(str(output_path))
+    
+    # 1. Verify content
+    with open(output_path, "r") as f:
+        content = f.read()
+    
+    # Should be commented out
+    assert "SN-MULTI" in content
+    assert "# Auto-matched" in content
+    
+    # 2. CRITICAL: Verify it parses as valid YAML
+    import yaml
+    try:
+        with open(output_path, "r") as f:
+            data = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        pytest.fail(f"Generated YAML is invalid: {e}")
+        
+    # Verify data integrity
+    loaded_rule = next(r for r in data["machines"] if r["serial_number"] == "SN-MULTI")
+    # Comment should NOT be in the loaded dict (as it's a comment now)
+    assert "comment" not in loaded_rule
+

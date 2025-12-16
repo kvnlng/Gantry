@@ -805,10 +805,21 @@ class DicomSession:
         if not missing_configs and not self.active_rules:
              print("No machines detected to scaffold.")
         
+        # Pre-process data to ensure comments are single-line strings
+        # This prevents yaml.dump from creating multiline scalar blocks that break our naive comment regex
+        for m in data.get("machines", []):
+            if "comment" in m and isinstance(m["comment"], str):
+                # Replace newlines with spaces/semicolons
+                m["comment"] = m["comment"].replace("\n", " ").replace("\r", "")
+                # collapse multiple spaces
+                import re
+                m["comment"] = re.sub(r'\s+', ' ', m["comment"]).strip()
+
         try:
             # Generate YAML string
             # sort_keys=False ensures order is preserved (machines list)
-            yaml_content = yaml.dump(data, sort_keys=False, default_flow_style=False)
+            # width=float("inf") prevents line wrapping for long strings
+            yaml_content = yaml.dump(data, sort_keys=False, default_flow_style=False, width=float("inf"))
             
             # Post-process: Convert "comment: ..." into "# ..."
             # Matches:   comment: "Some text"
