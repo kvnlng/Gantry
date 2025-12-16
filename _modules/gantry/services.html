@@ -119,10 +119,56 @@
 <span class="sd">    Applies pixel data redaction based on rules.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n">DicomStore</span><span class="p">,</span> <span class="n">store_backend</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">store</span> <span class="o">=</span> <span class="n">store</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">index</span> <span class="o">=</span> <span class="n">MachinePixelIndex</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">index_store</span><span class="p">(</span><span class="n">store</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">logger</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span> <span class="o">=</span> <span class="n">store_backend</span>
+
+<div class="viewcode-block" id="RedactionService.scan_burned_in_annotations">
+<a class="viewcode-back" href="../../gantry.html#gantry.services.RedactionService.scan_burned_in_annotations">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">scan_burned_in_annotations</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Scans all instances for &#39;Burned In Annotation&#39; (0028,0301) == &#39;YES&#39;.</span>
+<span class="sd">        Logs warnings for any found that have NOT been remediated (Image Type not DERIVED).</span>
+<span class="sd">        User requested we &#39;Must treat them somehow&#39;.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Scanning for untreated Burned In Annotations...&quot;</span><span class="p">)</span>
+        <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">untreated</span> <span class="o">=</span> <span class="mi">0</span>
+        
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">st</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
+                    <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">:</span>
+                         <span class="c1"># Check Tag (case insensitive)</span>
+                         <span class="n">val</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0301&quot;</span><span class="p">,</span> <span class="s2">&quot;NO&quot;</span><span class="p">)</span>
+                         <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">&quot;YES&quot;</span> <span class="ow">in</span> <span class="n">val</span><span class="o">.</span><span class="n">upper</span><span class="p">():</span>
+                             <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+                             <span class="c1"># Check if we remediated it</span>
+                             <span class="n">img_type</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0008,0008&quot;</span><span class="p">,</span> <span class="p">[])</span>
+                             <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">img_type</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span> <span class="n">img_type</span> <span class="o">=</span> <span class="p">[</span><span class="n">img_type</span><span class="p">]</span>
+                             
+                             <span class="n">is_treated</span> <span class="o">=</span> <span class="nb">any</span><span class="p">(</span><span class="s2">&quot;DERIVED&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">img_type</span><span class="p">)</span>
+                             
+                             <span class="k">if</span> <span class="ow">not</span> <span class="n">is_treated</span><span class="p">:</span>
+                                 <span class="n">untreated</span> <span class="o">+=</span> <span class="mi">1</span>
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;High Risk: Untreated Burned In Annotation in </span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                                 
+                                 <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="p">:</span>
+                                     <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="o">.</span><span class="n">log_audit</span><span class="p">(</span>
+                                         <span class="n">action_type</span><span class="o">=</span><span class="s2">&quot;RISK&quot;</span><span class="p">,</span>
+                                         <span class="n">entity_uid</span><span class="o">=</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="p">,</span>
+                                         <span class="n">details</span><span class="o">=</span><span class="s2">&quot;Burned In Annotation (0028,0301) present but not remediated.&quot;</span>
+                                     <span class="p">)</span>
+        
+        <span class="k">if</span> <span class="n">untreated</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Found </span><span class="si">{</span><span class="n">untreated</span><span class="si">}</span><span class="s2"> instances with potential Burned In Annotations that were NOT remediated.&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;WARNING: </span><span class="si">{</span><span class="n">untreated</span><span class="si">}</span><span class="s2"> instances flagged with &#39;Burned In Annotation&#39; were not targeted by any rule.&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Action Required: Review audit logs or add rules for these instances.&quot;</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">count</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Verified </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2"> Burned In Annotations were remediated.&quot;</span><span class="p">)</span></div>
+
 
 <div class="viewcode-block" id="RedactionService.process_machine_rules">
 <a class="viewcode-back" href="../../gantry.html#gantry.services.RedactionService.process_machine_rules">[docs]</a>
@@ -147,7 +193,12 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Applying config rules for Machine: </span><span class="si">{</span><span class="n">serial</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">targets</span><span class="p">)</span><span class="si">}</span><span class="s2"> images)...&quot;</span><span class="p">)</span>
 
         <span class="k">for</span> <span class="n">zone</span> <span class="ow">in</span> <span class="n">zones</span><span class="p">:</span>
-            <span class="n">roi</span> <span class="o">=</span> <span class="n">zone</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;roi&quot;</span><span class="p">)</span>  <span class="c1"># Expected [r1, r2, c1, c2]</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">zone</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+                <span class="c1"># Legacy/Simplified format: zone IS the ROI</span>
+                <span class="n">roi</span> <span class="o">=</span> <span class="n">zone</span>
+            <span class="k">else</span><span class="p">:</span>
+                 <span class="n">roi</span> <span class="o">=</span> <span class="n">zone</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;roi&quot;</span><span class="p">)</span>  <span class="c1"># Expected [r1, r2, c1, c2]</span>
+            
             <span class="k">if</span> <span class="n">roi</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">roi</span><span class="p">)</span> <span class="o">==</span> <span class="mi">4</span><span class="p">:</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">redact_machine_region</span><span class="p">(</span><span class="n">serial</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">roi</span><span class="p">))</span>
             <span class="k">else</span><span class="p">:</span>

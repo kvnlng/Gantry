@@ -744,8 +744,11 @@
 
             <span class="c1"># Save state after modification</span>
             <span class="c1"># self._save()</span>
-            <span class="c1"># get_logger().info(&quot;Execution Complete. Session saved.&quot;)</span>
+            <span class="c1"># Run Safety Checks</span>
+            <span class="n">service</span><span class="o">.</span><span class="n">scan_burned_in_annotations</span><span class="p">()</span>
+
             <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Execution Complete. Remember to call .save() to persist.&quot;</span><span class="p">)</span>
+            <span class="c1"># get_logger().info(&quot;Execution Complete. Session saved.&quot;)</span>
             <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Execution Complete. Session saved.&quot;</span><span class="p">)</span>
 
             <span class="c1"># Clear rules after execution?</span>
@@ -773,6 +776,10 @@
         
         <span class="c1"># 1. Identify what we have</span>
         <span class="n">all_equipment</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">get_unique_equipment</span><span class="p">()</span>
+        
+        <span class="c1"># Instantiate service to query pixel/tag data efficiently</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">.services</span><span class="w"> </span><span class="kn">import</span> <span class="n">RedactionService</span>
+        <span class="n">service</span> <span class="o">=</span> <span class="n">RedactionService</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="p">)</span>
         
         <span class="c1"># 2. Identify what is already configured (Pixel Rules)</span>
         <span class="n">configured_serials</span> <span class="o">=</span> <span class="p">{</span><span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;serial_number&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_rules</span><span class="p">}</span>
@@ -858,17 +865,37 @@
                                  <span class="n">matched_rule</span><span class="p">[</span><span class="s2">&quot;comment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Auto-matched from Model Knowledge Base (</span><span class="si">{</span><span class="n">eq</span><span class="o">.</span><span class="n">model_name</span><span class="si">}</span><span class="s2">)&quot;</span>
                                  <span class="k">break</span>
                 
+                <span class="c1"># 3.b Check for Burned In Annotations (Safety Check)</span>
+                <span class="c1"># query index for this machine</span>
+                <span class="n">instances</span> <span class="o">=</span> <span class="n">service</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">get_by_machine</span><span class="p">(</span><span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span><span class="p">)</span>
+                <span class="n">burned_in_count</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">instances</span><span class="p">:</span>
+                    <span class="n">val</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0028,0301&quot;</span><span class="p">,</span> <span class="s2">&quot;NO&quot;</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">&quot;YES&quot;</span> <span class="ow">in</span> <span class="n">val</span><span class="o">.</span><span class="n">upper</span><span class="p">():</span>
+                        <span class="n">burned_in_count</span> <span class="o">+=</span> <span class="mi">1</span>
+                
+                <span class="n">safety_comment</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+                <span class="k">if</span> <span class="n">burned_in_count</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">safety_comment</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;WARNING: </span><span class="si">{</span><span class="n">burned_in_count</span><span class="si">}</span><span class="s2"> images have &#39;Burned In Annotation&#39; flag. Verify pixel redaction.&quot;</span>
+
                 <span class="k">if</span> <span class="n">matched_rule</span><span class="p">:</span>
                     <span class="c1"># Use the template</span>
-                    <span class="n">missing_configs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">matched_rule</span><span class="p">)</span>
+                    <span class="n">rule_copy</span> <span class="o">=</span> <span class="n">matched_rule</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span> <span class="c1"># Ensure we don&#39;t mutate KB</span>
+                    <span class="k">if</span> <span class="n">safety_comment</span><span class="p">:</span>
+                        <span class="n">existing</span> <span class="o">=</span> <span class="n">rule_copy</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;comment&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+                        <span class="n">rule_copy</span><span class="p">[</span><span class="s2">&quot;comment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">existing</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">safety_comment</span><span class="si">}</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+                    <span class="n">missing_configs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">rule_copy</span><span class="p">)</span>
                 <span class="k">else</span><span class="p">:</span>
                     <span class="c1"># Create empty scaffold</span>
-                    <span class="n">missing_configs</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+                    <span class="n">new_rule</span> <span class="o">=</span> <span class="p">{</span>
                         <span class="s2">&quot;manufacturer&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">manufacturer</span> <span class="ow">or</span> <span class="s2">&quot;Unknown&quot;</span><span class="p">,</span>
                         <span class="s2">&quot;model_name&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">model_name</span> <span class="ow">or</span> <span class="s2">&quot;Unknown&quot;</span><span class="p">,</span>
                         <span class="s2">&quot;serial_number&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span><span class="p">,</span>
                         <span class="s2">&quot;redaction_zones&quot;</span><span class="p">:</span> <span class="p">[]</span> 
-                    <span class="p">})</span>
+                    <span class="p">}</span>
+                    <span class="k">if</span> <span class="n">safety_comment</span><span class="p">:</span>
+                        <span class="n">new_rule</span><span class="p">[</span><span class="s2">&quot;comment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">safety_comment</span>
+                    <span class="n">missing_configs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">new_rule</span><span class="p">)</span>
 
         <span class="c1"># 4. Load PHI Tags Default (if not loaded)</span>
         <span class="n">phi_tags</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span>

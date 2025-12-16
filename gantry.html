@@ -643,6 +643,14 @@ roi: (row_start, row_end, col_start, col_end)
 Includes safety checks for image bounds.</p>
 </dd></dl>
 
+<dl class="py method">
+<dt class="sig sig-object py" id="gantry.services.RedactionService.scan_burned_in_annotations">
+<span class="sig-name descname"><span class="pre">scan_burned_in_annotations</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/gantry/services.html#RedactionService.scan_burned_in_annotations"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#gantry.services.RedactionService.scan_burned_in_annotations" title="Link to this definition"></a></dt>
+<dd><p>Scans all instances for ‘Burned In Annotation’ (0028,0301) == ‘YES’.
+Logs warnings for any found that have NOT been remediated (Image Type not DERIVED).
+User requested we ‘Must treat them somehow’.</p>
+</dd></dl>
+
 </dd></dl>
 
 </section>
