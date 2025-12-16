@@ -37,7 +37,11 @@ def test_export_command_set_error(tmp_path):
     
     # Act: This should NOW SUCCEED (Command tags ignored)
     from unittest.mock import patch
-    with patch("gantry.validation.IODValidator.validate", return_value=[]):
+    import concurrent.futures
+    # We must patch ProcessPoolExecutor to ThreadPoolExecutor because 'spawn'ed processes 
+    # (default on macOS/Py3.14) do NOT see the mocked IODValidator.
+    with patch("gantry.validation.IODValidator.validate", return_value=[]), \
+         patch("concurrent.futures.ProcessPoolExecutor", side_effect=concurrent.futures.ThreadPoolExecutor):
         DicomExporter.save_patient(p, str(out_dir))
     
     # Verify file exists (recursive search)
