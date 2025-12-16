@@ -94,10 +94,8 @@ class CTPParser:
              return {
                  "manufacturer": criteria.get("manufacturer", "Unknown"),
                  "model_name": criteria.get("model_name", "Unknown"),
-                 "comment": f"Imported from CTP. Condition: {condition_str.strip()[:100]}...",
-                 "redaction_zones": gantry_zones,
-                 # Store raw condition for debugging?
-                 "_ctp_condition": condition_str.strip()
+                 "comment": f"Imported from CTP. Condition: {condition_str.strip()}",
+                 "redaction_zones": gantry_zones
              }
         
         return None

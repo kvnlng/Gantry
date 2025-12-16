@@ -703,8 +703,14 @@ class DicomSession:
                              if r_man and r_man in eq_man and r_mod and r_mod in eq_mod:
                                   matched_rule = rule.copy()
                                   matched_rule["serial_number"] = eq.device_serial_number
-                                  matched_rule["comment"] = f"Auto-matched from CTP Knowledge Base ({rule.get('manufacturer')} {rule.get('model_name')})"
-                                  # CTP doesn't have detailed comment in JSON usually, but we added it in parser
+                                  
+                                  # Move _ctp_condition to comment if present
+                                  cond = matched_rule.pop("_ctp_condition", None)
+                                  if cond:
+                                      matched_rule["comment"] = f"Auto-matched from CTP. Condition: {cond}"
+                                  else:
+                                      matched_rule["comment"] = f"Auto-matched from CTP Knowledge Base ({rule.get('manufacturer')} {rule.get('model_name')})"
+                                      
                                   break
 
                      except Exception as e:

@@ -32,6 +32,10 @@ class TestCTPParser:
         assert rules[0]["manufacturer"] == "GE MEDICAL"
         # Coordinates: (0,0,512,110) -> [0, 110, 0, 512] (r1, r2, c1, c2)
         assert rules[0]["redaction_zones"] == [[0, 110, 0, 512]]
+        
+        # Refinement Check:
+        assert "_ctp_condition" not in rules[0]
+        assert "Manufacturer.containsIgnoreCase" in rules[0]["comment"]
 
     def test_ctp_rules_file_exists(self):
         # Verify that the resource generation worked
