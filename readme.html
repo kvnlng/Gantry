@@ -59,7 +59,10 @@
 <li class="toctree-l3"><a class="reference internal" href="#standard-privacy-profiles">Standard Privacy Profiles</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#architecture">🧩 Architecture</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#architecture">🧩 Architecture</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#ctp-rule-import-legacy-support">CTP Rule Import (Legacy Support)</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="#running-tests">🧪 Running Tests</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#license">License</a></li>
 </ul>
@@ -259,8 +262,24 @@ Based on the <strong>DICOM PS3.15 Annex E (Basic Profile)</strong>, this profile
     Sqlite &lt;--&gt;|Hydrate/Save| Model
 </pre></div>
 </div>
-</section>
 <hr class="docutils" />
+<section id="ctp-rule-import-legacy-support">
+<h3>CTP Rule Import (Legacy Support)<a class="headerlink" href="#ctp-rule-import-legacy-support" title="Link to this heading"></a></h3>
+<p>If you are migrating from CTP (RSNA Clinical Trial Processor), Gantry can ingest your existing <code class="docutils literal notranslate"><span class="pre">DicomPixelAnonymizer.script</span></code> files to preserve your knowledge base of redaction zones.</p>
+<p><strong>Step 1: Convert the Script</strong>
+Use the built-in utility to convert your <code class="docutils literal notranslate"><span class="pre">.script</span></code> file into a Gantry-compatible JSON file.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>gantry.utils.ctp_parser<span class="w"> </span>/path/to/DicomPixelAnonymizer.script<span class="w"> </span>gantry/resources/ctp_rules.json
+</pre></div>
+</div>
+<p><strong>Step 2: Scaffolding</strong>
+Once the <code class="docutils literal notranslate"><span class="pre">ctp_rules.json</span></code> file is in <code class="docutils literal notranslate"><span class="pre">gantry/resources/</span></code>, the <code class="docutils literal notranslate"><span class="pre">scaffold_config</span></code> command will automatically use it to match machines and pre-fill redaction zones for your new inventory.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># In your python session</span>
+<span class="n">session</span><span class="o">.</span><span class="n">scaffold_config</span><span class="p">(</span><span class="s2">&quot;my_new_config.json&quot;</span><span class="p">)</span> 
+<span class="c1"># Gantry will check resources/ctp_rules.json and apply matching zones!</span>
+</pre></div>
+</div>
+</section>
+</section>
 <section id="running-tests">
 <h2>🧪 Running Tests<a class="headerlink" href="#running-tests" title="Link to this heading"></a></h2>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pytest<span class="w"> </span>-v

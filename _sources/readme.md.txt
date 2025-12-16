@@ -172,6 +172,26 @@ graph TD
 
 ---
 
+
+### CTP Rule Import (Legacy Support)
+If you are migrating from CTP (RSNA Clinical Trial Processor), Gantry can ingest your existing `DicomPixelAnonymizer.script` files to preserve your knowledge base of redaction zones.
+
+**Step 1: Convert the Script**
+Use the built-in utility to convert your `.script` file into a Gantry-compatible JSON file.
+
+```bash
+python -m gantry.utils.ctp_parser /path/to/DicomPixelAnonymizer.script gantry/resources/ctp_rules.json
+```
+
+**Step 2: Scaffolding**
+Once the `ctp_rules.json` file is in `gantry/resources/`, the `scaffold_config` command will automatically use it to match machines and pre-fill redaction zones for your new inventory.
+
+```python
+# In your python session
+session.scaffold_config("my_new_config.json") 
+# Gantry will check resources/ctp_rules.json and apply matching zones!
+```
+
 ## 🧪 Running Tests
 
 ```bash
