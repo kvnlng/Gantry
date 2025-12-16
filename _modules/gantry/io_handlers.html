@@ -340,6 +340,7 @@
         
         <span class="c1"># 0. Base Attributes</span>
         <span class="n">DicomExporter</span><span class="o">.</span><span class="n">_merge</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">inst</span><span class="o">.</span><span class="n">attributes</span><span class="p">)</span>
+        <span class="n">DicomExporter</span><span class="o">.</span><span class="n">_merge_sequences</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">inst</span><span class="o">.</span><span class="n">sequences</span><span class="p">)</span>
         
         <span class="c1"># 1. Patient Level</span>
         <span class="n">ds</span><span class="o">.</span><span class="n">PatientName</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">patient_attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;PatientName&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
@@ -567,6 +568,14 @@
             <span class="k">if</span> <span class="n">t</span> <span class="o">==</span> <span class="s2">&quot;0099,1001&quot;</span><span class="p">:</span>
                 <span class="n">ds</span><span class="o">.</span><span class="n">add_new</span><span class="p">(</span><span class="mh">0x00991001</span><span class="p">,</span> <span class="s1">&#39;OB&#39;</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
                 <span class="k">continue</span>
+            
+            <span class="c1"># Explicit handling for Encrypted Attributes to fix potential dictionary mismatches</span>
+            <span class="k">if</span> <span class="n">t</span> <span class="o">==</span> <span class="s2">&quot;0400,0510&quot;</span><span class="p">:</span> <span class="c1"># Encrypted Content</span>
+                <span class="n">ds</span><span class="o">.</span><span class="n">add_new</span><span class="p">(</span><span class="mh">0x04000510</span><span class="p">,</span> <span class="s1">&#39;OB&#39;</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+                <span class="k">continue</span>
+            <span class="k">if</span> <span class="n">t</span> <span class="o">==</span> <span class="s2">&quot;0400,0520&quot;</span><span class="p">:</span> <span class="c1"># Encrypted Content Transfer Syntax UID</span>
+                <span class="n">ds</span><span class="o">.</span><span class="n">add_new</span><span class="p">(</span><span class="mh">0x04000520</span><span class="p">,</span> <span class="s1">&#39;UI&#39;</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+                <span class="k">continue</span>
 
             <span class="n">g</span><span class="p">,</span> <span class="n">e</span> <span class="o">=</span> <span class="nb">map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="mi">16</span><span class="p">),</span> <span class="n">t</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;,&#39;</span><span class="p">))</span>
             
@@ -590,7 +599,35 @@
         <span class="c1"># Keep alphanumeric, dashes, underscores, spaces (maybe replace spaces with underscores?)</span>
         <span class="c1"># For strictness:</span>
         <span class="n">safe</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">filename</span><span class="p">)</span> <span class="k">if</span> <span class="n">c</span><span class="o">.</span><span class="n">isalnum</span><span class="p">()</span> <span class="ow">or</span> <span class="n">c</span> <span class="ow">in</span> <span class="p">(</span><span class="s1">&#39; &#39;</span><span class="p">,</span> <span class="s1">&#39;.&#39;</span><span class="p">,</span> <span class="s1">&#39;-&#39;</span><span class="p">,</span> <span class="s1">&#39;_&#39;</span><span class="p">)])</span>
-        <span class="k">return</span> <span class="n">safe</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="p">,</span> <span class="s2">&quot;_&quot;</span><span class="p">)</span></div>
+        <span class="k">return</span> <span class="n">safe</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="p">,</span> <span class="s2">&quot;_&quot;</span><span class="p">)</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_merge_sequences</span><span class="p">(</span><span class="n">ds</span><span class="p">,</span> <span class="n">sequences</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Recursively populates sequences into the dataset.</span>
+<span class="sd">        sequences: Dict[str, DicomSequence]</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">pydicom.sequence</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sequence</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">pydicom.dataset</span><span class="w"> </span><span class="kn">import</span> <span class="n">Dataset</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">pydicom.tag</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tag</span>
+
+        <span class="k">for</span> <span class="n">tag_str</span><span class="p">,</span> <span class="n">dicom_seq</span> <span class="ow">in</span> <span class="n">sequences</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">g</span><span class="p">,</span> <span class="n">e</span> <span class="o">=</span> <span class="nb">map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="mi">16</span><span class="p">),</span> <span class="n">tag_str</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;,&#39;</span><span class="p">))</span>
+            <span class="n">tag</span> <span class="o">=</span> <span class="n">Tag</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+            
+            <span class="n">pydicom_seq</span> <span class="o">=</span> <span class="n">Sequence</span><span class="p">()</span>
+            <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">dicom_seq</span><span class="o">.</span><span class="n">items</span><span class="p">:</span>
+                <span class="n">ds_item</span> <span class="o">=</span> <span class="n">Dataset</span><span class="p">()</span>
+                <span class="n">ds_item</span><span class="o">.</span><span class="n">is_little_endian</span> <span class="o">=</span> <span class="kc">True</span>
+                <span class="n">ds_item</span><span class="o">.</span><span class="n">is_implicit_VR</span> <span class="o">=</span> <span class="kc">True</span>
+                
+                <span class="c1"># Recursively merge item attributes and sub-sequences</span>
+                <span class="n">DicomExporter</span><span class="o">.</span><span class="n">_merge</span><span class="p">(</span><span class="n">ds_item</span><span class="p">,</span> <span class="n">item</span><span class="o">.</span><span class="n">attributes</span><span class="p">)</span>
+                <span class="n">DicomExporter</span><span class="o">.</span><span class="n">_merge_sequences</span><span class="p">(</span><span class="n">ds_item</span><span class="p">,</span> <span class="n">item</span><span class="o">.</span><span class="n">sequences</span><span class="p">)</span>
+                
+                <span class="n">pydicom_seq</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ds_item</span><span class="p">)</span>
+                
+            <span class="n">ds</span><span class="o">.</span><span class="n">add_new</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="s1">&#39;SQ&#39;</span><span class="p">,</span> <span class="n">pydicom_seq</span><span class="p">)</span></div>
 
 </pre></div>
 
