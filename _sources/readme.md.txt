@@ -17,7 +17,7 @@ Instead of treating files as flat dictionaries, Gantry provides a semantic inter
 *   **Smart Remediation**: Detects and fixes PHI in metadata (Anonymization & Configurable Date Shifting).
 *   **Research-Ready Configuration**: Built-in support for research datasets (keeping demographics, jittering dates).
 *   **Strict De-Identification**: Optional "Nuclear" mode to remove all private tags except those required for reversibility.
-*   **Reversible Anonymization**: Securely embeds encrypted original identities for authorized recovery (pseudonymization).
+*   **Reversible Anonymization**: Securely embeds encrypted original identities using **DICOM Standard Encrypted Attributes (0400,0500)** (Part 15 E.1.2 Compliant).
 *   **Pixel Redaction**: Rules-based engine to redact burned-in PHI from pixel data, with auto-detection for known machine models.
 
 ### ⚡ Performance & Scale
