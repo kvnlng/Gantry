@@ -206,3 +206,27 @@ def test_scaffold_burned_in_warning(tmp_path):
     # We now explicitly unescape '' -> ' in the post-processor to look nice.
     assert "# WARNING: 1 images have 'Burned In Annotation' flag" in content
 
+def test_scaffold_flow_style(tmp_path):
+    """Verify that redaction_zones are formatted as flow-style lists (brackets)."""
+    session = DicomSession(persistence_file=":memory:")
+    
+    # Add a machine with redaction zones
+    zones = [[10, 20, 30, 40], [50, 60, 70, 80]]
+    session.active_rules.append({
+        "serial_number": "SN-FLOW",
+        "redaction_zones": zones
+    })
+    
+    output_path = tmp_path / "flow_test.yaml"
+    session.scaffold_config(str(output_path))
+    
+    with open(output_path, "r") as f:
+        content = f.read()
+        
+    print(content) # For debugging if fails
+    
+    # We expect brackets: [[10, 20, 30, 40], [50, 60, 70, 80]]
+    # or with spaces.
+    # checking strict substring might be fragile due to spacing, but let's try typical yaml flow output
+    assert "[[10, 20, 30, 40], [50, 60, 70, 80]]" in content or "[[10, 20, 30, 40],[50, 60, 70, 80]]" in content
+

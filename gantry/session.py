@@ -640,6 +640,14 @@ class DicomSession:
         import yaml
         import os
         
+        # Helper for Flow-Style Lists (Bracketed)
+        class FlowList(list): pass
+        
+        def flow_list_representer(dumper, data):
+            return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True)
+            
+        yaml.add_representer(FlowList, flow_list_representer)
+
         if not (output_path.endswith(".yaml") or output_path.endswith(".yml")):
             output_path += ".yaml"
             print(f"Note: Appending .yaml extension -> {output_path}")
@@ -833,7 +841,7 @@ class DicomSession:
              print("No machines detected to scaffold.")
         
         # Pre-process data to ensure comments are single-line strings
-        # This prevents yaml.dump from creating multiline scalar blocks that break our naive comment regex
+        # And ensure redaction_zones use FlowList for bracketed style
         for m in data.get("machines", []):
             if "comment" in m and isinstance(m["comment"], str):
                 # Replace newlines with spaces/semicolons
@@ -841,6 +849,27 @@ class DicomSession:
                 # collapse multiple spaces
                 import re
                 m["comment"] = re.sub(r'\s+', ' ', m["comment"]).strip()
+            
+            if "redaction_zones" in m and isinstance(m["redaction_zones"], list):
+                # Wrap inner lists (zones) in FlowList
+                # And assume user wants [[...], [...]] so wrap outer too?
+                # User example: "redaction_zones: []" or "redaction_zones: [[...]]"
+                # If we wrap outer in FlowList, it becomes: redaction_zones: [[...], [...]]
+                # If we wrap inner in FlowList, it becomes:
+                # redaction_zones:
+                #   - [50, 420, ...]
+                #
+                # The user request "placed in brackets" usually implies flow style.
+                # Let's try wrapping OUTER list.
+                
+                zones = m["redaction_zones"]
+                new_zones = FlowList()
+                for z in zones:
+                    if isinstance(z, list):
+                        new_zones.append(FlowList(z))
+                    else:
+                        new_zones.append(z)
+                m["redaction_zones"] = new_zones # Assign flow list wrapper
 
         try:
             # Generate YAML string
