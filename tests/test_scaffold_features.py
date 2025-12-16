@@ -203,9 +203,6 @@ def test_scaffold_burned_in_warning(tmp_path):
     assert "SN-RISK" in content
     # The fix we made adds a comment. 
     # Because of our comment post-processor, it should be converted to # ...
-    # Note: YAML dump might double escape single quotes inside strings. 
-    # Just check for key phrase
-    assert "WARNING: 1 images have" in content
-    assert "flag" in content
-    assert "Burned In Annotation" in content
+    # We now explicitly unescape '' -> ' in the post-processor to look nice.
+    assert "# WARNING: 1 images have 'Burned In Annotation' flag" in content
 

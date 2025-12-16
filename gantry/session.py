@@ -850,29 +850,36 @@ class DicomSession:
             
             # Post-process: Convert "comment: ..." into "# ..."
             # Matches:   comment: "Some text"
-            # Replaces:  # Some text
+            # or         comment: Some text
             import re
-            # Match indentation + comment key
-            # pattern = r'^(\s*)comment: ["\']?(.*?)["\']?$' # Simple line-based match
-            
-            # We iterate lines to be safe and simple
-            lines = []
-            for line in yaml_content.splitlines():
-                match = re.search(r'^(\s*)comment: (.*)$', line)
+            lines = yaml_content.splitlines()
+            new_lines = []
+            for line in lines:
+                # Simple match for key-value pair
+                match = re.search(r'^(\s*)comment:\s*(.*)$', line)
                 if match:
                     indent = match.group(1)
-                    content = match.group(2)
-                    # Remove quotes if present
-                    if content.startswith('"') and content.endswith('"'):
-                        content = content[1:-1]
-                    elif content.startswith("'") and content.endswith("'"):
-                        content = content[1:-1]
+                    content = match.group(2).strip()
                     
-                    lines.append(f"{indent}# {content}")
+                    # Check for surrounding quotes and strip them
+                    # Handle single quotes (yaml uses '' escape)
+                    if content.startswith("'") and content.endswith("'"):
+                        content = content[1:-1]
+                        content = content.replace("''", "'")
+                    # Handle double quotes (json style/yaml style with backslash)
+                    elif content.startswith('"') and content.endswith('"'):
+                        content = content[1:-1]
+                        content = content.replace('\\"', '"')
+                    
+                    new_lines.append(f"{indent}# {content}")
                 else:
-                    lines.append(line)
-            
-            yaml_content = "\n".join(lines) + "\n"
+                    # Aesthetic Improvement: Add spacing between list items
+                    # Check if line looks like the start of a new list entry (e.g. "- manufacturer: ...")
+                    # But exclude the very first one to avoid leading newline at top of file (or top of section)
+                    if line.strip().startswith("- ") and len(new_lines) > 0 and new_lines[-1].strip() != "":
+                         new_lines.append("")
+                    
+                    new_lines.append(line)
             
             # Prepend Header Comments
             header = """# Gantry Privacy Configuration (v2.0)
@@ -893,7 +900,7 @@ class DicomSession:
 #   - If true, removes all odd-group tags except Gantry Metadata.
 #
 """
-            final_content = header + yaml_content
+            final_content = header + "\n".join(new_lines) + "\n"
 
             with open(output_path, 'w') as f:
                 f.write(final_content)
