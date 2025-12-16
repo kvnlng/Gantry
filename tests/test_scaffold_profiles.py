@@ -12,14 +12,15 @@ def test_scaffold_generates_basic_profile(tmp_path):
     session = DicomSession(":memory:")
     
     # 2. Run Scaffolding
-    output_path = tmp_path / "scaffold_profile.json"
+    output_path = tmp_path / "scaffold_profile.yaml"
     session.scaffold_config(str(output_path))
     
     # 3. Verify Output
     assert output_path.exists()
     
     with open(output_path, "r") as f:
-        data = json.load(f)
+        import yaml
+        data = yaml.safe_load(f)
         
     # Check Profile
     assert data.get("privacy_profile") == "basic"

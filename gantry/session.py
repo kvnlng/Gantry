@@ -744,12 +744,50 @@ class DicomSession:
              except Exception as e:
                  get_logger().warning(f"Failed to load research tags: {e}")
 
+        # 4b. Enhance PHI Tags (Transform to structured defaults)
+        structured_tags = {}
+        
+        # Ensure critical tags are present
+        if "0008,0020" not in phi_tags: phi_tags["0008,0020"] = "Study Date"
+        if "0010,0040" not in phi_tags: phi_tags["0010,0040"] = "Patient Sex"
+        if "0010,1010" not in phi_tags: phi_tags["0010,1010"] = "Patient Age" # Helper
+        
+        for tag, val in phi_tags.items():
+            name = val if isinstance(val, str) else val.get("name", "Unknown")
+            action = "REMOVE" # Default safety
+            
+            # Apply Research-Friendly Smart Defaults
+            if tag == "0008,0020": # Study Date
+                action = "JITTER"
+            elif tag == "0010,0040": # Sex
+                action = "KEEP"
+            elif tag == "0010,1010": # Age
+                action = "KEEP"
+            elif "Date" in name or "Time" in name:
+                action = "REMOVE" # Times are sensitive
+            elif "ID" in name:
+                action = "REMOVE" # IDs are sensitive
+            
+            # Preserve existing structure if it was already structured
+            if isinstance(val, dict):
+                structured_tags[tag] = val
+            else:
+                 # Minimal Scaffold: Skip tags that are simply REMOVED (covered by Basic profile)
+                 # Unless explicitly requested to show all? For now, match tests.
+                 if action == "REMOVE":
+                     continue
+                     
+                 structured_tags[tag] = {
+                     "name": name,
+                     "action": action
+                 }
+                 
         # 5. Construct Unified Data
         data = {
             "version": "2.0",
             "privacy_profile": "basic",
             # No _instructions dict anymore, we use comments!
-            "phi_tags": phi_tags,
+            "phi_tags": structured_tags,
             "date_jitter": {
                 "min_days": -365,
                 "max_days": -1

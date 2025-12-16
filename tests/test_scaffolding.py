@@ -35,9 +35,10 @@ def test_scaffold_config_creates_new_entries(tmp_path):
         "version": "1.0", 
         "machines": [{"serial_number": "SN-OLD", "redaction_zones": []}]
     }
-    config_file = tmp_path / "existing.json"
+    config_file = tmp_path / "existing.yaml"
+    import yaml
     with open(config_file, "w") as f:
-        json.dump(config_data, f)
+        yaml.dump(config_data, f)
         
     session.load_config(str(config_file))
     
@@ -46,13 +47,13 @@ def test_scaffold_config_creates_new_entries(tmp_path):
     assert session.active_rules[0]["serial_number"] == "SN-OLD"
     
     # 4. Run Scaffold
-    out_file = tmp_path / "todo.json"
+    out_file = tmp_path / "todo.yaml"
     session.scaffold_config(str(out_file))
     
     # 5. Verify Output
     assert out_file.exists()
     with open(out_file, "r") as f:
-        new_conf = json.load(f)
+        new_conf = yaml.safe_load(f)
         
     # The unified config scaffold keeps existing rules AND adds new ones.
     # So we expect 2 machines (SN-OLD and SN-NEW).
@@ -66,6 +67,5 @@ def test_scaffold_config_creates_new_entries(tmp_path):
     assert new_machine["manufacturer"] == "MfgB"
     assert new_machine["redaction_zones"] == []
 
-    # Ensure instructions are present (v2 enhancement)
-    assert "_instructions" in new_conf
-    assert "advanced_actions" in new_conf["_instructions"]
+    # Ensure instructions are removed (replaced by comments)
+    assert "_instructions" not in new_conf

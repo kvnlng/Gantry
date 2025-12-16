@@ -53,7 +53,7 @@ def dummy_patient(dummy_pixel_array_2d):
 
 @pytest.fixture
 def config_file(tmp_path):
-    """Creates a temporary JSON config file."""
+    """Creates a temporary YAML config file."""
     data = {
         "version": "1.0",
         "machines": [
@@ -64,6 +64,8 @@ def config_file(tmp_path):
             }
         ]
     }
-    p = tmp_path / "rules.json"
-    p.write_text(json.dumps(data))
+    p = tmp_path / "rules.yaml"
+    import yaml
+    with open(p, "w") as f:
+        yaml.dump(data, f)
     return str(p)

@@ -6,9 +6,10 @@ from gantry.config_manager import load_unified_config, ConfigLoader
 
 def test_load_basic_profile(tmp_path):
     # 1. Create config using "privacy_profile": "basic"
-    config_path = tmp_path / "config_basic.json"
+    config_path = tmp_path / "config_basic.yaml"
+    import yaml
     with open(config_path, "w") as f:
-        json.dump({
+        yaml.dump({
             "version": "2.0",
             "privacy_profile": "basic",
             # No user overrides
@@ -24,9 +25,10 @@ def test_load_basic_profile(tmp_path):
     
 def test_profile_override(tmp_path):
     # 1. Create config using "basic" but override Patient Name to KEEP
-    config_path = tmp_path / "config_override.json"
+    config_path = tmp_path / "config_override.yaml"
+    import yaml
     with open(config_path, "w") as f:
-        json.dump({
+        yaml.dump({
             "version": "2.0",
             "privacy_profile": "basic",
             "phi_tags": {
@@ -47,9 +49,10 @@ def test_profile_override(tmp_path):
 
 def test_legacy_loader_integration(tmp_path):
     # Verify that ConfigLoader.load_unified_config returns tuple correctly wrapped
-    config_path = tmp_path / "config_legacy_adapter.json"
+    config_path = tmp_path / "config_legacy_adapter.yaml"
+    import yaml
     with open(config_path, "w") as f:
-        json.dump({
+        yaml.dump({
             "privacy_profile": "basic"
         }, f)
         
@@ -59,9 +62,10 @@ def test_legacy_loader_integration(tmp_path):
     assert phi_tags["0010,0010"]["action"] == "REMOVE"
 
 def test_unknown_profile(tmp_path):
-    config_path = tmp_path / "config_unknown.json"
+    config_path = tmp_path / "config_unknown.yaml"
+    import yaml
     with open(config_path, "w") as f:
-        json.dump({"privacy_profile": "super_secret_profile"}, f)
+        yaml.dump({"privacy_profile": "super_secret_profile"}, f)
         
     config = load_unified_config(str(config_path))
     # Should just ignore and load empty/rules

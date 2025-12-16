@@ -24,9 +24,10 @@ def test_configured_remove_action(tmp_path):
     session.store.patients.append(pat)
     
     # 2. Configure PHI Tags with REMOVE action
-    config_path = tmp_path / "privacy_config.json"
+    config_path = tmp_path / "privacy_config.yaml"
+    import yaml
     with open(config_path, "w") as f:
-        json.dump({
+        yaml.dump({
             "version": "2.0",
             "phi_tags": {
                 "0008,0080": {

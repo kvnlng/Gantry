@@ -10,7 +10,7 @@ def test_legacy_list_config_loading(tmp_path):
     and correctly interprets the list as machine rules.
     """
     # 1. Create a legacy config file (List at root)
-    legacy_config_path = tmp_path / "legacy_config.json"
+    legacy_config_path = tmp_path / "legacy_config.yaml"
     legacy_config_data = [
         {
             "serial_number": "LEGACY_123", 
@@ -19,7 +19,8 @@ def test_legacy_list_config_loading(tmp_path):
         }
     ]
     with open(legacy_config_path, "w") as f:
-        json.dump(legacy_config_data, f)
+        import yaml
+        yaml.dump(legacy_config_data, f)
         
     # 2. Attempt to load
     session = DicomSession(":memory:")

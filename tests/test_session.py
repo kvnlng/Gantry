@@ -32,10 +32,10 @@ def test_load_empty_config(tmp_path):
     """Ensure session handles config files with no machines gracefully."""
     session = DicomSession(str(tmp_path / "empty.db"))
     
-    empty_conf = tmp_path / "empty_rules.json"
-    import json
+    empty_conf = tmp_path / "empty_rules.yaml"
+    import yaml
     with open(empty_conf, "w") as f:
-        json.dump({"version": "1.0", "machines": []}, f)
+        yaml.dump({"version": "1.0", "machines": []}, f)
         
     session.load_config(str(empty_conf))
     assert len(session.active_rules) == 0

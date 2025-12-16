@@ -39,9 +39,10 @@ def test_profile_remediation_end_to_end(tmp_path):
     create_simple_dicom(dcm_path, "John^Doe")
     
     # 2. Create Config with Basic Profile
-    config_path = tmp_path / "profile_config.json"
+    config_path = tmp_path / "profile_config.yaml"
+    import yaml
     with open(config_path, "w") as f:
-        json.dump({
+        yaml.dump({
             "version": "2.0",
             "privacy_profile": "basic",
             # Empty phi_tags means purely relying on profile

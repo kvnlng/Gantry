@@ -11,15 +11,15 @@ from gantry.remediation import RemediationService
 def test_scaffold_config_structure(tmp_path):
     """Verify that scaffold_config produces valid JSON with new fields."""
     session = DicomSession(persistence_file=":memory:")
-    output_path = tmp_path / "unified.json"
-    
+    output_path = tmp_path / "unified.yaml"
     session.scaffold_config(str(output_path))
     
     assert output_path.exists()
     
     # Load and check
     with open(output_path, 'r') as f:
-        data = json.load(f)
+        import yaml
+        data = yaml.safe_load(f)
         
     assert "version" in data
     assert "machines" in data
