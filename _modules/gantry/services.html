@@ -153,7 +153,10 @@
                              
                              <span class="k">if</span> <span class="ow">not</span> <span class="n">is_treated</span><span class="p">:</span>
                                  <span class="n">untreated</span> <span class="o">+=</span> <span class="mi">1</span>
-                                 <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;High Risk: Untreated Burned In Annotation in </span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                                 <span class="k">if</span> <span class="n">untreated</span> <span class="o">&lt;=</span> <span class="mi">5</span><span class="p">:</span>
+                                     <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;High Risk: Untreated Burned In Annotation in </span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                                 <span class="k">elif</span> <span class="n">untreated</span> <span class="o">==</span> <span class="mi">6</span><span class="p">:</span>
+                                      <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;... (Suppressing further individual errors for Burned In Annotations) ...&quot;</span><span class="p">)</span>
                                  
                                  <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="p">:</span>
                                      <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="o">.</span><span class="n">log_audit</span><span class="p">(</span>
@@ -227,6 +230,11 @@
             <span class="k">try</span><span class="p">:</span>
                 <span class="c1"># Triggers Lazy Load from disk</span>
                 <span class="n">arr</span> <span class="o">=</span> <span class="n">inst</span><span class="o">.</span><span class="n">get_pixel_data</span><span class="p">()</span>
+                
+                <span class="k">if</span> <span class="n">arr</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Skipping </span><span class="si">{</span><span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="si">}</span><span class="s2">: No pixel data found (or file missing).&quot;</span><span class="p">)</span>
+                    <span class="k">continue</span>
+
                 <span class="c1"># Apply redaction in memory</span>
                 <span class="n">r1</span><span class="p">,</span> <span class="n">r2</span><span class="p">,</span> <span class="n">c1</span><span class="p">,</span> <span class="n">c2</span> <span class="o">=</span> <span class="n">roi</span>
                 
