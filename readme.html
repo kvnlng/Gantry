@@ -155,15 +155,15 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 <span class="c1"># Output: Found 3 Devices (GE Rev CT, Siemens Vida...)</span>
 
 <span class="c1"># 3. Create Research Config</span>
-<span class="c1"># Generates a JSON file with safe defaults for research:</span>
+<span class="c1"># Generates a YAML file with safe defaults for research:</span>
 <span class="c1"># - Dates: JITTER (-365 to -1 days)</span>
 <span class="c1"># - Demographics: KEEP (Age, Sex)</span>
 <span class="c1"># - Private Tags: REMOVE (Strict)</span>
-<span class="n">session</span><span class="o">.</span><span class="n">scaffold_config</span><span class="p">(</span><span class="s2">&quot;research_config.json&quot;</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">scaffold_config</span><span class="p">(</span><span class="s2">&quot;research_config.yaml&quot;</span><span class="p">)</span>
 
 <span class="c1"># 4. (Optional) Customize Data Jitter</span>
-<span class="c1"># Edit &quot;research_config.json&quot;:</span>
-<span class="c1"># &quot;date_jitter&quot;: { &quot;min_days&quot;: -10, &quot;max_days&quot;: -10 }</span>
+<span class="c1"># Edit &quot;research_config.yaml&quot;:</span>
+<span class="c1"># date_jitter: { min_days: -10, max_days: -10 }</span>
 
 <span class="c1"># 5. Backup Original Identities (Pseudonymization)</span>
 <span class="n">session</span><span class="o">.</span><span class="n">enable_reversible_anonymization</span><span class="p">(</span><span class="s2">&quot;gantry.key&quot;</span><span class="p">)</span>
@@ -171,7 +171,7 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 
 <span class="c1"># 6. Apply De-Identification</span>
 <span class="c1"># This applies metadata anonymization, date shifting, and private tag removal</span>
-<span class="n">session</span><span class="o">.</span><span class="n">load_config</span><span class="p">(</span><span class="s2">&quot;research_config.json&quot;</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">load_config</span><span class="p">(</span><span class="s2">&quot;research_config.yaml&quot;</span><span class="p">)</span>
 <span class="n">risk_report</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">audit</span><span class="p">()</span>
 <span class="n">session</span><span class="o">.</span><span class="n">apply_remediation</span><span class="p">(</span><span class="n">risk_report</span><span class="p">)</span>
 
@@ -192,17 +192,16 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 <section id="date-jittering">
 <h3>Date Jittering<a class="headerlink" href="#date-jittering" title="Link to this heading"></a></h3>
 <p>Gantry supports deterministic date shifting based on a hash of the PatientID. You can configure the range in your config file:</p>
-<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="nt">&quot;date_jitter&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;min_days&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">-365</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;max_days&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">-1</span>
-<span class="p">}</span>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">date_jitter</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">min_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-365</span>
+<span class="w">  </span><span class="nt">max_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-1</span>
 </pre></div>
 </div>
 </section>
 <section id="private-tag-removal">
 <h3>Private Tag Removal<a class="headerlink" href="#private-tag-removal" title="Link to this heading"></a></h3>
-<p>By default, research configurations enable strict private tag removal. This removes <em>all</em> odd-group tags, ensuring no hidden PHI leaks, while automatically whitelisting Gantry’s own security tags (<code class="docutils literal notranslate"><span class="pre">0099,0010</span></code>) used for reversible anonymization.</p>
-<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="nt">&quot;remove_private_tags&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<p>By default, research configurations enable strict private tag removal. This removes <em>all</em> odd-group tags, ensuring no hidden PHI leaks, while automatically whitelisting Gantry’s own security tags (<code class="docutils literal notranslate"><span class="pre">0400,0500</span></code>) used for reversible anonymization.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">remove_private_tags</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </pre></div>
 </div>
 </section>

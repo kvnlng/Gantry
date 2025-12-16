@@ -59,15 +59,15 @@ session.examine()
 # Output: Found 3 Devices (GE Rev CT, Siemens Vida...)
 
 # 3. Create Research Config
-# Generates a JSON file with safe defaults for research:
+# Generates a YAML file with safe defaults for research:
 # - Dates: JITTER (-365 to -1 days)
 # - Demographics: KEEP (Age, Sex)
 # - Private Tags: REMOVE (Strict)
-session.scaffold_config("research_config.json")
+session.scaffold_config("research_config.yaml")
 
 # 4. (Optional) Customize Data Jitter
-# Edit "research_config.json":
-# "date_jitter": { "min_days": -10, "max_days": -10 }
+# Edit "research_config.yaml":
+# date_jitter: { min_days: -10, max_days: -10 }
 
 # 5. Backup Original Identities (Pseudonymization)
 session.enable_reversible_anonymization("gantry.key")
@@ -75,7 +75,7 @@ session.backup_identities(session.store.patients)
 
 # 6. Apply De-Identification
 # This applies metadata anonymization, date shifting, and private tag removal
-session.load_config("research_config.json")
+session.load_config("research_config.yaml")
 risk_report = session.audit()
 session.apply_remediation(risk_report)
 
@@ -96,18 +96,17 @@ session.save()
 ### Date Jittering
 Gantry supports deterministic date shifting based on a hash of the PatientID. You can configure the range in your config file:
 
-```json
-"date_jitter": {
-    "min_days": -365,
-    "max_days": -1
-}
+```yaml
+date_jitter:
+  min_days: -365
+  max_days: -1
 ```
 
 ### Private Tag Removal
-By default, research configurations enable strict private tag removal. This removes *all* odd-group tags, ensuring no hidden PHI leaks, while automatically whitelisting Gantry's own security tags (`0099,0010`) used for reversible anonymization.
+By default, research configurations enable strict private tag removal. This removes *all* odd-group tags, ensuring no hidden PHI leaks, while automatically whitelisting Gantry's own security tags (`0400,0500`) used for reversible anonymization.
 
-```json
-"remove_private_tags": true
+```yaml
+remove_private_tags: true
 ```
 
 ### Standard Privacy Profiles

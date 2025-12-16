@@ -761,11 +761,15 @@
 <a class="viewcode-back" href="../../gantry.html#gantry.session.DicomSession.scaffold_config">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">scaffold_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">output_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Generates a unified v2 configuration file.</span>
+<span class="sd">        Generates a unified v2 configuration file in YAML format.</span>
 <span class="sd">        Includes default PHI tags + Auto-detected machine inventory.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>
         <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+        
+        <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="n">output_path</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;.yaml&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="n">output_path</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;.yml&quot;</span><span class="p">)):</span>
+            <span class="n">output_path</span> <span class="o">+=</span> <span class="s2">&quot;.yaml&quot;</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Note: Appending .yaml extension -&gt; </span><span class="si">{</span><span class="n">output_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         
         <span class="c1"># 1. Identify what we have</span>
         <span class="n">all_equipment</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">get_unique_equipment</span><span class="p">()</span>
@@ -778,6 +782,7 @@
         <span class="n">kb_machines</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">kb_path</span><span class="p">):</span>
              <span class="k">try</span><span class="p">:</span>
+                 <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
                  <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">kb_path</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
                      <span class="n">kb_data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
                      <span class="n">kb_machines</span> <span class="o">=</span> <span class="n">kb_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;machines&quot;</span><span class="p">,</span> <span class="p">[])</span>
@@ -797,29 +802,41 @@
                         <span class="k">break</span>
                 
                 <span class="c1"># Check CTP Rules (Knowledge Base 2)</span>
-                <span class="n">ctp_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="s2">&quot;resources&quot;</span><span class="p">,</span> <span class="s2">&quot;ctp_rules.json&quot;</span><span class="p">)</span>
+                <span class="n">ctp_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="s2">&quot;resources&quot;</span><span class="p">,</span> <span class="s2">&quot;ctp_rules.yaml&quot;</span><span class="p">)</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">ctp_path</span><span class="p">):</span>
+                     <span class="c1"># Fallback to JSON if YAML doesn&#39;t exist</span>
+                     <span class="n">ctp_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="s2">&quot;resources&quot;</span><span class="p">,</span> <span class="s2">&quot;ctp_rules.json&quot;</span><span class="p">)</span>
+
                 <span class="k">if</span> <span class="ow">not</span> <span class="n">matched_rule</span> <span class="ow">and</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">ctp_path</span><span class="p">):</span>
                      <span class="k">try</span><span class="p">:</span>
-                         <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">ctp_path</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-                             <span class="n">ctp_data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
-                             <span class="n">ctp_rules</span> <span class="o">=</span> <span class="n">ctp_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;rules&quot;</span><span class="p">,</span> <span class="p">[])</span>
+                         <span class="k">if</span> <span class="n">ctp_path</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s1">&#39;.yaml&#39;</span><span class="p">):</span>
+                             <span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>
+                             <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">ctp_path</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                                 <span class="n">ctp_data</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+                         <span class="k">else</span><span class="p">:</span>
+                             <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+                             <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">ctp_path</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                                 <span class="n">ctp_data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+                                 
+                         <span class="n">ctp_rules</span> <span class="o">=</span> <span class="n">ctp_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;rules&quot;</span><span class="p">,</span> <span class="p">[])</span>
+                         
+                         <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="n">ctp_rules</span><span class="p">:</span>
+                             <span class="c1"># Fuzzy matching on Manufacturer and Model</span>
+                             <span class="c1"># CTP rules usually have &quot;manufacturer&quot; and &quot;model_name&quot;</span>
+                             <span class="n">r_man</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;manufacturer&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+                             <span class="n">r_mod</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model_name&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
                              
-                             <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="n">ctp_rules</span><span class="p">:</span>
-                                 <span class="c1"># Fuzzy matching on Manufacturer and Model</span>
-                                 <span class="c1"># CTP rules usually have &quot;manufacturer&quot; and &quot;model_name&quot;</span>
-                                 <span class="n">r_man</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;manufacturer&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
-                                 <span class="n">r_mod</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model_name&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
-                                 
-                                 <span class="n">eq_man</span> <span class="o">=</span> <span class="p">(</span><span class="n">eq</span><span class="o">.</span><span class="n">manufacturer</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
-                                 <span class="n">eq_mod</span> <span class="o">=</span> <span class="p">(</span><span class="n">eq</span><span class="o">.</span><span class="n">model_name</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
-                                 
-                                 <span class="c1"># Simple containment check as per CTP style</span>
-                                 <span class="k">if</span> <span class="n">r_man</span> <span class="ow">and</span> <span class="n">r_man</span> <span class="ow">in</span> <span class="n">eq_man</span> <span class="ow">and</span> <span class="n">r_mod</span> <span class="ow">and</span> <span class="n">r_mod</span> <span class="ow">in</span> <span class="n">eq_mod</span><span class="p">:</span>
-                                      <span class="n">matched_rule</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
-                                      <span class="n">matched_rule</span><span class="p">[</span><span class="s2">&quot;serial_number&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span>
-                                      <span class="n">matched_rule</span><span class="p">[</span><span class="s2">&quot;comment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Auto-matched from CTP Knowledge Base (</span><span class="si">{</span><span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;manufacturer&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;model_name&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">)&quot;</span>
-                                      <span class="c1"># CTP doesn&#39;t have detailed comment in JSON usually, but we added it in parser</span>
-                                      <span class="k">break</span>
+                             <span class="n">eq_man</span> <span class="o">=</span> <span class="p">(</span><span class="n">eq</span><span class="o">.</span><span class="n">manufacturer</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+                             <span class="n">eq_mod</span> <span class="o">=</span> <span class="p">(</span><span class="n">eq</span><span class="o">.</span><span class="n">model_name</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+                             
+                             <span class="c1"># Simple containment check as per CTP style</span>
+                             <span class="k">if</span> <span class="n">r_man</span> <span class="ow">and</span> <span class="n">r_man</span> <span class="ow">in</span> <span class="n">eq_man</span> <span class="ow">and</span> <span class="n">r_mod</span> <span class="ow">and</span> <span class="n">r_mod</span> <span class="ow">in</span> <span class="n">eq_mod</span><span class="p">:</span>
+                                  <span class="n">matched_rule</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+                                  <span class="n">matched_rule</span><span class="p">[</span><span class="s2">&quot;serial_number&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span>
+                                  <span class="n">matched_rule</span><span class="p">[</span><span class="s2">&quot;comment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Auto-matched from CTP Knowledge Base (</span><span class="si">{</span><span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;manufacturer&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;model_name&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">)&quot;</span>
+                                  <span class="c1"># CTP doesn&#39;t have detailed comment in JSON usually, but we added it in parser</span>
+                                  <span class="k">break</span>
+
                      <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
                          <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to load CTP rules: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
@@ -828,34 +845,32 @@
                     <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="n">kb_machines</span><span class="p">:</span>
                         <span class="k">if</span> <span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;model_name&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="n">eq</span><span class="o">.</span><span class="n">model_name</span><span class="p">:</span>
                              <span class="c1"># It&#39;s a model match, so we should probably copy the zones </span>
-                             <span class="c1"># but keep the specific serial of the detected device.</span>
-                             <span class="n">matched_rule</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
-                             <span class="n">matched_rule</span><span class="p">[</span><span class="s2">&quot;serial_number&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span>
-                             <span class="n">matched_rule</span><span class="p">[</span><span class="s2">&quot;comment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Auto-matched from Model </span><span class="si">{</span><span class="n">eq</span><span class="o">.</span><span class="n">model_name</span><span class="si">}</span><span class="s2">&quot;</span>
-                             <span class="k">break</span>
-
+                             <span class="n">matches_man</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;manufacturer&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">rule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;manufacturer&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="n">eq</span><span class="o">.</span><span class="n">manufacturer</span><span class="p">)</span>
+                             <span class="k">if</span> <span class="n">matches_man</span><span class="p">:</span>
+                                 <span class="n">matched_rule</span> <span class="o">=</span> <span class="n">rule</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+                                 <span class="n">matched_rule</span><span class="p">[</span><span class="s2">&quot;serial_number&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span>
+                                 <span class="n">matched_rule</span><span class="p">[</span><span class="s2">&quot;comment&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Auto-matched from Model Knowledge Base (</span><span class="si">{</span><span class="n">eq</span><span class="o">.</span><span class="n">model_name</span><span class="si">}</span><span class="s2">)&quot;</span>
+                                 <span class="k">break</span>
+                
                 <span class="k">if</span> <span class="n">matched_rule</span><span class="p">:</span>
+                    <span class="c1"># Use the template</span>
                     <span class="n">missing_configs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">matched_rule</span><span class="p">)</span>
                 <span class="k">else</span><span class="p">:</span>
+                    <span class="c1"># Create empty scaffold</span>
                     <span class="n">missing_configs</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+                        <span class="s2">&quot;manufacturer&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">manufacturer</span> <span class="ow">or</span> <span class="s2">&quot;Unknown&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;model_name&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">model_name</span> <span class="ow">or</span> <span class="s2">&quot;Unknown&quot;</span><span class="p">,</span>
                         <span class="s2">&quot;serial_number&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">device_serial_number</span><span class="p">,</span>
-                        <span class="s2">&quot;model_name&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">model_name</span><span class="p">,</span>
-                        <span class="s2">&quot;manufacturer&quot;</span><span class="p">:</span> <span class="n">eq</span><span class="o">.</span><span class="n">manufacturer</span><span class="p">,</span>
-                        <span class="s2">&quot;comment&quot;</span><span class="p">:</span> <span class="s2">&quot;Auto-detected. Please define redaction zones.&quot;</span><span class="p">,</span>
-                        <span class="s2">&quot;redaction_zones&quot;</span><span class="p">:</span> <span class="p">[]</span>
+                        <span class="s2">&quot;redaction_zones&quot;</span><span class="p">:</span> <span class="p">[]</span> 
                     <span class="p">})</span>
-        
-        <span class="c1"># 4. Include Default set of tags (Research Overrides Only)</span>
-        <span class="c1"># We now leverage the &quot;basic&quot; privacy profile for the heavy lifting.</span>
-        <span class="c1"># We only inject the research-specific overrides (e.g. KEEP Age/Sex, JIT Dates).</span>
-        
-        <span class="n">phi_tags</span> <span class="o">=</span> <span class="p">{}</span>
-        <span class="n">res_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="s2">&quot;resources&quot;</span><span class="p">,</span> <span class="s2">&quot;research_tags.json&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">res_path</span><span class="p">):</span>
+
+        <span class="c1"># 4. Load PHI Tags Default (if not loaded)</span>
+        <span class="n">phi_tags</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_phi_tags</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">phi_tags</span><span class="p">:</span>
+             <span class="c1"># Load default config for scaffold</span>
              <span class="k">try</span><span class="p">:</span>
-                 <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">res_path</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-                     <span class="n">res_data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
-                     <span class="n">phi_tags</span> <span class="o">=</span> <span class="n">res_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;research_tags&quot;</span><span class="p">,</span> <span class="p">{})</span>
+                 <span class="kn">from</span><span class="w"> </span><span class="nn">.config_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConfigLoader</span>
+                 <span class="n">phi_tags</span> <span class="o">=</span> <span class="n">ConfigLoader</span><span class="o">.</span><span class="n">load_phi_config</span><span class="p">()</span> 
              <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
                  <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to load research tags: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
@@ -863,13 +878,7 @@
         <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
             <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="s2">&quot;2.0&quot;</span><span class="p">,</span>
             <span class="s2">&quot;privacy_profile&quot;</span><span class="p">:</span> <span class="s2">&quot;basic&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;_instructions&quot;</span><span class="p">:</span> <span class="p">{</span>
-                <span class="s2">&quot;privacy_profile&quot;</span><span class="p">:</span> <span class="s2">&quot;Standard profile (basic) handles common PHI (Name, ID, etc).&quot;</span><span class="p">,</span>
-                <span class="s2">&quot;phi_tags&quot;</span><span class="p">:</span> <span class="s2">&quot;Define overrides here. &#39;JITTER&#39; shifts dates based on config.&quot;</span><span class="p">,</span>
-                <span class="s2">&quot;advanced_actions&quot;</span><span class="p">:</span> <span class="s2">&quot;Actions: REMOVE, EMPTY, REPLACE, KEEP, JITTER (SHIFT)&quot;</span><span class="p">,</span>
-                <span class="s2">&quot;date_jitter&quot;</span><span class="p">:</span> <span class="s2">&quot;Range of days to shift dates by (negative = past).&quot;</span><span class="p">,</span>
-                <span class="s2">&quot;remove_private_tags&quot;</span><span class="p">:</span> <span class="s2">&quot;If true, removes all odd-group tags except Gantry Metadata.&quot;</span>
-            <span class="p">},</span>
+            <span class="c1"># No _instructions dict anymore, we use comments!</span>
             <span class="s2">&quot;phi_tags&quot;</span><span class="p">:</span> <span class="n">phi_tags</span><span class="p">,</span>
             <span class="s2">&quot;date_jitter&quot;</span><span class="p">:</span> <span class="p">{</span>
                 <span class="s2">&quot;min_days&quot;</span><span class="p">:</span> <span class="o">-</span><span class="mi">365</span><span class="p">,</span>
@@ -883,8 +892,33 @@
              <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;No machines detected to scaffold.&quot;</span><span class="p">)</span>
         
         <span class="k">try</span><span class="p">:</span>
+            <span class="c1"># Generate YAML string</span>
+            <span class="n">yaml_content</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">sort_keys</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">default_flow_style</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            
+            <span class="c1"># Prepend Header Comments</span>
+            <span class="n">header</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;# Gantry Privacy Configuration (v2.0)</span>
+<span class="s2"># ==========================================</span>
+<span class="s2">#</span>
+<span class="s2"># privacy_profile: &quot;basic&quot;</span>
+<span class="s2">#   - Standard profile handling common PHI (Name, ID, etc).</span>
+<span class="s2">#   - Set to &quot;none&quot; for manual control.</span>
+<span class="s2">#</span>
+<span class="s2"># phi_tags:</span>
+<span class="s2">#   - Define custom overrides here.</span>
+<span class="s2">#   - Actions: KEEP, REMOVE, EMPTY, REPLACE, JITTER (SHIFT)</span>
+<span class="s2">#</span>
+<span class="s2"># date_jitter:</span>
+<span class="s2">#   - Range of days to shift dates by (negative = into past).</span>
+<span class="s2">#</span>
+<span class="s2"># remove_private_tags:</span>
+<span class="s2">#   - If true, removes all odd-group tags except Gantry Metadata.</span>
+<span class="s2">#</span>
+<span class="s2">&quot;&quot;&quot;</span>
+            <span class="n">final_content</span> <span class="o">=</span> <span class="n">header</span> <span class="o">+</span> <span class="n">yaml_content</span>
+
             <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">output_path</span><span class="p">,</span> <span class="s1">&#39;w&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-                <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
+                <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">final_content</span><span class="p">)</span>
+                
             <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Scaffolded Unified Config to </span><span class="si">{</span><span class="n">output_path</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">missing_configs</span><span class="p">)</span><span class="si">}</span><span class="s2"> new machines)&quot;</span><span class="p">)</span>
             <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Scaffolded Unified Config to </span><span class="si">{</span><span class="n">output_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
