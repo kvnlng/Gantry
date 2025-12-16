@@ -84,9 +84,12 @@ class RemediationService:
             new_date = self._shift_date_string(proposal.original_value, shift_days)
             
             if new_date:
-                setattr(entity, proposal.target_attr, new_date)
+                if hasattr(entity, "set_attr"):
+                     entity.set_attr(proposal.target_attr, new_date)
+                else:
+                     setattr(entity, proposal.target_attr, new_date)
                 
-                # Update tracking flag if it's a Study
+                # Update tracking flag if it's a Study or Instance (or any entity with the flag)
                 if hasattr(entity, "date_shifted"):
                     entity.date_shifted = True
                     

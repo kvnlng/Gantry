@@ -225,8 +225,12 @@ class PhiInspector:
                      new_val = ""
             elif action_code in ["SHIFT", "JITTER"]:
                  # Date Shifting
-                 needs_remediation = True
-                 remediation_action = "SHIFT_DATE"
+                 # If instance is already shifted, this is not a finding
+                 if hasattr(instance, "date_shifted") and instance.date_shifted:
+                     needs_remediation = False
+                 else:
+                     needs_remediation = True
+                     remediation_action = "SHIFT_DATE"
             elif action_code == "KEEP":
                  needs_remediation = False
             else: # REPLACE (Default)

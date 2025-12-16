@@ -69,6 +69,9 @@ class Instance(DicomItem):
 
     # Transient: Actual pixel data (NOT persisted to pickle)
     pixel_array: Optional[np.ndarray] = field(default=None, repr=False)
+    
+    # Transient: Track if dates have been shifted in memory
+    date_shifted: bool = field(default=False, init=False)
 
     def __post_init__(self):
         super().__post_init__()
