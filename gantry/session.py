@@ -807,7 +807,34 @@ class DicomSession:
         
         try:
             # Generate YAML string
+            # sort_keys=False ensures order is preserved (machines list)
             yaml_content = yaml.dump(data, sort_keys=False, default_flow_style=False)
+            
+            # Post-process: Convert "comment: ..." into "# ..."
+            # Matches:   comment: "Some text"
+            # Replaces:  # Some text
+            import re
+            # Match indentation + comment key
+            # pattern = r'^(\s*)comment: ["\']?(.*?)["\']?$' # Simple line-based match
+            
+            # We iterate lines to be safe and simple
+            lines = []
+            for line in yaml_content.splitlines():
+                match = re.search(r'^(\s*)comment: (.*)$', line)
+                if match:
+                    indent = match.group(1)
+                    content = match.group(2)
+                    # Remove quotes if present
+                    if content.startswith('"') and content.endswith('"'):
+                        content = content[1:-1]
+                    elif content.startswith("'") and content.endswith("'"):
+                        content = content[1:-1]
+                    
+                    lines.append(f"{indent}# {content}")
+                else:
+                    lines.append(line)
+            
+            yaml_content = "\n".join(lines) + "\n"
             
             # Prepend Header Comments
             header = """# Gantry Privacy Configuration (v2.0)

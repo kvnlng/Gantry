@@ -80,3 +80,50 @@ def test_date_jitter_service():
     # 20230111 shifted by -10 days -> 20230101
     new_date = svc._shift_date_string("20230111", shift)
     assert new_date == "20230101"
+
+def test_scaffold_comments(tmp_path):
+    """Verify that comment keys are converted to # comments in the output file."""
+    session = DicomSession(persistence_file=":memory:")
+    
+    # Needs matching equipment to trigger comment generation
+    # Inject a known equipment
+    # session.store.equipment.append(Equipment("GE MEDICAL", "GENESIS", "SN1")) # Invalid in current Store model
+    pass
+    
+    # We also need a fake KB rule or CTP rule to trigger auto-match?
+    # Or rely on the fallback logic: "Auto-matched from Model Knowledge Base" or similar?
+    # Actually, scaffold_config fallback generates "Auto-matched from Model Knowledge Base" if unknown?
+    # Let's check logic:
+    # If not matched_rule, it checks Model KB (kb_machines). If not there, it creates empty scaffold (redaction_zones=[])
+    # Empty scaffold does NOT have a comment in the code currently?
+    # Wait, looking at code:
+    # else: missing_configs.append({... serial_number... }) -> No comment added for completely unknown key.
+    
+    # So we need to match a rule.
+    # Method: Create a fake CTP rule file so it matches SN1.
+    ctp_path = "gantry/resources/ctp_rules.yaml"
+    import yaml
+    # Back up existing if needed, but in test env we might mock?
+    # Since we can't easily overwrite source in a safe way for parallel tests, 
+    # we might just rely on the fact that CTP parser puts comments in `phi_tags`?
+    # No, CTP parser logic is for machines.
+    
+    # Alternative: Inject a rule into `session.active_rules` MANUALLY with a comment, then scaffold.
+    # scaffold_config includes `self.active_rules` in output.
+    
+    session.active_rules.append({
+        "serial_number": "SN-MANUAL",
+        "redaction_zones": [],
+        "comment": "This is a manual comment"
+    })
+    
+    output_path = tmp_path / "comment_test.yaml"
+    session.scaffold_config(str(output_path))
+    
+    with open(output_path, "r") as f:
+        content = f.read()
+        
+    # Check that "comment:" is NOT present (as a key)
+    assert "comment: This is a manual comment" not in content
+    # Check that "# This is a manual comment" IS present
+    assert "# This is a manual comment" in content
