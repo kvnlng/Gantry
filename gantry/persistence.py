@@ -315,9 +315,75 @@ class SqliteStore:
         except sqlite3.Error as e:
             self.logger.error(f"Failed to update attributes: {e}")
 
-    # ... save_findings ... (unchanged)
+    def save_findings(self, findings: List[PhiFinding]):
+        """Persists PHI findings to the database."""
+        timestamp = datetime.now().isoformat()
+        
+        if not findings:
+            return
 
-    # ... load_findings ... (unchanged)
+        self.logger.info(f"Saving {len(findings)} PHI findings...")
+        
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cur = conn.cursor()
+                
+                # Insert
+                for f in findings:
+                    rem_action = None
+                    rem_value = None
+                    if f.remediation_proposal:
+                        rem_action = f.remediation_proposal.action_type
+                        rem_value = str(f.remediation_proposal.new_value)
+                        
+                    cur.execute("""
+                        INSERT INTO phi_findings 
+                        (timestamp, entity_uid, entity_type, field_name, value, reason, patient_id, remediation_action, remediation_value, details_json) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (timestamp, f.entity_uid, f.entity_type, f.field_name, str(f.value), f.reason, f.patient_id, rem_action, rem_value, "{}"))
+                
+                conn.commit()
+                self.logger.info("Findings saved.")
+                
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to save findings: {e}")
+
+    def load_findings(self) -> List[PhiFinding]:
+        """Loads all findings from the database."""
+        findings = []
+        if not os.path.exists(self.db_path):
+            return findings
+
+        try:
+             with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                # Check if table exists (backward compatibility for old DBs if init didnt run on them)
+                # But _init_db runs on __init__, so schema should be there.
+                
+                rows = cur.execute("SELECT * FROM phi_findings ORDER BY id").fetchall()
+                
+                for r in rows:
+                    if r['remediation_action']:
+                        prop = PhiRemediation(r['remediation_action'], r['field_name'], r['remediation_value'], None) 
+                    else: 
+                        prop = None
+                        
+                    f = PhiFinding(
+                        entity_uid=r['entity_uid'],
+                        entity_type=r['entity_type'],
+                        field_name=r['field_name'],
+                        value=r['value'],
+                        reason=r['reason'],
+                        patient_id=r['patient_id'],
+                        remediation_proposal=prop
+                    )
+                    findings.append(f)
+                    
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to load findings: {e}")
+            
+        return findings
 
 class GantryJSONEncoder(json.JSONEncoder):
     def default(self, obj):
