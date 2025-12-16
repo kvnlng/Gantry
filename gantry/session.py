@@ -617,8 +617,11 @@ class DicomSession:
 
             # Save state after modification
             # self._save()
-            # get_logger().info("Execution Complete. Session saved.")
+            # Run Safety Checks
+            service.scan_burned_in_annotations()
+
             print("Execution Complete. Remember to call .save() to persist.")
+            # get_logger().info("Execution Complete. Session saved.")
             print("Execution Complete. Session saved.")
 
             # Clear rules after execution?
@@ -643,6 +646,10 @@ class DicomSession:
         
         # 1. Identify what we have
         all_equipment = self.store.get_unique_equipment()
+        
+        # Instantiate service to query pixel/tag data efficiently
+        from .services import RedactionService
+        service = RedactionService(self.store)
         
         # 2. Identify what is already configured (Pixel Rules)
         configured_serials = {rule.get("serial_number") for rule in self.active_rules}
@@ -728,17 +735,37 @@ class DicomSession:
                                  matched_rule["comment"] = f"Auto-matched from Model Knowledge Base ({eq.model_name})"
                                  break
                 
+                # 3.b Check for Burned In Annotations (Safety Check)
+                # query index for this machine
+                instances = service.index.get_by_machine(eq.device_serial_number)
+                burned_in_count = 0
+                for inst in instances:
+                    val = inst.attributes.get("0028,0301", "NO")
+                    if isinstance(val, str) and "YES" in val.upper():
+                        burned_in_count += 1
+                
+                safety_comment = ""
+                if burned_in_count > 0:
+                    safety_comment = f"WARNING: {burned_in_count} images have 'Burned In Annotation' flag. Verify pixel redaction."
+
                 if matched_rule:
                     # Use the template
-                    missing_configs.append(matched_rule)
+                    rule_copy = matched_rule.copy() # Ensure we don't mutate KB
+                    if safety_comment:
+                        existing = rule_copy.get("comment", "")
+                        rule_copy["comment"] = f"{existing} {safety_comment}".strip()
+                    missing_configs.append(rule_copy)
                 else:
                     # Create empty scaffold
-                    missing_configs.append({
+                    new_rule = {
                         "manufacturer": eq.manufacturer or "Unknown",
                         "model_name": eq.model_name or "Unknown",
                         "serial_number": eq.device_serial_number,
                         "redaction_zones": [] 
-                    })
+                    }
+                    if safety_comment:
+                        new_rule["comment"] = safety_comment
+                    missing_configs.append(new_rule)
 
         # 4. Load PHI Tags Default (if not loaded)
         phi_tags = self.active_phi_tags

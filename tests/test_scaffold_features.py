@@ -166,3 +166,46 @@ def test_scaffold_multiline_comments(tmp_path):
     # Comment should NOT be in the loaded dict (as it's a comment now)
     assert "comment" not in loaded_rule
 
+def test_scaffold_burned_in_warning(tmp_path):
+    """Verify that machines with 'Burned In Annotation' flag get a warning in scaffold."""
+    session = DicomSession(persistence_file=":memory:")
+    
+    # Create Risk Instance
+    from gantry.entities import Equipment
+    # Inject unknown equipment -> Falls back to empty scaffold
+    # But now we expect a comment
+    # session.store.equipment.append(Equipment("RISK_MAN", "RISK_MOD", "SN-RISK")) # Invalid
+    pass
+    
+    # Inject instance into session (need to link to patient/study/series)
+    # Actually, scaffold checks `service.index.get_by_machine`.
+    # So we need full object graph.
+    from gantry.entities import Patient, Study, Series, Instance
+    p = Patient("P1", "N1")
+    st = Study("S1", None)
+    se = Series("SE1", "OT", 1)
+    se.equipment = Equipment("RISK_MAN", "RISK_MOD", "SN-RISK")
+    inst = Instance("I_RISK", "SOP_RISK", 1)
+    inst.attributes["0028,0301"] = "YES" # The Flag
+    
+    se.instances.append(inst)
+    st.series.append(se)
+    p.studies.append(st)
+    session.store.patients.append(p)
+    
+    output_path = tmp_path / "burned_in_test.yaml"
+    session.scaffold_config(str(output_path))
+    
+    with open(output_path, "r") as f:
+        content = f.read()
+        
+    # Check for Warning Comment
+    assert "SN-RISK" in content
+    # The fix we made adds a comment. 
+    # Because of our comment post-processor, it should be converted to # ...
+    # Note: YAML dump might double escape single quotes inside strings. 
+    # Just check for key phrase
+    assert "WARNING: 1 images have" in content
+    assert "flag" in content
+    assert "Burned In Annotation" in content
+

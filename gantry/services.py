@@ -36,10 +36,53 @@ class RedactionService:
     Applies pixel data redaction based on rules.
     """
     def __init__(self, store: DicomStore, store_backend=None):
+        self.store = store
         self.index = MachinePixelIndex()
         self.index.index_store(store)
         self.logger = get_logger()
         self.store_backend = store_backend
+
+    def scan_burned_in_annotations(self):
+        """
+        Scans all instances for 'Burned In Annotation' (0028,0301) == 'YES'.
+        Logs warnings for any found that have NOT been remediated (Image Type not DERIVED).
+        User requested we 'Must treat them somehow'.
+        """
+        self.logger.info("Scanning for untreated Burned In Annotations...")
+        count = 0
+        untreated = 0
+        
+        for p in self.store.patients:
+            for st in p.studies:
+                for se in st.series:
+                    for inst in se.instances:
+                         # Check Tag (case insensitive)
+                         val = inst.attributes.get("0028,0301", "NO")
+                         if isinstance(val, str) and "YES" in val.upper():
+                             count += 1
+                             # Check if we remediated it
+                             img_type = inst.attributes.get("0008,0008", [])
+                             if isinstance(img_type, str): img_type = [img_type]
+                             
+                             is_treated = any("DERIVED" in str(x).upper() for x in img_type)
+                             
+                             if not is_treated:
+                                 untreated += 1
+                                 self.logger.error(f"High Risk: Untreated Burned In Annotation in {inst.sop_instance_uid}")
+                                 
+                                 if self.store_backend:
+                                     self.store_backend.log_audit(
+                                         action_type="RISK",
+                                         entity_uid=inst.sop_instance_uid,
+                                         details="Burned In Annotation (0028,0301) present but not remediated."
+                                     )
+        
+        if untreated > 0:
+            self.logger.warning(f"Found {untreated} instances with potential Burned In Annotations that were NOT remediated.")
+            print(f"WARNING: {untreated} instances flagged with 'Burned In Annotation' were not targeted by any rule.")
+            print("Action Required: Review audit logs or add rules for these instances.")
+        elif count > 0:
+            self.logger.info(f"Verified {count} Burned In Annotations were remediated.")
 
     def process_machine_rules(self, machine_rules: dict):
         """
@@ -62,7 +105,12 @@ class RedactionService:
         self.logger.info(f"Applying config rules for Machine: {serial} ({len(targets)} images)...")
 
         for zone in zones:
-            roi = zone.get("roi")  # Expected [r1, r2, c1, c2]
+            if isinstance(zone, list):
+                # Legacy/Simplified format: zone IS the ROI
+                roi = zone
+            else:
+                 roi = zone.get("roi")  # Expected [r1, r2, c1, c2]
+            
             if roi and len(roi) == 4:
                 self.redact_machine_region(serial, tuple(roi))
             else:
