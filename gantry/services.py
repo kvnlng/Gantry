@@ -68,7 +68,10 @@ class RedactionService:
                              
                              if not is_treated:
                                  untreated += 1
-                                 self.logger.error(f"High Risk: Untreated Burned In Annotation in {inst.sop_instance_uid}")
+                                 if untreated <= 5:
+                                     self.logger.error(f"High Risk: Untreated Burned In Annotation in {inst.sop_instance_uid}")
+                                 elif untreated == 6:
+                                      self.logger.error("... (Suppressing further individual errors for Burned In Annotations) ...")
                                  
                                  if self.store_backend:
                                      self.store_backend.log_audit(
@@ -136,6 +139,11 @@ class RedactionService:
             try:
                 # Triggers Lazy Load from disk
                 arr = inst.get_pixel_data()
+                
+                if arr is None:
+                    self.logger.warning(f"  Skipping {inst.sop_instance_uid}: No pixel data found (or file missing).")
+                    continue
+
                 # Apply redaction in memory
                 r1, r2, c1, c2 = roi
                 
