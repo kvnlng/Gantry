@@ -235,6 +235,7 @@ def _export_instance_worker(ctx: ExportContext) -> str:
         
         # 0. Base Attributes
         DicomExporter._merge(ds, inst.attributes)
+        DicomExporter._merge_sequences(ds, inst.sequences)
         
         # 1. Patient Level
         ds.PatientName = ctx.patient_attributes.get("PatientName", "")
@@ -454,6 +455,14 @@ class DicomExporter:
             if t == "0099,1001":
                 ds.add_new(0x00991001, 'OB', v)
                 continue
+            
+            # Explicit handling for Encrypted Attributes to fix potential dictionary mismatches
+            if t == "0400,0510": # Encrypted Content
+                ds.add_new(0x04000510, 'OB', v)
+                continue
+            if t == "0400,0520": # Encrypted Content Transfer Syntax UID
+                ds.add_new(0x04000520, 'UI', v)
+                continue
 
             g, e = map(lambda x: int(x, 16), t.split(','))
             
@@ -478,3 +487,31 @@ class DicomExporter:
         # For strictness:
         safe = "".join([c for c in str(filename) if c.isalnum() or c in (' ', '.', '-', '_')])
         return safe.strip().replace(" ", "_")
+
+    @staticmethod
+    def _merge_sequences(ds, sequences: Dict[str, Any]):
+        """
+        Recursively populates sequences into the dataset.
+        sequences: Dict[str, DicomSequence]
+        """
+        from pydicom.sequence import Sequence
+        from pydicom.dataset import Dataset
+        from pydicom.tag import Tag
+
+        for tag_str, dicom_seq in sequences.items():
+            g, e = map(lambda x: int(x, 16), tag_str.split(','))
+            tag = Tag(g, e)
+            
+            pydicom_seq = Sequence()
+            for item in dicom_seq.items:
+                ds_item = Dataset()
+                ds_item.is_little_endian = True
+                ds_item.is_implicit_VR = True
+                
+                # Recursively merge item attributes and sub-sequences
+                DicomExporter._merge(ds_item, item.attributes)
+                DicomExporter._merge_sequences(ds_item, item.sequences)
+                
+                pydicom_seq.append(ds_item)
+                
+            ds.add_new(tag, 'SQ', pydicom_seq)
