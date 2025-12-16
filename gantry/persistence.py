@@ -1,7 +1,7 @@
 import sqlite3
 import os
 import json
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from .entities import Patient, Study, Series, Instance, Equipment
 from .logger import get_logger
