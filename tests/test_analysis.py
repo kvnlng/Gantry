@@ -66,5 +66,7 @@ def test_batch_preserve_from_report(tmp_path):
     cur = conn.cursor()
     cur.execute("SELECT attributes_json FROM instances")
     row = cur.fetchone()
-    assert "GANTRY_SECURE" in row[0]
+    # Now that we use sequences and serialize them, we expect 0400,0500
+    # in the persisted attributes_json (inside __sequences__ block)
+    assert "0400,0500" in row[0]
     conn.close()

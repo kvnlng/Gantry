@@ -46,12 +46,13 @@ def test_optimization_preservation(tmp_path):
     cur = conn.cursor()
     
     # Check if attributes_json has the private tag
+    # Check if attributes_json has the persisted sequence
     cur.execute("SELECT attributes_json FROM instances WHERE sop_instance_uid = 'SOP_0'")
     row = cur.fetchone()
     attrs = json.loads(row[0])
     
-    assert "0099,0010" in attrs
-    assert attrs["0099,0010"] == "GANTRY_SECURE"
+    assert "__sequences__" in attrs
+    assert "0400,0500" in attrs["__sequences__"]
     
     conn.close()
 
@@ -83,9 +84,10 @@ def test_batch_reversibility(tmp_path):
     session.persistence_manager.flush()
     
     # Check persistence
+    # Checking for the tag 0400,0500 in the JSON blob
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    cur.execute("SELECT count(*) FROM instances WHERE attributes_json LIKE '%GANTRY_SECURE%'")
+    cur.execute("SELECT count(*) FROM instances WHERE attributes_json LIKE '%0400,0500%'")
     count = cur.fetchone()[0]
     assert count == 3
     conn.close()
