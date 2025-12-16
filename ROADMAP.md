@@ -30,16 +30,20 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 
 ### v0.5.0 - Data Integrity & Advanced Redaction
 Focus: Validating data integrity and expanding redaction capabilities.
-- [ ] **Pixel Integrity Tests**: Verify that zeroed-out pixels are truly zero (not just concealed by LUTs).
+- [ ] **Pixel Redaction Verification**: Verify that zeroed-out pixels are truly zero (not just concealed by LUTs).
 - [x] **Pixel Integrity Tests**: Add unit tests to verify `PhotometricInterpretation` and `SamplesPerPixel` are preserved after modification.
 - [ ] **Memory Profiling**: Optimize `MachinePixelIndex` to handle massive datasets without excessive RAM usage.
 - [x] **Standard Privacy Profiles**: Built-in compliance profiles (e.g., DICOM PS3.15 Annex E) to simplify configuration.
+- [ ] **Custom Privacy Profiles**: Allow users to define their own reuseable profiles in external JSON files.
 - [ ] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.
 
 ### v0.6.0 - Analytics & Reporting
 Focus: Empowering users to understand their data through deep inspection on the object graph.
-- [ ] **Object Graph to DataFrame**: Expose a method to flatten `Patient -> Study -> Series -> Instance` hierarchy into a comprehensive Pandas DataFrame.
+- [ ] **Dataframe Export**: Expose a method to flatten `Patient -> Study -> Series -> Instance` hierarchy into a comprehensive Pandas DataFrame.
 - [ ] **Metadata Querying**: Enable SQL-like querying on the dataframe (e.g., "Find all scans with `SliceThickness < 1.0` acquired by 'GE' scanners").
+- [ ] **Query-based Export**: Allow users to filter exports using criteria (e.g., `session.export(query="Modality=='CT' and SliceThickness > 5.0")`).
+- [ ] **Compliance Reporting**: Generate reports verifying dataset compliance against a selected privacy profile.
+- [ ] **Export Manifest**: Automatic generation of visual (HTML) and machine-readable (CSV/JSON) manifests listing all exported files and their key metadata.
 - [ ] **Audit Reporting**: Export comprehensive CSV reports of the session inventory, including details on what was redacted or modified.
 - [ ] **Structured Reporting (SR) Support**: Support for deep parsing and anonymization of DICOM Structured Reports.
 

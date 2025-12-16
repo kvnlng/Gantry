@@ -101,3 +101,36 @@ class CTPParser:
              }
         
         return None
+
+if __name__ == "__main__":
+    import sys
+    import json
+    import os
+
+    if len(sys.argv) < 3:
+        print("Usage: python -m gantry.utils.ctp_parser <input_script_path> <output_json_path>")
+        sys.exit(1)
+
+    input_path = sys.argv[1]
+    output_path = sys.argv[2]
+
+    if not os.path.exists(input_path):
+        print(f"Error: Input file {input_path} not found.")
+        sys.exit(1)
+
+    try:
+        with open(input_path, 'r') as f:
+            content = f.read()
+        
+        rules = CTPParser.parse_script(content)
+        
+        output_data = {"rules": rules}
+        
+        with open(output_path, 'w') as f:
+            json.dump(output_data, f, indent=4)
+            
+        print(f"Successfully converted {len(rules)} rules to {output_path}")
+
+    except Exception as e:
+        print(f"Error parsing script: {e}")
+        sys.exit(1)
