@@ -147,7 +147,17 @@ class RedactionService:
                 # Apply redaction in memory
                 r1, r2, c1, c2 = roi
                 
-                rows, cols = arr.shape[-2], arr.shape[-1]
+                # Identify Dimensions: (Rows, Cols) even if RGB
+                ndim = len(arr.shape)
+                if ndim == 3 and arr.shape[-1] in [3, 4]:
+                     # RGB/RGBA: (Rows, Cols, Channels)
+                     rows, cols = arr.shape[0], arr.shape[1]
+                else:
+                     # Standard Grayscale: (Rows, Cols) or (Frames, Rows, Cols)??
+                     # If (Frames, Rows, Cols), usually Frames > 1.
+                     # But current logic was arr.shape[-2], arr.shape[-1].
+                     # Let's stick to last two dims as Rows, Cols for n-D grayscale
+                     rows, cols = arr.shape[-2], arr.shape[-1]
                 
                 # Safety Checks
                 if r1 >= rows or c1 >= cols:
