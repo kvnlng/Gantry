@@ -29,6 +29,10 @@ Instead of treating files as flat dictionaries, Gantry provides a semantic inter
 *   **Hierarchical Object Model**: Work with semantic entities (`Patient` → `Study`) instead of raw tags.
 *   **Machine-Centric Indexing**: Automatically groups images by equipment signature (Model & Serial).
 
+### 🏆 Audit & Compliance
+*   **Standard De-Identification**: Automatically stamps `(0012,0063)` and `(0012,0064)` with privacy profile details for compliance.
+*   **Robust Auditing**: SQLite-backed audit logs with concurrency support for high-throughput remediation.
+
 ---
 
 ## 📦 Installation
@@ -179,7 +183,7 @@ If you are migrating from CTP (RSNA Clinical Trial Processor), Gantry can ingest
 Use the built-in utility to convert your `.script` file into a Gantry-compatible JSON file.
 
 ```bash
-python -m gantry.utils.ctp_parser /path/to/DicomPixelAnonymizer.script gantry/resources/ctp_rules.json
+python -m gantry.utils.ctp_parser /path/to/DicomPixelAnonymizer.script gantry/resources/ctp_rules.yaml
 ```
 
 **Step 2: Scaffolding**
@@ -187,8 +191,8 @@ Once the `ctp_rules.json` file is in `gantry/resources/`, the `scaffold_config` 
 
 ```python
 # In your python session
-session.scaffold_config("my_new_config.json") 
-# Gantry will check resources/ctp_rules.json and apply matching zones!
+session.scaffold_config("my_new_config.yaml") 
+# Gantry will check resources/ctp_rules.yaml and apply matching zones!
 ```
 
 ## 🧪 Running Tests

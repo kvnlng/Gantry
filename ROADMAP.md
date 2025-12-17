@@ -23,6 +23,10 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 - [x] Parallel Processing (Multiprocessing for Import & PHI Scan)
 - [x] Optimized Batch UX (Deferred Persistence + Feedback)
 - [x] Advanced Configuration Actions (REMOVE / EMPTY)
+- [x] **YAML Configuration**: Full migration from JSON to YAML for configuration and scaffolding.
+- [x] **Redaction Robustness**: Aesthetic YAML output, flow-style lists, and "Burned In Annotation" warnings.
+- [x] **Standard De-Identification Tags**: Compliance with (0012,0063) and (0012,0064).
+- [x] **Audit Reliability**: Suppressed false positives for shifted dates and realized DB concurrency fixes.
 
 ---
 

@@ -1,5 +1,7 @@
-
+import os
 import re
+import sys
+import yaml
 
 class CTPParser:
     """
@@ -101,12 +103,9 @@ class CTPParser:
         return None
 
 if __name__ == "__main__":
-    import sys
-    import json
-    import os
 
     if len(sys.argv) < 3:
-        print("Usage: python -m gantry.utils.ctp_parser <input_script_path> <output_json_path>")
+        print("Usage: python -m gantry.utils.ctp_parser <input_script_path> <output_yaml_path>")
         sys.exit(1)
 
     input_path = sys.argv[1]
@@ -117,7 +116,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
-        import yaml
         with open(input_path, 'r') as f:
             content = f.read()
         

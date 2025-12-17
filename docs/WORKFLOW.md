@@ -97,7 +97,7 @@ We remove burned-in text from the pixel matrix using the configured ROIs.
 
 ```python
 # Load the plan
-session.load_config("redaction_plan.json")
+session.load_config("privacy_config.yaml")
 
 # Execute: Process pixel data
 session.redact_pixels()
@@ -108,7 +108,7 @@ session.redact_pixels()
 Re-run the scans on the *modified* in-memory session.
 
 ```python
-final_check = session.scan_for_phi()
+final_check = session.audit()
 if final_check:
     print("WARNING: Residual PHI detected!")
 else:

@@ -440,6 +440,21 @@ class DicomSession:
         """
         svc = RemediationService(self.store_backend, date_jitter_config=self.active_date_jitter)
         svc.apply_remediation(findings)
+        
+        # Apply Global De-Identification Tags (compliance)
+        # We process ALL instances to ensure they are stamped
+        get_logger().info("Applying standard De-Identification Method tags...")
+        print("Stamping De-Identification Method tags...")
+        
+        count = 0
+        for p in self.store.patients:
+            for st in p.studies:
+                for se in st.series:
+                    for inst in se.instances:
+                        svc.add_global_deid_tags(inst)
+                        count += 1
+                        
+        get_logger().info(f" stamped {count} instances.")
 
     def export(self, folder, safe=False):
         """
