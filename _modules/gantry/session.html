@@ -554,7 +554,22 @@
 <span class="sd">        Auto-logs to Audit Trail.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">svc</span> <span class="o">=</span> <span class="n">RemediationService</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span><span class="p">,</span> <span class="n">date_jitter_config</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">active_date_jitter</span><span class="p">)</span>
-        <span class="n">svc</span><span class="o">.</span><span class="n">apply_remediation</span><span class="p">(</span><span class="n">findings</span><span class="p">)</span></div>
+        <span class="n">svc</span><span class="o">.</span><span class="n">apply_remediation</span><span class="p">(</span><span class="n">findings</span><span class="p">)</span>
+        
+        <span class="c1"># Apply Global De-Identification Tags (compliance)</span>
+        <span class="c1"># We process ALL instances to ensure they are stamped</span>
+        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Applying standard De-Identification Method tags...&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Stamping De-Identification Method tags...&quot;</span><span class="p">)</span>
+        
+        <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">st</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">st</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
+                    <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">:</span>
+                        <span class="n">svc</span><span class="o">.</span><span class="n">add_global_deid_tags</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
+                        <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+                        
+        <span class="n">get_logger</span><span class="p">()</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot; stamped </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2"> instances.&quot;</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="DicomSession.export">

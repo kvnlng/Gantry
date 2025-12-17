@@ -49,6 +49,7 @@
 <li class="toctree-l3"><a class="reference internal" href="#privacy-security">🛡️ Privacy &amp; Security</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#performance-scale">⚡ Performance &amp; Scale</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#intelligent-data-management">🧠 Intelligent Data Management</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#audit-compliance">🏆 Audit &amp; Compliance</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="#installation">📦 Installation</a></li>
@@ -127,6 +128,13 @@
 <ul class="simple">
 <li><p><strong>Hierarchical Object Model</strong>: Work with semantic entities (<code class="docutils literal notranslate"><span class="pre">Patient</span></code> → <code class="docutils literal notranslate"><span class="pre">Study</span></code>) instead of raw tags.</p></li>
 <li><p><strong>Machine-Centric Indexing</strong>: Automatically groups images by equipment signature (Model &amp; Serial).</p></li>
+</ul>
+</section>
+<section id="audit-compliance">
+<h3>🏆 Audit &amp; Compliance<a class="headerlink" href="#audit-compliance" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p><strong>Standard De-Identification</strong>: Automatically stamps <code class="docutils literal notranslate"><span class="pre">(0012,0063)</span></code> and <code class="docutils literal notranslate"><span class="pre">(0012,0064)</span></code> with privacy profile details for compliance.</p></li>
+<li><p><strong>Robust Auditing</strong>: SQLite-backed audit logs with concurrency support for high-throughput remediation.</p></li>
 </ul>
 </section>
 </section>
@@ -267,14 +275,14 @@ Based on the <strong>DICOM PS3.15 Annex E (Basic Profile)</strong>, this profile
 <p>If you are migrating from CTP (RSNA Clinical Trial Processor), Gantry can ingest your existing <code class="docutils literal notranslate"><span class="pre">DicomPixelAnonymizer.script</span></code> files to preserve your knowledge base of redaction zones.</p>
 <p><strong>Step 1: Convert the Script</strong>
 Use the built-in utility to convert your <code class="docutils literal notranslate"><span class="pre">.script</span></code> file into a Gantry-compatible JSON file.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>gantry.utils.ctp_parser<span class="w"> </span>/path/to/DicomPixelAnonymizer.script<span class="w"> </span>gantry/resources/ctp_rules.json
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>gantry.utils.ctp_parser<span class="w"> </span>/path/to/DicomPixelAnonymizer.script<span class="w"> </span>gantry/resources/ctp_rules.yaml
 </pre></div>
 </div>
 <p><strong>Step 2: Scaffolding</strong>
 Once the <code class="docutils literal notranslate"><span class="pre">ctp_rules.json</span></code> file is in <code class="docutils literal notranslate"><span class="pre">gantry/resources/</span></code>, the <code class="docutils literal notranslate"><span class="pre">scaffold_config</span></code> command will automatically use it to match machines and pre-fill redaction zones for your new inventory.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># In your python session</span>
-<span class="n">session</span><span class="o">.</span><span class="n">scaffold_config</span><span class="p">(</span><span class="s2">&quot;my_new_config.json&quot;</span><span class="p">)</span> 
-<span class="c1"># Gantry will check resources/ctp_rules.json and apply matching zones!</span>
+<span class="n">session</span><span class="o">.</span><span class="n">scaffold_config</span><span class="p">(</span><span class="s2">&quot;my_new_config.yaml&quot;</span><span class="p">)</span> 
+<span class="c1"># Gantry will check resources/ctp_rules.yaml and apply matching zones!</span>
 </pre></div>
 </div>
 </section>
