@@ -17,7 +17,8 @@ def test_redaction_rgb_dimensions():
     
     inst = Instance("I_RGB", "SOP_RGB", 1)
     inst.set_pixel_data(rgb_data)
-    inst.regenerate_uid = MagicMock() # avoid heavy UID logic
+    inst.set_pixel_data(rgb_data)
+    # inst.regenerate_uid = MagicMock() # Removed: slots prevent monkeypatching, and regex is fast enough
     
     store = DicomStore()
     p = Patient("P1", "Test")

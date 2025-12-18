@@ -3,7 +3,7 @@ from typing import List, Any, Optional, Union, Dict
 import hashlib
 from .entities import Patient, Study, Series, Instance
 
-@dataclass
+@dataclass(slots=True)
 class PhiRemediation:
     """Proposed action to fix a PHI finding."""
     action_type: str  # e.g., "REPLACE_TAG", "REDACT_REGION"
@@ -12,7 +12,7 @@ class PhiRemediation:
     original_value: Any = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-@dataclass
+@dataclass(slots=True)
 class PhiFinding:
     """Represents a potential PHI breach discovered during a scan."""
     entity_uid: str

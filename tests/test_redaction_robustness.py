@@ -27,18 +27,21 @@ def test_redaction_crash_prevention(mock_store):
     
     # 1. Setup Instance with NO pixel data (None)
     inst = Instance("I_FAIL", "SOP1", 1)
-    # Mocking get_pixel_data to return None
-    inst.get_pixel_data = MagicMock(return_value=None)
+    # Mocking get_pixel_data to return None - Handled by patch.object below
+    # inst.get_pixel_data = MagicMock(return_value=None)
     series.instances.append(inst)
     
     # 2. Run Redaction
     service = RedactionService(store)
     service.logger = MagicMock()
     
-    try:
-        service.redact_machine_region("SN-FAIL", (0, 100, 0, 100))
-    except AttributeError as e:
-        pytest.fail(f"Crash detected: {e}")
+    # Patch the CLASS method because slots prevent instance monkeypatching
+    from unittest.mock import patch
+    with patch.object(Instance, 'get_pixel_data', return_value=None):
+        try:
+            service.redact_machine_region("SN-FAIL", (0, 100, 0, 100))
+        except AttributeError as e:
+            pytest.fail(f"Crash detected: {e}")
         
     # 3. Verify Warning Logged
     service.logger.warning.assert_called_with(f"  Skipping {inst.sop_instance_uid}: No pixel data found (or file missing).")

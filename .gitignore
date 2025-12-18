@@ -4,7 +4,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+.DS_Store/
 .DS_Store
+.vscode/
 
 # C extensions
 *.so
@@ -52,6 +54,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+__pycache__/
 cover/
 
 # Translations
@@ -63,6 +66,7 @@ cover/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+gantry.db
 
 # Flask stuff:
 instance/

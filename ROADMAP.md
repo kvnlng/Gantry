@@ -34,9 +34,9 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 
 ### v0.5.0 - Data Integrity & Advanced Redaction
 Focus: Validating data integrity and expanding redaction capabilities.
-- [ ] **Pixel Redaction Verification**: Verify that zeroed-out pixels are truly zero (not just concealed by LUTs).
+- [ ] **Pixel Redaction Verification**: Verify that zeroed-out pixels are truly zero.
 - [x] **Pixel Integrity Tests**: Add unit tests to verify `PhotometricInterpretation` and `SamplesPerPixel` are preserved after modification.
-- [ ] **Memory Profiling**: Optimize `MachinePixelIndex` to handle massive datasets without excessive RAM usage.
+- [x] **Memory Profiling**: Optimize `MachinePixelIndex` and `Entities` (using `__slots__`) to handle massive datasets.
 - [x] **Standard Privacy Profiles**: Built-in compliance profiles (e.g., DICOM PS3.15 Annex E) to simplify configuration.
 - [ ] **Custom Privacy Profiles**: Allow users to define their own reuseable profiles in external JSON files.
 - [ ] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.

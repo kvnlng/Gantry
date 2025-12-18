@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 
 # --- Base Classes ---
 
-@dataclass
+@dataclass(slots=True)
 class DicomSequence:
     """
     Represents a DICOM Sequence (SQ) containing multiple DicomItems.
@@ -17,7 +17,7 @@ class DicomSequence:
     items: List['DicomItem'] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(slots=True)
 class DicomItem:
     """
     Base class for any entity that holds DICOM attributes and sequences.
@@ -41,7 +41,7 @@ class DicomItem:
         self.sequences[tag].items.append(item)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Equipment:
     """
     Immutable Equipment definition.
@@ -54,7 +54,7 @@ class Equipment:
 
 # --- Core Hierarchy ---
 
-@dataclass
+@dataclass(slots=True)
 class Instance(DicomItem):
     """
     Represents a single DICOM image (SOP Instance).
@@ -79,15 +79,7 @@ class Instance(DicomItem):
         self.set_attr("0008,0016", self.sop_class_uid)
         self.set_attr("0020,0013", self.instance_number)
 
-    def __getstate__(self):
-        """Called when saving to disk. Drop the heavy pixel array."""
-        state = self.__dict__.copy()
-        state['pixel_array'] = None
-        return state
 
-    def __setstate__(self, state):
-        """Called when loading from disk. Restore metadata."""
-        self.__dict__.update(state)
 
     def regenerate_uid(self):
         """
@@ -179,7 +171,7 @@ class Instance(DicomItem):
         if samples >= 3: self.set_attr("0028,0004", "RGB")
 
 
-@dataclass
+@dataclass(slots=True)
 class Series:
     """
     Groups Instances by Series Instance UID.
@@ -192,7 +184,7 @@ class Series:
     instances: List[Instance] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(slots=True)
 class Study:
     """
     Groups Series by Study Instance UID.
@@ -204,7 +196,7 @@ class Study:
     date_shifted: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class Patient:
     """
     Root of the object hierarchy. Groups Studies by Patient ID.
