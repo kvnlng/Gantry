@@ -103,7 +103,8 @@ class Instance(DicomItem):
         # it no longer matches the file on disk.
         self.file_path = None 
         
-        print(f"  -> Identity regenerated: {new_uid}")
+        from .logger import get_logger
+        get_logger().debug(f"  -> Identity regenerated: {new_uid}")
 
     def get_pixel_data(self) -> Optional[np.ndarray]:
         """
