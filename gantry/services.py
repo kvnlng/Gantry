@@ -147,17 +147,21 @@ class RedactionService:
                 # Apply redaction in memory
                 r1, r2, c1, c2 = roi
                 
-                # Identify Dimensions: (Rows, Cols) even if RGB
+                # Identify Dimensions & Indices
                 ndim = len(arr.shape)
-                if ndim == 3 and arr.shape[-1] in [3, 4]:
-                     # RGB/RGBA: (Rows, Cols, Channels)
-                     rows, cols = arr.shape[0], arr.shape[1]
-                else:
-                     # Standard Grayscale: (Rows, Cols) or (Frames, Rows, Cols)??
-                     # If (Frames, Rows, Cols), usually Frames > 1.
-                     # But current logic was arr.shape[-2], arr.shape[-1].
-                     # Let's stick to last two dims as Rows, Cols for n-D grayscale
-                     rows, cols = arr.shape[-2], arr.shape[-1]
+                
+                # Default to last two dimensions (standard Grayscale/Planar)
+                row_dim = ndim - 2
+                col_dim = ndim - 1
+                
+                if ndim >= 3 and arr.shape[-1] in [3, 4]:
+                     # RGB/RGBA Interleaved: (..., Rows, Cols, Channels)
+                     # e.g. (1024, 1024, 3) or (1, 1024, 1024, 3)
+                     row_dim = ndim - 3
+                     col_dim = ndim - 2
+                
+                rows = arr.shape[row_dim]
+                cols = arr.shape[col_dim]
                 
                 # Safety Checks
                 if r1 >= rows or c1 >= cols:
@@ -171,7 +175,14 @@ class RedactionService:
                 if r2_clamped != r2 or c2_clamped != c2:
                     self.logger.warning(f"ROI {roi} extends beyond image ({rows}x{cols}). Clipping to image bounds.")
 
-                arr[r1:r2_clamped, c1:c2_clamped] = 0
+                # Construct Slices dynamically
+                slices = [slice(None)] * ndim
+                slices[row_dim] = slice(r1, r2_clamped)
+                slices[col_dim] = slice(c1, c2_clamped)
+                
+                # Apply Redaction
+                arr[tuple(slices)] = 0
+                
                 self._apply_redaction_flags(inst)
 
                 inst.regenerate_uid()
