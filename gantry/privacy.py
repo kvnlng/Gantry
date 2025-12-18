@@ -156,6 +156,9 @@ class PhiInspector:
         return findings
 
     def _scan_instance(self, instance: Instance, patient_id: str) -> List[PhiFinding]:
+        """
+        Scans a single instance for PHI based on configured tags and private tag rules.
+        """
         findings = []
         
         # 1. Private Tag Removal Logic
@@ -262,6 +265,9 @@ class PhiInspector:
         return findings
 
     def _scan_study(self, study: Study, patient_id: str = None) -> List[PhiFinding]:
+        """
+        Scans a Study entity for study-level PHI (e.g. StudyDate).
+        """
         findings = []
         uid = study.study_instance_uid
         

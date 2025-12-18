@@ -54,6 +54,12 @@ class DicomSession:
 
 
     def __init__(self, persistence_file="gantry.db"):
+        """
+        Initialize the DicomSession.
+        
+        Args:
+            persistence_file: Path to the SQLite database for session persistence.
+        """
         configure_logger()
         self.persistence_file = persistence_file
         self.store_backend = SqliteStore(persistence_file)
@@ -185,6 +191,10 @@ class DicomSession:
         return self._recover_identity_logic(patient_id) # Simplify for brevity if needed, but I should just replace the loop
 
     def _recover_identity_logic(self, patient_id: str):
+        """
+        Internal helper to execute the identity recovery logic.
+        (Placeholder for shared logic between single/batch recovery).
+        """
         # implementation details
         pass
 

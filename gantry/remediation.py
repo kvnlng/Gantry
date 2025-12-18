@@ -11,6 +11,13 @@ class RemediationService:
     Handles data anonymization and date shifting.
     """
     def __init__(self, store_backend=None, date_jitter_config: Optional[dict] = None):
+        """
+        Initialize the remediation service.
+        
+        Args:
+            store_backend: Persistence layer for logging audit trails.
+            date_jitter_config: Configuration for date shifting (min_days, max_days).
+        """
         self.logger = get_logger()
         self.store_backend = store_backend
         self.jitter_config = date_jitter_config or {"min_days": -365, "max_days": -1}
@@ -43,6 +50,10 @@ class RemediationService:
             self.store_backend.log_audit_batch(audit_buffer)
 
     def _apply_single_remediation(self, finding: PhiFinding, audit_buffer: list = None):
+        """
+        Executes a single remediation proposal on the target entity.
+        Handles REPLACE_TAG, SHIFT_DATE, REMOVE_TAG actions.
+        """
         proposal = finding.remediation_proposal
         entity = finding.entity
         
@@ -127,6 +138,10 @@ class RemediationService:
                     self.store_backend.log_audit(action_type, finding.entity_uid, details)
 
     def _resolve_patient_id(self, entity, proposal: PhiRemediation = None) -> Optional[str]:
+        """
+        Resolves the PatientID for a given entity or proposal.
+        Essential for deterministic date shifting.
+        """
         # 1. Check metadata in proposal (Best for Date Shifting logic)
         if proposal and proposal.metadata and "patient_id" in proposal.metadata:
             return proposal.metadata["patient_id"]
