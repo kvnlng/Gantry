@@ -24,7 +24,7 @@ Instead of treating files as flat dictionaries, Gantry provides a semantic inter
 ### ⚡ Performance & Scale
 *   **Parallel Processing**: Multi-process architecture for high-speed import and PHI scanning.
 *   **Lazy Loading**: Minimal memory footprint; loads pixel data only when needed.
-*   **Robust Persistence**: Powered by **SQLite** (`gantry.db`) to handle large-scale datasets with ACID guarantees.
+*   **Robust Persistence**: Powered by **SQLite** (`gantry.db`) for metadata and **Binary Sidecar** (`gantry_pixels.bin`) for high-performance pixel storage.
 
 ### 🧠 Intelligent Data Management
 *   **Hierarchical Object Model**: Work with semantic entities (`Patient` → `Study`) instead of raw tags.

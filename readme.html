@@ -121,7 +121,7 @@
 <ul class="simple">
 <li><p><strong>Parallel Processing</strong>: Multi-process architecture for high-speed import and PHI scanning.</p></li>
 <li><p><strong>Lazy Loading</strong>: Minimal memory footprint; loads pixel data only when needed.</p></li>
-<li><p><strong>Robust Persistence</strong>: Powered by <strong>SQLite</strong> (<code class="docutils literal notranslate"><span class="pre">gantry.db</span></code>) to handle large-scale datasets with ACID guarantees.</p></li>
+<li><p><strong>Robust Persistence</strong>: Powered by <strong>SQLite</strong> (<code class="docutils literal notranslate"><span class="pre">gantry.db</span></code>) for metadata and <strong>Binary Sidecar</strong> (<code class="docutils literal notranslate"><span class="pre">gantry_pixels.bin</span></code>) for high-performance pixel storage.</p></li>
 </ul>
 </section>
 <section id="intelligent-data-management">
