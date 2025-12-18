@@ -74,7 +74,10 @@ class Instance(DicomItem):
     date_shifted: bool = field(default=False, init=False)
 
     def __post_init__(self):
-        super().__post_init__()
+        # Inlined from DicomItem to avoid super() mismatch issues with slots/reloads
+        self.attributes = {}
+        self.sequences = {}
+        
         self.set_attr("0008,0018", self.sop_instance_uid)
         self.set_attr("0008,0016", self.sop_class_uid)
         self.set_attr("0020,0013", self.instance_number)
