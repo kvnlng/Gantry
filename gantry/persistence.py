@@ -1,9 +1,13 @@
 import sqlite3
+import sqlite3
 import os
+import tempfile
 import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from .entities import Patient, Study, Series, Instance, Equipment
+from .sidecar import SidecarManager
+import numpy as np
 from .logger import get_logger
 from .privacy import PhiFinding, PhiRemediation
 
@@ -48,6 +52,10 @@ class SqliteStore:
         sop_class_uid TEXT,
         instance_number INTEGER,
         file_path TEXT,
+        pixel_file_id INTEGER DEFAULT 0,
+        pixel_offset INTEGER,
+        pixel_length INTEGER,
+        compress_alg TEXT,
         attributes_json TEXT, -- Store extra attributes as JSON for now
         FOREIGN KEY(series_id_fk) REFERENCES series(id)
     );
@@ -77,6 +85,20 @@ class SqliteStore:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.logger = get_logger()
+        if db_path == ":memory:":
+            # Use a temporary file for sidecar if DB is in-memory
+            # SidecarManager currently requires a file path (append-only logic)
+            # Create a temp file that persists until process exit (or manual cleanup)
+            # We use NamedTemporaryFile but close it so SidecarManager can open/lock it.
+            tf = tempfile.NamedTemporaryFile(suffix="_pixels.bin", delete=False)
+            self.sidecar_path = tf.name
+            tf.close()
+            # Note: This temp file won't be auto-deleted by Gantry efficiently in all cases
+            # but avoids pollution. In stricter envs, we might want weakref cleanup.
+        else:
+            self.sidecar_path = os.path.splitext(db_path)[0] + "_pixels.bin"
+            
+        self.sidecar = SidecarManager(self.sidecar_path)
         self._init_db()
 
     def _init_db(self):
@@ -162,6 +184,65 @@ class SqliteStore:
                         r['instance_number'], 
                         file_path=r['file_path']
                     )
+                    
+                    # Wire up Sidecar Loader if present
+                    if r['pixel_offset'] is not None and r['pixel_length'] is not None:
+                         # Capture closure vars
+                         offset = r['pixel_offset']
+                         length = r['pixel_length']
+                         alg = r['compress_alg']
+                         
+                         # We need to reshape after loading. The dimensions are in attributes.
+                         # We can do this inside the lambda wrapper or a helper method.
+                         # But Instance.attributes aren't populated yet! 
+                         # Wait, we populate attributes right after this.
+                         # So the lambda calls self.instance methods? No, lambda binds early.
+                         
+                         def make_loader(mgr, o, l, c, i_ref):
+                             def loader():
+                                 raw = mgr.read_frame(o, l, c)
+                                 arr = np.frombuffer(raw, dtype=np.uint8) # Assumption: uint8?
+                                 # Uh oh, we need dtype and shape.
+                                 # Generally standard DICOM is uint8 or uint16.
+                                 # We should probably store dtype in DB? Or infer from bits stored?
+                                 
+                                 # For now, let's assume we can reconstruct or simple reshape?
+                                 # Wait, tobytes() is raw bytes. np.frombuffer needs dtype.
+                                 # We can infer dtype from BitsAllocated in attributes later.
+                                 
+                                 # We need access to the instance's attributes AT CALL TIME.
+                                 bits = i_ref.attributes.get("0028,0100", 8)
+                                 # Only 8 or 16 supported typically
+                                 dt = np.uint16 if bits > 8 else np.uint8
+                                 
+                                 arr = np.frombuffer(raw, dtype=dt)
+                                 
+                                 # Reshape
+                                 rows = i_ref.attributes.get("0028,0010", 0)
+                                 cols = i_ref.attributes.get("0028,0011", 0)
+                                 samples = i_ref.attributes.get("0028,0002", 1)
+                                 frames = int(i_ref.attributes.get("0028,0008", 0) or 0)
+                                 
+                                 # Logic to reconstruct shape
+                                 # (Keep consistent with set_pixel_data logic)
+                                 if frames > 1:
+                                     target_shape = (frames, rows, cols, samples)
+                                     if samples == 1: target_shape = (frames, rows, cols)
+                                 elif samples > 1:
+                                     target_shape = (rows, cols, samples)
+                                 else:
+                                     target_shape = (rows, cols)
+                                 
+                                 try:
+                                     return arr.reshape(target_shape)
+                                 except:
+                                     # Fallback if shape calc is wrong
+                                     return arr
+                                     
+                             return loader
+
+                         inst._pixel_loader = make_loader(self.sidecar, offset, length, alg, inst)
+
                     # Restore extra attributes
                     if r['attributes_json']:
                         try:
@@ -235,6 +316,10 @@ class SqliteStore:
         """
         self.logger.info(f"Saving {len(patients)} patients to {self.db_path}...")
         
+        pixel_bytes_written = 0
+        pixel_frames_written = 0
+        sidecar_manager = self.sidecar
+        
         try:
             with sqlite3.connect(self.db_path, timeout=300.0) as conn:
                 cur = conn.cursor()
@@ -272,13 +357,46 @@ class SqliteStore:
                                 full_data = self._serialize_item(inst)
                                 attrs_json = json.dumps(full_data, cls=GantryJSONEncoder)
                                 
+                                full_data = self._serialize_item(inst)
+                                attrs_json = json.dumps(full_data, cls=GantryJSONEncoder)
+                                
+                                # Pixel Persistence Sidecar Logic
+                                p_offset = None
+                                p_length = None
+                                p_alg = None
+                                
+                                # If pixels are dirty (in memory), write them.
+                                # If they came from sidecar (inst._pixel_loader matches our sidecar logic), 
+                                # we might theoretically optimize and not rewrite if unchanged?
+                                # But append-only is safest for simple "rewrite all" logic.
+                                # For now, if pixel_array is present, we write newly.
+                                
+                                if inst.pixel_array is not None:
+                                     b_data = inst.pixel_array.tobytes()
+                                     # Simple compression
+                                     c_alg = 'zlib'
+                                     off, leng = sidecar_manager.write_frame(b_data, c_alg)
+                                     p_offset = off
+                                     p_length = leng
+                                     p_alg = c_alg
+                                     
+                                     pixel_bytes_written += leng
+                                     pixel_frames_written += 1
+                                
                                 cur.execute("""
-                                    INSERT INTO instances (series_id_fk, sop_instance_uid, sop_class_uid, instance_number, file_path, attributes_json)
-                                    VALUES (?, ?, ?, ?, ?, ?)
-                                """, (se_pk, inst.sop_instance_uid, inst.sop_class_uid, inst.instance_number, inst.file_path, attrs_json))
+                                    INSERT INTO instances (series_id_fk, sop_instance_uid, sop_class_uid, instance_number, file_path, 
+                                                           pixel_offset, pixel_length, compress_alg, attributes_json)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (se_pk, inst.sop_instance_uid, inst.sop_class_uid, inst.instance_number, inst.file_path, 
+                                      p_offset, p_length, p_alg, attrs_json))
                 
                 conn.commit()
-                self.logger.info("Save complete.")
+                
+                msg = f"Save complete. DB: {len(patients)} patients."
+                if pixel_frames_written > 0:
+                    mb = pixel_bytes_written / (1024*1024)
+                    msg += f" Sidecar: {pixel_frames_written} frames ({mb:.2f} MB)."
+                self.logger.info(msg)
 
         except sqlite3.Error as e:
             self.logger.error(f"Failed to save to DB: {e}")

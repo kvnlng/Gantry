@@ -3,7 +3,7 @@ import numpy as np
 import pydicom
 from pydicom.uid import generate_uid
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 
 
 # --- Base Classes ---
@@ -70,6 +70,10 @@ class Instance(DicomItem):
     # Transient: Actual pixel data (NOT persisted to pickle)
     pixel_array: Optional[np.ndarray] = field(default=None, repr=False)
     
+    # Transient: Lazy Loader (Callable that returns np.ndarray)
+    # Used for Sidecar or deferred logic
+    _pixel_loader: Optional[Callable[[], np.ndarray]] = field(default=None, repr=False)
+
     # Transient: Track if dates have been shifted in memory
     date_shifted: bool = field(default=False, init=False)
 
@@ -113,6 +117,14 @@ class Instance(DicomItem):
         """
         if self.pixel_array is not None:
             return self.pixel_array
+
+        if self._pixel_loader:
+             try:
+                 # Invoke callback (e.g. sidecar read)
+                 self.pixel_array = self._pixel_loader()
+                 return self.pixel_array
+             except Exception as e:
+                 raise RuntimeError(f"Pixel Loader failed for {self.sop_instance_uid}: {e}")
 
         if self.file_path and os.path.exists(self.file_path):
             try:

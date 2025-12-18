@@ -159,7 +159,8 @@ graph TD
         end
 
         subgraph Storage [Persistence Layer]
-            Sqlite[(SqliteStore)]
+            Sqlite[(SqliteStore<br/>Metadata)]
+            Sidecar[(Pixels.bin<br/>Data)]
         end
     end
 
@@ -172,6 +173,7 @@ graph TD
     Logic -->|Scans/Modifies| Model
     Instance -.->|Lazy Load| FS
     Sqlite <-->|Hydrate/Save| Model
+    Sidecar <-->|Read/Write| Model
 ```
 
 ---
