@@ -20,26 +20,31 @@ def scan_worker(args):
     """
     Args:
         args: Tuple of (db_path, patient_id, config_source, remove_private) 
-              OR legacy (patient_obj, ...) for backward compatibility if needed (but we are replacing it).
+              OR (patient_obj, config_source, remove_private)
     
     Returns: List[PhiFinding] (WITHOUT entities)
     """
-    if len(args) == 4 and isinstance(args[0], str) and isinstance(args[1], str):
-        # New mode: (db_path, patient_id, ...)
+    patient = None
+    
+    # Check for Object Passing (Legacy/In-Memory/Tests)
+    # If first arg is NOT a string (it's a Patient object)
+    if len(args) >= 1 and not isinstance(args[0], str):
+        if len(args) == 3:
+            patient, config_source, remove_private = args
+        else:
+             patient, config_source = args
+             remove_private = True
+             
+    # Check for DB Loading (Large Scale / Production)
+    elif len(args) == 4 and isinstance(args[0], str) and isinstance(args[1], str):
         db_path, patient_id, config_source, remove_private = args
         # Rehydrate
         from .persistence import SqliteStore
         store = SqliteStore(db_path)
         patient = store.load_patient(patient_id)
-        if not patient:
-            return [] # Should not happen
-    else:
-        # Fallback / Old mode (if any calls remain)
-        if len(args) == 3:
-            patient, config_source, remove_private = args
-        else:
-            patient, config_source = args
-            remove_private = True
+    
+    if not patient:
+        return []
 
     from .privacy import PhiInspector
     
@@ -214,6 +219,42 @@ class DicomSession:
     # ... skip to scan_for_phi ...
 
 
+        
+    def _make_lightweight_copy(self, patient: "Patient") -> "Patient":
+        """
+        Creates a swallow copy of the patient graph with pixel data stripped.
+        Used to prevent IPC buffer overflows (Windows) when passing to workers.
+        """
+        from copy import copy
+        
+        # P -> St -> Se -> Inst
+        p_clone = copy(patient)
+        p_clone.studies = []
+        
+        for st in patient.studies:
+            st_clone = copy(st)
+            st_clone.series = []
+            p_clone.studies.append(st_clone)
+            
+            for se in st.series:
+                se_clone = copy(se)
+                se_clone.instances = []
+                st_clone.series.append(se_clone)
+                
+                for inst in se.instances:
+                    # Clone instance
+                    i_clone = copy(inst)
+                    # Strip heavy fields
+                    try:
+                        i_clone.pixel_array = None
+                        i_clone._pixel_loader = None
+                    except: 
+                        pass 
+                    
+                    se_clone.instances.append(i_clone)
+                    
+        return p_clone
+
     def audit(self, config_path: str = None) -> "PhiReport":
         """
         Scans all patients in the session for potential PHI.
@@ -256,11 +297,14 @@ class DicomSession:
         
         get_logger().info("Scanning for PHI (Parallel)...")
         
-        # Pass (DB_PATH, PATIENT_ID, ...) instead of full object to avoid IPC limits
-        worker_args = [
-            (self.persistence_file, p.patient_id, tags_to_use, self.active_remove_private_tags) 
-            for p in self.store.patients
-        ]
+        # Hybrid Approach:
+        # Pass lightweight object CLONES to avoid "Assert left > 0" IPC error
+        # AND to ensure we audit in-memory (unsaved) changes.
+        worker_args = []
+        for p in self.store.patients:
+            # Strip pixels to reduce size
+            light_p = self._make_lightweight_copy(p)
+            worker_args.append((light_p, tags_to_use, self.active_remove_private_tags))
         
         results = run_parallel(scan_worker, worker_args, desc="Scanning PHI")
         
