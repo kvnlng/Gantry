@@ -18,24 +18,36 @@ from .parallel import run_parallel
 
 def scan_worker(args):
     """
-    Worker to scan a single patient.
-    args: (patient_copy, config_source, remove_private)
-    Returns: List[PhiFinding] (WITHOUT entities, lightweight)
+    Args:
+        args: Tuple of (db_path, patient_id, config_source, remove_private) 
+              OR legacy (patient_obj, ...) for backward compatibility if needed (but we are replacing it).
+    
+    Returns: List[PhiFinding] (WITHOUT entities)
     """
-    if len(args) == 3:
-        patient, config_source, remove_private = args
+    if len(args) == 4 and isinstance(args[0], str) and isinstance(args[1], str):
+        # New mode: (db_path, patient_id, ...)
+        db_path, patient_id, config_source, remove_private = args
+        # Rehydrate
+        from .persistence import SqliteStore
+        store = SqliteStore(db_path)
+        patient = store.load_patient(patient_id)
+        if not patient:
+            return [] # Should not happen
     else:
-        patient, config_source = args
-        remove_private = True # Default
+        # Fallback / Old mode (if any calls remain)
+        if len(args) == 3:
+            patient, config_source, remove_private = args
+        else:
+            patient, config_source = args
+            remove_private = True
 
-    from .privacy import PhiInspector # Import inside worker
+    from .privacy import PhiInspector
     
     if isinstance(config_source, dict):
         inspector = PhiInspector(config_tags=config_source, remove_private_tags=remove_private)
     elif isinstance(config_source, str) or config_source is None:
         inspector = PhiInspector(config_path=config_source, remove_private_tags=remove_private)
     else:
-        # Fallback
         inspector = PhiInspector()
 
     findings = inspector.scan_patient(patient)
@@ -244,7 +256,11 @@ class DicomSession:
         
         get_logger().info("Scanning for PHI (Parallel)...")
         
-        worker_args = [(p, tags_to_use, self.active_remove_private_tags) for p in self.store.patients]
+        # Pass (DB_PATH, PATIENT_ID, ...) instead of full object to avoid IPC limits
+        worker_args = [
+            (self.persistence_file, p.patient_id, tags_to_use, self.active_remove_private_tags) 
+            for p in self.store.patients
+        ]
         
         results = run_parallel(scan_worker, worker_args, desc="Scanning PHI")
         

@@ -261,6 +261,89 @@ class SqliteStore:
             self.logger.error(f"Failed to load PDF from DB: {e}")
             return []
 
+    def load_patient(self, patient_uid: str) -> Optional[Patient]:
+        """Loads a single patient and their graph from the DB by PatientID."""
+        if not os.path.exists(self.db_path):
+            return None
+            
+        try:
+             with sqlite3.connect(self.db_path, timeout=300.0) as conn:
+                conn.row_factory = sqlite3.Row
+                cur = conn.cursor()
+                
+                # Fetch Patient
+                p_row = cur.execute("SELECT * FROM patients WHERE patient_id = ?", (patient_uid,)).fetchone()
+                if not p_row: return None
+                
+                p = Patient(p_row['patient_id'], p_row['patient_name'])
+                p_pk = p_row['id']
+                
+                # Fetch Studies
+                st_rows = cur.execute("SELECT * FROM studies WHERE patient_id_fk = ?", (p_pk,)).fetchall()
+                for st_r in st_rows:
+                    st = Study(st_r['study_instance_uid'], st_r['study_date'])
+                    st_pk = st_r['id']
+                    
+                    # Fetch Series
+                    se_rows = cur.execute("SELECT * FROM series WHERE study_id_fk = ?", (st_pk,)).fetchall()
+                    for se_r in se_rows:
+                        se = Series(se_r['series_instance_uid'], se_r['modality'], se_r['series_number'])
+                        if se_r['manufacturer'] or se_r['model_name']:
+                            se.equipment = Equipment(se_r['manufacturer'], se_r['model_name'], se_r['device_serial_number'])
+                        se_pk = se_r['id']
+                        
+                        # Fetch Instances
+                        i_rows = cur.execute("SELECT * FROM instances WHERE series_id_fk = ?", (se_pk,)).fetchall()
+                        for r in i_rows:
+                            inst = Instance(
+                                r['sop_instance_uid'], 
+                                r['sop_class_uid'], 
+                                r['instance_number'], 
+                                file_path=r['file_path']
+                            )
+                            # Wire up Sidecar (Copy-Paste logic from load_all, keep generic?)
+                            # ideally refactor _hydrate_instance but inline is fine for now
+                            if r['pixel_offset'] is not None and r['pixel_length'] is not None:
+                                offset, length, alg = r['pixel_offset'], r['pixel_length'], r['compress_alg']
+                                def make_loader(mgr, o, l, c, i_ref):
+                                    def loader():
+                                        raw = mgr.read_frame(o, l, c)
+                                        arr = np.frombuffer(raw, dtype=np.uint8) 
+                                        bits = i_ref.attributes.get("0028,0100", 8)
+                                        dt = np.uint16 if bits > 8 else np.uint8
+                                        arr = np.frombuffer(raw, dtype=dt)
+                                        rows = i_ref.attributes.get("0028,0010", 0)
+                                        cols = i_ref.attributes.get("0028,0011", 0)
+                                        samples = i_ref.attributes.get("0028,0002", 1)
+                                        frames = int(i_ref.attributes.get("0028,0008", 0) or 0)
+                                        if frames > 1:
+                                            target_shape = (frames, rows, cols, samples)
+                                            if samples == 1: target_shape = (frames, rows, cols)
+                                        elif samples > 1:
+                                            target_shape = (rows, cols, samples)
+                                        else:
+                                            target_shape = (rows, cols)
+                                        try: return arr.reshape(target_shape)
+                                        except: return arr
+                                    return loader
+                                inst._pixel_loader = make_loader(self.sidecar, offset, length, alg, inst)
+
+                            if r['attributes_json']:
+                                try:
+                                    attrs = json.loads(r['attributes_json'], object_hook=gantry_json_object_hook)
+                                    self._deserialize_into(inst, attrs)
+                                except: pass
+                                
+                            se.instances.append(inst)
+                        
+                        st.series.append(se)
+                    p.studies.append(st)
+                    
+                return p
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to load patient: {e}")
+            return None
+
     def _serialize_item(self, item: Instance) -> Dict[str, Any]:
         """
         Serializes a DicomItem (or Instance) to a dictionary, including attributes and sequences.
