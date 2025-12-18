@@ -131,6 +131,12 @@
 
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">persistence_file</span><span class="o">=</span><span class="s2">&quot;gantry.db&quot;</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Initialize the DicomSession.</span>
+<span class="sd">        </span>
+<span class="sd">        Args:</span>
+<span class="sd">            persistence_file: Path to the SQLite database for session persistence.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">configure_logger</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">persistence_file</span> <span class="o">=</span> <span class="n">persistence_file</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">store_backend</span> <span class="o">=</span> <span class="n">SqliteStore</span><span class="p">(</span><span class="n">persistence_file</span><span class="p">)</span>
@@ -274,6 +280,10 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_recover_identity_logic</span><span class="p">(</span><span class="n">patient_id</span><span class="p">)</span> <span class="c1"># Simplify for brevity if needed, but I should just replace the loop</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_recover_identity_logic</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Internal helper to execute the identity recovery logic.</span>
+<span class="sd">        (Placeholder for shared logic between single/batch recovery).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="c1"># implementation details</span>
         <span class="k">pass</span>
 
