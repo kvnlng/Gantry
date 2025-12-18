@@ -2,6 +2,7 @@ from typing import Dict, List
 from .entities import Instance, Patient, DicomItem, DicomSequence
 from .io_handlers import DicomStore
 from .logger import get_logger
+from tqdm import tqdm
 
 
 # Define standard codes for the Sequence
@@ -98,6 +99,10 @@ class RedactionService:
             self.logger.warning("Skipping rule with missing serial number.")
             return
 
+        if not zones:
+            self.logger.info(f"Machine {serial} has no redaction zones configured. Skipping.")
+            return
+
         # Check if we even have this machine in our store
         # (Optimization: Don't load pixels if machine isn't in the dataset)
         targets = self.index.get_by_machine(serial)
@@ -135,7 +140,7 @@ class RedactionService:
                 details=f"Redacting {len(targets)} images with ROI {roi}"
             )
 
-        for inst in targets:
+        for inst in tqdm(targets, desc=f"Redacting {machine_sn}", unit="img"):
             try:
                 # Triggers Lazy Load from disk
                 arr = inst.get_pixel_data()
