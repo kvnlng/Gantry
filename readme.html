@@ -255,7 +255,8 @@ Based on the <strong>DICOM PS3.15 Annex E (Basic Profile)</strong>, this profile
         end
 
         subgraph Storage [Persistence Layer]
-            Sqlite[(SqliteStore)]
+            Sqlite[(SqliteStore&lt;br/&gt;Metadata)]
+            Sidecar[(Pixels.bin&lt;br/&gt;Data)]
         end
     end
 
@@ -268,6 +269,7 @@ Based on the <strong>DICOM PS3.15 Annex E (Basic Profile)</strong>, this profile
     Logic --&gt;|Scans/Modifies| Model
     Instance -.-&gt;|Lazy Load| FS
     Sqlite &lt;--&gt;|Hydrate/Save| Model
+    Sidecar &lt;--&gt;|Read/Write| Model
 </pre></div>
 </div>
 <hr class="docutils" />
