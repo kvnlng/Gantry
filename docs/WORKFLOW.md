@@ -121,5 +121,18 @@ Write the clean objects to new DICOM files. The `safe=True` flag enforces a fina
 
 ```python
 # Safe Export: Will fail/skip if any PHI remains
-session.export("./clean_dataset_v1", safe=True)
+session.export("./clean_ dataset_v1", safe=True)
+```
+
+## 9. Saving Progress (Persistence)
+**Goal**: Pause and Resume.
+You can save the session state at any time. This persists all metadata to SQLite (`gantry.db`) and all modified pixel data to the **Sidecar** (`gantry_pixels.bin`).
+
+```python
+# Saves everything (including redacted pixels)
+session.save()
+
+# Resume later
+new_session = gantry.Session("gantry.db")
+# Pixels are lazy-loaded from the sidecar automatically
 ```
