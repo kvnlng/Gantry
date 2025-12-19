@@ -129,7 +129,7 @@ class DicomSession:
         self.reversibility_service = ReversibilityService(self.key_manager)
         get_logger().info(f"Reversible anonymization enabled. Key: {key_path}")
 
-    def lock_identities(self, patient_id: str, persist: bool = False, _patient_obj: "Patient" = None) -> List["Instance"]:
+    def lock_identities(self, patient_id: str, persist: bool = False, _patient_obj: "Patient" = None, verbose: bool = True) -> List["Instance"]:
         """
         Securely embeds the original patient name/ID into a private DICOM tag
         for all instances belonging to the specified patient.
@@ -139,11 +139,13 @@ class DicomSession:
             patient_id: The ID of the patient to preserve.
             persist: If True, writes changes to DB immediately. If False, returns instances for batch persistence.
             _patient_obj: Optimization argument to avoid O(N) lookup if patient is already known.
+            verbose: If True, logs debug information. Set to False for batch operations.
         """
         if not self.reversibility_service:
             raise RuntimeError("Reversible anonymization not enabled. Call enable_reversible_anonymization() first.")
             
-        get_logger().debug(f"Preserving identity for {patient_id}...") # Debug level in batch? Info is fine.
+        if verbose:
+            get_logger().debug(f"Preserving identity for {patient_id}...")
         
         modified_instances = []
         
@@ -213,7 +215,7 @@ class DicomSession:
         for pid in tqdm(patient_ids, desc="Locking Identities", unit="patient"):
             p_obj = patient_map.get(pid)
             if p_obj:
-                res = self.lock_identities(pid, persist=False, _patient_obj=p_obj)
+                res = self.lock_identities(pid, persist=False, _patient_obj=p_obj, verbose=False)
                 modified_instances.extend(res)
                 count_patients += 1
             else:
