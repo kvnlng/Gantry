@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="gantry",
-    version="0.4.0",
+    version="0.5.0",
     description="A Python DICOM Object Model and Redaction Toolkit",
     author="Kevin Long",
     packages=find_packages(),
@@ -13,7 +13,6 @@ setup(
         "cryptography>=41.0.0",
         "pandas>=2.0.0",
         "PyYAML>=6.0"
-        # "pylibjpeg==2.1.0"
     ],
     python_requires=">=3.9",
     extras_require={

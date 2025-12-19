@@ -178,33 +178,32 @@ class DicomSession:
             
         return modified_instances
 
-    def lock_identities_batch(self, input_data: list):
+    def lock_identities_batch(self, patient_ids: List[str], auto_persist_chunk_size: int = 0) -> List["Instance"]:
         """
-        Batch preservation for multiple patients.
-        input_data can be:
-        - List[str]: List of Patient IDs
-        - PhiReport: Result from scan_for_phi
-        - List[PhiFinding]: List of findings
+        Batch process multiple patients to lock identities.
+        Returns a list of all modified instances (unless auto_persist_chunk_size is used).
+        
+        Args:
+            patient_ids: List of PatientIDs to process.
+            auto_persist_chunk_size: If > 0, persists changes and releases memory every N instances.
+                                     IMPORTANT: Returns an empty list if enabled to prevent OOM.
         """
         if not self.reversibility_service:
-            raise RuntimeError("Reversible anonymization not enabled. Call enable_reversible_anonymization() first.")
-
-        # Extract unique patient IDs
-        patient_ids = set()
+            raise RuntimeError("Reversible anonymization not enabled.")
+            
+        # Helper to normalize input
+        if isinstance(patient_ids, set):
+            patient_ids = list(patient_ids)
+            
+        # Support passing Patient objects directly? 
+        # The signature says List[str], but let's be robust if user passes objects
+        # actually, let's stick to str as typed.
         
-        # Helper to iterate different input types
-        iterable_data = input_data
-        if hasattr(input_data, 'findings'): # PhiReport
-            iterable_data = input_data.findings
-
-        for item in iterable_data:
-            if isinstance(item, str):
-                patient_ids.add(item)
-            elif hasattr(item, 'patient_id') and item.patient_id:
-                 patient_ids.add(item.patient_id)
+        modified_instances = [] # Only used if auto_persist_chunk_size == 0
+        current_chunk = []      # Used if auto_persist_chunk_size > 0
         
-        modified_instances = []
         count_patients = 0
+        count_instances_chunked = 0
         
         from tqdm import tqdm
         
@@ -215,21 +214,38 @@ class DicomSession:
         for pid in tqdm(patient_ids, desc="Locking Identities", unit="patient"):
             p_obj = patient_map.get(pid)
             if p_obj:
+                # Use verbose=False to avoid log spam
                 res = self.lock_identities(pid, persist=False, _patient_obj=p_obj, verbose=False)
-                modified_instances.extend(res)
+                
+                if auto_persist_chunk_size > 0:
+                    current_chunk.extend(res)
+                    if len(current_chunk) >= auto_persist_chunk_size:
+                        self.store_backend.update_attributes(current_chunk)
+                        count_instances_chunked += len(current_chunk)
+                        current_chunk = [] # Release memory
+                else:
+                    modified_instances.extend(res)
+                
                 count_patients += 1
             else:
                  get_logger().error(f"Patient {pid} not found (batch processing).")
             
+        # Final cleanup
+        if auto_persist_chunk_size > 0:
+            if current_chunk:
+                self.store_backend.update_attributes(current_chunk)
+                count_instances_chunked += len(current_chunk)
+            
+            get_logger().info(f"Batch preserved identity for {count_patients} patients ({count_instances_chunked} instances). Persisted incrementally.")
+            return []
              
         if modified_instances:
              msg = f"Preserved identity for {len(modified_instances)} instances."
              print(f"\n{msg}\nRemember to call .save() to persist changes.")
              get_logger().info(msg)
-             # self.store_backend.update_attributes(modified_instances)
-             # print("Persistence complete.")
              
         get_logger().info(f"Batch preserved identity for {count_patients} patients ({len(modified_instances)} instances).")
+        return modified_instances
 
     def recover_patient_identity(self, patient_id: str):
         """

@@ -91,3 +91,44 @@ def test_batch_reversibility(tmp_path):
     count = cur.fetchone()[0]
     assert count == 3
     conn.close()
+
+def test_batch_chunking(tmp_path):
+    """Verify auto_persist_chunk_size logic."""
+    db_path = str(tmp_path / "chunk.db")
+    key_path = str(tmp_path / "chunk.key")
+    session = DicomSession(db_path)
+    session.enable_reversible_anonymization(key_path)
+    
+    # Create multiple patients
+    ids = ["C1", "C2", "C3"]
+    for pid in ids:
+        p = Patient(pid, f"Name {pid}")
+        st = Study(f"ST_{pid}", date(2023,1,1))
+        se = Series(f"SE_{pid}", "CT", 1)
+        # 10 instances each
+        for i in range(10):
+            inst = Instance(f"SOP_{pid}_{i}", "1.2.3", i)
+            inst.file_path = None
+            se.instances.append(inst)
+        st.series.append(se)
+        p.studies.append(st)
+        session.store.patients.append(p)
+        
+    session.save()
+    session.persistence_manager.flush()
+    
+    # Batch Preserve with Chunking
+    # 3 patients * 10 instances = 30 instances. Chunk 5 => 6 flushes.
+    res = session.lock_identities_batch(ids, auto_persist_chunk_size=5)
+    
+    # Must return empty list
+    assert res == []
+    
+    # Verify persistence
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    # Check if we have 30 modified instances
+    cur.execute("SELECT count(*) FROM instances WHERE attributes_json LIKE '%0400,0500%'")
+    count = cur.fetchone()[0]
+    assert count == 30
+    conn.close()
