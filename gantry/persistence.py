@@ -80,6 +80,13 @@ class SqliteStore:
         remediation_value TEXT,
         details_json TEXT
     );
+
+    -- Indexing for Performance
+    CREATE INDEX IF NOT EXISTS idx_studies_patient_fk ON studies(patient_id_fk);
+    CREATE INDEX IF NOT EXISTS idx_series_study_fk ON series(study_id_fk);
+    CREATE INDEX IF NOT EXISTS idx_instances_series_fk ON instances(series_id_fk);
+    CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_uid);
+    CREATE INDEX IF NOT EXISTS idx_findings_entity ON phi_findings(entity_uid);
     """
 
     def __init__(self, db_path: str):
