@@ -64,6 +64,7 @@
 <li class="toctree-l3"><a class="reference internal" href="#ctp-rule-import-legacy-support">CTP Rule Import (Legacy Support)</a></li>
 </ul>
 </li>
+<li class="toctree-l2"><a class="reference internal" href="#benchmarks-scalability">📊 Benchmarks &amp; Scalability</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#running-tests">🧪 Running Tests</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#license">License</a></li>
 </ul>
@@ -289,6 +290,36 @@ Once the <code class="docutils literal notranslate"><span class="pre">ctp_rules.
 </pre></div>
 </div>
 </section>
+</section>
+<section id="benchmarks-scalability">
+<h2>📊 Benchmarks &amp; Scalability<a class="headerlink" href="#benchmarks-scalability" title="Link to this heading"></a></h2>
+<p>Gantry uses a high-performance <strong>Split-Persistence Architecture</strong> (SQLite + Binary Sidecar) designed to scale to massive cohorts.</p>
+<p><strong>Stress Test Results (Dec 2025):</strong></p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head text-left"><p>Metric</p></th>
+<th class="head text-left"><p>Count</p></th>
+<th class="head text-left"><p>Data Size</p></th>
+<th class="head text-left"><p>Write Speed</p></th>
+<th class="head text-left"><p>Read Time</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td class="text-left"><p><strong>Metadata Scale</strong></p></td>
+<td class="text-left"><p>100,000 Inst</p></td>
+<td class="text-left"><p>Metadata Only</p></td>
+<td class="text-left"><p><strong>140,104 obj/s</strong></p></td>
+<td class="text-left"><p>0.60s (Total)</p></td>
+</tr>
+<tr class="row-odd"><td class="text-left"><p><strong>Payload Scale</strong></p></td>
+<td class="text-left"><p>5,000 Inst</p></td>
+<td class="text-left"><p><strong>30.52 GB</strong></p></td>
+<td class="text-left"><p><strong>584 MB/s</strong></p></td>
+<td class="text-left"><p>0.38s (Warm)</p></td>
+</tr>
+</tbody>
+</table>
+<p><em>Tests performed on Apple Silicon (Pro G40). Write speed limited by SSD throughput (Sequential Append).</em></p>
 </section>
 <section id="running-tests">
 <h2>🧪 Running Tests<a class="headerlink" href="#running-tests" title="Link to this heading"></a></h2>
