@@ -1,5 +1,5 @@
 import glob
-from typing import List, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from .io_handlers import DicomStore, DicomImporter, DicomExporter
 from .services import RedactionService
 from .config_manager import ConfigLoader
@@ -178,26 +178,34 @@ class DicomSession:
             
         return modified_instances
 
-    def lock_identities_batch(self, patient_ids: List[str], auto_persist_chunk_size: int = 0) -> List["Instance"]:
+    def lock_identities_batch(self, patient_ids: Union[List[str], "PhiReport", List["PhiFinding"]], auto_persist_chunk_size: int = 0) -> List["Instance"]:
         """
         Batch process multiple patients to lock identities.
         Returns a list of all modified instances (unless auto_persist_chunk_size is used).
         
         Args:
-            patient_ids: List of PatientIDs to process.
+            patient_ids: List of PatientIDs, OR a PhiReport/list of objects with patient_id.
             auto_persist_chunk_size: If > 0, persists changes and releases memory every N instances.
                                      IMPORTANT: Returns an empty list if enabled to prevent OOM.
         """
         if not self.reversibility_service:
             raise RuntimeError("Reversible anonymization not enabled.")
             
-        # Helper to normalize input
-        if isinstance(patient_ids, set):
-            patient_ids = list(patient_ids)
+        # Normalize input to a set of strings
+        normalized_ids = set()
+        
+        # Handle PhiReport or list containers
+        iterable_data = patient_ids
+        if hasattr(patient_ids, 'findings'): # PhiReport
+            iterable_data = patient_ids.findings
             
-        # Support passing Patient objects directly? 
-        # The signature says List[str], but let's be robust if user passes objects
-        # actually, let's stick to str as typed.
+        for item in iterable_data:
+            if isinstance(item, str):
+                normalized_ids.add(item)
+            elif hasattr(item, 'patient_id') and item.patient_id:
+                 normalized_ids.add(item.patient_id)
+                 
+        start_ids = list(normalized_ids)
         
         modified_instances = [] # Only used if auto_persist_chunk_size == 0
         current_chunk = []      # Used if auto_persist_chunk_size > 0
@@ -211,7 +219,7 @@ class DicomSession:
         # This replaces the O(N) lookup per patient inside the loop
         patient_map = {p.patient_id: p for p in self.store.patients}
         
-        for pid in tqdm(patient_ids, desc="Locking Identities", unit="patient"):
+        for pid in tqdm(start_ids, desc="Locking Identities", unit="patient"):
             p_obj = patient_map.get(pid)
             if p_obj:
                 # Use verbose=False to avoid log spam
