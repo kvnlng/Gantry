@@ -23,8 +23,6 @@ setup(
             "myst_parser>=2.0.0",
         ],
         "images": [
-            "pylibjpeg>=1.4.0",
-            "pylibjpeg-libjpeg>=2.0.0",
             "pillow>=10.0.0" 
         ]
     }
