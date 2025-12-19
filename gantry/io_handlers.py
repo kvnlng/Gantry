@@ -223,6 +223,7 @@ class ExportContext(NamedTuple):
     study_attributes: Dict[str, Any]
     series_attributes: Dict[str, Any]
     pixel_array: Optional[Any] = None # Numpy array or None
+    compression: Optional[str] = None # 'j2k' or None
 
 def _export_instance_worker(ctx: ExportContext) -> str:
     """
@@ -306,18 +307,93 @@ def _export_instance_worker(ctx: ExportContext) -> str:
             ds.PixelRepresentation = inst.attributes.get("0028,0103", 0)
 
         # Validate & Save
-        errs = IODValidator.validate(ds)
-        if not errs:
-            # Ensure dir exists (race safe)
-            os.makedirs(os.path.dirname(ctx.output_path), exist_ok=True)
-            ds.save_as(ctx.output_path)
-            return ctx.output_path
-        else:
-            return None
+        ds = DicomExporter._finalize_dataset(ds, ctx.compression) 
+        
+        # Ensure dir exists (race safe)
+        os.makedirs(os.path.dirname(ctx.output_path), exist_ok=True)
+        ds.save_as(ctx.output_path)
+        return ctx.output_path
             
     except Exception as e:
         # Re-raise to be caught by parallel wrapper or handled
         raise RuntimeError(f"Export failed for {ctx.output_path}: {e}")
+
+def _compress_j2k(ds):
+    """
+    Compresses the pixel data of the dataset using JPEG 2000 Lossless (Pillow).
+    Updates TransferSyntaxUID and PixelData.
+    """
+    try:
+        import numpy as np
+        from PIL import Image
+        import io
+        from pydicom.uid import JPEG2000Lossless
+        try:
+            from pydicom.encapsulate import encapsulate
+        except ImportError:
+            from pydicom.encaps import encapsulate
+        
+        if not hasattr(ds, 'PixelData'):
+            return
+
+        # 1. Get metadata
+        rows = ds.Rows
+        cols = ds.Columns
+        samples = ds.SamplesPerPixel
+        bits = ds.BitsAllocated
+        
+        # 2. Reconstruct Numpy Array from bytes (since we just set it in worker)
+        # Assuming Little Endian input for now (as set in _create_ds)
+        dt = np.uint16 if bits > 8 else np.uint8
+        arr = np.frombuffer(ds.PixelData, dtype=dt)
+        
+        # Reshape
+        # Correctly handle frames
+        frames = getattr(ds, "NumberOfFrames", 1)
+        
+        # Shape logic matching export worker
+        if frames > 1:
+            if samples > 1:
+                 arr = arr.reshape((frames, rows, cols, samples))
+            else:
+                 arr = arr.reshape((frames, rows, cols))
+        else:
+            if samples > 1:
+                arr = arr.reshape((rows, cols, samples))
+            else:
+                arr = arr.reshape((rows, cols))
+
+        # 3. Compress
+        frames_data = []
+        
+        # Helper to compress single frame
+        def encode_frame(frame_arr):
+            # Pillow expects [H, W] or [H, W, C]
+            img = Image.fromarray(frame_arr)
+            bio = io.BytesIO()
+            img.save(bio, format='JPEG2000', compression='lossless')
+            return bio.getvalue()
+
+        if frames > 1:
+            for i in range(frames):
+                frames_data.append(encode_frame(arr[i]))
+        else:
+            frames_data.append(encode_frame(arr))
+            
+        # 4. Encapsulate and Update DS
+        ds.PixelData = encapsulate(frames_data)
+        # ds.TransferSyntaxUID = JPEG2000Lossless # REMOVE: Group 2 tags must be in file_meta only
+        ds.file_meta.TransferSyntaxUID = JPEG2000Lossless
+        ds.is_implicit_VR = False # Compressed transfer syntaxes are always Explicit VR
+        ds.is_little_endian = True # JPEG 2000 is always Little Endian (in DICOM encapsulation typically)
+        
+    except ImportError:
+        # Fallback or Log? 
+        # If requested but dependencies missing, we should probably fail hard or warn.
+        # But this is inside a worker. simpler to raise.
+        raise RuntimeError("Pillow or pydicom not installed/configured for JPEG 2000.")
+    except Exception as e:
+        raise RuntimeError(f"Compression failed: {e}")
 
 
 class DicomExporter:
@@ -332,9 +408,10 @@ class DicomExporter:
         DicomExporter.save_studies(patient, patient.studies, out_dir)
 
     @staticmethod
-    def save_studies(patient: Patient, studies: List[Study], out_dir: str):
+    def save_studies(patient: Patient, studies: List[Study], out_dir: str, compression: str = None):
         """
         Exports a specific list of studies for a patient using parallel workers.
+        compression: 'j2k' or None
         """
         if not os.path.exists(out_dir): os.makedirs(out_dir)
         logger = get_logger()
@@ -419,7 +496,8 @@ class DicomExporter:
                         patient_attributes=pat_attrs,
                         study_attributes=study_attrs,
                         series_attributes=series_attrs,
-                        pixel_array=p_array
+                        pixel_array=p_array,
+                        compression=compression
                     )
                     export_tasks.append(ctx)
 
@@ -434,6 +512,28 @@ class DicomExporter:
         # results contains paths or Nones
         success_count = sum(1 for r in results if r is not None)
         logger.info(f"Export Complete. Success: {success_count}/{len(export_tasks)}")
+        
+    @staticmethod
+    def _finalize_dataset(ds, compression=None):
+        """
+        Finalizes the dataset before saving:
+        1. Applies compression if requested.
+        2. Validates IOD.
+        Returns the dataset (modified) or raises RuntimeError if invalid.
+        """
+        if compression == 'j2k':
+            _compress_j2k(ds)
+            
+        errs = IODValidator.validate(ds)
+        if errs:
+            # We log but might want to raise? logic in worker returns None on error.
+            # But worker expects exception to be raised for error? 
+            # In previous logic: "if not errs: save else return None"
+            # So here we should probably return None or raise.
+            # Let's raise to be clearer in worker catch
+            raise ValueError(f"Validation Errors: {errs}")
+            
+        return ds
     @staticmethod
     def _create_ds(inst):
         meta = FileMetaDataset()

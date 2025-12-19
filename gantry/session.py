@@ -79,12 +79,22 @@ class DicomSession:
         """
         configure_logger()
         self.persistence_file = persistence_file
+        
+        # Check existence before SqliteStore potentially creates it
+        import os
+        db_exists = os.path.exists(persistence_file)
+        
         self.store_backend = SqliteStore(persistence_file)
         self.persistence_manager = PersistenceManager(self.store_backend)
         
         # Hydrate memory from DB
         self.store = DicomStore() 
-        print(f"Loading session from {persistence_file}...")
+        
+        if db_exists:
+            print(f"Loading session from {persistence_file}...")
+        else:
+            print(f"Initializing new session at {persistence_file}...")
+            
         self.store.patients = self.store_backend.load_all()
         
         self.active_rules: List[Dict[str, Any]] = []
@@ -95,6 +105,10 @@ class DicomSession:
         # Reversibility
         self.key_manager = None
         self.reversibility_service = None
+        
+        # Auto-detect key
+        if os.path.exists("gantry.key"):
+            self.enable_reversible_anonymization("gantry.key")
 
         get_logger().info(f"Session started. {len(self.store.patients)} patients loaded.")
 
@@ -526,10 +540,11 @@ class DicomSession:
                         
         get_logger().info(f" stamped {count} instances.")
 
-    def export(self, folder, safe=False):
+    def export(self, folder, safe=False, compression=None):
         """
         Exports the current state of all patients to a folder.
         If safe=True, performs a fresh PHI scan and ONLY exports clean data.
+        compression: 'j2k' (JPEG 2000 Lossless) or None (Uncompressed)
         """
         get_logger().info(f"Exporting session to {folder} (safe={safe})...")
         print("Exporting...")
@@ -610,7 +625,7 @@ class DicomSession:
                 safe_studies = p.studies
 
             if safe_studies:
-                DicomExporter.save_studies(p, safe_studies, folder)
+                DicomExporter.save_studies(p, safe_studies, folder, compression=compression)
                 exported_count += 1
 
         get_logger().info(f"Export complete. (Exported Groups: {exported_count}, Skipped: {skipped_count})")

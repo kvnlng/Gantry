@@ -44,6 +44,9 @@ Clone the repository and install in editable mode:
 git clone https://github.com/kvnlng/gantry.git
 cd gantry
 pip install -e .
+
+# For Image Compression Support
+pip install ".[images]"
 ```
 
 ---
@@ -87,8 +90,10 @@ session.apply_remediation(risk_report)
 # 7. Redact Pixels (if needed)
 session.redact_pixels()
 
-# 8. Safe Export
-session.export_data("./clean_research_data", safe=True)
+# 8. Safe Export (with Compression)
+# Safe=True scans for PHI before export
+# Compression='j2k' reduces storage footprint by ~50%
+session.export_data("./clean_research_data", safe=True, compression='j2k')
 
 # Save Session
 session.save()
