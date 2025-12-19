@@ -32,12 +32,15 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 
 ## 🚀 Upcoming Milestones
 
-### v0.5.0 - Data Integrity & Advanced Redaction
-Focus: Validating data integrity and expanding redaction capabilities.
-- [ ] **Pixel Redaction Verification**: Verify that zeroed-out pixels are truly zero.
+### v0.5.0 - Performance & Scalability
+Focus: Validating data integrity and ensuring system scales to massive datasets.
+- [x] **Pixel Redaction Verification**: Verify that zeroed-out pixels are truly zero (Verified via `test_redaction_parallel.py`).
 - [x] **Pixel Integrity Tests**: Add unit tests to verify `PhotometricInterpretation` and `SamplesPerPixel` are preserved after modification.
 - [x] **Memory Profiling**: Optimize `MachinePixelIndex` and `Entities` (using `__slots__`) to handle massive datasets.
 - [x] **Standard Privacy Profiles**: Built-in compliance profiles (e.g., DICOM PS3.15 Annex E) to simplify configuration.
+- [x] **Split-Persistence Architecture**: Introduced `sidecar.py` to store pixel data in an append-only binary file (`.bin`), keeping SQLite metadata lightweight.
+- [x] **Database Indexing**: Added indexes to Foreign Keys and Entity UIDs to ensure O(1) lookups and scalable Joins.
+- [x] **Multithreaded Redaction**: Parallelized `redact_pixels` using `ThreadPoolExecutor` to maximize CPU usage and throughput.
 - [ ] **Custom Privacy Profiles**: Allow users to define their own reuseable profiles in external JSON files.
 - [ ] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.
 
