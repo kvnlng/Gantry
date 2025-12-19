@@ -43,13 +43,13 @@ def test_process_valid_zones(mock_store):
     """Verify process_machine_rules proceeds if zones exist."""
     service = RedactionService(mock_store)
     service.logger = MagicMock()
-    service.redact_machine_region = MagicMock()
+    service.redact_machine_instances = MagicMock()
     
     rule = {"serial_number": "M1", "redaction_zones": [[0,10,0,10]]}
     
     service.process_machine_rules(rule)
     
-    service.redact_machine_region.assert_called_once()
+    service.redact_machine_instances.assert_called_once()
 
 
 @patch("gantry.services.tqdm")
@@ -60,7 +60,7 @@ def test_redact_feedback_tqdm(mock_tqdm, mock_store):
     # Actual logic calls tqdm(targets, ...)
     # targets will be [inst]
     
-    service.redact_machine_region("M1", (0,10,0,10))
+    service.redact_machine_instances("M1", [(0,10,0,10)])
     
     # Check if tqdm was called
     assert mock_tqdm.called

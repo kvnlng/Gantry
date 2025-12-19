@@ -27,7 +27,7 @@ def test_redaction_service(dummy_patient):
     inst.pixel_array[20, 20] = 500
 
     # Act: Redact region 10-50
-    svc.redact_machine_region("SN-999", (10, 50, 10, 50))
+    svc.redact_machine_instances("SN-999", [(10, 50, 10, 50)])
 
     # Assert
     # Assert

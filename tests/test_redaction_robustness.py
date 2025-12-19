@@ -39,7 +39,7 @@ def test_redaction_crash_prevention(mock_store):
     from unittest.mock import patch
     with patch.object(Instance, 'get_pixel_data', return_value=None):
         try:
-            service.redact_machine_region("SN-FAIL", (0, 100, 0, 100))
+            service.redact_machine_instances("SN-FAIL", [(0, 100, 0, 100)])
         except AttributeError as e:
             pytest.fail(f"Crash detected: {e}")
         

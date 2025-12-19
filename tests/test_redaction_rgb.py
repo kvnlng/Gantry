@@ -37,7 +37,7 @@ def test_redaction_rgb_dimensions():
     # 3. Apply Redaction
     # ROI: x=50, w=10 -> c1=50, c2=60
     # If logic thinks cols=3, this will trigger "completely outside" warning
-    service.redact_machine_region("SN-RGB", (0, 10, 50, 60))
+    service.redact_machine_instances("SN-RGB", [(0, 10, 50, 60)])
     
     # 4. Verify Failure
     # If the bug exists, we expect a warning about "outside image dimensions"
