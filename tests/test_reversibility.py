@@ -39,7 +39,7 @@ def test_reversible_anonymization_flow(tmp_path):
     session.save()
     
     # 2. Preserve Identity
-    session.preserve_patient_identity(pid)
+    session.lock_identities(pid)
     session.save()
     session.persistence_manager.shutdown()
     
