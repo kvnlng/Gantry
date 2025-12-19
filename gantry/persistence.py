@@ -421,6 +421,7 @@ class SqliteStore:
                 cur.execute("DELETE FROM patients")
                 
                 # 2. Re-insert
+                instance_data_buffer = []
                 for p in patients:
                     cur.execute("INSERT INTO patients (patient_id, patient_name) VALUES (?, ?)", 
                                 (p.patient_id, p.patient_name))
@@ -447,20 +448,12 @@ class SqliteStore:
                                 full_data = self._serialize_item(inst)
                                 attrs_json = json.dumps(full_data, cls=GantryJSONEncoder)
                                 
-                                full_data = self._serialize_item(inst)
-                                attrs_json = json.dumps(full_data, cls=GantryJSONEncoder)
-                                
                                 # Pixel Persistence Sidecar Logic
                                 p_offset = None
                                 p_length = None
                                 p_alg = None
                                 
                                 # If pixels are dirty (in memory), write them.
-                                # If they came from sidecar (inst._pixel_loader matches our sidecar logic), 
-                                # we might theoretically optimize and not rewrite if unchanged?
-                                # But append-only is safest for simple "rewrite all" logic.
-                                # For now, if pixel_array is present, we write newly.
-                                
                                 if inst.pixel_array is not None:
                                      b_data = inst.pixel_array.tobytes()
                                      # Simple compression
@@ -473,12 +466,24 @@ class SqliteStore:
                                      pixel_bytes_written += leng
                                      pixel_frames_written += 1
                                 
-                                cur.execute("""
-                                    INSERT INTO instances (series_id_fk, sop_instance_uid, sop_class_uid, instance_number, file_path, 
-                                                           pixel_offset, pixel_length, compress_alg, attributes_json)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (se_pk, inst.sop_instance_uid, inst.sop_class_uid, inst.instance_number, inst.file_path, 
-                                      p_offset, p_length, p_alg, attrs_json))
+                                instance_data_buffer.append((
+                                    se_pk, 
+                                    inst.sop_instance_uid, 
+                                    inst.sop_class_uid, 
+                                    inst.instance_number, 
+                                    inst.file_path, 
+                                    p_offset, 
+                                    p_length, 
+                                    p_alg, 
+                                    attrs_json
+                                ))
+
+                if instance_data_buffer:
+                    cur.executemany("""
+                        INSERT INTO instances (series_id_fk, sop_instance_uid, sop_class_uid, instance_number, file_path, 
+                                               pixel_offset, pixel_length, compress_alg, attributes_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, instance_data_buffer)
                 
                 conn.commit()
                 
