@@ -208,6 +208,16 @@ Gantry uses a high-performance **Split-Persistence Architecture** (SQLite + Bina
 | **Metadata Scale** | 100,000 Inst | Metadata Only | **140,104 obj/s** | 0.60s (Total) |
 | **Payload Scale** | 5,000 Inst | **30.52 GB** | **584 MB/s** | 0.38s (Warm) |
 
+### 🚀 Python 3.14t (Free-Threaded) Ready
+Gantry automatically detects free-threaded environments and optimizes its parallelism strategy, eliminating IPC overhead.
+
+| Operation | Standard (Processes) | Free-Threaded (Threads) | Speedup |
+| :--- | :--- | :--- | :--- |
+| **PHI Scan (Audit)** | 3,756 img/s | **41,184 img/s** | **10.6x** |
+| **Pixel Redaction** | 149 img/s | **149 img/s** | *Native* |
+| **DB Write (Concurrent)** | 8,137 logs/s | 6,783 logs/s | *0.8x* |
+*(Benchmarks run on Apple Silicon M3 Max)*
+
 *Tests performed on Apple Silicon (Pro G40). Write speed limited by SSD throughput (Sequential Append).*
 
 ## 🧪 Running Tests
