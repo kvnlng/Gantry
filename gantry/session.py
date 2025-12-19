@@ -697,8 +697,18 @@ class DicomSession:
         service = RedactionService(self.store, self.store_backend)
 
         try:
-            for rule in self.active_rules:
-                service.process_machine_rules(rule)
+            from concurrent.futures import ThreadPoolExecutor
+            import os
+
+            # Parallel Execution for Speed
+            # Threading works well here because pixel I/O and NumPy ops release GIL.
+            # Shared memory allows in-place modification of instances.
+            max_workers = min(32, (os.cpu_count() or 1) + 4)
+            print(f"Executing {len(self.active_rules)} rules using {max_workers} threads...")
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Force execution of all tasks
+                list(executor.map(service.process_machine_rules, self.active_rules))
 
             # Save state after modification
             # self._save()

@@ -102,7 +102,7 @@ class SqliteStore:
         self._init_db()
 
     def _init_db(self):
-        with sqlite3.connect(self.db_path, timeout=300.0) as conn:
+        with sqlite3.connect(self.db_path, timeout=900.0) as conn:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.executescript(self.SCHEMA)
 
@@ -122,7 +122,7 @@ class SqliteStore:
         data = [(timestamp, e[0], e[1], e[2]) for e in entries]
         
         try:
-            with sqlite3.connect(self.db_path, timeout=300.0) as conn:
+            with sqlite3.connect(self.db_path, timeout=900.0) as conn:
                 conn.executemany(
                     "INSERT INTO audit_log (timestamp, action_type, entity_uid, details) VALUES (?, ?, ?, ?)",
                     data
@@ -141,7 +141,7 @@ class SqliteStore:
             return patients
 
         try:
-            with sqlite3.connect(self.db_path, timeout=300.0) as conn:
+            with sqlite3.connect(self.db_path, timeout=900.0) as conn:
                 conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
 
@@ -267,7 +267,7 @@ class SqliteStore:
             return None
             
         try:
-             with sqlite3.connect(self.db_path, timeout=300.0) as conn:
+             with sqlite3.connect(self.db_path, timeout=900.0) as conn:
                 conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 
@@ -404,7 +404,7 @@ class SqliteStore:
         sidecar_manager = self.sidecar
         
         try:
-            with sqlite3.connect(self.db_path, timeout=300.0) as conn:
+            with sqlite3.connect(self.db_path, timeout=900.0) as conn:
                 cur = conn.cursor()
                 
                 # 1. Clear Data Tables (Leave Audit Log)
@@ -493,7 +493,7 @@ class SqliteStore:
 
         self.logger.info(f"Updating attributes for {len(instances)} instances...")
         try:
-            with sqlite3.connect(self.db_path, timeout=300.0) as conn:
+            with sqlite3.connect(self.db_path, timeout=900.0) as conn:
                 cur = conn.cursor()
                 
                 # Pre-calculate data for executemany
@@ -526,7 +526,7 @@ class SqliteStore:
         self.logger.info(f"Saving {len(findings)} PHI findings...")
         
         try:
-            with sqlite3.connect(self.db_path, timeout=300.0) as conn:
+            with sqlite3.connect(self.db_path, timeout=900.0) as conn:
                 cur = conn.cursor()
                 
                 # Insert
@@ -556,7 +556,7 @@ class SqliteStore:
             return findings
 
         try:
-             with sqlite3.connect(self.db_path, timeout=300.0) as conn:
+             with sqlite3.connect(self.db_path, timeout=900.0) as conn:
                 conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 # Check if table exists (backward compatibility for old DBs if init didnt run on them)
