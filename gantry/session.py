@@ -129,7 +129,7 @@ class DicomSession:
         self.reversibility_service = ReversibilityService(self.key_manager)
         get_logger().info(f"Reversible anonymization enabled. Key: {key_path}")
 
-    def lock_identities(self, patient_id: str, persist: bool = False) -> List["Instance"]:
+    def lock_identities(self, patient_id: str, persist: bool = False, _patient_obj: "Patient" = None) -> List["Instance"]:
         """
         Securely embeds the original patient name/ID into a private DICOM tag
         for all instances belonging to the specified patient.
@@ -138,6 +138,7 @@ class DicomSession:
         Args:
             patient_id: The ID of the patient to preserve.
             persist: If True, writes changes to DB immediately. If False, returns instances for batch persistence.
+            _patient_obj: Optimization argument to avoid O(N) lookup if patient is already known.
         """
         if not self.reversibility_service:
             raise RuntimeError("Reversible anonymization not enabled. Call enable_reversible_anonymization() first.")
@@ -145,7 +146,11 @@ class DicomSession:
         get_logger().debug(f"Preserving identity for {patient_id}...") # Debug level in batch? Info is fine.
         
         modified_instances = []
-        patient = next((p for p in self.store.patients if p.patient_id == patient_id), None)
+        
+        if _patient_obj:
+            patient = _patient_obj
+        else:
+            patient = next((p for p in self.store.patients if p.patient_id == patient_id), None)
         
         if not patient:
             get_logger().error(f"Patient {patient_id} not found.")
@@ -200,10 +205,19 @@ class DicomSession:
         count_patients = 0
         
         from tqdm import tqdm
+        
+        # Optimization: Create a lookup map for O(1) access
+        # This replaces the O(N) lookup per patient inside the loop
+        patient_map = {p.patient_id: p for p in self.store.patients}
+        
         for pid in tqdm(patient_ids, desc="Locking Identities", unit="patient"):
-            res = self.lock_identities(pid, persist=False)
-            modified_instances.extend(res)
-            count_patients += 1
+            p_obj = patient_map.get(pid)
+            if p_obj:
+                res = self.lock_identities(pid, persist=False, _patient_obj=p_obj)
+                modified_instances.extend(res)
+                count_patients += 1
+            else:
+                 get_logger().error(f"Patient {pid} not found (batch processing).")
             
              
         if modified_instances:
@@ -1048,7 +1062,4 @@ class DicomSession:
             print(f"Scaffolded Unified Config to {output_path}")
         except Exception as e:
             get_logger().error(f"Failed to write scaffold: {e}")
-
-
-
 
