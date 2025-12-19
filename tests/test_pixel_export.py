@@ -62,10 +62,10 @@ def test_pixel_integrity(tmp_path):
     
     # 3. Ingest and Export
     session = DicomSession(":memory:")
-    session.import_folder(str(input_dir))
+    session.ingest(str(input_dir))
     
     export_dir = tmp_path / "export_rgb"
-    session.export_data(str(export_dir))
+    session.export(str(export_dir))
     
     # 4. Verify Output
     exported_files = list(export_dir.rglob("*.dcm"))

@@ -65,7 +65,7 @@ def test_monochrome_preservation(tmp_path):
     
     # Ingest
     session = DicomSession(":memory:")
-    session.import_folder(str(tmp_path))
+    session.ingest(str(tmp_path))
     
     # Export
     out_dir = tmp_path / "export_mono"
@@ -95,7 +95,7 @@ def test_rgb_preservation(tmp_path):
     
     # Ingest
     session = DicomSession(":memory:")
-    session.import_folder(str(tmp_path))
+    session.ingest(str(tmp_path))
     
     # Export
     out_dir = tmp_path / "export_rgb"
@@ -122,7 +122,7 @@ def test_samples_per_pixel_integrity(tmp_path):
     
     # Ingest
     session = DicomSession(":memory:")
-    session.import_folder(str(tmp_path))
+    session.ingest(str(tmp_path))
     
     out_dir = tmp_path / "export_spp"
     session.export(str(out_dir))

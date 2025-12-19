@@ -31,7 +31,7 @@ def test_full_logging_coverage(tmp_path):
     # 3. Excercise Session Methods that should log
     
     # Inventory
-    session.inventory()
+    session.examine()
     
     # PHI Scan (Empty config warning)
     session.scan_for_phi()
@@ -44,11 +44,11 @@ def test_full_logging_coverage(tmp_path):
     session.load_config(str(config_path))
     
     # Config Execution (Empty)
-    session.execute_config()
+    session.redact()
     
     # Scaffold
     scaffold_path = tmp_path / "scaffold_log.json"
-    session.scaffold_config(str(scaffold_path))
+    session.create_config(str(scaffold_path))
     
     # Export
     export_dir = tmp_path / "export_log"

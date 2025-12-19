@@ -65,7 +65,7 @@ class TestRedactionParallel(unittest.TestCase):
         
         # Execute
         # This will use ThreadPoolExecutor inside
-        self.session.execute_config()
+        self.session.redact()
         
         # Verify Results
         # Each instance should have the top-left 10x10 region black (0)

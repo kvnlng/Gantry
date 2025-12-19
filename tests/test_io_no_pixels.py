@@ -31,7 +31,7 @@ def test_reproduce_no_pixel_data_crash(tmp_path):
     
     # 2. Ingest
     session = DicomSession(":memory:")
-    session.import_folder(str(tmp_path))
+    session.ingest(str(tmp_path))
     
     assert len(session.store.patients) == 1
     
@@ -39,7 +39,7 @@ def test_reproduce_no_pixel_data_crash(tmp_path):
     export_dir = tmp_path / "export"
     
     try:
-        session.export_data(str(export_dir))
+        session.export(str(export_dir))
     except RuntimeError as e:
         pytest.fail(f"Export should NOT have crashed for file w/o pixels: {e}")
         

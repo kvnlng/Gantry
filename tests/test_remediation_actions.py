@@ -49,7 +49,7 @@ def test_configured_remove_action(tmp_path):
     assert f.remediation_proposal.action_type == "REMOVE_TAG"
     
     # 4. Anonymize
-    session.anonymize_metadata(findings)
+    session.anonymize(findings)
     
     # 5. Verify In-Memory State
     # Tag should be GONE (None)

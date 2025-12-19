@@ -37,7 +37,7 @@ def test_optimization_preservation(tmp_path):
     # But since we mocked/implmented update_attributes, let's verify functional correctness first.
     
     # Preserve Identity
-    session.preserve_patient_identity(pid)
+    session.lock_identities(pid)
     session.save()
     session.persistence_manager.flush()
     
@@ -79,7 +79,7 @@ def test_batch_reversibility(tmp_path):
     session.persistence_manager.flush()
     
     # Batch Preserve
-    session.preserve_identities(ids)
+    session.lock_identities_batch(ids)
     session.save()
     session.persistence_manager.flush()
     

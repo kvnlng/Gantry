@@ -15,7 +15,7 @@ def test_import_validation_headerless(tmp_path):
     
     # 2. Import folder
     # This should ignore the bad file
-    session.import_folder(str(tmp_path))
+    session.ingest(str(tmp_path))
     
     # 3. Verify Store is Empty
     assert len(session.store.patients) == 0, "Bad file was incorrectly ingested!"
@@ -24,6 +24,6 @@ def test_import_validation_headerless(tmp_path):
     # Should not crash
     export_dir = tmp_path / "export"
     try:
-        session.export_data(str(export_dir))
+        session.export(str(export_dir))
     except Exception as e:
         pytest.fail(f"Export crashed: {e}")

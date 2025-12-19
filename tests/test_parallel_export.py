@@ -41,7 +41,7 @@ def create_dcm(path, patient_id, study_uid, series_uid, sop_uid, seri_num=0, ins
 
 def test_parallel_export(tmp_path):
     """
-    Verifies that export_data runs without error and produces output files
+    Verifies that export runs without error and produces output files
     using the new parallel implementation.
     """
     # 1. Setup Input Repo
@@ -58,13 +58,13 @@ def test_parallel_export(tmp_path):
     
     # 2. Ingest
     session = DicomSession(":memory:")
-    session.import_folder(str(input_dir))
+    session.ingest(str(input_dir))
     
     assert len(session.store.patients) == 2
     
     # 3. Export
     export_dir = tmp_path / "export"
-    session.export_data(str(export_dir))
+    session.export(str(export_dir))
     
     # 4. Verify Output
     # We expect recursive finding of 5 .dcm files

@@ -56,7 +56,7 @@ def test_batch_preserve_from_report(tmp_path):
     report = session.scan_for_phi()
     
     # Preserve using Report directly
-    session.preserve_identities(report)
+    session.lock_identities_batch(report)
     session.save()
     session.persistence_manager.shutdown()
     

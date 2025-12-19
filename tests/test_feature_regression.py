@@ -69,7 +69,7 @@ class TestNewFeatures(unittest.TestCase):
     def test_export_compression_j2k(self):
         """Verify JPEG 2000 Export Feature"""
         s = DicomSession(":memory:")
-        s.import_folder(self.input_dir)
+        s.ingest(self.input_dir)
         
         out = os.path.join(self.output_dir, "compressed")
         s.export(out, compression='j2k')
@@ -96,6 +96,8 @@ class TestNewFeatures(unittest.TestCase):
             self.assertEqual(arr.shape, (64, 64))
         except Exception as e:
             self.fail(f"Failed to decode compressed pixels: {e}")
+
+
 
     def test_session_auto_key_loading(self):
         """Verify Gantry automatically loads 'gantry.key' if present"""

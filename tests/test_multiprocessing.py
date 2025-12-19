@@ -43,7 +43,7 @@ def test_parallel_import_and_scan(tmp_path):
 
     # 2. Parallel Import
     session = DicomSession(db_path)
-    session.import_folder(str(raw_dir))
+    session.ingest(str(raw_dir))
     
     assert len(session.store.patients) == 20
     

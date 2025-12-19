@@ -46,7 +46,7 @@ def populated_session():
 
 def test_inventory_output(populated_session, capsys):
     """Verifies inventory prints summary and grouped equipment."""
-    populated_session.inventory()
+    populated_session.examine()
     captured = capsys.readouterr()
     
     # Check Summary

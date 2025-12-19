@@ -48,7 +48,7 @@ def test_scaffold_config_creates_new_entries(tmp_path):
     
     # 4. Run Scaffold
     out_file = tmp_path / "todo.yaml"
-    session.scaffold_config(str(out_file))
+    session.create_config(str(out_file))
     
     # 5. Verify Output
     assert out_file.exists()

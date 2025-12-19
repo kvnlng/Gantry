@@ -10,13 +10,13 @@ This guide outlines the standard operating procedure for Curating, Anonymizing, 
 | :--- | :--- | :--- | :--- |
 | **1** | **Ingest** | Load & Index Data | `ingest` |
 | **2** | **Examine** | Inventory & Query | `examine` |
-| **3** | **Configure** | Define Rules | `setup_config` |
+| **3** | **Configure** | Define Rules | `create_config` |
 | **4** | **Target** | Identify Risks | `audit` |
-| **5** | **Backup** | Secure Identity | `backup_identities` |
-| **6** | **Anonymize** | Metadata Remediation | `anonymize_metadata` |
-| **7** | **Redact** | Pixel Cleaning | `redact_pixels` |
-| **8** | **Verify** | Safety Check | `verify` |
-| **9** | **Export** | Release Data | `export_data` |
+| **5** | **Backup** | Secure Identity | `lock_identities` |
+| **6** | **Anonymize** | Metadata Remediation | `anonymize` |
+| **7** | **Redact** | Pixel Cleaning | `redact` |
+| **8** | **Verify** | Safety Check | `audit` |
+| **9** | **Export** | Release Data | `export` |
 
 ---
 
@@ -42,7 +42,7 @@ Gantry uses a **Unified Configuration** (v2.0) that defines both:
 
 ```python
 # Generate a unified config skeleton based on your inventory
-session.setup_config("privacy_config.yaml")
+session.create_config("privacy_config.yaml")
 
 # USER ACTION: Edit 'privacy_config.yaml' in your text editor.
 # - Add specific PHI tags to custom list
@@ -69,7 +69,7 @@ Before destroying identifiers, cryptographically seal them so authorized personn
 session.enable_reversible_anonymization("master_key.key")
 
 # "Backup" the identities of the targeted patients
-session.preserve_identities(phi_findings)
+session.lock_identities(phi_findings)
 ```
 
 ### Mechanism: Standard-Compliant Reversibility
@@ -88,7 +88,7 @@ We clean the object graph attributes (PatientName, PatientID, etc.) using the **
 ```python
 # Use the findings from the Audit step
 # risk_report = session.audit(...)
-session.anonymize_metadata(risk_report)
+session.anonymize(risk_report)
 ```
 
 ## 6. Checkpoint: Redact (Pixels)
@@ -100,10 +100,10 @@ We remove burned-in text from the pixel matrix using the configured ROIs.
 session.load_config("privacy_config.yaml")
 
 # Execute: Process pixel data
-session.redact_pixels()
+session.redact()
 ```
 
-## 7. Checkpoint: Verify (Double Check)
+## 8. Checkpoint: Audit (Verify)
 **Goal**: Ensure nothing was missed.
 Re-run the scans on the *modified* in-memory session.
 

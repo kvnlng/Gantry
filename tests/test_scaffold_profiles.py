@@ -13,7 +13,7 @@ def test_scaffold_generates_basic_profile(tmp_path):
     
     # 2. Run Scaffolding
     output_path = tmp_path / "scaffold_profile.yaml"
-    session.scaffold_config(str(output_path))
+    session.create_config(str(output_path))
     
     # 3. Verify Output
     assert output_path.exists()

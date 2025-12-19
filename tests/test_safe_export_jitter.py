@@ -41,7 +41,7 @@ def test_safe_export_allows_jittered_dates(tmp_path):
     findings = session.scan_for_phi()
     assert len(findings) > 0, "Setup failed: PHI finding should be detected."
     
-    session.apply_remediation(findings)
+    session.anonymize(findings)
     
     # Verify date changed and flag set
     assert s.study_date != date(2023, 1, 1)

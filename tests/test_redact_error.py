@@ -56,7 +56,7 @@ def test_execute_config_session_level_interruption(capsys):
     session = DicomSession(persistence_file=":memory:")
     session.active_rules = [["bad", "rule"]]
     
-    session.execute_config()
+    session.redact()
     
     captured = capsys.readouterr()
     assert "Execution interrupted: 'list' object has no attribute 'get'" in captured.out
@@ -98,7 +98,7 @@ def test_burned_in_safety_check(capsys):
     
     # Capture output/logs
     # Usage of print in services.py should be captured by capsys
-    session.execute_config()
+    session.redact()
     # Wait, execute_config returns early if no active_rules?
     # Yes: "if not self.active_rules: return"
     

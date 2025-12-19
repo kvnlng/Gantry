@@ -45,7 +45,7 @@ def test_import_with_progress(tmp_path, monkeypatch):
     session = DicomSession(str(tmp_path / "session.db"))
     
     # 4. Import Folder
-    session.import_folder(str(dcm_dir))
+    session.ingest(str(dcm_dir))
     
     # 5. Verify Logger created file
     log_file = os.getenv("GANTRY_LOG_FILE", "gantry.log")

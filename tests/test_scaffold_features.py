@@ -12,7 +12,7 @@ def test_scaffold_config_structure(tmp_path):
     """Verify that scaffold_config produces valid JSON with new fields."""
     session = DicomSession(persistence_file=":memory:")
     output_path = tmp_path / "unified.yaml"
-    session.scaffold_config(str(output_path))
+    session.create_config(str(output_path))
     
     assert output_path.exists()
     
@@ -118,7 +118,7 @@ def test_scaffold_comments(tmp_path):
     })
     
     output_path = tmp_path / "comment_test.yaml"
-    session.scaffold_config(str(output_path))
+    session.create_config(str(output_path))
     
     with open(output_path, "r") as f:
         content = f.read()
@@ -143,7 +143,7 @@ def test_scaffold_multiline_comments(tmp_path):
     })
     
     output_path = tmp_path / "multiline_test.yaml"
-    session.scaffold_config(str(output_path))
+    session.create_config(str(output_path))
     
     # 1. Verify content
     with open(output_path, "r") as f:
@@ -194,7 +194,7 @@ def test_scaffold_burned_in_warning(tmp_path):
     session.store.patients.append(p)
     
     output_path = tmp_path / "burned_in_test.yaml"
-    session.scaffold_config(str(output_path))
+    session.create_config(str(output_path))
     
     with open(output_path, "r") as f:
         content = f.read()
@@ -218,7 +218,7 @@ def test_scaffold_flow_style(tmp_path):
     })
     
     output_path = tmp_path / "flow_test.yaml"
-    session.scaffold_config(str(output_path))
+    session.create_config(str(output_path))
     
     with open(output_path, "r") as f:
         content = f.read()

@@ -51,7 +51,7 @@ def test_profile_remediation_end_to_end(tmp_path):
         
     # 3. Setup Session
     session = DicomSession(":memory:")
-    session.import_folder(str(tmp_path)) # Ingest
+    session.ingest(str(tmp_path)) # Ingest
     
     # 4. Load Config
     session.load_config(str(config_path))
@@ -74,7 +74,7 @@ def test_profile_remediation_end_to_end(tmp_path):
     # Generate risk report
     risk_report = session.audit() 
     # Use RemediationService to apply (mocking internal flow if needed, but session usually has helpers)
-    session.apply_remediation(risk_report)
+    session.anonymize(risk_report)
     
     session.export(str(export_dir), safe=False) 
     

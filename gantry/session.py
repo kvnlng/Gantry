@@ -129,7 +129,7 @@ class DicomSession:
         self.reversibility_service = ReversibilityService(self.key_manager)
         get_logger().info(f"Reversible anonymization enabled. Key: {key_path}")
 
-    def preserve_patient_identity(self, patient_id: str, persist: bool = False) -> List["Instance"]:
+    def lock_identities(self, patient_id: str, persist: bool = False) -> List["Instance"]:
         """
         Securely embeds the original patient name/ID into a private DICOM tag
         for all instances belonging to the specified patient.
@@ -171,7 +171,7 @@ class DicomSession:
             
         return modified_instances
 
-    def preserve_identities(self, input_data: list):
+    def lock_identities_batch(self, input_data: list):
         """
         Batch preservation for multiple patients.
         input_data can be:
@@ -200,8 +200,8 @@ class DicomSession:
         count_patients = 0
         
         from tqdm import tqdm
-        for pid in tqdm(patient_ids, desc="Preserving Identities", unit="patient"):
-            res = self.preserve_patient_identity(pid, persist=False)
+        for pid in tqdm(patient_ids, desc="Locking Identities", unit="patient"):
+            res = self.lock_identities(pid, persist=False)
             modified_instances.extend(res)
             count_patients += 1
             
@@ -419,7 +419,7 @@ class DicomSession:
         else:
             print("No encrypted identity found or decryption failed.")
 
-    def import_folder(self, folder_path):
+    def ingest(self, folder_path):
         """
         Scans a folder for .dcm files (recursively) and imports them into the session.
         """
@@ -440,7 +440,7 @@ class DicomSession:
         print(f"  - {n_i} Instances")
         print("Remember to call .save() to persist changes.\n")
 
-    def inventory(self):
+    def examine(self):
         """Prints a summary of the session contents and equipment."""
         get_logger().info("Generating inventory report.")
         
@@ -517,7 +517,7 @@ class DicomSession:
         svc = RedactionService(self.store, self.store_backend)
         svc.redact_machine_region(serial_number, roi)
 
-    def apply_remediation(self, findings: List[PhiFinding]):
+    def anonymize(self, findings: List[PhiFinding]):
         """
         Applies remediation to the current session based on findings.
         Auto-logs to Audit Trail.
@@ -699,7 +699,7 @@ class DicomSession:
         print(f"\nSummary: Execution will modify approximately {match_count} images.")
         print("---------------------------------------")
 
-    def execute_config(self):
+    def redact(self):
         """
         User Action: 'Apply the currently loaded rules to the pixel data.'
         """
@@ -742,7 +742,7 @@ class DicomSession:
             get_logger().error(f"Execution interrupted: {e}")
             print(f"Execution interrupted: {e}")
 
-    def scaffold_config(self, output_path: str):
+    def create_config(self, output_path: str):
         """
         Generates a unified v2 configuration file in YAML format.
         Includes default PHI tags + Auto-detected machine inventory.
@@ -1049,64 +1049,6 @@ class DicomSession:
         except Exception as e:
             get_logger().error(f"Failed to write scaffold: {e}")
 
-    # =========================================================================
-    # WORKFLOW ALIASES (Ref: docs/WORKFLOW.md)
-    # =========================================================================
 
-    def ingest(self, folder_path: str):
-        """
-        Alias for import_folder.
-        Checkpoint 1: Ingest.
-        """
-        return self.import_folder(folder_path)
-
-    def examine(self):
-        """
-        Alias for inventory.
-        Checkpoint 2: Examine.
-        """
-        return self.inventory()
-
-    def setup_config(self, output_path: str):
-        """
-        Alias for scaffold_config.
-        Checkpoint 3: Configure.
-        """
-        return self.scaffold_config(output_path)
-
-    def backup_identities(self, input_data: list):
-        """
-        Alias for preserve_identities.
-        Checkpoint 5: Backup.
-        """
-        return self.preserve_identities(input_data)
-
-    def anonymize_metadata(self, findings: List[PhiFinding]):
-        """
-        Alias for apply_remediation.
-        Checkpoint 6: Anonymize.
-        """
-        return self.apply_remediation(findings)
-
-    def redact_pixels(self):
-        """
-        Alias for execute_config.
-        Checkpoint 7: Redact.
-        """
-        return self.execute_config()
-
-    def verify(self, config_path: str = None) -> "PhiReport":
-        """
-        Alias for scan_for_phi.
-        Checkpoint 8: Verify.
-        """
-        return self.scan_for_phi(config_path)
-
-    def export_data(self, folder: str, safe: bool = False):
-        """
-        Alias for export.
-        Checkpoint 9: Export.
-        """
-        return self.export(folder, safe=safe)
 
 

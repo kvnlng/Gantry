@@ -41,7 +41,7 @@ def test_load_empty_config(tmp_path):
     assert len(session.active_rules) == 0
     
     # Should not crash on execution
-    session.execute_config() 
+    session.redact() 
 
 
 
@@ -70,7 +70,7 @@ def test_execute_config_integration(tmp_path, dummy_patient, config_file):
 
     # Act
     session.load_config(config_file)  # Config targets SN-999, ROI 10-50
-    session.execute_config()
+    session.redact()
 
     # Assert
     # Verify the instance in memory is updated (Lazy loaded then updated)

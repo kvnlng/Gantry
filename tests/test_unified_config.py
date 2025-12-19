@@ -18,7 +18,7 @@ def test_unified_workflow(session_db, tmp_path, dummy_patient):
     
     # 2. Scaffold Config (Action: Setup)
     config_path = tmp_path / "unified_config.yaml"
-    session.setup_config(str(config_path))
+    session.create_config(str(config_path))
     
     assert os.path.exists(config_path)
     
@@ -71,7 +71,7 @@ def test_unified_workflow(session_db, tmp_path, dummy_patient):
     assert found_custom, "Audit failed to find the custom 'Protocol Name' tag on the instance."
     
     # 6. Verify Remediation (Anonymize)
-    session.anonymize_metadata(report)
+    session.anonymize(report)
     
     # Verify the instance in memory is updated
     assert inst.attributes["0018,1030"] == "ANONYMIZED"
