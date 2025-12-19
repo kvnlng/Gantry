@@ -112,6 +112,7 @@ class RedactionService:
 
         self.logger.info(f"Applying config rules for Machine: {serial} ({len(targets)} images)...")
 
+        valid_rois = []
         for zone in zones:
             if isinstance(zone, list):
                 # Legacy/Simplified format: zone IS the ROI
@@ -120,24 +121,26 @@ class RedactionService:
                  roi = zone.get("roi")  # Expected [r1, r2, c1, c2]
             
             if roi and len(roi) == 4:
-                self.redact_machine_region(serial, tuple(roi))
+                valid_rois.append(tuple(roi))
             else:
                 self.logger.warning(f"Invalid ROI format in config: {roi}")
+        
+        if valid_rois:
+            self.redact_machine_instances(serial, valid_rois)
 
-    def redact_machine_region(self, machine_sn: str, roi: tuple):
+    def redact_machine_instances(self, machine_sn: str, rois: List[tuple]):
         """
-        Zeroes out a rectangular region for all images from the specified machine.
-        roi: (row_start, row_end, col_start, col_end)
-        Includes safety checks for image bounds.
+        Applies a LIST of ROIs to all images from the specified machine.
+        Optimized to iterate images ONCE.
         """
         targets = self.index.get_by_machine(machine_sn)
-        self.logger.info(f"Redacting {len(targets)} images for {machine_sn}...")
+        self.logger.info(f"Redacting {len(targets)} images for {machine_sn} ({len(rois)} zones)...")
         
         if self.store_backend and targets:
              self.store_backend.log_audit(
                 action_type="REDACTION",
                 entity_uid=machine_sn,
-                details=f"Redacting {len(targets)} images with ROI {roi}"
+                details=f"Redacting {len(targets)} images with {len(rois)} zones"
             )
 
         for inst in tqdm(targets, desc=f"Redacting {machine_sn}", unit="img"):
@@ -149,52 +152,63 @@ class RedactionService:
                     self.logger.warning(f"  Skipping {inst.sop_instance_uid}: No pixel data found (or file missing).")
                     continue
 
-                # Apply redaction in memory
-                r1, r2, c1, c2 = roi
+                modified = False
+                for roi in rois:
+                    if self._apply_roi_to_instance(inst, arr, roi):
+                        modified = True
                 
-                # Identify Dimensions & Indices
-                ndim = len(arr.shape)
-                
-                # Default to last two dimensions (standard Grayscale/Planar)
-                row_dim = ndim - 2
-                col_dim = ndim - 1
-                
-                if ndim >= 3 and arr.shape[-1] in [3, 4]:
-                     # RGB/RGBA Interleaved: (..., Rows, Cols, Channels)
-                     # e.g. (1024, 1024, 3) or (1, 1024, 1024, 3)
-                     row_dim = ndim - 3
-                     col_dim = ndim - 2
-                
-                rows = arr.shape[row_dim]
-                cols = arr.shape[col_dim]
-                
-                # Safety Checks
-                if r1 >= rows or c1 >= cols:
-                     self.logger.warning(f"ROI {roi} is completely outside image dimensions ({rows}x{cols}). Skipping.")
-                     continue
-                
-                # Clipping
-                r2_clamped = min(r2, rows)
-                c2_clamped = min(c2, cols)
-                
-                if r2_clamped != r2 or c2_clamped != c2:
-                    self.logger.warning(f"ROI {roi} extends beyond image ({rows}x{cols}). Clipping to image bounds.")
+                if modified:
+                    self._apply_redaction_flags(inst)
+                    inst.regenerate_uid()
+                    self.logger.debug(f"  Modified {inst.sop_instance_uid}")
 
-                # Construct Slices dynamically
-                slices = [slice(None)] * ndim
-                slices[row_dim] = slice(r1, r2_clamped)
-                slices[col_dim] = slice(c1, c2_clamped)
-                
-                # Apply Redaction
-                arr[tuple(slices)] = 0
-                
-                self._apply_redaction_flags(inst)
-
-                inst.regenerate_uid()
-
-                self.logger.debug(f"  Modified {inst.sop_instance_uid}")
             except Exception as e:
                 self.logger.error(f"  Failed {inst.sop_instance_uid}: {e}")
+
+    def _apply_roi_to_instance(self, inst: Instance, arr, roi: tuple) -> bool:
+        """
+        Applies a single ROI to the pixel array in place.
+        Returns True if successful/applied.
+        """
+        try:
+            r1, r2, c1, c2 = roi
+            
+            # Identify Dimensions & Indices
+            ndim = len(arr.shape)
+            
+            # Default to last two dimensions (standard Grayscale/Planar)
+            row_dim = ndim - 2
+            col_dim = ndim - 1
+            
+            if ndim >= 3 and arr.shape[-1] in [3, 4]:
+                 # RGB/RGBA Interleaved: (..., Rows, Cols, Channels)
+                 row_dim = ndim - 3
+                 col_dim = ndim - 2
+            
+            rows = arr.shape[row_dim]
+            cols = arr.shape[col_dim]
+            
+            # Safety Checks
+            if r1 >= rows or c1 >= cols:
+                 # self.logger.warning(f"ROI {roi} is completely outside image dimensions ({rows}x{cols}). Skipping.")
+                 return False
+            
+            # Clipping
+            r2_clamped = min(r2, rows)
+            c2_clamped = min(c2, cols)
+            
+            # Construct Slices dynamically
+            slices = [slice(None)] * ndim
+            slices[row_dim] = slice(r1, r2_clamped)
+            slices[col_dim] = slice(c1, c2_clamped)
+            
+            # Apply Redaction
+            arr[tuple(slices)] = 0
+            return True
+        except:
+            return False
+
+
 
     def _apply_redaction_flags(self, inst: Instance):
         """
