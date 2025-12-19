@@ -175,29 +175,29 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot
 <span class="c1"># - Dates: JITTER (-365 to -1 days)</span>
 <span class="c1"># - Demographics: KEEP (Age, Sex)</span>
 <span class="c1"># - Private Tags: REMOVE (Strict)</span>
-<span class="n">session</span><span class="o">.</span><span class="n">scaffold_config</span><span class="p">(</span><span class="s2">&quot;research_config.yaml&quot;</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">create_config</span><span class="p">(</span><span class="s2">&quot;privacy_config.yaml&quot;</span><span class="p">)</span>
 
 <span class="c1"># 4. (Optional) Customize Data Jitter</span>
-<span class="c1"># Edit &quot;research_config.yaml&quot;:</span>
+<span class="c1"># Edit &quot;privacy_config.yaml&quot;:</span>
 <span class="c1"># date_jitter: { min_days: -10, max_days: -10 }</span>
 
 <span class="c1"># 5. Backup Original Identities (Pseudonymization)</span>
 <span class="n">session</span><span class="o">.</span><span class="n">enable_reversible_anonymization</span><span class="p">(</span><span class="s2">&quot;gantry.key&quot;</span><span class="p">)</span>
-<span class="n">session</span><span class="o">.</span><span class="n">backup_identities</span><span class="p">(</span><span class="n">session</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">lock_identities</span><span class="p">(</span><span class="n">session</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">)</span>
 
 <span class="c1"># 6. Apply De-Identification</span>
 <span class="c1"># This applies metadata anonymization, date shifting, and private tag removal</span>
 <span class="n">session</span><span class="o">.</span><span class="n">load_config</span><span class="p">(</span><span class="s2">&quot;research_config.yaml&quot;</span><span class="p">)</span>
 <span class="n">risk_report</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">audit</span><span class="p">()</span>
-<span class="n">session</span><span class="o">.</span><span class="n">apply_remediation</span><span class="p">(</span><span class="n">risk_report</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">anonymize</span><span class="p">(</span><span class="n">risk_report</span><span class="p">)</span>
 
 <span class="c1"># 7. Redact Pixels (if needed)</span>
-<span class="n">session</span><span class="o">.</span><span class="n">redact_pixels</span><span class="p">()</span>
+<span class="n">session</span><span class="o">.</span><span class="n">redact</span><span class="p">()</span>
 
 <span class="c1"># 8. Safe Export (with Compression)</span>
 <span class="c1"># Safe=True scans for PHI before export</span>
 <span class="c1"># Compression=&#39;j2k&#39; reduces storage footprint by ~50%</span>
-<span class="n">session</span><span class="o">.</span><span class="n">export_data</span><span class="p">(</span><span class="s2">&quot;./clean_research_data&quot;</span><span class="p">,</span> <span class="n">safe</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">compression</span><span class="o">=</span><span class="s1">&#39;j2k&#39;</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">&quot;./clean_research_data&quot;</span><span class="p">,</span> <span class="n">safe</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">compression</span><span class="o">=</span><span class="s1">&#39;j2k&#39;</span><span class="p">)</span>
 
 <span class="c1"># Save Session</span>
 <span class="n">session</span><span class="o">.</span><span class="n">save</span><span class="p">()</span>

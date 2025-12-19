@@ -71,29 +71,29 @@ session.examine()
 # - Dates: JITTER (-365 to -1 days)
 # - Demographics: KEEP (Age, Sex)
 # - Private Tags: REMOVE (Strict)
-session.scaffold_config("research_config.yaml")
+session.create_config("privacy_config.yaml")
 
 # 4. (Optional) Customize Data Jitter
-# Edit "research_config.yaml":
+# Edit "privacy_config.yaml":
 # date_jitter: { min_days: -10, max_days: -10 }
 
 # 5. Backup Original Identities (Pseudonymization)
 session.enable_reversible_anonymization("gantry.key")
-session.backup_identities(session.store.patients)
+session.lock_identities(session.store.patients)
 
 # 6. Apply De-Identification
 # This applies metadata anonymization, date shifting, and private tag removal
 session.load_config("research_config.yaml")
 risk_report = session.audit()
-session.apply_remediation(risk_report)
+session.anonymize(risk_report)
 
 # 7. Redact Pixels (if needed)
-session.redact_pixels()
+session.redact()
 
 # 8. Safe Export (with Compression)
 # Safe=True scans for PHI before export
 # Compression='j2k' reduces storage footprint by ~50%
-session.export_data("./clean_research_data", safe=True, compression='j2k')
+session.export("./clean_research_data", safe=True, compression='j2k')
 
 # Save Session
 session.save()
