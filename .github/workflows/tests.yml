@@ -8,6 +8,14 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.13", "3.14", "3.14t"]
+        include:
+          - python-version: "3.13"
+            PYTHON_GIL: "1" 
+          - python-version: "3.14"
+            PYTHON_GIL: "1" 
+          - python-version: "3.14t"
+            PYTHON_GIL: "0" 
+            
 
     steps:
     - uses: actions/checkout@v4
@@ -27,3 +35,6 @@ jobs:
     - name: Run Tests
       run: |
         pytest -v
+      env:
+        PYTHON_GIL: ${{ matrix.PYTHON_GIL }}
+
