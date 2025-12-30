@@ -142,10 +142,14 @@ class Instance(DicomItem):
                     raise e
                     
             except Exception as e:
+                # Try to get Transfer Syntax UID for better debugging
+                ts_uid = getattr(ds.file_meta, "TransferSyntaxUID", "Unknown")
+                
                 if "missing dependencies" in str(e) or "decompress" in str(e):
                     raise RuntimeError(
-                        f"Failed to decompress pixel data for {os.path.basename(self.file_path)}. "
-                        "Missing image codecs. Please ensure 'pillow' and 'gdcm' (if needed) are installed."
+                        f"Failed to decompress pixel data for {os.path.basename(self.file_path)} "
+                        f"(Transfer Syntax: {ts_uid}). "
+                        "Missing image codecs. Please ensure 'pillow', 'pylibjpeg', or 'gdcm' are installed."
                     ) from e
                 
                 # If we just caught the re-raised "no pixel data" exception, it would be handled above, 
