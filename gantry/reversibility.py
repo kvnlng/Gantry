@@ -26,6 +26,41 @@ class ReversibilityService:
         self.engine = CryptoEngine(key_manager.get_key())
         self.logger = get_logger()
 
+    def generate_identity_token(self, original_attributes: Dict[str, Any]) -> bytes:
+        """
+        Serializes and encrypts the attributes into a reusable token.
+        """
+        if not original_attributes:
+            return b""
+            
+        json_str = json.dumps(original_attributes)
+        data_bytes = json_str.encode('utf-8')
+        return self.engine.encrypt(data_bytes)
+
+    def embed_identity_token(self, instance: Instance, token: bytes):
+        """
+        Embeds a pre-calculated encrypted token into the instance.
+        """
+        if not token:
+            return
+
+        try:
+            # Create Sequence Item
+            from .entities import DicomItem
+
+            item = DicomItem()
+            item.set_attr(self.TAG_ENCRYPTED_CONTENT, token)
+            item.set_attr(self.TAG_TRANSFER_SYNTAX_UID, self.PAYLOAD_TRANSFER_SYNTAX)
+
+            # Embed into attributes dict via Sequence helper
+            instance.add_sequence_item(self.TAG_ENCRYPTED_ATTRS_SEQ, item)
+            
+            # self.logger.debug(f"Embedded token into {instance.sop_instance_uid}.") 
+
+        except Exception as e:
+            self.logger.error(f"Failed to embed token: {e}")
+            raise
+
     def embed_original_data(self, instance: Instance, original_attributes: Dict[str, Any]):
         """
         Serializes, encrypts, and embeds the provided attributes into the instance
@@ -35,27 +70,9 @@ class ReversibilityService:
             return
 
         try:
-            # 1. Serialize
-            json_str = json.dumps(original_attributes)
-            data_bytes = json_str.encode('utf-8')
-
-            # 2. Encrypt
-            encrypted_bytes = self.engine.encrypt(data_bytes)
-
-            # 3. Create Sequence Item
-            # We need to import DicomItem dynamically or assume it's available.
-            # Since 'Instance' imports 'DicomItem', we can try to use DicomItem from entities if needed,
-            # but Instance is passed in. We can create a generic DicomItem.
-            from .entities import DicomItem
-
-            item = DicomItem()
-            item.set_attr(self.TAG_ENCRYPTED_CONTENT, encrypted_bytes)
-            item.set_attr(self.TAG_TRANSFER_SYNTAX_UID, self.PAYLOAD_TRANSFER_SYNTAX)
-
-            # 4. Embed into attributes dict via Sequence helper
-            instance.add_sequence_item(self.TAG_ENCRYPTED_ATTRS_SEQ, item)
-
-            self.logger.debug(f"Embedded {len(encrypted_bytes)} bytes of encrypted data into {instance.sop_instance_uid}.")
+            token = self.generate_identity_token(original_attributes)
+            self.embed_identity_token(instance, token)
+            self.logger.debug(f"Embedded {len(token)} bytes of encrypted data into {instance.sop_instance_uid}.")
 
         except Exception as e:
             self.logger.error(f"Failed to embed original data: {e}")

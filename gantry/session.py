@@ -164,11 +164,15 @@ class DicomSession:
             "PatientID": patient.patient_id
         }
         
+        # Optimization: Encrypt once per patient
+        token = self.reversibility_service.generate_identity_token(original_attributes=original_attrs)
+        
         # Iterate deep
         for st in patient.studies:
             for se in st.series:
                 for inst in se.instances:
-                    self.reversibility_service.embed_original_data(inst, original_attrs)
+                    # self.reversibility_service.embed_original_data(inst, original_attrs)
+                    self.reversibility_service.embed_identity_token(inst, token)
                     modified_instances.append(inst)
                     cnt += 1
         
