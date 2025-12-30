@@ -219,6 +219,7 @@ Gantry automatically detects free-threaded environments and optimizes its parall
 | Operation | Standard (Processes) | Free-Threaded (Threads) | Speedup |
 | :--- | :--- | :--- | :--- |
 | **PHI Scan (Audit)** | 3,756 img/s | **41,184 img/s** | **10.6x** |
+| **Identity Locking** | 48,585 img/s | **838,844 img/s** | **17.2x** |
 | **Pixel Redaction** | 149 img/s | **149 img/s** | *Native* |
 | **DB Write (Concurrent)** | 8,137 logs/s | 6,783 logs/s | *0.8x* |
 *(Benchmarks run on Apple Silicon M3 Max)*
