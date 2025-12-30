@@ -31,4 +31,5 @@ def test_missing_compression_deps_error(tmp_path):
             inst.get_pixel_data()
             
         assert "Missing image codecs" in str(excinfo.value)
-        assert "pip install \"gantry[images]\"" in str(excinfo.value)
+        assert "Missing image codecs" in str(excinfo.value)
+        assert "pillow" in str(excinfo.value) and "gdcm" in str(excinfo.value)
