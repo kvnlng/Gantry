@@ -14,10 +14,10 @@ setup(
         "pandas>=2.0.0",
         "PyYAML>=6.0",
         "pillow>=10.0.0",
-        "pylibjpeg>=1.4.0; python_version <= '3.13'",
-        "pylibjpeg-libjpeg>=1.3.0; python_version <= '3.13'",
-        "pylibjpeg-openjpeg>=1.3.0; python_version <= '3.13'",
-        "pylibjpeg-rle>=2.0.0; python_version <= '3.13'"
+        "pylibjpeg>=1.4.0; python_version < '3.15'",
+        "pylibjpeg-libjpeg>=1.3.0; python_version < '3.15'",
+        "pylibjpeg-openjpeg>=1.3.0; python_version < '3.15'",
+        "pylibjpeg-rle>=2.0.0; python_version < '3.15'"
     ],
     python_requires=">=3.9",
     extras_require={
