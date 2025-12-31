@@ -129,8 +129,9 @@ class Instance(DicomItem):
         if self.file_path and os.path.exists(self.file_path):
             try:
                 # Read pixel data on demand
-                ds = pydicom.dcmread(self.file_path)
+                ds = None
                 try:
+                    ds = pydicom.dcmread(self.file_path)
                     self.set_pixel_data(ds.pixel_array)  # Cache it in memory
                     return self.pixel_array
                 except (AttributeError, TypeError):
@@ -139,17 +140,20 @@ class Instance(DicomItem):
                 except Exception as e:
                     if "no pixel data" in str(e).lower():
                         return None
+                    # Re-raise to be handled by outer except
                     raise e
                     
             except Exception as e:
                 # Try to get Transfer Syntax UID for better debugging
-                ts_uid = getattr(ds.file_meta, "TransferSyntaxUID", "Unknown")
+                ts_uid = "Unknown"
+                if ds is not None and hasattr(ds, "file_meta"):
+                     ts_uid = getattr(ds.file_meta, "TransferSyntaxUID", "Unknown")
                 
                 if "missing dependencies" in str(e) or "decompress" in str(e):
                     # Enhanced debug output
                     handlers = []
                     try:
-                        import pydicom.config
+                        # pydicom is already imported globally
                         handlers = [str(h) for h in pydicom.config.pixel_data_handlers]
                     except: pass
 
