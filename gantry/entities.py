@@ -162,7 +162,7 @@ class Instance(DicomItem):
                         f"(Transfer Syntax: {ts_uid}).\n"
                         f"Underlying Error: {e}\n"
                         f"Active pydicom handlers: {handlers}\n"
-                        "Please ensure 'pillow', 'pylibjpeg', or 'gdcm' are installed."
+                        "Missing image codecs. Please ensure 'pillow', 'pylibjpeg', or 'gdcm' are installed."
                     ) from e
                 
                 # If we just caught the re-raised "no pixel data" exception, it would be handled above, 
