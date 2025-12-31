@@ -20,11 +20,8 @@ try:
     # We explicitly define the priority list to ensure maximum compatibility.
     pydicom_config.pixel_data_handlers = [
         "pydicom.pixel_data_handlers.gdcm_handler",      # Attempt GDCM first (if installed by user)
-        "pydicom.pixel_data_handlers.pylibjpeg_handler", # Preferred pure-python decoder
-        "pydicom.pixel_data_handlers.jpeg_ls_handler",   # CharPyLS
-        "pydicom.pixel_data_handlers.pillow_handler",    # Fallback for standard JPEGs
-        "pydicom.pixel_data_handlers.numpy_handler",     # For uncompressed data
-        "pydicom.pixel_data_handlers.rle_handler"        # Native Numpy RLE
+        "pydicom.pixel_data_handlers.pillow_handler",    # Primary handler now for JPEGs
+        "pydicom.pixel_data_handlers.numpy_handler"      # For uncompressed data
     ]
 except ImportError:
     pass
