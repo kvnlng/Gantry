@@ -146,10 +146,19 @@ class Instance(DicomItem):
                 ts_uid = getattr(ds.file_meta, "TransferSyntaxUID", "Unknown")
                 
                 if "missing dependencies" in str(e) or "decompress" in str(e):
+                    # Enhanced debug output
+                    handlers = []
+                    try:
+                        import pydicom.config
+                        handlers = [str(h) for h in pydicom.config.pixel_data_handlers]
+                    except: pass
+
                     raise RuntimeError(
                         f"Failed to decompress pixel data for {os.path.basename(self.file_path)} "
-                        f"(Transfer Syntax: {ts_uid}). "
-                        "Missing image codecs. Please ensure 'pillow', 'pylibjpeg', or 'gdcm' are installed."
+                        f"(Transfer Syntax: {ts_uid}).\n"
+                        f"Underlying Error: {e}\n"
+                        f"Active pydicom handlers: {handlers}\n"
+                        "Please ensure 'pillow', 'pylibjpeg', or 'gdcm' are installed."
                     ) from e
                 
                 # If we just caught the re-raised "no pixel data" exception, it would be handled above, 

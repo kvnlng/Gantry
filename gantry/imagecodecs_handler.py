@@ -77,8 +77,13 @@ def get_pixel_data(ds):
     # imagecodecs.jpeg_decode handles the stream?
     
     try:
-        # JPEG Lossless / Baseline / Extended
-        if transfer_syntax in [JPEGLossless, JPEGLosslessSV1, JPEGBaseline, JPEGExtended]:
+        # JPEG Lossless (Process 14) and SV1 (.70)
+        # Standard libjpeg often fails here; use specific ljpeg codec
+        if transfer_syntax in [JPEGLossless, JPEGLosslessSV1]:
+             return imagecodecs.ljpeg_decode(pixel_bytes)
+
+        # JPEG Baseline / Extended (Process 1, 2, 4)
+        if transfer_syntax in [JPEGBaseline, JPEGExtended]:
              return imagecodecs.jpeg_decode(pixel_bytes)
              
         # JPEG 2000

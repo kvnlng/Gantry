@@ -10,6 +10,9 @@ try:
 
     # Expose Equipment for type hinting
     from .entities import Equipment
+    
+    # Expose handler for direct import check
+    from . import imagecodecs_handler
 
 except ImportError as e:
     # Catch broken pylibjpeg installations that typically occur on Python 3.14t
