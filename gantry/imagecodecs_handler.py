@@ -1,11 +1,21 @@
-
-import numpy as np
+import sys
+IMPORT_ERROR = None
 try:
     import imagecodecs
-except ImportError:
+except ImportError as e:
     imagecodecs = None
+    IMPORT_ERROR = e
 
 from pydicom.uid import UID
+
+# ... (UID Constants omitted) ...
+
+def is_available():
+    if imagecodecs is None:
+        # Log to stderr so it appears in logs even if pydicom swallows the handler check
+        print(f"[gantry_imagecodecs_handler] NOT AVAILABLE. Import Error: {IMPORT_ERROR}", file=sys.stderr)
+        return False
+    return True
 
 # UID Constants
 JPEGLossless = UID("1.2.840.10008.1.2.4.57")
@@ -36,8 +46,6 @@ SUPPORTED_TRANSFER_SYNTAXES = [
     RLELossless
 ]
 
-def is_available():
-    return imagecodecs is not None
 
 def supports_transfer_syntax(transfer_syntax):
     return transfer_syntax in SUPPORTED_TRANSFER_SYNTAXES
