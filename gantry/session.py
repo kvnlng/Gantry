@@ -144,6 +144,11 @@ class DicomSession:
         if not self.reversibility_service:
             raise RuntimeError("Reversible anonymization not enabled. Call enable_reversible_anonymization() first.")
             
+        # Dispatch to batch method if a list is provided
+        # This handles List[str] or List[Patient] automatically via lock_identities_batch logic
+        if isinstance(patient_id, (list, tuple, set)) or hasattr(patient_id, 'findings'):
+            return self.lock_identities_batch(patient_id)
+            
         if verbose:
             get_logger().debug(f"Preserving identity for {patient_id}...")
         
