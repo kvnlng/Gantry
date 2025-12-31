@@ -267,6 +267,7 @@ def _export_instance_worker(ctx: ExportContext) -> str:
             
             # Recalculate dimensions based on array shape
             # Logic mirrored from Instance.set_pixel_data
+            # Logic mirrored from Instance.set_pixel_data
             shape = arr.shape
             ndim = len(shape)
             
@@ -486,8 +487,21 @@ class DicomExporter:
                     # Handle In-Memory Pixels (e.g. Remediated/Detached instances)
                     # If file_path is None, worker cannot load pixels. send them.
                     p_array = None
-                    if inst.file_path is None and inst.pixel_array is not None:
+                    p_array = None
+                    p_raw = None
+                    p_ts = None
+                    
+                    if inst.pixel_array is not None:
+                        # In-memory modified pixels (Redaction)
                         p_array = inst.pixel_array
+                    elif compression is None:
+                        # Optimization: Try Raw Copy
+                        p_raw, p_ts = inst.get_raw_pixel_data()
+                        
+                        # If Raw fetch fails but file exists (e.g. edge case), p_raw is None
+                        # logic in worker will just strip pixels? No, logic above says:
+                        # "if arr is None: inst.get_pixel_data()" unless raw is set.
+                        # so fallback is preserved in worker.
 
                     # Add to queue
                     ctx = ExportContext(
@@ -497,6 +511,8 @@ class DicomExporter:
                         study_attributes=study_attrs,
                         series_attributes=series_attrs,
                         pixel_array=p_array,
+                        raw_pixel_bytes=p_raw,
+                        raw_transfer_syntax=p_ts,
                         compression=compression
                     )
                     export_tasks.append(ctx)
