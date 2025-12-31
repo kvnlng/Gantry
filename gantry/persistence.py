@@ -541,33 +541,33 @@ class SqliteStore:
             with sqlite3.connect(self.db_path, timeout=900.0) as conn:
                 cur = conn.cursor()
                 
-                # Prepare Data for Batch Insert
-                data = []
-                for f in findings:
-                    rem_action = None
-                    rem_value = None
-                    if f.remediation_proposal:
-                        rem_action = f.remediation_proposal.action_type
-                        rem_value = str(f.remediation_proposal.new_value)
-                    
-                    data.append((
-                        timestamp, 
-                        f.entity_uid, 
-                        f.entity_type, 
-                        f.field_name, 
-                        str(f.value), 
-                        f.reason, 
-                        f.patient_id, 
-                        rem_action, 
-                        rem_value, 
-                        "{}"
-                    ))
+                # Prepare Data Generator for Batch Insert (Memory Efficient)
+                def findings_generator():
+                    for f in findings:
+                        rem_action = None
+                        rem_value = None
+                        if f.remediation_proposal:
+                            rem_action = f.remediation_proposal.action_type
+                            rem_value = str(f.remediation_proposal.new_value)
+                        
+                        yield (
+                            timestamp, 
+                            f.entity_uid, 
+                            f.entity_type, 
+                            f.field_name, 
+                            str(f.value), 
+                            f.reason, 
+                            f.patient_id, 
+                            rem_action, 
+                            rem_value, 
+                            "{}"
+                        )
 
                 cur.executemany("""
                     INSERT INTO phi_findings 
                     (timestamp, entity_uid, entity_type, field_name, value, reason, patient_id, remediation_action, remediation_value, details_json) 
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, data)
+                """, findings_generator())
                 
                 conn.commit()
                 self.logger.info("Findings saved.")
