@@ -13,7 +13,8 @@ setup(
         "cryptography>=41.0.0",
         "pandas>=2.0.0",
         "PyYAML>=6.0",
-        "pillow>=10.0.0"
+        "pillow>=10.0.0",
+        "imagecodecs>=2023.0.0"
     ],
     python_requires=">=3.9",
     extras_require={
