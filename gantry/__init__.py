@@ -2,14 +2,29 @@ import warnings
 # Suppress all pydicom warnings (e.g. strict UID validation)
 warnings.filterwarnings("ignore", module="pydicom.*")
 
-from .session import DicomSession as Session
+try:
+    from .session import DicomSession as Session
 
-# Expose the Builder for power users
-from .builders import DicomBuilder as Builder
+    # Expose the Builder for power users
+    from .builders import DicomBuilder as Builder
 
-# Expose Equipment for type hinting
-# Expose Equipment for type hinting
-from .entities import Equipment
+    # Expose Equipment for type hinting
+    from .entities import Equipment
+
+except ImportError as e:
+    # Catch broken pylibjpeg installations that typically occur on Python 3.14t
+    if "_openjpeg" in str(e):
+        raise RuntimeError(
+            "\n"
+            "CRITICAL ERROR: Broken 'pylibjpeg' installation detected.\n"
+            "----------------------------------------------------------\n"
+            "This environment contains corrupt 'pylibjpeg' packages from a failed build attempt.\n"
+            "Gantry cannot start because 'pydicom' is attempting to load these broken plugins.\n\n"
+            "TO FIX: Run this command to clean your environment:\n"
+            "    pip uninstall -y pylibjpeg pylibjpeg-openjpeg pylibjpeg-libjpeg pylibjpeg-rle\n"
+            "----------------------------------------------------------\n"
+        ) from e
+    raise
 
 # Configure pydicom handlers
 # We prioritize pylibjpeg (if installed) and pillow.
