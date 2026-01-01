@@ -1,239 +1,220 @@
 # Gantry
 
-**A Robust, Object-Oriented DICOM Management & Redaction Toolkit.**
+**A Python DICOM Object Model and Redaction Toolkit.**
 
-[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Gantry Tests](https://github.com/kvnlng/Gantry/actions/workflows/tests.yml/badge.svg)](https://github.com/kvnlng/Gantry/actions/workflows/tests.yml)
+Gantry provides a high-performance, object-oriented interface for managing, analyzing, and de-identifying DICOM datasets. It is designed for large-scale ingestion, precise pixel redaction, and strict PHI compliance.
 
-**Gantry** is a high-level framework for curating, anonymizing, and redacting medical imaging data. It transforms raw DICOM files into safe, research-ready datasets.
+## Features
 
-Instead of treating files as flat dictionaries, Gantry provides a semantic interface (`Patient` → `Study`) to automate critical tasks like **PHI Scanning**, **Reversible Anonymization**, **Pixel Redaction**, **Date Jittering**, and **Compliance Auditing**.
+- **Object-Oriented API**: Work with `Patient`, `Study`, `Series`, and `Instance` objects directly.
+- **Persistent Sessions**: All metadata is indexed in a SQLite database, allowing you to pause/resume large jobs and providing an audit trail.
+- **Parallel Processing**: Multi-process ingestion and export for maximum throughput.
+- **Robust Redaction**:
+  - **Metadata**: Configurable tag removal, replacement, and shifting.
+  - **Pixel Data**: Machine-specific redaction zones (ROI) to scrub burned-in PHI.
+  - **Reversibility**: Optional cryptographic identity preservation.
+- **Codecs**: Robust support for JPEG Lossless, JPEG 2000, and other compressed formats via `imagecodecs`.
+- **Free-threaded Python Ready**: Fully compatible with Python 3.13t+ (no-GIL) for true parallelism.
 
----
+## Architecture
 
-## 🚀 Key Features
+Gantry acts as a smart indexing layer over your raw DICOM files. It does *not* modify your original data. Instead, it builds a lightweight metadata index (SQLite) and exposes a clean Python Object Model for manipulation.
 
-### 🛡️ Privacy & Security
-*   **Smart Remediation**: Detects and fixes PHI in metadata (Anonymization & Configurable Date Shifting).
-*   **Research-Ready Configuration**: Built-in support for research datasets (keeping demographics, jittering dates).
-*   **Strict De-Identification**: Optional "Nuclear" mode to remove all private tags except those required for reversibility.
-*   **Reversible Anonymization**: Securely embeds encrypted original identities using **DICOM Standard Encrypted Attributes (0400,0500)** (Part 15 E.1.2 Compliant).
-*   **Pixel Redaction**: Rules-based engine to redact burned-in PHI from pixel data, with auto-detection for known machine models.
+### 1. The Session Facade
+The `Session` object is your single entry point. It manages:
+- **Persistence**: Auto-saving state to `gantry.db`.
+- **Inventory**: Tracking Patients, Studies, and Series.
+- **Transactions**: Atomic persistence of changes.
 
-### ⚡ Performance & Scale
-*   **Parallel Processing**: Multi-process architecture for high-speed import and PHI scanning.
-*   **Lazy Loading**: Minimal memory footprint; loads pixel data only when needed.
-*   **Robust Persistence**: Powered by **SQLite** (`gantry.db`) for metadata and **Binary Sidecar** (`gantry_pixels.bin`) for high-performance pixel storage.
-
-### 🧠 Intelligent Data Management
-*   **Hierarchical Object Model**: Work with semantic entities (`Patient` → `Study`) instead of raw tags.
-*   **Machine-Centric Indexing**: Automatically groups images by equipment signature (Model & Serial).
-
-### 🏆 Audit & Compliance
-*   **Standard De-Identification**: Automatically stamps `(0012,0063)` and `(0012,0064)` with privacy profile details for compliance.
-*   **Robust Auditing**: SQLite-backed audit logs with concurrency support for high-throughput remediation.
-
----
-
-## 📦 Installation
-
-Clone the repository and install in editable mode:
-
-```bash
-git clone https://github.com/kvnlng/gantry.git
-cd gantry
-pip install -e .
-
-# For Image Compression Support
-pip install ".[images]"
-```
-
----
-
-## ⚡ Quick Start: Research Workflow
-
-Gantry makes it easy to prepare data for research.
-
-```python
-import gantry
-
-# 1. Ingest Data
-session = gantry.Session("research_cohort.db")
-session.ingest("./raw_dicom_data")
-
-# 2. Inventory Equipment
-session.examine() 
-# Output: Found 3 Devices (GE Rev CT, Siemens Vida...)
-
-# 3. Create Research Config
-# Generates a YAML file with safe defaults for research:
-# - Dates: JITTER (-365 to -1 days)
-# - Demographics: KEEP (Age, Sex)
-# - Private Tags: REMOVE (Strict)
-session.create_config("privacy_config.yaml")
-
-# 4. (Optional) Customize Data Jitter
-# Edit "privacy_config.yaml":
-# date_jitter: { min_days: -10, max_days: -10 }
-
-# 5. Backup Original Identities (Pseudonymization)
-session.enable_reversible_anonymization("gantry.key")
-session.lock_identities(session.store.patients)
-
-# 6. Apply De-Identification
-# This applies metadata anonymization, date shifting, and private tag removal
-session.load_config("research_config.yaml")
-risk_report = session.audit()
-session.anonymize(risk_report)
-
-# 7. Redact Pixels (if needed)
-session.redact()
-
-# 8. Safe Export (with Compression)
-# Safe=True scans for PHI before export
-# Compression='j2k' reduces storage footprint by ~50%
-session.export("./clean_research_data", safe=True, compression='j2k')
-
-# Save Session
-session.save()
-```
-
----
-
-## 🕵️ Advanced Configuration
-
-### Date Jittering
-Gantry supports deterministic date shifting based on a hash of the PatientID. You can configure the range in your config file:
-
-```yaml
-date_jitter:
-  min_days: -365
-  max_days: -1
-```
-
-### Private Tag Removal
-By default, research configurations enable strict private tag removal. This removes *all* odd-group tags, ensuring no hidden PHI leaks, while automatically whitelisting Gantry's own security tags (`0400,0500`) used for reversible anonymization.
-
-```yaml
-remove_private_tags: true
-```
-
-### Standard Privacy Profiles
-To simplify configuration, Gantry includes built-in privacy profiles based on industry standards.
-
-**Basic Profile (`privacy_profile": "basic"`)**:
-Based on the **DICOM PS3.15 Annex E (Basic Profile)**, this profile provides a safe baseline for de-identification by removing or cleaning 18+ common identifiers (e.g., `PatientName`, `PatientID`, `BirthDate`, `OperatorsName`).
-
-Using a standard profile ensures you are compliant with best practices without manually specifying every tag. You can still override specific tags in your `phi_tags` config.
-
-```json
-{
-    "version": "2.0",
-    "privacy_profile": "basic",
-    "phi_tags": {
-        "0010,0010": { "action": "KEEP", "name": "Patient Name (Exception)" } 
-    }
-}
-```
-
----
-
-## 🧩 Architecture
-
-Gantry uses a **Layered Architecture** accessed via a central Facade.
+### 2. Object Model
+Gantry abstracts DICOM into a semantic hierarchy, removing the pain of manual tag iteration.
 
 ```mermaid
-graph TD
-    User([User]) --> Session
-    
-    subgraph Core [Gantry Codebase]
-        direction TB
-        Session[DicomSession Facade]
-        
-        subgraph Logic [Services Layer]
-            Privacy[PhiInspector]
-            Remediation[RemediationService]
-            Indexer[MachinePixelIndex]
-        end
-
-        subgraph Model [Object Graph]
-            Patient --> Study
-            Study --> Series
-            Series --> Instance
-        end
-
-        subgraph Storage [Persistence Layer]
-            Sqlite[(SqliteStore<br/>Metadata)]
-            Sidecar[(Pixels.bin<br/>Data)]
-        end
-    end
-
-    FS[File System]
-
-    Session -->|Delegates| Logic
-    Session -->|Manages| Model
-    Session -->|Persists| Storage
-    
-    Logic -->|Scans/Modifies| Model
-    Instance -.->|Lazy Load| FS
-    Sqlite <-->|Hydrate/Save| Model
-    Sidecar <-->|Read/Write| Model
+graph LR
+    Patient --> Study
+    Study --> Series
+    Series --> Instance
+    Instance --> Pixels((Pixel Data))
 ```
 
----
+- **Patient**: Root entity (Name, ID).
+- **Study**: A distinct visit/exam.
+- **Series**: A scan or reconstruction (e.g., "ct_soft_kernel").
+- **Instance**: A single DICOM slice. **Pixel data is lazy-loaded**; the 500MB+ pixel array is only read from disk when you access `.pixel_array` or export.
 
+### 3. Pipeline
+1.  **Ingest**: Multithreaded scan of input folders. Extracts only essential metadata to SQLite.
+2.  **Audit**: Runs rules against the index to flag PHI.
+3.  **Clone & Modify**: "Redaction" creates in-memory copies of metadata. Original files are untouched.
+4.  **Export**: Writes new, clean DICOM files to the output directory.
 
-### CTP Rule Import (Legacy Support)
-If you are migrating from CTP (RSNA Clinical Trial Processor), Gantry can ingest your existing `DicomPixelAnonymizer.script` files to preserve your knowledge base of redaction zones.
+## Installation
 
-**Step 1: Convert the Script**
-Use the built-in utility to convert your `.script` file into a Gantry-compatible JSON file.
+Gantry requires **Python 3.9+**.
 
 ```bash
-python -m gantry.utils.ctp_parser /path/to/DicomPixelAnonymizer.script gantry/resources/ctp_rules.yaml
+# Clone the repository
+git clone https://github.com/kvnlng/Gantry.git
+cd Gantry
+
+# Install with dependencies (including codecs)
+pip install -e .
 ```
 
-**Step 2: Scaffolding**
-Once the `ctp_rules.json` file is in `gantry/resources/`, the `scaffold_config` command will automatically use it to match machines and pre-fill redaction zones for your new inventory.
+*Note: The `imagecodecs` dependency is included and strongly recommended for handling JPEG Lossless and other compressed Transfer Syntaxes.*
+
+## Quick Start
+
+### 1. Initialize a Session
+
+All operations start with a `Session`. This creates (or loads) a local SQLite database to manage your data.
 
 ```python
-# In your python session
-session.scaffold_config("my_new_config.yaml") 
-# Gantry will check resources/ctp_rules.yaml and apply matching zones!
+from gantry import Session
+
+# Initialize a new session (creates 'gantry.db' by default)
+session = Session("my_project.db")
 ```
 
-## 📊 Benchmarks & Scalability
-Gantry uses a high-performance **Split-Persistence Architecture** (SQLite + Binary Sidecar) designed to scale to massive cohorts.
+### 2. Ingest Data
 
-**Stress Test Results (Dec 2025):**
+Scan directories for DICOM files. Gantry is resilient to nested folders and non-DICOM clutter.
 
-| Metric | Count | Data Size | Write Speed | Read Time |
-| :--- | :--- | :--- | :--- | :--- |
-| **Metadata Scale** | 100,000 Inst | Metadata Only | **140,104 obj/s** | 0.60s (Total) |
-| **Payload Scale** | 5,000 Inst | **30.52 GB** | **584 MB/s** | 0.38s (Warm) |
+```python
+session.ingest("/path/to/dicom/data")
+session.save() # Persist the index to disk
+```
 
-### 🚀 Python 3.14t (Free-Threaded) Ready
-Gantry automatically detects free-threaded environments and optimizes its parallelism strategy, eliminating IPC overhead.
+### 3. Analyze for PHI
 
-| Operation | Standard (Processes) | Free-Threaded (Threads) | Speedup |
-| :--- | :--- | :--- | :--- |
-| **PHI Scan (Audit)** | 3,756 img/s | **41,184 img/s** | **10.6x** |
-| **Identity Locking** | 48,585 img/s | **838,844 img/s** | **17.2x** |
-| **Pixel Redaction** | 149 img/s | **149 img/s** | *Native* |
-| **DB Write (Concurrent)** | 8,137 logs/s | 6,783 logs/s | *0.8x* |
-*(Benchmarks run on Apple Silicon M3 Max)*
+Audit your dataset using a configuration file or a built-in profile.
 
-*Tests performed on Apple Silicon (Pro G40). Write speed limited by SSD throughput (Sequential Append).*
+```python
+# Create a default configuration file (v2.0 YAML)
+session.create_config("config.yaml")
 
-## 🧪 Running Tests
+# Run an audit
+report = session.audit("config.yaml")
+session.save_analysis(report)
+
+print(f"Found {len(report)} potential PHI issues.")
+```
+
+### 4. Anonymize & Export
+
+Apply remediation rules (metadata scrubbing + pixel redaction) and export the "clean" data.
+
+```python
+# Apply remediation rules in-memory
+session.anonymize("config.yaml")
+
+# Export only safe (clean) data to a new folder
+# Compression="j2k" optionally compresses output to JPEG 2000
+session.export("/path/to/export_clean", safe=True, compression="j2k")
+```
+
+## Configuration
+
+Gantry uses a **Unified YAML Configuration** to control all aspects of de-identification.
+
+### Example `config.yaml`
+
+```yaml
+
+# 1. Privacy Profile (Optional)
+# Inherit standard rules from 'basic' or 'comprehensive' profiles.
+privacy_profile: "basic"
+
+# 2. Date Jitter
+# Shift all dates by a random amount within this range (consistent per Patient).
+date_jitter:
+  min_days: -30
+  max_days: -10
+
+# 3. Private Tags
+# Whether to remove all private dicom tags (odd groups).
+remove_private_tags: true
+
+# 4. Custom PHI Tags (Overrides Profile)
+phi_tags:
+  "0010,0010": { "action": "REMOVE", "name": "PatientName" }
+  "0010,0020": { "action": "REPLACE", "name": "PatientID", "value": "ANON_{id}" }
+
+# 5. Pixel Redaction Rules (Machine Specific)
+machines:
+  - serial_number: "DEV12345"
+    model_name: "UltraSound Pro"
+    redaction_zones:
+      - [0, 50, 0, 800] # ROI: [row_start, row_end, col_start, col_end]
+```
+
+## Advanced Features
+
+### Pixel Redaction
+
+Gantry can scrub burned-in PHI from pixels based on matching the equipment's `DeviceSerialNumber`. Define `redaction_zones` in your config to automatically verify and scrub these regions during export/anonymization.
+
+### Reversible Anonymization
+
+To maintain a secure link back to the original identity:
+
+```python
+# Enable encryption (generates 'gantry.key')
+session.enable_reversible_anonymization()
+
+# Lock identities BEFORE anonymization to store encrypted original data
+session.lock_identities("PATIENT_123")
+```
+
+Users can later recover the identity if they possess the correct key:
+
+```python
+session.recover_patient_identity("ANON_123")
+```
+
+### Strict Codec & Export Safety
+
+Gantry performs strict validation during export. If a compressed image cannot be decompressed (e.g., due to missing codecs or corruption), the export **will fail** rather than passing through unverified data. This ensures 100% PHI safety.
+
+Supported Transfer Syntaxes:
+- JPEG Lossless (Process 14, SV1)
+- JPEG 2000 (Lossless & Lossy)
+- JPEG-LS
+- RLE Lossless
+- Standard JPEG Baseline/Extended
+
+## Performance & Benchmarks
+
+Gantry is optimized for high-throughput clinical environments.
+
+| Operation | Scale | Time (Mac M3 Max) | Throughput | 
+|-----------|-------|-------------------|------------|
+| **Identity Locking** | 100,000 Instances | ~0.13 s | **769k / sec** |
+| **Persist Findings** | 100,000 Issues | ~0.13 s | **770k / sec** |
+| **Ingestion** | - | - | **25k / sec** |
+
+*Note: Benchmarks run on Python 3.14t (Free-threaded).*
+
+## Migration Tools
+
+### Clinical Trial Processor (CTP)
+
+Gantry includes a utility to convert legacy CTP `DicomPixelAnonymizer.script` files into Gantry's YAML configuration format.
 
 ```bash
-pytest -v
+# Convert CTP script to Gantry YAML
+python -m gantry.utils.ctp_parser /path/to/anonymizer.script output_rules.yaml
 ```
 
----
+This parser extracts:
+- Manufacturer/Model matching criteria.
+- Redaction zones (automatically converting `x,y,w,h` to `r1,r2,c1,c2`).
 
-## License
+## Running Tests
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+Gantry uses `pytest` for its test suite.
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```

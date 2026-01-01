@@ -45,31 +45,37 @@
               <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
 <ul class="current">
 <li class="toctree-l1 current"><a class="current reference internal" href="#">Gantry</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="#key-features">🚀 Key Features</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#privacy-security">🛡️ Privacy &amp; Security</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#performance-scale">⚡ Performance &amp; Scale</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#intelligent-data-management">🧠 Intelligent Data Management</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#audit-compliance">🏆 Audit &amp; Compliance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#features">Features</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#architecture">Architecture</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#the-session-facade">1. The Session Facade</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#object-model">2. Object Model</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#pipeline">3. Pipeline</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#installation">📦 Installation</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#quick-start-research-workflow">⚡ Quick Start: Research Workflow</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#advanced-configuration">🕵️ Advanced Configuration</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#date-jittering">Date Jittering</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#private-tag-removal">Private Tag Removal</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#standard-privacy-profiles">Standard Privacy Profiles</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#installation">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#quick-start">Quick Start</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#initialize-a-session">1. Initialize a Session</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ingest-data">2. Ingest Data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#analyze-for-phi">3. Analyze for PHI</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#anonymize-export">4. Anonymize &amp; Export</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#architecture">🧩 Architecture</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#ctp-rule-import-legacy-support">CTP Rule Import (Legacy Support)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#configuration">Configuration</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#example-config-yaml">Example <code class="docutils literal notranslate"><span class="pre">config.yaml</span></code></a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#benchmarks-scalability">📊 Benchmarks &amp; Scalability</a><ul>
-<li class="toctree-l3"><a class="reference internal" href="#python-3-14t-free-threaded-ready">🚀 Python 3.14t (Free-Threaded) Ready</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#advanced-features">Advanced Features</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#pixel-redaction">Pixel Redaction</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#reversible-anonymization">Reversible Anonymization</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#strict-codec-export-safety">Strict Codec &amp; Export Safety</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#running-tests">🧪 Running Tests</a></li>
-<li class="toctree-l2"><a class="reference internal" href="#license">License</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#performance-benchmarks">Performance &amp; Benchmarks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#migration-tools">Migration Tools</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#clinical-trial-processor-ctp">Clinical Trial Processor (CTP)</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#running-tests">Running Tests</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="modules.html">gantry</a></li>
@@ -101,284 +107,246 @@
              
   <section id="gantry">
 <h1>Gantry<a class="headerlink" href="#gantry" title="Link to this heading"></a></h1>
-<p><strong>A Robust, Object-Oriented DICOM Management &amp; Redaction Toolkit.</strong></p>
-<p><a class="reference external" href="https://www.python.org/downloads/"><img alt="Python 3.13+" src="https://img.shields.io/badge/python-3.13+-blue.svg" /></a>
-<a class="reference external" href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
-<a class="reference external" href="https://github.com/kvnlng/Gantry/actions/workflows/tests.yml"><img alt="Gantry Tests" src="https://github.com/kvnlng/Gantry/actions/workflows/tests.yml/badge.svg" /></a></p>
-<p><strong>Gantry</strong> is a high-level framework for curating, anonymizing, and redacting medical imaging data. It transforms raw DICOM files into safe, research-ready datasets.</p>
-<p>Instead of treating files as flat dictionaries, Gantry provides a semantic interface (<code class="docutils literal notranslate"><span class="pre">Patient</span></code> → <code class="docutils literal notranslate"><span class="pre">Study</span></code>) to automate critical tasks like <strong>PHI Scanning</strong>, <strong>Reversible Anonymization</strong>, <strong>Pixel Redaction</strong>, <strong>Date Jittering</strong>, and <strong>Compliance Auditing</strong>.</p>
-<hr class="docutils" />
-<section id="key-features">
-<h2>🚀 Key Features<a class="headerlink" href="#key-features" title="Link to this heading"></a></h2>
-<section id="privacy-security">
-<h3>🛡️ Privacy &amp; Security<a class="headerlink" href="#privacy-security" title="Link to this heading"></a></h3>
+<p><strong>A Python DICOM Object Model and Redaction Toolkit.</strong></p>
+<p>Gantry provides a high-performance, object-oriented interface for managing, analyzing, and de-identifying DICOM datasets. It is designed for large-scale ingestion, precise pixel redaction, and strict PHI compliance.</p>
+<section id="features">
+<h2>Features<a class="headerlink" href="#features" title="Link to this heading"></a></h2>
 <ul class="simple">
-<li><p><strong>Smart Remediation</strong>: Detects and fixes PHI in metadata (Anonymization &amp; Configurable Date Shifting).</p></li>
-<li><p><strong>Research-Ready Configuration</strong>: Built-in support for research datasets (keeping demographics, jittering dates).</p></li>
-<li><p><strong>Strict De-Identification</strong>: Optional “Nuclear” mode to remove all private tags except those required for reversibility.</p></li>
-<li><p><strong>Reversible Anonymization</strong>: Securely embeds encrypted original identities using <strong>DICOM Standard Encrypted Attributes (0400,0500)</strong> (Part 15 E.1.2 Compliant).</p></li>
-<li><p><strong>Pixel Redaction</strong>: Rules-based engine to redact burned-in PHI from pixel data, with auto-detection for known machine models.</p></li>
+<li><p><strong>Object-Oriented API</strong>: Work with <code class="docutils literal notranslate"><span class="pre">Patient</span></code>, <code class="docutils literal notranslate"><span class="pre">Study</span></code>, <code class="docutils literal notranslate"><span class="pre">Series</span></code>, and <code class="docutils literal notranslate"><span class="pre">Instance</span></code> objects directly.</p></li>
+<li><p><strong>Persistent Sessions</strong>: All metadata is indexed in a SQLite database, allowing you to pause/resume large jobs and providing an audit trail.</p></li>
+<li><p><strong>Parallel Processing</strong>: Multi-process ingestion and export for maximum throughput.</p></li>
+<li><p><strong>Robust Redaction</strong>:</p>
+<ul>
+<li><p><strong>Metadata</strong>: Configurable tag removal, replacement, and shifting.</p></li>
+<li><p><strong>Pixel Data</strong>: Machine-specific redaction zones (ROI) to scrub burned-in PHI.</p></li>
+<li><p><strong>Reversibility</strong>: Optional cryptographic identity preservation.</p></li>
+</ul>
+</li>
+<li><p><strong>Codecs</strong>: Robust support for JPEG Lossless, JPEG 2000, and other compressed formats via <code class="docutils literal notranslate"><span class="pre">imagecodecs</span></code>.</p></li>
+<li><p><strong>Free-threaded Python Ready</strong>: Fully compatible with Python 3.13t+ (no-GIL) for true parallelism.</p></li>
 </ul>
 </section>
-<section id="performance-scale">
-<h3>⚡ Performance &amp; Scale<a class="headerlink" href="#performance-scale" title="Link to this heading"></a></h3>
-<ul class="simple">
-<li><p><strong>Parallel Processing</strong>: Multi-process architecture for high-speed import and PHI scanning.</p></li>
-<li><p><strong>Lazy Loading</strong>: Minimal memory footprint; loads pixel data only when needed.</p></li>
-<li><p><strong>Robust Persistence</strong>: Powered by <strong>SQLite</strong> (<code class="docutils literal notranslate"><span class="pre">gantry.db</span></code>) for metadata and <strong>Binary Sidecar</strong> (<code class="docutils literal notranslate"><span class="pre">gantry_pixels.bin</span></code>) for high-performance pixel storage.</p></li>
-</ul>
-</section>
-<section id="intelligent-data-management">
-<h3>🧠 Intelligent Data Management<a class="headerlink" href="#intelligent-data-management" title="Link to this heading"></a></h3>
-<ul class="simple">
-<li><p><strong>Hierarchical Object Model</strong>: Work with semantic entities (<code class="docutils literal notranslate"><span class="pre">Patient</span></code> → <code class="docutils literal notranslate"><span class="pre">Study</span></code>) instead of raw tags.</p></li>
-<li><p><strong>Machine-Centric Indexing</strong>: Automatically groups images by equipment signature (Model &amp; Serial).</p></li>
-</ul>
-</section>
-<section id="audit-compliance">
-<h3>🏆 Audit &amp; Compliance<a class="headerlink" href="#audit-compliance" title="Link to this heading"></a></h3>
-<ul class="simple">
-<li><p><strong>Standard De-Identification</strong>: Automatically stamps <code class="docutils literal notranslate"><span class="pre">(0012,0063)</span></code> and <code class="docutils literal notranslate"><span class="pre">(0012,0064)</span></code> with privacy profile details for compliance.</p></li>
-<li><p><strong>Robust Auditing</strong>: SQLite-backed audit logs with concurrency support for high-throughput remediation.</p></li>
-</ul>
-</section>
-</section>
-<hr class="docutils" />
-<section id="installation">
-<h2>📦 Installation<a class="headerlink" href="#installation" title="Link to this heading"></a></h2>
-<p>Clone the repository and install in editable mode:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/kvnlng/gantry.git
-<span class="nb">cd</span><span class="w"> </span>gantry
-pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
-
-<span class="c1"># For Image Compression Support</span>
-pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;.[images]&quot;</span>
-</pre></div>
-</div>
-</section>
-<hr class="docutils" />
-<section id="quick-start-research-workflow">
-<h2>⚡ Quick Start: Research Workflow<a class="headerlink" href="#quick-start-research-workflow" title="Link to this heading"></a></h2>
-<p>Gantry makes it easy to prepare data for research.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">gantry</span>
-
-<span class="c1"># 1. Ingest Data</span>
-<span class="n">session</span> <span class="o">=</span> <span class="n">gantry</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="s2">&quot;research_cohort.db&quot;</span><span class="p">)</span>
-<span class="n">session</span><span class="o">.</span><span class="n">ingest</span><span class="p">(</span><span class="s2">&quot;./raw_dicom_data&quot;</span><span class="p">)</span>
-
-<span class="c1"># 2. Inventory Equipment</span>
-<span class="n">session</span><span class="o">.</span><span class="n">examine</span><span class="p">()</span> 
-<span class="c1"># Output: Found 3 Devices (GE Rev CT, Siemens Vida...)</span>
-
-<span class="c1"># 3. Create Research Config</span>
-<span class="c1"># Generates a YAML file with safe defaults for research:</span>
-<span class="c1"># - Dates: JITTER (-365 to -1 days)</span>
-<span class="c1"># - Demographics: KEEP (Age, Sex)</span>
-<span class="c1"># - Private Tags: REMOVE (Strict)</span>
-<span class="n">session</span><span class="o">.</span><span class="n">create_config</span><span class="p">(</span><span class="s2">&quot;privacy_config.yaml&quot;</span><span class="p">)</span>
-
-<span class="c1"># 4. (Optional) Customize Data Jitter</span>
-<span class="c1"># Edit &quot;privacy_config.yaml&quot;:</span>
-<span class="c1"># date_jitter: { min_days: -10, max_days: -10 }</span>
-
-<span class="c1"># 5. Backup Original Identities (Pseudonymization)</span>
-<span class="n">session</span><span class="o">.</span><span class="n">enable_reversible_anonymization</span><span class="p">(</span><span class="s2">&quot;gantry.key&quot;</span><span class="p">)</span>
-<span class="n">session</span><span class="o">.</span><span class="n">lock_identities</span><span class="p">(</span><span class="n">session</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">patients</span><span class="p">)</span>
-
-<span class="c1"># 6. Apply De-Identification</span>
-<span class="c1"># This applies metadata anonymization, date shifting, and private tag removal</span>
-<span class="n">session</span><span class="o">.</span><span class="n">load_config</span><span class="p">(</span><span class="s2">&quot;research_config.yaml&quot;</span><span class="p">)</span>
-<span class="n">risk_report</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">audit</span><span class="p">()</span>
-<span class="n">session</span><span class="o">.</span><span class="n">anonymize</span><span class="p">(</span><span class="n">risk_report</span><span class="p">)</span>
-
-<span class="c1"># 7. Redact Pixels (if needed)</span>
-<span class="n">session</span><span class="o">.</span><span class="n">redact</span><span class="p">()</span>
-
-<span class="c1"># 8. Safe Export (with Compression)</span>
-<span class="c1"># Safe=True scans for PHI before export</span>
-<span class="c1"># Compression=&#39;j2k&#39; reduces storage footprint by ~50%</span>
-<span class="n">session</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">&quot;./clean_research_data&quot;</span><span class="p">,</span> <span class="n">safe</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">compression</span><span class="o">=</span><span class="s1">&#39;j2k&#39;</span><span class="p">)</span>
-
-<span class="c1"># Save Session</span>
-<span class="n">session</span><span class="o">.</span><span class="n">save</span><span class="p">()</span>
-</pre></div>
-</div>
-</section>
-<hr class="docutils" />
-<section id="advanced-configuration">
-<h2>🕵️ Advanced Configuration<a class="headerlink" href="#advanced-configuration" title="Link to this heading"></a></h2>
-<section id="date-jittering">
-<h3>Date Jittering<a class="headerlink" href="#date-jittering" title="Link to this heading"></a></h3>
-<p>Gantry supports deterministic date shifting based on a hash of the PatientID. You can configure the range in your config file:</p>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">date_jitter</span><span class="p">:</span>
-<span class="w">  </span><span class="nt">min_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-365</span>
-<span class="w">  </span><span class="nt">max_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-1</span>
-</pre></div>
-</div>
-</section>
-<section id="private-tag-removal">
-<h3>Private Tag Removal<a class="headerlink" href="#private-tag-removal" title="Link to this heading"></a></h3>
-<p>By default, research configurations enable strict private tag removal. This removes <em>all</em> odd-group tags, ensuring no hidden PHI leaks, while automatically whitelisting Gantry’s own security tags (<code class="docutils literal notranslate"><span class="pre">0400,0500</span></code>) used for reversible anonymization.</p>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">remove_private_tags</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</pre></div>
-</div>
-</section>
-<section id="standard-privacy-profiles">
-<h3>Standard Privacy Profiles<a class="headerlink" href="#standard-privacy-profiles" title="Link to this heading"></a></h3>
-<p>To simplify configuration, Gantry includes built-in privacy profiles based on industry standards.</p>
-<p><strong>Basic Profile (<code class="docutils literal notranslate"><span class="pre">privacy_profile&quot;:</span> <span class="pre">&quot;basic&quot;</span></code>)</strong>:
-Based on the <strong>DICOM PS3.15 Annex E (Basic Profile)</strong>, this profile provides a safe baseline for de-identification by removing or cleaning 18+ common identifiers (e.g., <code class="docutils literal notranslate"><span class="pre">PatientName</span></code>, <code class="docutils literal notranslate"><span class="pre">PatientID</span></code>, <code class="docutils literal notranslate"><span class="pre">BirthDate</span></code>, <code class="docutils literal notranslate"><span class="pre">OperatorsName</span></code>).</p>
-<p>Using a standard profile ensures you are compliant with best practices without manually specifying every tag. You can still override specific tags in your <code class="docutils literal notranslate"><span class="pre">phi_tags</span></code> config.</p>
-<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
-<span class="w">    </span><span class="nt">&quot;version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2.0&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;privacy_profile&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;basic&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nt">&quot;phi_tags&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="nt">&quot;0010,0010&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;action&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;KEEP&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Patient Name (Exception)&quot;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
-</pre></div>
-</div>
-</section>
-</section>
-<hr class="docutils" />
 <section id="architecture">
-<h2>🧩 Architecture<a class="headerlink" href="#architecture" title="Link to this heading"></a></h2>
-<p>Gantry uses a <strong>Layered Architecture</strong> accessed via a central Facade.</p>
-<div class="highlight-mermaid notranslate"><div class="highlight"><pre><span></span>graph TD
-    User([User]) --&gt; Session
-    
-    subgraph Core [Gantry Codebase]
-        direction TB
-        Session[DicomSession Facade]
-        
-        subgraph Logic [Services Layer]
-            Privacy[PhiInspector]
-            Remediation[RemediationService]
-            Indexer[MachinePixelIndex]
-        end
-
-        subgraph Model [Object Graph]
-            Patient --&gt; Study
-            Study --&gt; Series
-            Series --&gt; Instance
-        end
-
-        subgraph Storage [Persistence Layer]
-            Sqlite[(SqliteStore&lt;br/&gt;Metadata)]
-            Sidecar[(Pixels.bin&lt;br/&gt;Data)]
-        end
-    end
-
-    FS[File System]
-
-    Session --&gt;|Delegates| Logic
-    Session --&gt;|Manages| Model
-    Session --&gt;|Persists| Storage
-    
-    Logic --&gt;|Scans/Modifies| Model
-    Instance -.-&gt;|Lazy Load| FS
-    Sqlite &lt;--&gt;|Hydrate/Save| Model
-    Sidecar &lt;--&gt;|Read/Write| Model
+<h2>Architecture<a class="headerlink" href="#architecture" title="Link to this heading"></a></h2>
+<p>Gantry acts as a smart indexing layer over your raw DICOM files. It does <em>not</em> modify your original data. Instead, it builds a lightweight metadata index (SQLite) and exposes a clean Python Object Model for manipulation.</p>
+<section id="the-session-facade">
+<h3>1. The Session Facade<a class="headerlink" href="#the-session-facade" title="Link to this heading"></a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">Session</span></code> object is your single entry point. It manages:</p>
+<ul class="simple">
+<li><p><strong>Persistence</strong>: Auto-saving state to <code class="docutils literal notranslate"><span class="pre">gantry.db</span></code>.</p></li>
+<li><p><strong>Inventory</strong>: Tracking Patients, Studies, and Series.</p></li>
+<li><p><strong>Transactions</strong>: Atomic persistence of changes.</p></li>
+</ul>
+</section>
+<section id="object-model">
+<h3>2. Object Model<a class="headerlink" href="#object-model" title="Link to this heading"></a></h3>
+<p>Gantry abstracts DICOM into a semantic hierarchy, removing the pain of manual tag iteration.</p>
+<div class="highlight-mermaid notranslate"><div class="highlight"><pre><span></span>graph LR
+    Patient --&gt; Study
+    Study --&gt; Series
+    Series --&gt; Instance
+    Instance --&gt; Pixels((Pixel Data))
 </pre></div>
 </div>
-<hr class="docutils" />
-<section id="ctp-rule-import-legacy-support">
-<h3>CTP Rule Import (Legacy Support)<a class="headerlink" href="#ctp-rule-import-legacy-support" title="Link to this heading"></a></h3>
-<p>If you are migrating from CTP (RSNA Clinical Trial Processor), Gantry can ingest your existing <code class="docutils literal notranslate"><span class="pre">DicomPixelAnonymizer.script</span></code> files to preserve your knowledge base of redaction zones.</p>
-<p><strong>Step 1: Convert the Script</strong>
-Use the built-in utility to convert your <code class="docutils literal notranslate"><span class="pre">.script</span></code> file into a Gantry-compatible JSON file.</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>gantry.utils.ctp_parser<span class="w"> </span>/path/to/DicomPixelAnonymizer.script<span class="w"> </span>gantry/resources/ctp_rules.yaml
+<ul class="simple">
+<li><p><strong>Patient</strong>: Root entity (Name, ID).</p></li>
+<li><p><strong>Study</strong>: A distinct visit/exam.</p></li>
+<li><p><strong>Series</strong>: A scan or reconstruction (e.g., “ct_soft_kernel”).</p></li>
+<li><p><strong>Instance</strong>: A single DICOM slice. <strong>Pixel data is lazy-loaded</strong>; the 500MB+ pixel array is only read from disk when you access <code class="docutils literal notranslate"><span class="pre">.pixel_array</span></code> or export.</p></li>
+</ul>
+</section>
+<section id="pipeline">
+<h3>3. Pipeline<a class="headerlink" href="#pipeline" title="Link to this heading"></a></h3>
+<ol class="arabic simple">
+<li><p><strong>Ingest</strong>: Multithreaded scan of input folders. Extracts only essential metadata to SQLite.</p></li>
+<li><p><strong>Audit</strong>: Runs rules against the index to flag PHI.</p></li>
+<li><p><strong>Clone &amp; Modify</strong>: “Redaction” creates in-memory copies of metadata. Original files are untouched.</p></li>
+<li><p><strong>Export</strong>: Writes new, clean DICOM files to the output directory.</p></li>
+</ol>
+</section>
+</section>
+<section id="installation">
+<h2>Installation<a class="headerlink" href="#installation" title="Link to this heading"></a></h2>
+<p>Gantry requires <strong>Python 3.9+</strong>.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Clone the repository</span>
+git<span class="w"> </span>clone<span class="w"> </span>https://github.com/kvnlng/Gantry.git
+<span class="nb">cd</span><span class="w"> </span>Gantry
+
+<span class="c1"># Install with dependencies (including codecs)</span>
+pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.
 </pre></div>
 </div>
-<p><strong>Step 2: Scaffolding</strong>
-Once the <code class="docutils literal notranslate"><span class="pre">ctp_rules.json</span></code> file is in <code class="docutils literal notranslate"><span class="pre">gantry/resources/</span></code>, the <code class="docutils literal notranslate"><span class="pre">scaffold_config</span></code> command will automatically use it to match machines and pre-fill redaction zones for your new inventory.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># In your python session</span>
-<span class="n">session</span><span class="o">.</span><span class="n">scaffold_config</span><span class="p">(</span><span class="s2">&quot;my_new_config.yaml&quot;</span><span class="p">)</span> 
-<span class="c1"># Gantry will check resources/ctp_rules.yaml and apply matching zones!</span>
+<p><em>Note: The <code class="docutils literal notranslate"><span class="pre">imagecodecs</span></code> dependency is included and strongly recommended for handling JPEG Lossless and other compressed Transfer Syntaxes.</em></p>
+</section>
+<section id="quick-start">
+<h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading"></a></h2>
+<section id="initialize-a-session">
+<h3>1. Initialize a Session<a class="headerlink" href="#initialize-a-session" title="Link to this heading"></a></h3>
+<p>All operations start with a <code class="docutils literal notranslate"><span class="pre">Session</span></code>. This creates (or loads) a local SQLite database to manage your data.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">gantry</span><span class="w"> </span><span class="kn">import</span> <span class="n">Session</span>
+
+<span class="c1"># Initialize a new session (creates &#39;gantry.db&#39; by default)</span>
+<span class="n">session</span> <span class="o">=</span> <span class="n">Session</span><span class="p">(</span><span class="s2">&quot;my_project.db&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="ingest-data">
+<h3>2. Ingest Data<a class="headerlink" href="#ingest-data" title="Link to this heading"></a></h3>
+<p>Scan directories for DICOM files. Gantry is resilient to nested folders and non-DICOM clutter.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">session</span><span class="o">.</span><span class="n">ingest</span><span class="p">(</span><span class="s2">&quot;/path/to/dicom/data&quot;</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">save</span><span class="p">()</span> <span class="c1"># Persist the index to disk</span>
+</pre></div>
+</div>
+</section>
+<section id="analyze-for-phi">
+<h3>3. Analyze for PHI<a class="headerlink" href="#analyze-for-phi" title="Link to this heading"></a></h3>
+<p>Audit your dataset using a configuration file or a built-in profile.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Create a default configuration file (v2.0 YAML)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">create_config</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
+
+<span class="c1"># Run an audit</span>
+<span class="n">report</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">audit</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">save_analysis</span><span class="p">(</span><span class="n">report</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Found </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">report</span><span class="p">)</span><span class="si">}</span><span class="s2"> potential PHI issues.&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="anonymize-export">
+<h3>4. Anonymize &amp; Export<a class="headerlink" href="#anonymize-export" title="Link to this heading"></a></h3>
+<p>Apply remediation rules (metadata scrubbing + pixel redaction) and export the “clean” data.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Apply remediation rules in-memory</span>
+<span class="n">session</span><span class="o">.</span><span class="n">anonymize</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
+
+<span class="c1"># Export only safe (clean) data to a new folder</span>
+<span class="c1"># Compression=&quot;j2k&quot; optionally compresses output to JPEG 2000</span>
+<span class="n">session</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">&quot;/path/to/export_clean&quot;</span><span class="p">,</span> <span class="n">safe</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">compression</span><span class="o">=</span><span class="s2">&quot;j2k&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
 </section>
 </section>
-<section id="benchmarks-scalability">
-<h2>📊 Benchmarks &amp; Scalability<a class="headerlink" href="#benchmarks-scalability" title="Link to this heading"></a></h2>
-<p>Gantry uses a high-performance <strong>Split-Persistence Architecture</strong> (SQLite + Binary Sidecar) designed to scale to massive cohorts.</p>
-<p><strong>Stress Test Results (Dec 2025):</strong></p>
+<section id="configuration">
+<h2>Configuration<a class="headerlink" href="#configuration" title="Link to this heading"></a></h2>
+<p>Gantry uses a <strong>Unified YAML Configuration</strong> to control all aspects of de-identification.</p>
+<section id="example-config-yaml">
+<h3>Example <code class="docutils literal notranslate"><span class="pre">config.yaml</span></code><a class="headerlink" href="#example-config-yaml" title="Link to this heading"></a></h3>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># 1. Privacy Profile (Optional)</span>
+<span class="c1"># Inherit standard rules from &#39;basic&#39; or &#39;comprehensive&#39; profiles.</span>
+<span class="nt">privacy_profile</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;basic&quot;</span>
+
+<span class="c1"># 2. Date Jitter</span>
+<span class="c1"># Shift all dates by a random amount within this range (consistent per Patient).</span>
+<span class="nt">date_jitter</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">min_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-30</span>
+<span class="w">  </span><span class="nt">max_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-10</span>
+
+<span class="c1"># 3. Private Tags</span>
+<span class="c1"># Whether to remove all private dicom tags (odd groups).</span>
+<span class="nt">remove_private_tags</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+
+<span class="c1"># 4. Custom PHI Tags (Overrides Profile)</span>
+<span class="nt">phi_tags</span><span class="p">:</span>
+<span class="w">  </span><span class="s">&quot;0010,0010&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="s">&quot;action&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;REMOVE&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;name&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;PatientName&quot;</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<span class="w">  </span><span class="s">&quot;0010,0020&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="s">&quot;action&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;REPLACE&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;name&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;PatientID&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;value&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;ANON_{id}&quot;</span><span class="w"> </span><span class="p p-Indicator">}</span>
+
+<span class="c1"># 5. Pixel Redaction Rules (Machine Specific)</span>
+<span class="nt">machines</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">serial_number</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;DEV12345&quot;</span>
+<span class="w">    </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;UltraSound</span><span class="nv"> </span><span class="s">Pro&quot;</span>
+<span class="w">    </span><span class="nt">redaction_zones</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">800</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="c1"># ROI: [row_start, row_end, col_start, col_end]</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="advanced-features">
+<h2>Advanced Features<a class="headerlink" href="#advanced-features" title="Link to this heading"></a></h2>
+<section id="pixel-redaction">
+<h3>Pixel Redaction<a class="headerlink" href="#pixel-redaction" title="Link to this heading"></a></h3>
+<p>Gantry can scrub burned-in PHI from pixels based on matching the equipment’s <code class="docutils literal notranslate"><span class="pre">DeviceSerialNumber</span></code>. Define <code class="docutils literal notranslate"><span class="pre">redaction_zones</span></code> in your config to automatically verify and scrub these regions during export/anonymization.</p>
+</section>
+<section id="reversible-anonymization">
+<h3>Reversible Anonymization<a class="headerlink" href="#reversible-anonymization" title="Link to this heading"></a></h3>
+<p>To maintain a secure link back to the original identity:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Enable encryption (generates &#39;gantry.key&#39;)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">enable_reversible_anonymization</span><span class="p">()</span>
+
+<span class="c1"># Lock identities BEFORE anonymization to store encrypted original data</span>
+<span class="n">session</span><span class="o">.</span><span class="n">lock_identities</span><span class="p">(</span><span class="s2">&quot;PATIENT_123&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Users can later recover the identity if they possess the correct key:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">session</span><span class="o">.</span><span class="n">recover_patient_identity</span><span class="p">(</span><span class="s2">&quot;ANON_123&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="strict-codec-export-safety">
+<h3>Strict Codec &amp; Export Safety<a class="headerlink" href="#strict-codec-export-safety" title="Link to this heading"></a></h3>
+<p>Gantry performs strict validation during export. If a compressed image cannot be decompressed (e.g., due to missing codecs or corruption), the export <strong>will fail</strong> rather than passing through unverified data. This ensures 100% PHI safety.</p>
+<p>Supported Transfer Syntaxes:</p>
+<ul class="simple">
+<li><p>JPEG Lossless (Process 14, SV1)</p></li>
+<li><p>JPEG 2000 (Lossless &amp; Lossy)</p></li>
+<li><p>JPEG-LS</p></li>
+<li><p>RLE Lossless</p></li>
+<li><p>Standard JPEG Baseline/Extended</p></li>
+</ul>
+</section>
+</section>
+<section id="performance-benchmarks">
+<h2>Performance &amp; Benchmarks<a class="headerlink" href="#performance-benchmarks" title="Link to this heading"></a></h2>
+<p>Gantry is optimized for high-throughput clinical environments.</p>
 <table class="docutils align-default">
 <thead>
-<tr class="row-odd"><th class="head text-left"><p>Metric</p></th>
-<th class="head text-left"><p>Count</p></th>
-<th class="head text-left"><p>Data Size</p></th>
-<th class="head text-left"><p>Write Speed</p></th>
-<th class="head text-left"><p>Read Time</p></th>
+<tr class="row-odd"><th class="head"><p>Operation</p></th>
+<th class="head"><p>Scale</p></th>
+<th class="head"><p>Time (Mac M3 Max)</p></th>
+<th class="head"><p>Throughput</p></th>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td class="text-left"><p><strong>Metadata Scale</strong></p></td>
-<td class="text-left"><p>100,000 Inst</p></td>
-<td class="text-left"><p>Metadata Only</p></td>
-<td class="text-left"><p><strong>140,104 obj/s</strong></p></td>
-<td class="text-left"><p>0.60s (Total)</p></td>
+<tr class="row-even"><td><p><strong>Identity Locking</strong></p></td>
+<td><p>100,000 Instances</p></td>
+<td><p>~0.13 s</p></td>
+<td><p><strong>769k / sec</strong></p></td>
 </tr>
-<tr class="row-odd"><td class="text-left"><p><strong>Payload Scale</strong></p></td>
-<td class="text-left"><p>5,000 Inst</p></td>
-<td class="text-left"><p><strong>30.52 GB</strong></p></td>
-<td class="text-left"><p><strong>584 MB/s</strong></p></td>
-<td class="text-left"><p>0.38s (Warm)</p></td>
+<tr class="row-odd"><td><p><strong>Persist Findings</strong></p></td>
+<td><p>100,000 Issues</p></td>
+<td><p>~0.13 s</p></td>
+<td><p><strong>770k / sec</strong></p></td>
 </tr>
-</tbody>
-</table>
-<section id="python-3-14t-free-threaded-ready">
-<h3>🚀 Python 3.14t (Free-Threaded) Ready<a class="headerlink" href="#python-3-14t-free-threaded-ready" title="Link to this heading"></a></h3>
-<p>Gantry automatically detects free-threaded environments and optimizes its parallelism strategy, eliminating IPC overhead.</p>
-<table class="docutils align-default">
-<thead>
-<tr class="row-odd"><th class="head text-left"><p>Operation</p></th>
-<th class="head text-left"><p>Standard (Processes)</p></th>
-<th class="head text-left"><p>Free-Threaded (Threads)</p></th>
-<th class="head text-left"><p>Speedup</p></th>
-</tr>
-</thead>
-<tbody>
-<tr class="row-even"><td class="text-left"><p><strong>PHI Scan (Audit)</strong></p></td>
-<td class="text-left"><p>3,756 img/s</p></td>
-<td class="text-left"><p><strong>41,184 img/s</strong></p></td>
-<td class="text-left"><p><strong>10.6x</strong></p></td>
-</tr>
-<tr class="row-odd"><td class="text-left"><p><strong>Identity Locking</strong></p></td>
-<td class="text-left"><p>48,585 img/s</p></td>
-<td class="text-left"><p><strong>838,844 img/s</strong></p></td>
-<td class="text-left"><p><strong>17.2x</strong></p></td>
-</tr>
-<tr class="row-even"><td class="text-left"><p><strong>Pixel Redaction</strong></p></td>
-<td class="text-left"><p>149 img/s</p></td>
-<td class="text-left"><p><strong>149 img/s</strong></p></td>
-<td class="text-left"><p><em>Native</em></p></td>
-</tr>
-<tr class="row-odd"><td class="text-left"><p><strong>DB Write (Concurrent)</strong></p></td>
-<td class="text-left"><p>8,137 logs/s</p></td>
-<td class="text-left"><p>6,783 logs/s</p></td>
-<td class="text-left"><p><em>0.8x</em></p></td>
-</tr>
-<tr class="row-even"><td class="text-left"><p><em>(Benchmarks run on Apple Silicon M3 Max)</em></p></td>
-<td class="text-left"><p></p></td>
-<td class="text-left"><p></p></td>
-<td class="text-left"><p></p></td>
+<tr class="row-even"><td><p><strong>Ingestion</strong></p></td>
+<td><p>-</p></td>
+<td><p>-</p></td>
+<td><p><strong>25k / sec</strong></p></td>
 </tr>
 </tbody>
 </table>
-<p><em>Tests performed on Apple Silicon (Pro G40). Write speed limited by SSD throughput (Sequential Append).</em></p>
+<p><em>Note: Benchmarks run on Python 3.14t (Free-threaded).</em></p>
+</section>
+<section id="migration-tools">
+<h2>Migration Tools<a class="headerlink" href="#migration-tools" title="Link to this heading"></a></h2>
+<section id="clinical-trial-processor-ctp">
+<h3>Clinical Trial Processor (CTP)<a class="headerlink" href="#clinical-trial-processor-ctp" title="Link to this heading"></a></h3>
+<p>Gantry includes a utility to convert legacy CTP <code class="docutils literal notranslate"><span class="pre">DicomPixelAnonymizer.script</span></code> files into Gantry’s YAML configuration format.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Convert CTP script to Gantry YAML</span>
+python<span class="w"> </span>-m<span class="w"> </span>gantry.utils.ctp_parser<span class="w"> </span>/path/to/anonymizer.script<span class="w"> </span>output_rules.yaml
+</pre></div>
+</div>
+<p>This parser extracts:</p>
+<ul class="simple">
+<li><p>Manufacturer/Model matching criteria.</p></li>
+<li><p>Redaction zones (automatically converting <code class="docutils literal notranslate"><span class="pre">x,y,w,h</span></code> to <code class="docutils literal notranslate"><span class="pre">r1,r2,c1,c2</span></code>).</p></li>
+</ul>
 </section>
 </section>
 <section id="running-tests">
-<h2>🧪 Running Tests<a class="headerlink" href="#running-tests" title="Link to this heading"></a></h2>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pytest<span class="w"> </span>-v
+<h2>Running Tests<a class="headerlink" href="#running-tests" title="Link to this heading"></a></h2>
+<p>Gantry uses <code class="docutils literal notranslate"><span class="pre">pytest</span></code> for its test suite.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>requirements-dev.txt
+pytest
 </pre></div>
 </div>
-</section>
-<hr class="docutils" />
-<section id="license">
-<h2>License<a class="headerlink" href="#license" title="Link to this heading"></a></h2>
-<p>This project is licensed under the MIT License - see the LICENSE file for details.</p>
 </section>
 </section>
 
