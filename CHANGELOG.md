@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Documentation**: Complete rewrite of `README.md` to reflect v2.0 Architecture.
 
 ### Fixed
-- **Decompression**: Robust support for JPEG Lossless (Process 14) via `imagecodecs`.
+- **Decompression**: Robust support for encapsulated Multi-Frame images and JPEG Lossless (Process 14) via `imagecodecs`.
+- **Robustness**: Implemented automatic fallback to installed codecs if standard `pydicom` handler discovery fails (e.g. environment path issues).
 - **Handling**: Fixed `UnboundLocalError` regressions in error reporting.
 - **Correctness**: Fixed bug where encapsulated pixel data was passed incorrectly to decoders.
 
