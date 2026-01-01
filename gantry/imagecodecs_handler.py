@@ -8,8 +8,6 @@ except ImportError as e:
 
 from pydicom.uid import UID
 
-# ... (UID Constants omitted) ...
-
 def is_available():
     if imagecodecs is None:
         # Log to stderr so it appears in logs even if pydicom swallows the handler check
@@ -70,51 +68,45 @@ def get_pixel_data(ds):
     from pydicom.encaps import decode_data_sequence
     import sys
 
-    # Flatten fragments to get the raw bitstream
-    # This works for Single Frame. For Multi-Frame, this creates one large stream.
-    # imagecodecs often handles single concatenated stream or we might need to loop.
-    # For robust Single Frame fix:
     try:
-        # decode_data_sequence returns iterator of bytes (fragments)
-        # join them to form the contiguous codestream
-        has_frames = getattr(ds, 'NumberOfFrames', 1) > 1
+        num_frames = getattr(ds, 'NumberOfFrames', 1)
         
-        # De-encapsulate
-        if ds.file_meta.TransferSyntaxUID.is_encapsulated:
-            codestream = b"".join(decode_data_sequence(pixel_bytes))
-        else:
-            codestream = pixel_bytes
+        # Helper to decode a single bitstream
+        def decode_frame(bitstream):
+            if transfer_syntax in [JPEGLossless, JPEGLosslessSV1]:
+                 return imagecodecs.ljpeg_decode(bitstream)
+            if transfer_syntax in [JPEGBaseline, JPEGExtended]:
+                 return imagecodecs.jpeg_decode(bitstream)
+            if transfer_syntax in [JPEG2000Lossless, JPEG2000]:
+                 return imagecodecs.jpeg2k_decode(bitstream)
+            if transfer_syntax in [JPEGLSLossless, JPEGLSLossy]:
+                 return imagecodecs.jpegls_decode(bitstream)
+            if transfer_syntax == RLELossless:
+                 return imagecodecs.rle_decode(bitstream, shape=(ds.Rows, ds.Columns))
+            raise RuntimeError(f"Unsupported syntax: {transfer_syntax}")
+
+        # Multi-Frame Handling
+        if num_frames > 1 and ds.file_meta.TransferSyntaxUID.is_encapsulated:
+            from pydicom.encaps import generate_pixel_data_frame
+            import numpy as np
             
-    except Exception as e:
-        print(f"[gantry_imagecodecs_handler] De-encapsulation error: {e}", file=sys.stderr)
-        raise e
-    
-    try:
-        # JPEG Lossless (Process 14) and SV1 (.70)
-        # Standard libjpeg often fails here; use specific ljpeg codec
-        if transfer_syntax in [JPEGLossless, JPEGLosslessSV1]:
-             return imagecodecs.ljpeg_decode(codestream)
-
-        # JPEG Baseline / Extended (Process 1, 2, 4)
-        if transfer_syntax in [JPEGBaseline, JPEGExtended]:
-             return imagecodecs.jpeg_decode(codestream)
-             
-        # JPEG 2000
-        if transfer_syntax in [JPEG2000Lossless, JPEG2000]:
-             return imagecodecs.jpeg2k_decode(codestream)
-             
-        # JPEG-LS
-        if transfer_syntax in [JPEGLSLossless, JPEGLSLossy]:
-             # imagecodecs JPEGLS might expect bytes
-             return imagecodecs.jpegls_decode(codestream)
-
-        # RLE
-        if transfer_syntax == RLELossless:
-             # RLE needs shape info usually?
-             return imagecodecs.rle_decode(codestream, shape=(ds.Rows, ds.Columns)) # guessing sig
+            # generate_pixel_data_frame handles BOT and fragments logic
+            frames = []
+            for frame_bitstream in generate_pixel_data_frame(ds.PixelData, num_frames):
+                decoded = decode_frame(frame_bitstream)
+                frames.append(decoded)
+            
+            return np.array(frames)
+            
+        # Single-Frame Handling
+        else:
+            if ds.file_meta.TransferSyntaxUID.is_encapsulated:
+                codestream = b"".join(decode_data_sequence(pixel_bytes))
+            else:
+                codestream = pixel_bytes
+            
+            return decode_frame(codestream)
 
     except Exception as e:
         print(f"[gantry_imagecodecs_handler] Decode error for {transfer_syntax}: {e}", file=sys.stderr)
         raise RuntimeError(f"imagecodecs failed to decode {transfer_syntax}: {e}")
-
-    raise NotImplementedError(f"Transfer Syntax {transfer_syntax} not handled by gantry_imagecodecs_handler")

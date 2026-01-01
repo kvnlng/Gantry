@@ -5,6 +5,22 @@ All notable changes to the "Gantry" project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2025-12-31
+
+### Added
+- **Python 3.13t+ Support**: Full compatibility with Free-threaded Python (no-GIL).
+- **Benchmarks**: Documented performance achieving ~770k instances/sec for metadata operations.
+- **Migration Tools**: Added `gantry.utils.ctp_parser` to convert legacy CTP scripts to Gantry YAML.
+
+### Changed
+- **Dependencies**: Merged `[images]` extra into core install. Gantry now installs `pillow` and `imagecodecs` by default.
+- **Documentation**: Complete rewrite of `README.md` to reflect v2.0 Architecture.
+
+### Fixed
+- **Decompression**: Robust support for JPEG Lossless (Process 14) via `imagecodecs`.
+- **Handling**: Fixed `UnboundLocalError` regressions in error reporting.
+- **Correctness**: Fixed bug where encapsulated pixel data was passed incorrectly to decoders.
+
 ## [0.5.0] - 2025-12-18
 
 ### Added

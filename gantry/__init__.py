@@ -34,13 +34,17 @@ except ImportError as e:
 # GDCM is often problematic to install via pip, so pylibjpeg is preferred for JPEG/JPEG-LS/RLE.
 try:
     from pydicom import config as pydicom_config
-    # These are import strings for the handlers
-    # We explicitly define the priority list to ensure maximum compatibility.
+    import pydicom.pixel_data_handlers.gdcm_handler as gdcm_handler
+    import pydicom.pixel_data_handlers.pillow_handler as pillow_handler
+    import pydicom.pixel_data_handlers.numpy_handler as numpy_handler
+    from . import imagecodecs_handler
+    
+    # We explicitly define the priority list using module objects
     pydicom_config.pixel_data_handlers = [
-        "pydicom.pixel_data_handlers.gdcm_handler",      # Attempt GDCM first (if installed by user)
-        "gantry.imagecodecs_handler",                    # Custom imagecodecs handler (Robust fallback for Py3.14t)
-        "pydicom.pixel_data_handlers.pillow_handler",    # Primary handler for standard JPEGs
-        "pydicom.pixel_data_handlers.numpy_handler"      # For uncompressed data
+        gdcm_handler,
+        imagecodecs_handler,
+        pillow_handler,
+        numpy_handler
     ]
 except ImportError:
     pass

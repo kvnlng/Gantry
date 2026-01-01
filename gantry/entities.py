@@ -132,6 +132,7 @@ class Instance(DicomItem):
                 ds = None
                 try:
                     ds = pydicom.dcmread(self.file_path)
+                    
                     self.set_pixel_data(ds.pixel_array)  # Cache it in memory
                     return self.pixel_array
                 except (AttributeError, TypeError):
@@ -144,6 +145,18 @@ class Instance(DicomItem):
                     raise e
                     
             except Exception as e:
+                # Try explicit fallback to gantry.imagecodecs_handler
+                # Pydicom sometimes fails to iterate handlers correctly or swallows errors.
+                try:
+                    import gantry.imagecodecs_handler as h
+                    if ds is not None and h.is_available() and h.supports_transfer_syntax(ds.file_meta.TransferSyntaxUID):
+                        arr = h.get_pixel_data(ds)
+                        self.set_pixel_data(arr)
+                        return self.pixel_array
+                except Exception as fallback_e:
+                    # Fallback failed, proceed to raise original error
+                    pass
+
                 # Try to get Transfer Syntax UID for better debugging
                 ts_uid = "Unknown"
                 if ds is not None and hasattr(ds, "file_meta"):
