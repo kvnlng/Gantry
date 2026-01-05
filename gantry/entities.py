@@ -110,6 +110,22 @@ class Instance(DicomItem):
         from .logger import get_logger
         get_logger().debug(f"  -> Identity regenerated: {new_uid}")
 
+    def unload_pixel_data(self):
+        """
+        Clears the cached pixel_array from memory to free resources.
+        Only performs the clear if the data can be re-loaded (file_path or _pixel_loader exists).
+        Returns True if unloaded, False if unsafe to unload.
+        """
+        if self.pixel_array is None:
+            return True
+            
+        if self.file_path or self._pixel_loader:
+            self.pixel_array = None
+            return True
+        else:
+            # Data is in memory only (e.g. modified but not saved)
+            return False
+
     def get_pixel_data(self) -> Optional[np.ndarray]:
         """
         Returns pixel_array. Loads from disk if not in memory.

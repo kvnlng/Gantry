@@ -11,6 +11,48 @@ import numpy as np
 from .logger import get_logger
 from .privacy import PhiFinding, PhiRemediation
 
+class SidecarPixelLoader:
+    """
+    Functor for lazy loading of pixel data from sidecar.
+    Must be a top-level class to be picklable.
+    """
+    def __init__(self, sidecar_path, offset, length, alg, instance):
+        self.sidecar_path = sidecar_path
+        self.offset = offset
+        self.length = length
+        self.alg = alg
+        self.instance = instance
+
+    def __call__(self):
+        from .sidecar import SidecarManager
+        mgr = SidecarManager(self.sidecar_path)
+        
+        raw = mgr.read_frame(self.offset, self.length, self.alg)
+        
+        # Reconstruct based on attributes
+        bits = self.instance.attributes.get("0028,0100", 8)
+        dt = np.uint16 if bits > 8 else np.uint8
+        
+        arr = np.frombuffer(raw, dtype=dt)
+        
+        rows = self.instance.attributes.get("0028,0010", 0)
+        cols = self.instance.attributes.get("0028,0011", 0)
+        samples = self.instance.attributes.get("0028,0002", 1)
+        frames = int(self.instance.attributes.get("0028,0008", 0) or 0)
+        
+        if frames > 1:
+            target_shape = (frames, rows, cols, samples)
+            if samples == 1: target_shape = (frames, rows, cols)
+        elif samples > 1:
+            target_shape = (rows, cols, samples)
+        else:
+            target_shape = (rows, cols)
+        
+        try:
+            return arr.reshape(target_shape)
+        except:
+            return arr
+
 class SqliteStore:
     """
     Handles persistence of the Object Graph to a SQLite database.
@@ -113,6 +155,10 @@ class SqliteStore:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.executescript(self.SCHEMA)
 
+    def _create_pixel_loader(self, offset, length, alg, instance):
+        """Helper to create a lazy pixel loader for the sidecar."""
+        return SidecarPixelLoader(self.sidecar_path, offset, length, alg, instance)
+
     def log_audit(self, action_type: str, entity_uid: str, details: str):
         """Records an action in the audit log."""
         self.log_audit_batch([(action_type, entity_uid, details)])
@@ -205,50 +251,7 @@ class SqliteStore:
                          # Wait, we populate attributes right after this.
                          # So the lambda calls self.instance methods? No, lambda binds early.
                          
-                         def make_loader(mgr, o, l, c, i_ref):
-                             def loader():
-                                 raw = mgr.read_frame(o, l, c)
-                                 arr = np.frombuffer(raw, dtype=np.uint8) # Assumption: uint8?
-                                 # Uh oh, we need dtype and shape.
-                                 # Generally standard DICOM is uint8 or uint16.
-                                 # We should probably store dtype in DB? Or infer from bits stored?
-                                 
-                                 # For now, let's assume we can reconstruct or simple reshape?
-                                 # Wait, tobytes() is raw bytes. np.frombuffer needs dtype.
-                                 # We can infer dtype from BitsAllocated in attributes later.
-                                 
-                                 # We need access to the instance's attributes AT CALL TIME.
-                                 bits = i_ref.attributes.get("0028,0100", 8)
-                                 # Only 8 or 16 supported typically
-                                 dt = np.uint16 if bits > 8 else np.uint8
-                                 
-                                 arr = np.frombuffer(raw, dtype=dt)
-                                 
-                                 # Reshape
-                                 rows = i_ref.attributes.get("0028,0010", 0)
-                                 cols = i_ref.attributes.get("0028,0011", 0)
-                                 samples = i_ref.attributes.get("0028,0002", 1)
-                                 frames = int(i_ref.attributes.get("0028,0008", 0) or 0)
-                                 
-                                 # Logic to reconstruct shape
-                                 # (Keep consistent with set_pixel_data logic)
-                                 if frames > 1:
-                                     target_shape = (frames, rows, cols, samples)
-                                     if samples == 1: target_shape = (frames, rows, cols)
-                                 elif samples > 1:
-                                     target_shape = (rows, cols, samples)
-                                 else:
-                                     target_shape = (rows, cols)
-                                 
-                                 try:
-                                     return arr.reshape(target_shape)
-                                 except:
-                                     # Fallback if shape calc is wrong
-                                     return arr
-                                     
-                             return loader
-
-                         inst._pixel_loader = make_loader(self.sidecar, offset, length, alg, inst)
+                         inst._pixel_loader = self._create_pixel_loader(r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
 
                     # Restore extra attributes
                     if r['attributes_json']:
@@ -312,28 +315,7 @@ class SqliteStore:
                             # ideally refactor _hydrate_instance but inline is fine for now
                             if r['pixel_offset'] is not None and r['pixel_length'] is not None:
                                 offset, length, alg = r['pixel_offset'], r['pixel_length'], r['compress_alg']
-                                def make_loader(mgr, o, l, c, i_ref):
-                                    def loader():
-                                        raw = mgr.read_frame(o, l, c)
-                                        arr = np.frombuffer(raw, dtype=np.uint8) 
-                                        bits = i_ref.attributes.get("0028,0100", 8)
-                                        dt = np.uint16 if bits > 8 else np.uint8
-                                        arr = np.frombuffer(raw, dtype=dt)
-                                        rows = i_ref.attributes.get("0028,0010", 0)
-                                        cols = i_ref.attributes.get("0028,0011", 0)
-                                        samples = i_ref.attributes.get("0028,0002", 1)
-                                        frames = int(i_ref.attributes.get("0028,0008", 0) or 0)
-                                        if frames > 1:
-                                            target_shape = (frames, rows, cols, samples)
-                                            if samples == 1: target_shape = (frames, rows, cols)
-                                        elif samples > 1:
-                                            target_shape = (rows, cols, samples)
-                                        else:
-                                            target_shape = (rows, cols)
-                                        try: return arr.reshape(target_shape)
-                                        except: return arr
-                                    return loader
-                                inst._pixel_loader = make_loader(self.sidecar, offset, length, alg, inst)
+                                inst._pixel_loader = self._create_pixel_loader(r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
 
                             if r['attributes_json']:
                                 try:
@@ -465,6 +447,9 @@ class SqliteStore:
                                      
                                      pixel_bytes_written += leng
                                      pixel_frames_written += 1
+                                     
+                                     # Enable safe unloading
+                                     inst._pixel_loader = self._create_pixel_loader(p_offset, p_length, p_alg, inst)
                                 
                                 instance_data_buffer.append((
                                     se_pk, 

@@ -119,6 +119,27 @@ class DicomSession:
         """
         self.persistence_manager.save_async(self.store.patients)
 
+    def release_memory(self):
+        """
+        Attempts to release memory by unloading pixel data from all instances.
+        Safe to call: only unloads data that is safely persisted (on disk or sidecar).
+        Useful after running extensive redaction or export operations.
+        """
+        get_logger().info("Releasing memory (RAM cleanup)...")
+        count = 0
+        freed = 0
+        for p in self.store.patients:
+            for st in p.studies:
+                for se in st.series:
+                    for inst in se.instances:
+                        count += 1
+                        if inst.unload_pixel_data():
+                            freed += 1
+        
+        get_logger().info(f"Memory release complete. Unloaded pixels for {freed}/{count} instances.")
+        if freed > 0:
+            print(f"Memory Cleanup: Released {freed} images from RAM.")
+
 
     def enable_reversible_anonymization(self, key_path: str = "gantry.key"):
         """
@@ -595,6 +616,13 @@ class DicomSession:
         If safe=True, performs a fresh PHI scan and ONLY exports clean data.
         compression: 'j2k' (JPEG 2000 Lossless) or None (Uncompressed)
         """
+        # AUTO-OPTIMIZATION: Ensure clean memory before spawning processes
+        get_logger().info("Preparing for export (Auto-Save & Memory Release)...")
+        print("Preparing for export (saving & releasing memory)...")
+        self.save()
+        self.persistence_manager.flush()
+        self.release_memory()
+        
         get_logger().info(f"Exporting session to {folder} (safe={safe})...")
         print("Exporting...")
 
