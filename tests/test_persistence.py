@@ -59,6 +59,9 @@ def test_crud_hierarchy(store):
 def test_audit_log(store):
     store.log_audit("TEST_ACTION", "UID_123", "Details here")
     
+    # Flush Async Queue
+    store.stop()
+    
     with sqlite3.connect(store.db_path) as conn:
         row = conn.execute("SELECT * FROM audit_log").fetchone()
         

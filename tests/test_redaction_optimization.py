@@ -31,7 +31,7 @@ def test_skip_empty_zones(mock_store):
     
     rule = {"serial_number": "M1", "redaction_zones": []}
     
-    service.process_machine_rules(rule)
+    service.process_machine_rules(rule, verbose=True)
     
     # Assert Warning/Info Log
     service.logger.info.assert_called_with("Machine M1 has no redaction zones configured. Skipping.")

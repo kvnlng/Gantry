@@ -88,15 +88,6 @@ class RedactionService:
         elif count > 0:
             self.logger.info(f"Verified {count} Burned In Annotations were remediated.")
 
-        targets = self.index.get_by_machine(serial)
-        if not targets:
-            if show_progress: # Reusing show_progress as proxy for verbose logging during rule planning? No, let's stick to explicit args.
-                 # Wait, user asked to remove warnings unless "user asks for them".
-                 # Using the new signature requires update in session.py too.
-                 pass
-            self.logger.warning(f"Config rule exists for {serial}, but no matching images found in Session.")
-            return
-
     def process_machine_rules(self, machine_rules: dict, show_progress: bool = True, verbose: bool = False):
         """
         Applies all zones defined in a single machine config object.
