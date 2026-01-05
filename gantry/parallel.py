@@ -13,7 +13,8 @@ def run_parallel(
     desc: str = "Processing",
     max_workers: int = None,
     chunksize: int = 1,
-    show_progress: bool = True
+    show_progress: bool = True,
+    force_threads: bool = False
 ) -> List[R]:
     """
     Executes func(item) in parallel using ProcessPoolExecutor.
@@ -35,7 +36,7 @@ def run_parallel(
     # Priority: Env Var -> Free-Threading Detection -> Default (Process)
     use_threads = False
     
-    if os.environ.get("GANTRY_FORCE_THREADS") == "1":
+    if force_threads or os.environ.get("GANTRY_FORCE_THREADS") == "1":
         use_threads = True
     elif os.environ.get("GANTRY_FORCE_PROCESSES") == "1":
         use_threads = False

@@ -826,7 +826,7 @@ class DicomSession:
             from functools import partial
             worker = partial(service.process_machine_rules, show_progress=False)
             
-            run_parallel(worker, self.active_rules, desc="Redacting", max_workers=max_workers)
+            run_parallel(worker, self.active_rules, desc="Redacting", max_workers=max_workers, force_threads=True)
 
             # Save state after modification
             # self._save()
