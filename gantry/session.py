@@ -128,13 +128,23 @@ class DicomSession:
         get_logger().info("Releasing memory (RAM cleanup)...")
         count = 0
         freed = 0
-        for p in self.store.patients:
-            for st in p.studies:
-                for se in st.series:
-                    for inst in se.instances:
-                        count += 1
-                        if inst.unload_pixel_data():
-                            freed += 1
+        
+        # Count total instances first for progress bar
+        total_instances = sum(len(se.instances) for p in self.store.patients for st in p.studies for se in st.series)
+        
+        if total_instances == 0:
+            return
+
+        from tqdm import tqdm
+        with tqdm(total=total_instances, desc="Releasing Memory", unit="img") as pbar:
+            for p in self.store.patients:
+                for st in p.studies:
+                    for se in st.series:
+                        for inst in se.instances:
+                            count += 1
+                            if inst.unload_pixel_data():
+                                freed += 1
+                            pbar.update(1)
         
         get_logger().info(f"Memory release complete. Unloaded pixels for {freed}/{count} instances.")
         if freed > 0:
@@ -677,8 +687,13 @@ class DicomSession:
 
         exported_count = 0
         skipped_count = 0
-
-        for p in self.store.patients:
+        
+        from tqdm import tqdm
+        
+        # Consolidate progress bar
+        # Iterate over patients with TQDM
+        
+        for p in tqdm(self.store.patients, desc="Exporting", unit="patient"):
             # Check Patient Level
             if safe and p.patient_id in dirty_patients:
                 get_logger().warning(f"Skipping Dirty Patient: {p.patient_id}")
@@ -702,8 +717,20 @@ class DicomSession:
                 safe_studies = p.studies
 
             if safe_studies:
-                DicomExporter.save_studies(p, safe_studies, folder, compression=compression)
+                # Disable inner progress bar using show_progress=False
+                DicomExporter.save_studies(p, safe_studies, folder, compression=compression, show_progress=False)
                 exported_count += 1
+                
+                # MEMORY OPTIMIZATION: Unload pixels immediately for this patient
+                for st in safe_studies:
+                    for se in st.series:
+                        for inst in se.instances:
+                            # Only unload if pixels are in memory (implied by safe_studies context logic)
+                            # This prevents RAM explosion during massive exports
+                            # Force unload if needed
+                            try:
+                                inst.unload_pixel_data()
+                            except: pass
 
         get_logger().info(f"Export complete. (Exported Groups: {exported_count}, Skipped: {skipped_count})")
         print("Done.")

@@ -12,11 +12,12 @@ def run_parallel(
     items: Iterable[T],
     desc: str = "Processing",
     max_workers: int = None,
-    chunksize: int = 1
+    chunksize: int = 1,
+    show_progress: bool = True
 ) -> List[R]:
     """
     Executes func(item) in parallel using ProcessPoolExecutor.
-    Displays a tqdm progress bar.
+    Displays a tqdm progress bar unless show_progress=False.
     """
     results = []
     # If no items, return empty
@@ -58,6 +59,10 @@ def run_parallel(
         # Using list(tqdm(executor.map(...))) allows progress bar
         
         # Note: items should be picklable (if using processes) / thread-safe (if using threads)
-        results = list(tqdm(executor.map(func, items_list, chunksize=chunksize), total=len(items_list), desc=desc, unit="item"))
+        results = list(tqdm(executor.map(func, items_list, chunksize=chunksize), 
+                           total=len(items_list), 
+                           desc=desc, 
+                           unit="item",
+                           disable=not show_progress))
         
     return results

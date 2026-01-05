@@ -409,7 +409,7 @@ class DicomExporter:
         DicomExporter.save_studies(patient, patient.studies, out_dir)
 
     @staticmethod
-    def save_studies(patient: Patient, studies: List[Study], out_dir: str, compression: str = None):
+    def save_studies(patient: Patient, studies: List[Study], out_dir: str, compression: str = None, show_progress: bool = True):
         """
         Exports a specific list of studies for a patient using parallel workers.
         compression: 'j2k' or None
@@ -486,8 +486,6 @@ class DicomExporter:
                     
                     # Handle In-Memory Pixels (e.g. Remediated/Detached instances)
                     # If file_path is None, worker cannot load pixels. send them.
-                    # Handle In-Memory Pixels (e.g. Remediated/Detached instances)
-                    # If file_path is None, worker cannot load pixels. send them.
                     p_array = None
                     if inst.pixel_array is not None:
                          p_array = inst.pixel_array
@@ -509,8 +507,12 @@ class DicomExporter:
             logger.warning("No instances found to export.")
             return
 
-        logger.info(f"Starting parallel export of {len(export_tasks)} instances...")
-        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=10)
+        # Log only if progress is shown, or at least one summary line if hidden?
+        # If hidden, the caller (batch export) is logging.
+        if show_progress:
+            logger.info(f"Starting parallel export of {len(export_tasks)} instances...")
+            
+        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=10, show_progress=show_progress)
         
         # results contains paths or Nones
         success_count = sum(1 for r in results if r is not None)

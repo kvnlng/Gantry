@@ -113,6 +113,17 @@ session.anonymize("config.yaml")
 session.export("/path/to/export_clean", safe=True, compression="j2k")
 ```
 
+Progress for the save, memory release, and export phases will be displayed:
+
+```text
+Preparing for export (Auto-Save & Memory Release)...
+Releasing Memory: 100%|██████████| 5000/5000 [00:02<00:00, 2000.00img/s]
+Memory Cleanup: Released 5000 images from RAM.
+Exporting session to output_folder (safe=False)...
+Exporting...
+Exporting:  15%|██▌       | 15/100 [00:05<00:30,  2.80patient/s]
+```
+
 ## Configuration
 
 Gantry uses a **Unified YAML Configuration** to control all aspects of de-identification.
