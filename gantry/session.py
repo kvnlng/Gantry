@@ -688,12 +688,11 @@ class DicomSession:
         exported_count = 0
         skipped_count = 0
         
-        from tqdm import tqdm
+        all_export_contexts = []
         
-        # Consolidate progress bar
-        # Iterate over patients with TQDM
-        
-        for p in tqdm(self.store.patients, desc="Exporting", unit="patient"):
+        # Planning Phase
+        get_logger().info("Planning export batch...")
+        for p in self.store.patients:
             # Check Patient Level
             if safe and p.patient_id in dirty_patients:
                 get_logger().warning(f"Skipping Dirty Patient: {p.patient_id}")
@@ -717,22 +716,18 @@ class DicomSession:
                 safe_studies = p.studies
 
             if safe_studies:
-                # Disable inner progress bar using show_progress=False
-                DicomExporter.save_studies(p, safe_studies, folder, compression=compression, show_progress=False)
+                # Generate tasks (Metadata only)
+                contexts = DicomExporter._generate_export_contexts(p, safe_studies, folder, compression)
+                all_export_contexts.extend(contexts)
                 exported_count += 1
-                
-                # MEMORY OPTIMIZATION: Unload pixels immediately for this patient
-                for st in safe_studies:
-                    for se in st.series:
-                        for inst in se.instances:
-                            # Only unload if pixels are in memory (implied by safe_studies context logic)
-                            # This prevents RAM explosion during massive exports
-                            # Force unload if needed
-                            try:
-                                inst.unload_pixel_data()
-                            except: pass
-
-        get_logger().info(f"Export complete. (Exported Groups: {exported_count}, Skipped: {skipped_count})")
+        
+        # Execution Phase (Global Parallelism)
+        if all_export_contexts:
+            success_count = DicomExporter.export_batch(all_export_contexts, show_progress=True)
+            get_logger().info(f"Export complete. (Exported Groups: {exported_count}, Skipped: {skipped_count})")
+        else:
+            get_logger().warning("No instances queued for export.")
+            
         print("Done.")
 
     def load_config(self, config_file: str):
@@ -822,12 +817,16 @@ class DicomSession:
             # Parallel Execution for Speed
             # Threading works well here because pixel I/O and NumPy ops release GIL.
             # Shared memory allows in-place modification of instances.
-            max_workers = min(32, (os.cpu_count() or 1) + 4)
+            cpu_count = os.cpu_count() or 1
+            max_workers = cpu_count * 2
             print(f"Executing {len(self.active_rules)} rules using {max_workers} threads...")
             
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Force execution of all tasks
-                list(executor.map(service.process_machine_rules, self.active_rules))
+            # Use run_parallel for consolidated progress bar
+            # We use a partial to inject show_progress=False
+            from functools import partial
+            worker = partial(service.process_machine_rules, show_progress=False)
+            
+            run_parallel(worker, self.active_rules, desc="Redacting", max_workers=max_workers)
 
             # Save state after modification
             # self._save()

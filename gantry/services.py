@@ -88,7 +88,7 @@ class RedactionService:
         elif count > 0:
             self.logger.info(f"Verified {count} Burned In Annotations were remediated.")
 
-    def process_machine_rules(self, machine_rules: dict):
+    def process_machine_rules(self, machine_rules: dict, show_progress: bool = True):
         """
         Applies all zones defined in a single machine config object.
         """
@@ -126,9 +126,9 @@ class RedactionService:
                 self.logger.warning(f"Invalid ROI format in config: {roi}")
         
         if valid_rois:
-            self.redact_machine_instances(serial, valid_rois)
+            self.redact_machine_instances(serial, valid_rois, show_progress=show_progress)
 
-    def redact_machine_instances(self, machine_sn: str, rois: List[tuple]):
+    def redact_machine_instances(self, machine_sn: str, rois: List[tuple], show_progress: bool = True):
         """
         Applies a LIST of ROIs to all images from the specified machine.
         Optimized to iterate images ONCE.
@@ -143,7 +143,7 @@ class RedactionService:
                 details=f"Redacting {len(targets)} images with {len(rois)} zones"
             )
 
-        for inst in tqdm(targets, desc=f"Redacting {machine_sn}", unit="img"):
+        for inst in tqdm(targets, desc=f"Redacting {machine_sn}", unit="img", disable=not show_progress):
             try:
                 # Triggers Lazy Load from disk
                 arr = inst.get_pixel_data()

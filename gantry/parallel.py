@@ -25,10 +25,11 @@ def run_parallel(
     if not items_list:
         return []
 
-    # Use max_workers = os.cpu_count() by default
-    # If items are few, don't spawn too many
+    # Use max_workers = os.cpu_count() * 2 by default
+    # This provides better throughput for I/O and compression heavy tasks
     if max_workers is None:
-        max_workers = min(32, os.cpu_count() + 4) # Standard heuristic
+        cpu_count = os.cpu_count() or 1
+        max_workers = cpu_count * 2
 
     # Determine Strategy
     # Priority: Env Var -> Free-Threading Detection -> Default (Process)
