@@ -88,7 +88,16 @@ class RedactionService:
         elif count > 0:
             self.logger.info(f"Verified {count} Burned In Annotations were remediated.")
 
-    def process_machine_rules(self, machine_rules: dict, show_progress: bool = True):
+        targets = self.index.get_by_machine(serial)
+        if not targets:
+            if show_progress: # Reusing show_progress as proxy for verbose logging during rule planning? No, let's stick to explicit args.
+                 # Wait, user asked to remove warnings unless "user asks for them".
+                 # Using the new signature requires update in session.py too.
+                 pass
+            self.logger.warning(f"Config rule exists for {serial}, but no matching images found in Session.")
+            return
+
+    def process_machine_rules(self, machine_rules: dict, show_progress: bool = True, verbose: bool = False):
         """
         Applies all zones defined in a single machine config object.
         """
@@ -96,21 +105,21 @@ class RedactionService:
         zones = machine_rules.get("redaction_zones", [])
 
         if not serial:
-            self.logger.warning("Skipping rule with missing serial number.")
+            if verbose: self.logger.warning("Skipping rule with missing serial number.")
             return
 
         if not zones:
-            self.logger.info(f"Machine {serial} has no redaction zones configured. Skipping.")
+            if verbose: self.logger.info(f"Machine {serial} has no redaction zones configured. Skipping.")
             return
 
         # Check if we even have this machine in our store
         # (Optimization: Don't load pixels if machine isn't in the dataset)
         targets = self.index.get_by_machine(serial)
         if not targets:
-            self.logger.warning(f"Config rule exists for {serial}, but no matching images found in Session.")
+            if verbose: self.logger.warning(f"Config rule exists for {serial}, but no matching images found in Session.")
             return
 
-        self.logger.info(f"Applying config rules for Machine: {serial} ({len(targets)} images)...")
+        if verbose: self.logger.info(f"Applying config rules for Machine: {serial} ({len(targets)} images)...")
 
         valid_rois = []
         for zone in zones:
@@ -126,9 +135,9 @@ class RedactionService:
                 self.logger.warning(f"Invalid ROI format in config: {roi}")
         
         if valid_rois:
-            self.redact_machine_instances(serial, valid_rois, show_progress=show_progress)
+            self.redact_machine_instances(serial, valid_rois, show_progress=show_progress, verbose=verbose)
 
-    def redact_machine_instances(self, machine_sn: str, rois: List[tuple], show_progress: bool = True):
+    def redact_machine_instances(self, machine_sn: str, rois: List[tuple], show_progress: bool = True, verbose: bool = False):
         """
         Applies a LIST of ROIs to all images from the specified machine.
         Optimized to iterate images ONCE.
@@ -149,7 +158,7 @@ class RedactionService:
                 arr = inst.get_pixel_data()
                 
                 if arr is None:
-                    self.logger.warning(f"  Skipping {inst.sop_instance_uid}: No pixel data found (or file missing).")
+                    if verbose: self.logger.warning(f"  Skipping {inst.sop_instance_uid}: No pixel data found (or file missing).")
                     continue
 
                 modified = False

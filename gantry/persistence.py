@@ -1,8 +1,10 @@
 import sqlite3
-import sqlite3
 import os
 import tempfile
 import json
+import queue
+import threading
+import time
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from .entities import Patient, Study, Series, Instance, Equipment
@@ -149,6 +151,12 @@ class SqliteStore:
             
         self.sidecar = SidecarManager(self.sidecar_path)
         self._init_db()
+        
+        # Async Audit Queue
+        self.audit_queue = queue.Queue()
+        self._stop_event = threading.Event()
+        self._audit_thread = threading.Thread(target=self._audit_worker, daemon=True, name="AuditWorker")
+        self._audit_thread.start()
 
     def _init_db(self):
         with sqlite3.connect(self.db_path, timeout=900.0) as conn:
@@ -158,10 +166,54 @@ class SqliteStore:
     def _create_pixel_loader(self, offset, length, alg, instance):
         """Helper to create a lazy pixel loader for the sidecar."""
         return SidecarPixelLoader(self.sidecar_path, offset, length, alg, instance)
+        
+    def _audit_worker(self):
+        """Background thread to batch write audit logs."""
+        batch = []
+        while not self._stop_event.is_set():
+            try:
+                # Collect items with timeout
+                try:
+                    item = self.audit_queue.get(timeout=1.0)
+                    batch.append(item)
+                    
+                    # Drain queue up to limit
+                    while len(batch) < 100:
+                        try:
+                            item = self.audit_queue.get_nowait()
+                            batch.append(item)
+                        except queue.Empty:
+                            break
+                            
+                except queue.Empty:
+                    pass
+                
+                if batch:
+                    self.log_audit_batch(batch)
+                    batch = []
+                    
+            except Exception as e:
+                # Don't crash thread
+                self.logger.error(f"Audit Worker Error: {e}")
+                
+        # Flush remaining
+        while not self.audit_queue.empty():
+            try:
+                batch.append(self.audit_queue.get_nowait())
+            except: break
+        if batch:
+            self.log_audit_batch(batch)
+
+    def stop(self):
+        """Stops the audit worker and flushes queue."""
+        self._stop_event.set()
+        if self._audit_thread.is_alive():
+            self._audit_thread.join(timeout=2.0)
 
     def log_audit(self, action_type: str, entity_uid: str, details: str):
-        """Records an action in the audit log."""
-        self.log_audit_batch([(action_type, entity_uid, details)])
+        """Records an action in the audit log (Async)."""
+        # Push to queue instead of writing directly
+        self.audit_queue.put((action_type, entity_uid, details))
 
     def log_audit_batch(self, entries: List[tuple]):
         """
