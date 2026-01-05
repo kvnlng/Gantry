@@ -223,6 +223,15 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 <span class="n">session</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">&quot;/path/to/export_clean&quot;</span><span class="p">,</span> <span class="n">safe</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">compression</span><span class="o">=</span><span class="s2">&quot;j2k&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
+<p>Progress for the save, memory release, and export phases will be displayed:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Preparing for export (Auto-Save &amp; Memory Release)...
+Releasing Memory: 100%|██████████| 5000/5000 [00:02&lt;00:00, 2000.00img/s]
+Memory Cleanup: Released 5000 images from RAM.
+Exporting session to output_folder (safe=False)...
+Exporting...
+Exporting:  15%|██▌       | 15/100 [00:05&lt;00:30,  2.80patient/s]
+</pre></div>
+</div>
 </section>
 </section>
 <section id="configuration">
