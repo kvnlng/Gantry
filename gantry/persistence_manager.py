@@ -16,16 +16,25 @@ class PersistenceManager:
     def __init__(self, store_backend: SqliteStore):
         self.store_backend = store_backend
         self.queue = queue.Queue()
-        self.running = True
-        self.thread = threading.Thread(target=self._worker, daemon=True)
-        self.thread.start()
+        self.running = False
+        self.thread = None
+        
+        self._start_worker()
         
         atexit.register(self.shutdown)
-        get_logger().info("PersistenceManager started in background.")
+        get_logger().info("PersistenceManager initialized.")
+
+    def _start_worker(self):
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self._worker, daemon=True)
+            self.thread.start()
+            get_logger().info("PersistenceManager worker thread started.")
 
     def flush(self):
         """Blocks until all tasks in the queue have been processed."""
-        self.queue.join()
+        if self.running and self.thread and self.thread.is_alive():
+             self.queue.join()
 
     def save_async(self, patients: List[Patient]):
         """
@@ -35,6 +44,11 @@ class PersistenceManager:
         For robustness, we could shallow copy the list of patients: list(patients).
         Deep copying the entire graph is too expensive.
         """
+        # Auto-restart if we were shut down
+        if not self.running or not self.thread or not self.thread.is_alive():
+            get_logger().info("PersistenceManager was stopped. Restarting worker for new save operation.")
+            self._start_worker()
+
         # Shallow copy the list itself so if the session adds/removes patients, we have the old list.
         # But if attributes of patients change, we see the change. This is usually acceptable "eventual consistency" for this UX.
         snapshot = list(patients)
@@ -48,6 +62,10 @@ class PersistenceManager:
                 
                 # If we get a sentinel (None), we exit
                 if patients is None:
+                    if self.running:
+                         # Stale sentinel from previous shutdown - ignore it
+                         self.queue.task_done()
+                         continue
                     self.queue.task_done()
                     break
                 
@@ -59,6 +77,11 @@ class PersistenceManager:
                     get_logger().error(f"Background save failed: {e}")
                 finally:
                     self.queue.task_done()
+                    
+            except queue.Empty:
+                continue
+            except Exception as e:
+                get_logger().error(f"Worker crashed: {e}")
                     
             except queue.Empty:
                 continue
