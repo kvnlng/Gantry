@@ -38,16 +38,31 @@ def load_unified_config(path: str) -> Dict[str, Any]:
     # Merge Privacy Profile
     if "privacy_profile" in config:
         profile_name = config["privacy_profile"]
+        
+        profile_rules = {}
+        
+        # 1. Check Built-in Profiles
         if profile_name in PRIVACY_PROFILES:
             profile_rules = copy.deepcopy(PRIVACY_PROFILES[profile_name])
-            user_rules = config.get("phi_tags", {})
+            get_logger().info(f"Loaded built-in privacy profile '{profile_name}' with {len(profile_rules)} rules.")
             
+        # 2. Check External File (Custom Profile)
+        elif os.path.exists(profile_name):
+            try:
+                # We reuse load_phi_config logic to parse just the tags
+                profile_rules = ConfigLoader.load_phi_config(profile_name)
+                get_logger().info(f"Loaded custom privacy profile from '{profile_name}' with {len(profile_rules)} rules.")
+            except Exception as e:
+                get_logger().error(f"Failed to load custom profile '{profile_name}': {e}")
+                
+        else:
+            get_logger().warning(f"Unknown privacy profile reference '{profile_name}' (not a built-in or file). Ignoring.")
+
+        if profile_rules:
             # User rules override profile rules
+            user_rules = config.get("phi_tags", {})
             profile_rules.update(user_rules)
             config["phi_tags"] = profile_rules
-            get_logger().info(f"Loaded privacy profile '{profile_name}' with {len(PRIVACY_PROFILES[profile_name])} default rules.")
-        else:
-            get_logger().warning(f"Unknown privacy profile '{profile_name}'. ignoring.")
             
     return config
 
