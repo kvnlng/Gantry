@@ -42,11 +42,18 @@ graph LR
 - **Series**: A scan or reconstruction (e.g., "ct_soft_kernel").
 - **Instance**: A single DICOM slice. **Pixel data is lazy-loaded**; the 500MB+ pixel array is only read from disk when you access `.pixel_array` or export.
 
-### 3. Pipeline
-1.  **Ingest**: Multithreaded scan of input folders. Extracts only essential metadata to SQLite.
-2.  **Audit**: Runs rules against the index to flag PHI.
-3.  **Clone & Modify**: "Redaction" creates in-memory copies of metadata. Original files are untouched.
-4.  **Export**: Writes new, clean DICOM files to the output directory.
+### 3. Safety Pipeline (The 8 Checkpoints)
+Gantry enforces a strict checkpoint system to ensure data safety:
+
+1.  **Ingest**: Load raw data into the managed session index.
+2.  **Examine**: Inventory the cohort and equipment.
+3.  **Configure**: Define privacy tags and redaction rules.
+4.  **Audit (Target)**: Measure PHI risks against the configuration.
+5.  **Backup**: (Optional) Securely lock original identities for reversibility.
+6.  **Anonymize**: Apply remediation to metadata (in-memory).
+7.  **Redact**: Scrub pixel data for specific machines (in-memory).
+8.  **Verify**: Re-audit the session to ensure a clean state.
+9.  **Export**: Write clean DICOM files to disk.
 
 ## Installation
 
@@ -67,7 +74,7 @@ pip install -e .
 
 ### 1. Initialize a Session
 
-All operations start with a `Session`. This creates (or loads) a local SQLite database to manage your data.
+Gantry uses a **persistent session** to manage your workflow. Unlike scripts that run once and forget, a Session creates a local SQLite database (`gantry.db`) to index your data. This allows you to pause, resume, and audit your work without re-scanning thousands of files.
 
 ```python
 from gantry import Session
@@ -76,37 +83,62 @@ from gantry import Session
 session = Session("my_project.db")
 ```
 
-### 2. Ingest Data
+### 2. Ingest & Examine
 
-Scan directories for DICOM files. Gantry is resilient to nested folders and non-DICOM clutter.
+Ingestion builds a lightweight **metadata index** of your DICOM files. Gantry scans your folders recursively, extracting patient/study/series information into the database *without moving or modifying your original files*. It is resilient to nested directories and non-DICOM clutter.
 
 ```python
 session.ingest("/path/to/dicom/data")
 session.save() # Persist the index to disk
+
+# Print a summary of the cohort and equipment
+session.examine()
 ```
 
-### 3. Analyze for PHI
+### 3. Configure & Audit
 
-Audit your dataset using a configuration file or a built-in profile.
+Before changing anything, define your privacy rules. Use `create_config` to generate a scaffolding based on your inventory, then `audit` to scan that inventory against your rules. This "Measure Twice, Cut Once" approach lets you identify all PHI risks before applying any irreversible changes.
 
 ```python
 # Create a default configuration file (v2.0 YAML)
 session.create_config("config.yaml")
 
-# Run an audit
-report = session.audit("config.yaml")
+# Load the configuration (rules, tags, jitter)
+session.load_config("config.yaml")
+
+# Run an audit to find PHI
+report = session.audit() 
 session.save_analysis(report)
 
 print(f"Found {len(report)} potential PHI issues.")
 ```
 
-### 4. Anonymize & Export
+### 4. Backup Identity (Optional)
 
-Apply remediation rules (metadata scrubbing + pixel redaction) and export the "clean" data.
+To enable reversible anonymization, generate a cryptographic key and "lock" the original patient identities into a secure, encrypted DICOM tag. This must be done *before* anonymization.
 
 ```python
-# Apply remediation rules in-memory
-session.anonymize("config.yaml")
+# Enable encryption (generates 'gantry.key')
+session.enable_reversible_anonymization()
+
+# cryptographically lock identities for all patients found in the audit
+session.lock_identities(report)
+session.save()
+```
+
+### 5. Anonymize, Redact & Export
+
+Remediation is a multi-stage process performed in-memory:
+1. **Anonymize**: Strips or replaces metadata tags (PatientID, Names, Dates) based on your config.
+2. **Redact**: Loads pixel data and scrubs burned-in PHI from defined regions.
+3. **Export**: The final "Gatekeeper". Writes clean files to a new directory. Setting `safe=True` ensures the export halts if any verification checks fail (e.g., corrupt images or missing codecs).
+
+```python
+# Apply metadata remediation (anonymization) using the findings
+session.anonymize(report)
+
+# Apply pixel redaction rules (requires config to be loaded)
+session.redact()
 
 # Export only safe (clean) data to a new folder
 # Compression="j2k" optionally compresses output to JPEG 2000
@@ -119,9 +151,24 @@ Progress for the save, memory release, and export phases will be displayed:
 Preparing for export (Auto-Save & Memory Release)...
 Releasing Memory: 100%|██████████| 5000/5000 [00:02<00:00, 2000.00img/s]
 Memory Cleanup: Released 5000 images from RAM.
-Exporting session to output_folder (safe=False)...
-Exporting...
+Executing Redaction Rules...
+Redacting: 100%|██████████| 150/150 [00:05<00:00, 28.00img/s]
+Exporting session to output_folder (safe=True)...
 Exporting:  15%|██▌       | 15/100 [00:05<00:30,  2.80patient/s]
+```
+
+### 6. Recover Identity (Optional)
+
+If you have a valid key (`gantry.key`) and need to retrieve the original identity of an anonymized patient:
+
+```python
+# Load the session containing anonymized data
+session = Session("my_project.db")
+session.enable_reversible_anonymization("gantry.key")
+
+# Recover the original PatientName and PatientID
+original_id = session.recover_patient_identity("ANON_12345")
+print(f"Original Identity: {original_id}")
 ```
 
 ## Configuration
@@ -133,7 +180,11 @@ Gantry uses a **Unified YAML Configuration** to control all aspects of de-identi
 ```yaml
 
 # 1. Privacy Profile (Optional)
-# Inherit standard rules from 'basic' or 'comprehensive' profiles.
+# Defines the baseline set of tags to remove/clean.
+# Options:
+#   - "basic": DICOM PS3.15 Annex E Basic Profile (Partial De-Id)
+#   - "comprehensive": Full De-Identification (Most conservative)
+#   - "/path/to/profile.yaml": Load a custom set of rules from an external file
 privacy_profile: "basic"
 
 # 2. Date Jitter

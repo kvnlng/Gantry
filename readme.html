@@ -49,15 +49,17 @@
 <li class="toctree-l2"><a class="reference internal" href="#architecture">Architecture</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#the-session-facade">1. The Session Facade</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#object-model">2. Object Model</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#pipeline">3. Pipeline</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#safety-pipeline-the-8-checkpoints">3. Safety Pipeline (The 8 Checkpoints)</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="#installation">Installation</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#quick-start">Quick Start</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#initialize-a-session">1. Initialize a Session</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#ingest-data">2. Ingest Data</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#analyze-for-phi">3. Analyze for PHI</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#anonymize-export">4. Anonymize &amp; Export</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ingest-examine">2. Ingest &amp; Examine</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#configure-audit">3. Configure &amp; Audit</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#backup-identity-optional">4. Backup Identity (Optional)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#anonymize-redact-export">5. Anonymize, Redact &amp; Export</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#recover-identity-optional">6. Recover Identity (Optional)</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="#configuration">Configuration</a><ul>
@@ -155,13 +157,19 @@
 <li><p><strong>Instance</strong>: A single DICOM slice. <strong>Pixel data is lazy-loaded</strong>; the 500MB+ pixel array is only read from disk when you access <code class="docutils literal notranslate"><span class="pre">.pixel_array</span></code> or export.</p></li>
 </ul>
 </section>
-<section id="pipeline">
-<h3>3. Pipeline<a class="headerlink" href="#pipeline" title="Link to this heading"></a></h3>
+<section id="safety-pipeline-the-8-checkpoints">
+<h3>3. Safety Pipeline (The 8 Checkpoints)<a class="headerlink" href="#safety-pipeline-the-8-checkpoints" title="Link to this heading"></a></h3>
+<p>Gantry enforces a strict checkpoint system to ensure data safety:</p>
 <ol class="arabic simple">
-<li><p><strong>Ingest</strong>: Multithreaded scan of input folders. Extracts only essential metadata to SQLite.</p></li>
-<li><p><strong>Audit</strong>: Runs rules against the index to flag PHI.</p></li>
-<li><p><strong>Clone &amp; Modify</strong>: “Redaction” creates in-memory copies of metadata. Original files are untouched.</p></li>
-<li><p><strong>Export</strong>: Writes new, clean DICOM files to the output directory.</p></li>
+<li><p><strong>Ingest</strong>: Load raw data into the managed session index.</p></li>
+<li><p><strong>Examine</strong>: Inventory the cohort and equipment.</p></li>
+<li><p><strong>Configure</strong>: Define privacy tags and redaction rules.</p></li>
+<li><p><strong>Audit (Target)</strong>: Measure PHI risks against the configuration.</p></li>
+<li><p><strong>Backup</strong>: (Optional) Securely lock original identities for reversibility.</p></li>
+<li><p><strong>Anonymize</strong>: Apply remediation to metadata (in-memory).</p></li>
+<li><p><strong>Redact</strong>: Scrub pixel data for specific machines (in-memory).</p></li>
+<li><p><strong>Verify</strong>: Re-audit the session to ensure a clean state.</p></li>
+<li><p><strong>Export</strong>: Write clean DICOM files to disk.</p></li>
 </ol>
 </section>
 </section>
@@ -182,7 +190,7 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 <h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading"></a></h2>
 <section id="initialize-a-session">
 <h3>1. Initialize a Session<a class="headerlink" href="#initialize-a-session" title="Link to this heading"></a></h3>
-<p>All operations start with a <code class="docutils literal notranslate"><span class="pre">Session</span></code>. This creates (or loads) a local SQLite database to manage your data.</p>
+<p>Gantry uses a <strong>persistent session</strong> to manage your workflow. Unlike scripts that run once and forget, a Session creates a local SQLite database (<code class="docutils literal notranslate"><span class="pre">gantry.db</span></code>) to index your data. This allows you to pause, resume, and audit your work without re-scanning thousands of files.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">gantry</span><span class="w"> </span><span class="kn">import</span> <span class="n">Session</span>
 
 <span class="c1"># Initialize a new session (creates &#39;gantry.db&#39; by default)</span>
@@ -190,33 +198,59 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 </pre></div>
 </div>
 </section>
-<section id="ingest-data">
-<h3>2. Ingest Data<a class="headerlink" href="#ingest-data" title="Link to this heading"></a></h3>
-<p>Scan directories for DICOM files. Gantry is resilient to nested folders and non-DICOM clutter.</p>
+<section id="ingest-examine">
+<h3>2. Ingest &amp; Examine<a class="headerlink" href="#ingest-examine" title="Link to this heading"></a></h3>
+<p>Ingestion builds a lightweight <strong>metadata index</strong> of your DICOM files. Gantry scans your folders recursively, extracting patient/study/series information into the database <em>without moving or modifying your original files</em>. It is resilient to nested directories and non-DICOM clutter.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">session</span><span class="o">.</span><span class="n">ingest</span><span class="p">(</span><span class="s2">&quot;/path/to/dicom/data&quot;</span><span class="p">)</span>
 <span class="n">session</span><span class="o">.</span><span class="n">save</span><span class="p">()</span> <span class="c1"># Persist the index to disk</span>
+
+<span class="c1"># Print a summary of the cohort and equipment</span>
+<span class="n">session</span><span class="o">.</span><span class="n">examine</span><span class="p">()</span>
 </pre></div>
 </div>
 </section>
-<section id="analyze-for-phi">
-<h3>3. Analyze for PHI<a class="headerlink" href="#analyze-for-phi" title="Link to this heading"></a></h3>
-<p>Audit your dataset using a configuration file or a built-in profile.</p>
+<section id="configure-audit">
+<h3>3. Configure &amp; Audit<a class="headerlink" href="#configure-audit" title="Link to this heading"></a></h3>
+<p>Before changing anything, define your privacy rules. Use <code class="docutils literal notranslate"><span class="pre">create_config</span></code> to generate a scaffolding based on your inventory, then <code class="docutils literal notranslate"><span class="pre">audit</span></code> to scan that inventory against your rules. This “Measure Twice, Cut Once” approach lets you identify all PHI risks before applying any irreversible changes.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Create a default configuration file (v2.0 YAML)</span>
 <span class="n">session</span><span class="o">.</span><span class="n">create_config</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
 
-<span class="c1"># Run an audit</span>
-<span class="n">report</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">audit</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
+<span class="c1"># Load the configuration (rules, tags, jitter)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">load_config</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
+
+<span class="c1"># Run an audit to find PHI</span>
+<span class="n">report</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">audit</span><span class="p">()</span> 
 <span class="n">session</span><span class="o">.</span><span class="n">save_analysis</span><span class="p">(</span><span class="n">report</span><span class="p">)</span>
 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Found </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">report</span><span class="p">)</span><span class="si">}</span><span class="s2"> potential PHI issues.&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
 </section>
-<section id="anonymize-export">
-<h3>4. Anonymize &amp; Export<a class="headerlink" href="#anonymize-export" title="Link to this heading"></a></h3>
-<p>Apply remediation rules (metadata scrubbing + pixel redaction) and export the “clean” data.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Apply remediation rules in-memory</span>
-<span class="n">session</span><span class="o">.</span><span class="n">anonymize</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
+<section id="backup-identity-optional">
+<h3>4. Backup Identity (Optional)<a class="headerlink" href="#backup-identity-optional" title="Link to this heading"></a></h3>
+<p>To enable reversible anonymization, generate a cryptographic key and “lock” the original patient identities into a secure, encrypted DICOM tag. This must be done <em>before</em> anonymization.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Enable encryption (generates &#39;gantry.key&#39;)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">enable_reversible_anonymization</span><span class="p">()</span>
+
+<span class="c1"># cryptographically lock identities for all patients found in the audit</span>
+<span class="n">session</span><span class="o">.</span><span class="n">lock_identities</span><span class="p">(</span><span class="n">report</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">save</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+<section id="anonymize-redact-export">
+<h3>5. Anonymize, Redact &amp; Export<a class="headerlink" href="#anonymize-redact-export" title="Link to this heading"></a></h3>
+<p>Remediation is a multi-stage process performed in-memory:</p>
+<ol class="arabic simple">
+<li><p><strong>Anonymize</strong>: Strips or replaces metadata tags (PatientID, Names, Dates) based on your config.</p></li>
+<li><p><strong>Redact</strong>: Loads pixel data and scrubs burned-in PHI from defined regions.</p></li>
+<li><p><strong>Export</strong>: The final “Gatekeeper”. Writes clean files to a new directory. Setting <code class="docutils literal notranslate"><span class="pre">safe=True</span></code> ensures the export halts if any verification checks fail (e.g., corrupt images or missing codecs).</p></li>
+</ol>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Apply metadata remediation (anonymization) using the findings</span>
+<span class="n">session</span><span class="o">.</span><span class="n">anonymize</span><span class="p">(</span><span class="n">report</span><span class="p">)</span>
+
+<span class="c1"># Apply pixel redaction rules (requires config to be loaded)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">redact</span><span class="p">()</span>
 
 <span class="c1"># Export only safe (clean) data to a new folder</span>
 <span class="c1"># Compression=&quot;j2k&quot; optionally compresses output to JPEG 2000</span>
@@ -227,9 +261,23 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Preparing for export (Auto-Save &amp; Memory Release)...
 Releasing Memory: 100%|██████████| 5000/5000 [00:02&lt;00:00, 2000.00img/s]
 Memory Cleanup: Released 5000 images from RAM.
-Exporting session to output_folder (safe=False)...
-Exporting...
+Executing Redaction Rules...
+Redacting: 100%|██████████| 150/150 [00:05&lt;00:00, 28.00img/s]
+Exporting session to output_folder (safe=True)...
 Exporting:  15%|██▌       | 15/100 [00:05&lt;00:30,  2.80patient/s]
+</pre></div>
+</div>
+</section>
+<section id="recover-identity-optional">
+<h3>6. Recover Identity (Optional)<a class="headerlink" href="#recover-identity-optional" title="Link to this heading"></a></h3>
+<p>If you have a valid key (<code class="docutils literal notranslate"><span class="pre">gantry.key</span></code>) and need to retrieve the original identity of an anonymized patient:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Load the session containing anonymized data</span>
+<span class="n">session</span> <span class="o">=</span> <span class="n">Session</span><span class="p">(</span><span class="s2">&quot;my_project.db&quot;</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">enable_reversible_anonymization</span><span class="p">(</span><span class="s2">&quot;gantry.key&quot;</span><span class="p">)</span>
+
+<span class="c1"># Recover the original PatientName and PatientID</span>
+<span class="n">original_id</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">recover_patient_identity</span><span class="p">(</span><span class="s2">&quot;ANON_12345&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Original Identity: </span><span class="si">{</span><span class="n">original_id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
 </section>
@@ -240,7 +288,11 @@ Exporting:  15%|██▌       | 15/100 [00:05&lt;00:30,  2.80patient/s]
 <section id="example-config-yaml">
 <h3>Example <code class="docutils literal notranslate"><span class="pre">config.yaml</span></code><a class="headerlink" href="#example-config-yaml" title="Link to this heading"></a></h3>
 <div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># 1. Privacy Profile (Optional)</span>
-<span class="c1"># Inherit standard rules from &#39;basic&#39; or &#39;comprehensive&#39; profiles.</span>
+<span class="c1"># Defines the baseline set of tags to remove/clean.</span>
+<span class="c1"># Options:</span>
+<span class="c1">#   - &quot;basic&quot;: DICOM PS3.15 Annex E Basic Profile (Partial De-Id)</span>
+<span class="c1">#   - &quot;comprehensive&quot;: Full De-Identification (Most conservative)</span>
+<span class="c1">#   - &quot;/path/to/profile.yaml&quot;: Load a custom set of rules from an external file</span>
 <span class="nt">privacy_profile</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;basic&quot;</span>
 
 <span class="c1"># 2. Date Jitter</span>
