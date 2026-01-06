@@ -25,20 +25,30 @@ class DicomItem:
     # init=False to avoid constructor conflicts during inheritance
     attributes: Dict[str, Any] = field(init=False)
     sequences: Dict[str, DicomSequence] = field(init=False)
+    _dirty: bool = field(init=False, default=True)
 
     def __post_init__(self):
         self.attributes = {}
         self.sequences = {}
+        self._dirty = True
 
     def set_attr(self, tag: str, value: Any):
         """Sets a generic attribute by its hex tag (e.g., '0010,0010')."""
         self.attributes[tag] = value
+        self._dirty = True
 
     def add_sequence_item(self, tag: str, item: 'DicomItem'):
         """Appends a new item to a sequence, creating the sequence if needed."""
         if tag not in self.sequences:
             self.sequences[tag] = DicomSequence(tag=tag)
         self.sequences[tag].items.append(item)
+        self._dirty = True
+
+    def mark_clean(self):
+        self._dirty = False
+        for seq in self.sequences.values():
+            for item in seq.items:
+                item.mark_clean()
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +91,7 @@ class Instance(DicomItem):
         # Inlined from DicomItem to avoid super() mismatch issues with slots/reloads
         self.attributes = {}
         self.sequences = {}
+        self._dirty = True
         
         self.set_attr("0008,0018", self.sop_instance_uid)
         self.set_attr("0008,0016", self.sop_class_uid)
@@ -231,6 +242,8 @@ class Instance(DicomItem):
         self.set_attr("0028,0002", samples)
         if frames > 1: self.set_attr("0028,0008", str(frames))
         if samples >= 3: self.set_attr("0028,0004", "RGB")
+        
+        self._dirty = True
 
 
 @dataclass(slots=True)
@@ -244,6 +257,15 @@ class Series:
     series_number: int
     equipment: Optional[Equipment] = None
     instances: List[Instance] = field(default_factory=list)
+    _dirty: bool = field(default=True, init=False)
+
+    def __post_init__(self):
+        self._dirty = True
+
+    def mark_clean(self):
+        self._dirty = False
+        for i in self.instances:
+            i.mark_clean()
 
 
 @dataclass(slots=True)
@@ -256,6 +278,15 @@ class Study:
     study_date: Any
     series: List[Series] = field(default_factory=list)
     date_shifted: bool = False
+    _dirty: bool = field(default=True, init=False)
+
+    def __post_init__(self):
+        self._dirty = True
+
+    def mark_clean(self):
+        self._dirty = False
+        for s in self.series:
+            s.mark_clean()
 
 
 @dataclass(slots=True)
@@ -266,3 +297,12 @@ class Patient:
     patient_id: str
     patient_name: str
     studies: List[Study] = field(default_factory=list)
+    _dirty: bool = field(default=True, init=False)
+
+    def __post_init__(self):
+        self._dirty = True
+
+    def mark_clean(self):
+        self._dirty = False
+        for s in self.studies:
+            s.mark_clean()
