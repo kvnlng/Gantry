@@ -53,6 +53,10 @@ class ReversibilityService:
             item.set_attr(self.TAG_TRANSFER_SYNTAX_UID, self.PAYLOAD_TRANSFER_SYNTAX)
 
             # Embed into attributes dict via Sequence helper
+            # TODO: Check if sequence already exists and has items. 
+            # Currently, this appends a new item. If called twice (e.g. on already anonymized data),
+            # it will append a second (likely incorrect) token. Recovery uses the first item, so it's safe,
+            # but we should probably clear existing items or warn.
             instance.add_sequence_item(self.TAG_ENCRYPTED_ATTRS_SEQ, item)
             
             # self.logger.debug(f"Embedded token into {instance.sop_instance_uid}.") 

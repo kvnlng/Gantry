@@ -68,14 +68,10 @@ local_settings.py
 # SQLite
 db.sqlite3
 db.sqlite3-journal
-gantry.db
-gantry.db-shm
-gantry.db-wal
-gantry_pixels.bin
-test_auto_key_pixels.bin
-test_auto_key.db
-test_auto_key.db-shm
-test_auto_key.db-wal
+*.bin
+*.db
+*.db-shm
+*.db-wal
 
 # Flask stuff:
 instance/

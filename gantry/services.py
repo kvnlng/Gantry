@@ -3,6 +3,8 @@ from .entities import Instance, Patient, DicomItem, DicomSequence
 from .io_handlers import DicomStore
 from .logger import get_logger
 from tqdm import tqdm
+import hashlib
+import json
 
 
 # Define standard codes for the Sequence
@@ -143,8 +145,27 @@ class RedactionService:
                 details=f"Redacting {len(targets)} images with {len(rois)} zones"
             )
 
+        # 1. Compute Hash for this Config
+        # We assume rois list fully captures the intent (zones)
+        # Sort to ensure stability if zones are re-ordered
+        rois_stable = sorted(rois)
+        config_str = json.dumps({"serial": machine_sn, "rois": rois_stable}, sort_keys=True)
+        config_hash = hashlib.md5(config_str.encode('utf-8')).hexdigest()
+
         for inst in tqdm(targets, desc=f"Redacting {machine_sn}", unit="img", disable=not show_progress):
             try:
+                # Optimized: Skip if already redacted with same config
+                current_hash = inst.attributes.get("_GANTRY_REDACTION_HASH")
+                
+                # DEBUG: Log hashes
+                # if verbose and current_hash:
+                #    self.logger.debug(f"DEBUG: {inst.sop_instance_uid} Current: {current_hash} vs New: {config_hash}")
+
+                if current_hash == config_hash:
+                    # Log at DEBUG level (requires logging configuration to show)
+                    self.logger.debug(f"  Skipping {inst.sop_instance_uid}: Already redacted (Hash Match).")
+                    continue
+                
                 # Triggers Lazy Load from disk
                 arr = inst.get_pixel_data()
                 
@@ -160,6 +181,10 @@ class RedactionService:
                 if modified:
                     self._apply_redaction_flags(inst)
                     inst.regenerate_uid()
+                    # Mark as redacted with this hash
+                    inst.attributes["_GANTRY_REDACTION_HASH"] = config_hash
+                    # Force Dirty to persist metadata update
+                    inst._dirty = True 
                     self.logger.debug(f"  Modified {inst.sop_instance_uid}")
 
             except Exception as e:

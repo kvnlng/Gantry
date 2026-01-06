@@ -304,6 +304,10 @@ def _export_instance_worker(ctx: ExportContext) -> str:
             ds.HighBit = inst.attributes.get("0028,0102", default_bits - 1)
             ds.PixelRepresentation = inst.attributes.get("0028,0103", 0)
 
+        # Strip internal Gantry attributes
+        if "_GANTRY_REDACTION_HASH" in ds:
+            del ds["_GANTRY_REDACTION_HASH"]
+
         # Validate & Save
         ds = DicomExporter._finalize_dataset(ds, ctx.compression) 
         
