@@ -72,6 +72,10 @@ gantry.db
 gantry.db-shm
 gantry.db-wal
 gantry_pixels.bin
+test_auto_key_pixels.bin
+test_auto_key.db
+test_auto_key.db-shm
+test_auto_key.db-wal
 
 # Flask stuff:
 instance/

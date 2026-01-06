@@ -1,4 +1,5 @@
 import sqlite3
+import contextlib
 import os
 import tempfile
 import json
@@ -147,10 +148,14 @@ class SqliteStore:
             tf = tempfile.NamedTemporaryFile(suffix="_pixels.bin", delete=False)
             self.sidecar_path = tf.name
             tf.close()
-            # Note: This temp file won't be auto-deleted by Gantry efficiently in all cases
-            # but avoids pollution. In stricter envs, we might want weakref cleanup.
+            # Shared memory connection for :memory: database to persist across transactions
+            self._memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
+            self._memory_conn.row_factory = sqlite3.Row
+            self._memory_lock = threading.Lock()
         else:
             self.sidecar_path = os.path.splitext(db_path)[0] + "_pixels.bin"
+            self._memory_conn = None
+            self._memory_lock = None
             
         self.sidecar = SidecarManager(self.sidecar_path)
         self._init_db()
@@ -161,8 +166,41 @@ class SqliteStore:
         self._audit_thread = threading.Thread(target=self._audit_worker, daemon=True, name="AuditWorker")
         self._audit_thread.start()
 
+    @contextlib.contextmanager
+    def _get_connection(self):
+        """
+        Context manager for database connections.
+        Handles persistent connection for :memory: databases.
+        """
+        if self._memory_conn:
+            # For in-memory DB, reuse the single connection.
+            # We must serialize access because sqlite3 connections are not thread-safe 
+            # for concurrent writes even with check_same_thread=False.
+            with self._memory_lock:
+                try:
+                    # print(f"DEBUG: Acquired lock. Yielding conn {id(self._memory_conn)}") # Reduced spam
+                    yield self._memory_conn
+                    self._memory_conn.commit()
+                    # print("DEBUG: Commit successful")
+                except Exception as e:
+                    print(f"DEBUG: Rollback due to {e}")
+                    self._memory_conn.rollback()
+                    raise
+        else:
+            # File-based DB: create fresh connection per transaction
+            conn = sqlite3.connect(self.db_path, timeout=900.0)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
     def _init_db(self):
-        with sqlite3.connect(self.db_path, timeout=900.0) as conn:
+        with self._get_connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.executescript(self.SCHEMA)
 
@@ -230,7 +268,7 @@ class SqliteStore:
         data = [(timestamp, e[0], e[1], e[2]) for e in entries]
         
         try:
-            with sqlite3.connect(self.db_path, timeout=900.0) as conn:
+            with self._get_connection() as conn:
                 conn.executemany(
                     "INSERT INTO audit_log (timestamp, action_type, entity_uid, details) VALUES (?, ?, ?, ?)",
                     data
@@ -245,12 +283,12 @@ class SqliteStore:
         Returns a list of Patient objects.
         """
         patients = []
-        if not os.path.exists(self.db_path):
+        if self.db_path != ":memory:" and not os.path.exists(self.db_path):
             return patients
 
         try:
-            with sqlite3.connect(self.db_path, timeout=900.0) as conn:
-                conn.row_factory = sqlite3.Row
+            with self._get_connection() as conn:
+                # conn.row_factory = sqlite3.Row  <-- Handled by _get_connection
                 cur = conn.cursor()
 
                 # Optimized: We could do joins, but for clarity/mapping let's do hierarchical fetch.
@@ -261,6 +299,8 @@ class SqliteStore:
                 st_rows = cur.execute("SELECT * FROM studies").fetchall()
                 se_rows = cur.execute("SELECT * FROM series").fetchall()
                 i_rows = cur.execute("SELECT * FROM instances").fetchall()
+
+
 
                 # 2. Build Maps
                 p_map = {}
@@ -326,17 +366,20 @@ class SqliteStore:
             return patients
 
         except sqlite3.Error as e:
+            print(f"DEBUG: Failed to load from DB: {e}")
             self.logger.error(f"Failed to load PDF from DB: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def load_patient(self, patient_uid: str) -> Optional[Patient]:
         """Loads a single patient and their graph from the DB by PatientID."""
-        if not os.path.exists(self.db_path):
+        if self.db_path != ":memory:" and not os.path.exists(self.db_path):
             return None
             
         try:
-             with sqlite3.connect(self.db_path, timeout=900.0) as conn:
-                conn.row_factory = sqlite3.Row
+             with self._get_connection() as conn:
+                # conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 
                 # Fetch Patient
@@ -452,7 +495,7 @@ class SqliteStore:
         sidecar_manager = self.sidecar
         
         try:
-            with sqlite3.connect(self.db_path, timeout=900.0) as conn:
+            with self._get_connection() as conn:
                 cur = conn.cursor()
                 
                 # Check for schema compatibility (simple check)
@@ -619,7 +662,7 @@ class SqliteStore:
         Ideal for streaming exports or analysis without loading the entire graph into RAM.
         """
         # We use a managed connection that stays open during iteration
-        with sqlite3.connect(self.db_path, timeout=60.0) as conn:
+        with self._get_connection() as conn:
             # conn.row_factory = sqlite3.Row
             cur = conn.cursor()
             
@@ -661,7 +704,7 @@ class SqliteStore:
 
         self.logger.info(f"Updating attributes for {len(instances)} instances...")
         try:
-            with sqlite3.connect(self.db_path, timeout=900.0) as conn:
+            with self._get_connection() as conn:
                 cur = conn.cursor()
                 
                 # Pre-calculate data for executemany
@@ -694,7 +737,7 @@ class SqliteStore:
         self.logger.info(f"Saving {len(findings)} PHI findings...")
         
         try:
-            with sqlite3.connect(self.db_path, timeout=900.0) as conn:
+            with self._get_connection() as conn:
                 cur = conn.cursor()
                 
                 # Prepare Data Generator for Batch Insert (Memory Efficient)
@@ -734,12 +777,12 @@ class SqliteStore:
     def load_findings(self) -> List[PhiFinding]:
         """Loads all findings from the database."""
         findings = []
-        if not os.path.exists(self.db_path):
+        if self.db_path != ":memory:" and not os.path.exists(self.db_path):
             return findings
 
         try:
-             with sqlite3.connect(self.db_path, timeout=900.0) as conn:
-                conn.row_factory = sqlite3.Row
+             with self._get_connection() as conn:
+                # conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 # Check if table exists (backward compatibility for old DBs if init didnt run on them)
                 # But _init_db runs on __init__, so schema should be there.

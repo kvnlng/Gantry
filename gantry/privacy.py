@@ -237,7 +237,7 @@ class PhiInspector:
             elif action_code == "KEEP":
                  needs_remediation = False
             else: # REPLACE (Default)
-                 if val != "ANONYMIZED":
+                 if val != "ANONYMIZED" and val != "":
                      needs_remediation = True
                      remediation_action = "REPLACE_TAG"
                      new_val = "ANONYMIZED"

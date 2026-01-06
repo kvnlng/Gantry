@@ -111,17 +111,16 @@ def test_safe_export_skips_phi(tmp_path):
     sess.export(str(out_dir), safe=True)
     
     # 4. Assertions
-    # 4. Assertions
     # Dirty Patient file I1 should NOT exist
     # Scan recursively to be sure
     all_files = list(out_dir.rglob("*.dcm"))
     
     # We expect I2 (Clean) to exist as 0001.dcm in Subject_ANON_CLEAN folder
     # We expect I1 (Dirty) to NOT exist (it would be 0001.dcm in Subject_P_DIRTY)
-    
+
     dirty_files = [f for f in all_files if "Subject_P_DIRTY" in str(f)]
     assert len(dirty_files) == 0
     
-    clean_files = [f for f in all_files if "Subject_ANON_CLEAN" in str(f) and f.name == "0001.dcm"]
+    clean_files = [f for f in all_files if "Subject_ANON_CLEAN" in str(f) and f.name == "I2.dcm"]
     assert len(clean_files) == 1
     assert clean_files[0].exists()
