@@ -7,7 +7,7 @@ from pydicom.uid import ImplicitVRLittleEndian
 from pydicom.tag import Tag
 from pydicom.datadict import dictionary_VR
 from datetime import datetime, date
-from typing import List, Set, Dict, Any, Optional, Tuple, NamedTuple
+from typing import List, Set, Dict, Any, Optional, Tuple, NamedTuple, Iterable
 import shutil
 from .entities import Patient, Study, Series, Instance, Equipment, DicomItem
 from .logger import get_logger

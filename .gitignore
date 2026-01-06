@@ -64,9 +64,14 @@ cover/
 # Django stuff:
 *.log
 local_settings.py
+
+# SQLite
 db.sqlite3
 db.sqlite3-journal
 gantry.db
+gantry.db-shm
+gantry.db-wal
+gantry_pixels.bin
 
 # Flask stuff:
 instance/
