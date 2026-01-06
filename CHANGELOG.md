@@ -42,6 +42,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Redaction**: Fixed crash when `get_pixel_data` returns `None` (missing file).
 - **Redaction**: Fixed "Completely Outside" warning logic for RGB images (interpreting Channels as Columns).
 
+## [Unreleased]
+
+### Added
+- **Global Export Parallelism**: Export process now utilizes a global pool of workers across all patients, significantly improving throughput for datasets with many small studies.
+- **Async Audit Queue**: Implemented an asynchronous queue for writing audit logs to SQLite, preventing database locking and contention during highly parallel operations.
+- **Redaction Progress UI**: Consolidated multiple per-machine progress bars into a single, clean "Redacting Rules" indicator.
+- **Verbose Logging**: Added `verbose` flag to Redaction Service methods to allow optional debugging of missing pixels/rules.
+
+### Changed
+- **Thread Tuning**: Adjusted default parallel worker count to `1.5 * CPU_CORES` (previously `min(32, cpu+4)`).
+- **Warning Suppression**: Redaction warnings (e.g., missing pixel data) are now suppressed by default to reduce console noise.
+- **Redaction Execution**: Switched `redact()` to enforce threading (`force_threads=True`) to correctly handle in-memory state updates and avoid pickling errors with SQLite connections.
+
+### Fixed
+- **Logging Regression**: Fixed assertion failure in `test_full_logging_coverage` regarding suppressed log messages.
+- **NameError**: Fixed a variable scoping issue in `RedactionService.process_machine_rules`.
+- **Parallel Redaction Bugs**: Resolved `pickle` errors and state synchronization issues in parallel redaction by enforcing threading.
+
 ## [0.4.1] - 2025-12-12
 
 ### Added
