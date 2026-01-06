@@ -208,8 +208,6 @@ class RedactionService:
         except:
             return False
 
-
-
     def _apply_redaction_flags(self, inst: Instance):
         """
         Sets DICOM tags indicating Pixel Data modification (Derivation)

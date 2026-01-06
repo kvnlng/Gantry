@@ -56,9 +56,7 @@ class DicomStore:
         with open(filepath, 'rb') as f:
             return pickle.load(f)
 
-
 from .parallel import run_parallel
-
 
 def populate_attrs(ds, item):
     """Standalone function to populate attributes for pickle-compatibility in workers."""
@@ -267,7 +265,6 @@ def _export_instance_worker(ctx: ExportContext) -> str:
             
             # Recalculate dimensions based on array shape
             # Logic mirrored from Instance.set_pixel_data
-            # Logic mirrored from Instance.set_pixel_data
             shape = arr.shape
             ndim = len(shape)
             
@@ -397,6 +394,61 @@ def _compress_j2k(ds):
         raise RuntimeError(f"Compression failed: {e}")
 
 
+import json
+
+def gantry_json_object_hook(d):
+    if "__type__" in d and d["__type__"] == "bytes":
+        import base64
+        return base64.b64decode(d["data"])
+    return d
+
+class SidecarPixelLoader:
+    """
+    Functor for lazy loading of pixel data from sidecar.
+    Must be a top-level class to be picklable.
+    """
+    def __init__(self, sidecar_path, offset, length, alg, instance):
+        self.sidecar_path = sidecar_path
+        self.offset = offset
+        self.length = length
+        self.alg = alg
+        self.instance = instance
+
+    def __call__(self):
+        # We need SidecarManager. Importing here to avoid circular dep at top level logic?
+        # Actually persistence.py imports it.
+        # But SidecarManager might be in a module unrelated to this.
+        # Let's hope we can import it.
+        from .sidecar import SidecarManager
+        mgr = SidecarManager(self.sidecar_path)
+        
+        raw = mgr.read_frame(self.offset, self.length, self.alg)
+        
+        # Reconstruct based on attributes
+        import numpy as np
+        bits = self.instance.attributes.get("0028,0100", 8)
+        dt = np.uint16 if bits > 8 else np.uint8
+        
+        arr = np.frombuffer(raw, dtype=dt)
+        
+        rows = self.instance.attributes.get("0028,0010", 0)
+        cols = self.instance.attributes.get("0028,0011", 0)
+        samples = self.instance.attributes.get("0028,0002", 1)
+        frames = int(self.instance.attributes.get("0028,0008", 0) or 0)
+        
+        if frames > 1:
+            target_shape = (frames, rows, cols, samples)
+            if samples == 1: target_shape = (frames, rows, cols)
+        elif samples > 1:
+            target_shape = (rows, cols, samples)
+        else:
+            target_shape = (rows, cols)
+        
+        try:
+            return arr.reshape(target_shape)
+        except:
+            return arr
+
 class DicomExporter:
     """
     Handles writing the Object Graph back to standard DICOM files.
@@ -407,6 +459,116 @@ class DicomExporter:
         Iterates over a Patient's hierarchy and saves valid .dcm files to out_dir.
         """
         DicomExporter.save_studies(patient, patient.studies, out_dir)
+
+    @staticmethod
+    def generate_export_from_db(store_backend, out_dir: str, patient_ids: List[str] = None, compression: str = None):
+        """
+        Generator that yields ExportContext objects directly from the DB.
+        O(1) Memory usage.
+        """
+        for row in store_backend.get_flattened_instances(patient_ids):
+            # 1. Rehydrate Attributes
+            attrs = {}
+            if row['attributes_json']:
+                try:
+                    attrs = json.loads(row['attributes_json'], object_hook=gantry_json_object_hook)
+                except:
+                    pass
+            
+            # 2. Construct Lightweight Instance
+            inst = Instance(
+                sop_instance_uid=row['sop_instance_uid'],
+                sop_class_uid=row['sop_class_uid'],
+                instance_number=row['instance_number'] or 0,
+                file_path=row['file_path']
+            )
+            
+            # 3. Handle Sequences
+            if '__sequences__' in attrs:
+                seq_data = attrs.pop('__sequences__')
+                
+                # Recursive rehydration helper
+                from .entities import DicomSequence, DicomItem
+                
+                def rehydrate_seq(seq_dict):
+                    rehydrated = {}
+                    for tag, items in seq_dict.items():
+                        ds = DicomSequence(tag=tag)
+                        for item_data in items:
+                            di = DicomItem()
+                            # Item data is a dict (serialized item)
+                            # recursion
+                            if '__sequences__' in item_data:
+                                sub_seqs = item_data.pop('__sequences__')
+                                di.sequences = rehydrate_seq(sub_seqs)
+                            di.attributes = item_data
+                            ds.items.append(di)
+                        rehydrated[tag] = ds
+                    return rehydrated
+                
+                inst.sequences = rehydrate_seq(seq_data)
+            
+            inst.attributes = attrs
+            
+            # 4. Pixel Loader 
+            if row['pixel_offset'] is not None:
+                # Use the store's sidecar path, not the instance's original file path
+                # Note: This assumes single sidecar file or current one. 
+                # If using multiple sidecars, we'd need pixel_file_id lookup.
+                sc_path = getattr(store_backend, 'sidecar_path', None)
+                if not sc_path and row.get('file_path'): 
+                    # Fallback if pixel data is in original file but we have offset (e.g. partial read?)
+                    # But usually offset implies SidecarManager format. 
+                    # If store_backend doesn't expose sidecar_path, we might be in trouble.
+                    # But SqliteStore does.
+                    sc_path = row['file_path']
+                
+                inst._pixel_loader = SidecarPixelLoader(
+                    sidecar_path=sc_path, 
+                    offset=row['pixel_offset'],
+                    length=row['pixel_length'],
+                    alg=row['compress_alg'],
+                    instance=inst
+                )
+
+            # 5. Metadata Overrides (from DB columns)
+            pat_attrs = {"PatientName": row['patient_name'], "PatientID": row['patient_id']}
+            
+            s_date = row['study_date'] or ""
+            study_attrs = {
+                "StudyInstanceUID": row['study_instance_uid'],
+                "StudyDate": s_date, 
+                "StudyTime": "120000"
+            }
+            
+            series_attrs = {
+                "SeriesInstanceUID": row['series_instance_uid'],
+                "Modality": row['modality'],
+                "SeriesNumber": row['series_number'],
+                "Manufacturer": row['manufacturer'],
+                "ManufacturerModelName": row['model_name']
+            }
+            
+            # 6. Output Path Logic
+            subj_name = f"Subject_{DicomExporter._sanitize(row['patient_id'])}"
+            st_desc = attrs.get("0008,1030", "Study")
+            study_folder = f"Study_{s_date}_{DicomExporter._sanitize(st_desc)}"
+            se_desc = attrs.get("0008,103E", "Series")
+            se_num = row['series_number'] or "0"
+            series_folder = f"Series_{se_num}_{DicomExporter._sanitize(se_desc)}"
+            fname = f"{row['sop_instance_uid']}.dcm"
+            
+            full_out_path = os.path.join(out_dir, subj_name, study_folder, series_folder, fname)
+            
+            yield ExportContext(
+                instance=inst,
+                output_path=full_out_path,
+                patient_attributes=pat_attrs,
+                study_attributes=study_attrs,
+                series_attributes=series_attrs,
+                pixel_array=None, 
+                compression=compression
+            )
 
     @staticmethod
     def _generate_export_contexts(patient: Patient, studies: List[Study], out_dir: str, compression: str = None) -> List[ExportContext]:
@@ -526,23 +688,22 @@ class DicomExporter:
         logger.info(f"Export Complete. Success: {success_count}/{len(export_tasks)}")
 
     @staticmethod
-    def export_batch(export_tasks: List[ExportContext], show_progress: bool = True):
+    def export_batch(export_tasks: Iterable[ExportContext], show_progress: bool = True, total: int = None):
         """
         Exports a flat list of ExportContexts using parallel workers.
         """
         logger = get_logger()
-        if not export_tasks:
-            logger.warning("No instances found to export.")
-            return
+        # if not export_tasks: return # Cannot easily check empty iterator without consuming
 
         if show_progress:
-            logger.info(f"Starting global parallel export of {len(export_tasks)} instances...")
+            count_str = str(total) if total else "?"
+            logger.info(f"Starting global parallel export of {count_str} instances...")
             
         # Run parallel
-        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=10, show_progress=show_progress)
+        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=10, show_progress=show_progress, total=total)
         
         success_count = sum(1 for r in results if r is not None)
-        logger.info(f"Export Complete. Success: {success_count}/{len(export_tasks)}")
+        logger.info(f"Export Complete. Success: {success_count}/{total or '?'}")
         return success_count
         
     @staticmethod
@@ -566,6 +727,7 @@ class DicomExporter:
             raise ValueError(f"Validation Errors: {errs}")
             
         return ds
+
     @staticmethod
     def _create_ds(inst):
         meta = FileMetaDataset()

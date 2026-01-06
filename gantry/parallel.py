@@ -14,18 +14,16 @@ def run_parallel(
     max_workers: int = None,
     chunksize: int = 1,
     show_progress: bool = True,
-    force_threads: bool = False
+    force_threads: bool = False,
+    total: int = None
 ) -> List[R]:
     """
     Executes func(item) in parallel using ProcessPoolExecutor.
     Displays a tqdm progress bar unless show_progress=False.
+    Supports generators (pass total=N for progress bar).
     """
     results = []
-    # If no items, return empty
-    items_list = list(items)
-    if not items_list:
-        return []
-
+    
     # Use max_workers = os.cpu_count() * 1.5 by default
     # This provides better throughput for I/O and compression heavy tasks
     if max_workers is None:
@@ -58,13 +56,17 @@ def run_parallel(
         # submit all
         # We use map for simplicity, but as_completed allows earlier processing
         # However, map preserves order which might be nice (though not strictly required here)
-        # Using list(tqdm(executor.map(...))) allows progress bar
         
         # Note: items should be picklable (if using processes) / thread-safe (if using threads)
-        results = list(tqdm(executor.map(func, items_list, chunksize=chunksize), 
-                           total=len(items_list), 
-                           desc=desc, 
-                           unit="item",
-                           disable=not show_progress))
+        iterator = executor.map(func, items, chunksize=chunksize)
         
+        if show_progress:
+            # If total is unknown and items is generator, tqdm will show just stats without bar
+            if total is None and hasattr(items, '__len__'):
+                total = len(items)
+            
+            results = list(tqdm(iterator, total=total, desc=desc))
+        else:
+            results = list(iterator)
+
     return results

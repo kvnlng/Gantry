@@ -598,18 +598,58 @@ class SqliteStore:
                     # Better to collect all dirty into a list, try commit, then clean them.
                     # But hierarchically that's hard.
                     # Compromise: We mark clean at the end.
-                    p.mark_clean() 
+                    p.mark_clean()
                 
+                # Restore Logging Logic
                 if saved_p + saved_i > 0:
-                    msg = f"Save (Inc) complete. P:{saved_p} St:{saved_st} Se:{saved_se} I:{saved_i}."
-                    if pixel_frames_written > 0:
-                        mb = pixel_bytes_written / (1024*1024)
-                        msg += f" Sidecar: {pixel_frames_written} frames ({mb:.2f} MB)."
-                    self.logger.info(msg)
+                     msg = f"Save (Inc) complete. P:{saved_p} St:{saved_st} Se:{saved_se} I:{saved_i}."
+                     if pixel_frames_written > 0:
+                         mb = pixel_bytes_written / (1024*1024)
+                         msg += f" Sidecar: {pixel_frames_written} frames ({mb:.2f} MB)."
+                     self.logger.info(msg)
 
-        except sqlite3.Error as e:
-            self.logger.error(f"Failed to save to DB: {e}")
-            # Do NOT mark clean on error so we retry next time
+        except Exception as e:
+            self.logger.error(f"Save failed: {e}")
+            if hasattr(conn, "rollback"): conn.rollback()
+            raise
+
+    def get_flattened_instances(self, patient_ids: List[str] = None):
+        """
+        Yields a flat dictionary for every instance in the DB (or filtered by patient_ids).
+        Ideal for streaming exports or analysis without loading the entire graph into RAM.
+        """
+        # We use a managed connection that stays open during iteration
+        with sqlite3.connect(self.db_path, timeout=60.0) as conn:
+            # conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            
+            query = """
+                SELECT 
+                    p.patient_id, p.patient_name,
+                    st.study_instance_uid, st.study_date,
+                    s.series_instance_uid, s.modality, s.series_number, s.manufacturer, s.model_name, s.device_serial_number,
+                    i.sop_instance_uid, i.sop_class_uid, i.instance_number, i.file_path, 
+                    i.pixel_offset, i.pixel_length, i.compress_alg, i.attributes_json
+                FROM instances i
+                JOIN series s ON i.series_id_fk = s.id
+                JOIN studies st ON s.study_id_fk = st.id
+                JOIN patients p ON st.patient_id_fk = p.id
+            """
+            
+            params = []
+            if patient_ids:
+                placeholders = ",".join("?" for _ in patient_ids)
+                query += f" WHERE p.patient_id IN ({placeholders})"
+                params.extend(patient_ids)
+                
+            # Execute generator
+            cursor = cur.execute(query, params)
+            
+            # We can map columns to names
+            cols = [desc[0] for desc in cursor.description]
+            
+            for row in cursor:
+                yield dict(zip(cols, row))
 
 
     def update_attributes(self, instances: List[Patient]):

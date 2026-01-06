@@ -150,7 +150,6 @@ class DicomSession:
         if freed > 0:
             print(f"Memory Cleanup: Released {freed} images from RAM.")
 
-
     def enable_reversible_anonymization(self, key_path: str = "gantry.key"):
         """
         Initializes the encryption subsystem.
@@ -309,11 +308,6 @@ class DicomSession:
         # implementation details
         pass
 
-
-    # ... skip to scan_for_phi ...
-
-
-        
     def _make_lightweight_copy(self, patient: "Patient") -> "Patient":
         """
         Creates a swallow copy of the patient graph with pixel data stripped.
@@ -641,7 +635,7 @@ class DicomSession:
 
         if safe:
             print("Running safety scan...")
-            report = self.scan_for_phi()
+            report = self.audit()
             for finding in report:
                 if finding.entity_type == "Patient":
                     dirty_patients.add(finding.entity_uid)
@@ -685,50 +679,137 @@ class DicomSession:
                 get_logger().warning(msg)
                 print(msg)
 
-        exported_count = 0
+            exported_count = 0
         skipped_count = 0
         
-        all_export_contexts = []
+        # 1. Calculate Scope & Total (In-Memory Helper)
+        patient_ids = []
+        total_instances = 0
         
-        # Planning Phase
-        get_logger().info("Planning export batch...")
         for p in self.store.patients:
-            # Check Patient Level
+            # Check Patient Level (Early Filter for ID list)
             if safe and p.patient_id in dirty_patients:
                 get_logger().warning(f"Skipping Dirty Patient: {p.patient_id}")
-                skipped_count += 1
+                skipped_count += getattr(p, 'instance_count', 0) # Estimate
                 continue
-
-            # Determine which studies to export
-            if safe:
-                safe_studies = [st for st in p.studies if st.study_instance_uid not in dirty_studies]
-                if not p.studies: # Handle empty patient
-                     pass
-                elif not safe_studies:
-                     get_logger().warning(f"Skipping Patient {p.patient_id} (All {len(p.studies)} studies dirty).")
-                     skipped_count += 1
-                     continue
                 
-                # Check if we filtered some out
-                if len(safe_studies) < len(p.studies):
-                     get_logger().info(f"Partial Export for {p.patient_id}: {len(safe_studies)}/{len(p.studies)} studies.")
+            patient_ids.append(p.patient_id)
+            
+            # Count instances for progress bar
+            # If safe=True, we technically should check study cleanliness too for accurate count
+            if safe:
+                p_inst_count = 0
+                for st in p.studies:
+                    if st.study_instance_uid not in dirty_studies:
+                        p_inst_count += sum(len(se.instances) for se in st.series)
+                total_instances += p_inst_count
             else:
-                safe_studies = p.studies
+                total_instances += sum(sum(len(se.instances) for se in st.series) for st in p.studies)
 
-            if safe_studies:
-                # Generate tasks (Metadata only)
-                contexts = DicomExporter._generate_export_contexts(p, safe_studies, folder, compression)
-                all_export_contexts.extend(contexts)
-                exported_count += 1
+        if not patient_ids:
+            get_logger().warning("No valid patients to export.")
+            return
+
+        # 2. Generate tasks (Streaming from DB)
+        get_logger().info(f"Queuing export for {total_instances} instances (SQL Streaming)...")
         
-        # Execution Phase (Global Parallelism)
-        if all_export_contexts:
-            success_count = DicomExporter.export_batch(all_export_contexts, show_progress=True)
-            get_logger().info(f"Export complete. (Exported Groups: {exported_count}, Skipped: {skipped_count})")
+        raw_tasks = DicomExporter.generate_export_from_db(
+            self.persistence_manager.store_backend, 
+            folder, 
+            patient_ids, 
+            compression
+        )
+        
+        # 3. Apply Safety Filter (Lazy)
+        # The DB generation is flattened, so we filter stream based on Context attributes
+        def safety_filter(generator):
+            for ctx in generator:
+                # We already filtered patient_ids list passed to SQL, 
+                # but we need to filter Studies if they are dirty.
+                if safe:
+                    uid = ctx.study_attributes.get("StudyInstanceUID")
+                    if uid and uid in dirty_studies:
+                        continue
+                yield ctx
+
+        export_tasks = safety_filter(raw_tasks) if safe else raw_tasks
+        
+        # 4. Execution Phase (Global Parallelism)
+        if total_instances > 0:
+            success_count = DicomExporter.export_batch(export_tasks, show_progress=True, total=total_instances)
+            # Note: skipped_count is only patient-level skips. Study-level skips aren't counted here explicitly 
+            # unless we wrap the generator to count them, but that's complex for a simple log.
+            get_logger().info(f"Export complete.")
         else:
             get_logger().warning("No instances queued for export.")
             
         print("Done.")
+
+    def export_to_parquet(self, output_path: str, patient_ids: List[str] = None):
+        """
+        [EXPERIMENTAL] Exports flattened metadata to a Parquet file.
+        
+        Requires 'pandas' and 'pyarrow' or 'fastparquet'.
+        
+        Args:
+            output_path (str): Destination .parquet file path.
+            patient_ids (List[str], optional): List of PatientIDs to filter. Defaults to None (all currently in store).
+        """
+        try:
+            import pandas as pd
+        except ImportError:
+            get_logger().error("export_to_parquet requires 'pandas' installed.")
+            raise ImportError("Please install pandas to use this feature: pip install pandas pyarrow")
+
+        # 1. Sync DB state
+        # If the user has unsaved changes, we should warn or auto-save.
+        # Currently, get_flattened_instances reads ONLY from DB.
+        # We'll auto-save just like normal export.
+        get_logger().info("Saving state before Parquet export...")
+        self.save()
+        
+        # 2. Stream Data
+        get_logger().info("Streaming data from database...")
+        
+        # We assume if patient_ids is None, we export ALL loaded patients (which matches DB if we just saved)
+        # However, sess.store.patients might be a subset if we implemented partial loading later.
+        # But for now, session manages a cohort.
+        target_ids = patient_ids
+        if target_ids is None:
+             target_ids = [p.patient_id for p in self.store.patients]
+             
+        if not target_ids:
+            get_logger().warning("No patients to export.")
+            return
+
+        generator = self.persistence_manager.store_backend.get_flattened_instances(target_ids)
+        
+        # Materialize generator to list for DataFrame creation
+        # Note: This loads metadata into RAM. If 1M rows, might be heavy, but Parquet export needs batching or full DF usually.
+        # For a prototype, full load is fine using our lightweight dicts.
+        rows = list(generator)
+        
+        if not rows:
+            get_logger().warning("No instances found for these patients.")
+            return
+            
+        df = pd.DataFrame(rows)
+        
+        # 3. Save
+        get_logger().info(f"Writing {len(df)} rows to {output_path}...")
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        
+        try:
+            df.to_parquet(output_path, index=False)
+            get_logger().info("Parquet export successful.")
+        except ImportError as e:
+             get_logger().error("Parquet engine (pyarrow or fastparquet) missing.")
+             raise e
+        except Exception as e:
+            get_logger().error(f"Failed to write parquet: {e}")
+            raise
 
     def load_config(self, config_file: str):
         """
@@ -807,7 +888,6 @@ class DicomSession:
             print("No configuration loaded. Use .load_config() first.")
             return
 
-        print(f"\nExecuting {len(self.active_rules)} rules...")
         service = RedactionService(self.store, self.store_backend)
 
         try:
@@ -818,7 +898,7 @@ class DicomSession:
             # Threading works well here because pixel I/O and NumPy ops release GIL.
             # Shared memory allows in-place modification of instances.
             cpu_count = os.cpu_count() or 1
-            max_workers = cpu_count * 2
+            max_workers = int(cpu_count * 1.5)
             print(f"Executing {len(self.active_rules)} rules using {max_workers} threads...")
             
             # Use run_parallel for consolidated progress bar
