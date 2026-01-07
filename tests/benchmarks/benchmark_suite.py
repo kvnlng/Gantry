@@ -16,9 +16,9 @@ import shutil
 # Let's do: 50k -> 100k -> 300k.
 
 PHASES = [
-    {"target_count": 50000, "label": "Phase 1 (50k)"},
-    {"target_count": 100000, "label": "Phase 2 (100k)"},
-    {"target_count": 300000, "label": "Phase 3 (300k)"}
+    {"target_count": 500, "label": "Phase 1 (500 Files)"},
+    {"target_count": 1000, "label": "Phase 2 (1000 Files)"},
+    {"target_count": 1500, "label": "Phase 3 (1500 Files)"}
 ]
 
 DATA_DIR = "data/benchmark_in"
@@ -52,16 +52,10 @@ def main():
         print(f"STARTING {label} (Target: {target}, Adding: {needed})")
         print(f"{'#'*60}")
         
-        # 1. Generate Data (Incremental)
-        # We assume generate_dataset adds files if we change prefix or just adds to dir.
-        # generate_dataset creates new Series dirs.
-        # We need distinct prefixes to avoid collisions or just trust UUIDs.
-        # Let's use prefix based on phase.
-        
         if needed > 0:
             prefix = f"P{target}"
-            # We mix 50% GantryGen, 50% Others (via random logic in generator)
-            run_command(f"python3 tests/benchmarks/generate_dataset.py --output {DATA_DIR} --count {needed} --patients {max(10, needed//100)} --frames 1 --prefix {prefix}")
+            # Multi-Frame Range 100-1000 | RLE Compressed
+            run_command(f"python3 tests/benchmarks/generate_dataset.py --output {DATA_DIR} --count {needed} --patients {max(10, needed//10)} --frames '100-1000' --prefix {prefix} --compress")
             current_count = target
 
         # 2. Run Benchmark
@@ -71,7 +65,7 @@ def main():
         # For now, let's just time the wrapper execution of the function? 
         # No, better to import and call, getting return values.
         
-        stats = run_benchmark(DATA_DIR, OUT_DIR, DB_PATH, return_stats=True)
+        stats = run_benchmark(DATA_DIR, OUT_DIR, DB_PATH, return_stats=True, compress_export=True)
         stats["Phase"] = label
         stats["Total Instances"] = target
         results.append(stats)

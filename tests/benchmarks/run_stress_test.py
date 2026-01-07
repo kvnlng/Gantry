@@ -23,7 +23,7 @@ def report_resource_usage(stage_name):
     # Safer to just print raw.
     print(f"[{stage_name}] Max RSS: {usage.ru_maxrss} (units OS dependent)")
     
-def run_benchmark(input_dir, output_dir, db_path, return_stats=False):
+def run_benchmark(input_dir, output_dir, db_path, return_stats=False, compress_export=True):
     print(f"--- Starting Safety Pipeline Stress Test ---")
     print(f"Input: {input_dir}")
     print(f"Output: {output_dir}")
@@ -107,7 +107,9 @@ machines:
     # [9] Verify & Export (Cut Once)
     print("\n[Step 9] Export (Verify & Write)")
     t0 = time.time()
-    sess.export(output_dir, safe=True)
+    # Default to j2k if compress requested, else None
+    comp_method = 'j2k' if compress_export else None
+    sess.export(output_dir, safe=True, compression=comp_method)
     duration_export = time.time() - t0
     print(f"Export Duration: {duration_export:.2f}s")
     report_resource_usage("Post-Export")
@@ -172,6 +174,7 @@ if __name__ == "__main__":
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--db", default="benchmark.db")
+    parser.add_argument("--compress", action="store_true", help="Enable Export Compression (J2K)")
     args = parser.parse_args()
     
-    run_benchmark(args.input, args.output, args.db)
+    run_benchmark(args.input, args.output, args.db, compress_export=args.compress)

@@ -6,13 +6,16 @@ description: Run the 50GB Export Benchmark on Google Cloud
 
 # High-Performance Export Stress Test (GCP)
 
-This workflow guides you through running the large-scale (100k instances, ~50GB) stress test on a Google Cloud VM.
+This workflow guides you through running the **Scalability Benchmark Suite** on a Google Cloud VM.
+The suite performs a 3-Phase stress test using massive, multi-frame, compressed DICOM datasets to validate the Gantry pipeline's stability and performance at scale.
 
 ## 1. Provision VM
 
 Use `gcloud` or the Console to create a VM.
-**Recommendation**: `n2-standard-4` (4 vCPU, 16GB RAM) or higher.
-**Disk**: At least 100GB SSD (`pd-ssd`) or Local SSD (`local-ssd`) for best IO performance.
+
+* **Machine Type**: `n2-standard-4` (4 vCPU, 16GB RAM) or higher.
+* **Boot Disk**: **2TB pd-ssd**.
+  * *Why?* The benchmark generates ~412GB of raw data, persists ~412GB in the sidecar database, and exports ~200GB (compressed). Total peak usage exceeds 1TB.
 
 ```bash
 gcloud compute instances create gantry-benchmark \
@@ -20,7 +23,7 @@ gcloud compute instances create gantry-benchmark \
     --machine-type=n2-standard-8 \
     --image-family=ubuntu-2204-lts \
     --image-project=ubuntu-os-cloud \
-    --boot-disk-size=200GB \
+    --boot-disk-size=2TB \
     --boot-disk-type=pd-ssd
 ```
 
@@ -29,7 +32,7 @@ gcloud compute instances create gantry-benchmark \
 SSH into the machine:
 
 ```bash
-gcloud compute ssh gantry-benchmark
+gcloud compute ssh gantry-benchmark --zone=us-central1-a
 ```
 
 Clone and Install (inside VM):
@@ -45,139 +48,44 @@ source venv/bin/activate
 
 pip install -r requirements.txt
 pip install psutil
+pip install -e .
 ```
 
 ## 3. Remote Execution (Recommended)
 
-You can run the full benchmark from your local machine using the provided wrapper script. This will sync your local code to the VM and execute the selected scenario.
+You can run the full benchmark suite from your **local machine** using the provided wrapper script. This script acts as a controller: it syncs your local code to the remote VM (via Git) and triggers the suite.
 
 ```bash
-# Usage: ./tests/benchmarks/run_remote.sh [SCENARIO]
-# Scenarios:
-#   A - Baseline (50GB Single-Frame)
-#   B - Mixed Load (50GB Single + Multi)
-#   C - Scalability (100GB)
-
-./tests/benchmarks/run_remote.sh C
+# Execute the Scalability Suite (Phases 1-3)
+./tests/benchmarks/run_remote.sh
 ```
 
-## 4. Manual Execution
+**What happens?**
+The suite executes 3 incremental phases:
 
-If you prefer to SSH in manually:
+1. **Phase 1 (500 Files)**: Generates ~135GB of Multi-Frame (100-1000 frames) Compressed (RLE) DICOMs.
+    * Runs full privacy pipeline (Ingest -> Redact -> Export j2k).
+2. **Phase 2 (1000 Files)**: Appends another 500 files (~270GB Total).
+    * Re-runs pipeline on total dataset.
+3. **Phase 3 (1500 Files)**: Appends final 500 files (~412GB Total).
+    * Re-runs pipeline on total dataset.
 
-### Scenario A: Baseline (50GB Single-Frame)
+## 4. Manual Execution (Debugging)
 
-*Standard stress test for high file I/O operations (100k files).*
-
-```bash
-# 1. Clean previous data
-rm -rf data/* benchmark.db
-
-# 2. Generate 100k instances (Single Frame)
-python3 tests/benchmarks/generate_dataset.py \
-    --output data/benchmark_in \
-    --count 100000 \
-    --patients 1000 \
-    --frames 1
-
-# 3. Run Benchmark
-python3 tests/benchmarks/run_stress_test.py \
-    --input data/benchmark_in \
-    --output data/benchmark_out \
-    --db benchmark.db
-```
-
-### Scenario B: Mixed Load (50GB Single + Multi)
-
-*Tests memory stability with large objects (50MB/file).*
+If you need to debug or run specific parts manually on the remote VM:
 
 ```bash
-# 1. Clean previous data
+# Clean start
 rm -rf data/* benchmark.db
 
-# 2. Generate Data (25GB Single + 25GB Multi)
-python3 tests/benchmarks/generate_dataset.py \
-    --output data/benchmark_in \
-    --count 50000 \
-    --patients 500 \
-    --frames 1 \
-    --prefix PATIENT_SINGLE
-
-python3 tests/benchmarks/generate_dataset.py \
-    --output data/benchmark_in \
-    --count 500 \
-    --patients 50 \
-    --frames 100 \
-    --prefix PATIENT_MULTI
-
-# 3. Run Benchmark
-python3 tests/benchmarks/run_stress_test.py \
-    --input data/benchmark_in \
-    --output data/benchmark_out \
-    --db benchmark.db
-```
-
-### Scenario C: Scalability (100GB)
-
-*Tests linear scaling by running 50GB then extending to 100GB.*
-
-```bash
-# 1. Start Clean
-rm -rf data/* benchmark.db
-
-# --- PHASE 1: 50GB ---
-echo "--- Starting Phase 1 (50GB) ---"
-
-# Generate Batch A
-python3 tests/benchmarks/generate_dataset.py \
-    --output data/benchmark_in \
-    --count 50000 \
-    --patients 500 \
-    --frames 1 \
-    --prefix PATIENT_SINGLE_A
-
-python3 tests/benchmarks/generate_dataset.py \
-    --output data/benchmark_in \
-    --count 500 \
-    --patients 50 \
-    --frames 100 \
-    --prefix PATIENT_MULTI_A
-
-# Run Benchmark (50GB)
-python3 tests/benchmarks/run_stress_test.py \
-    --input data/benchmark_in \
-    --output data/benchmark_out \
-    --db benchmark.db
-
-# --- PHASE 2: 100GB ---
-echo "--- Starting Phase 2 (Extension to 100GB) ---"
-
-# Generate Batch B (Appends to same directory)
-python3 tests/benchmarks/generate_dataset.py \
-    --output data/benchmark_in \
-    --count 50000 \
-    --patients 500 \
-    --frames 1 \
-    --prefix PATIENT_SINGLE_B
-
-python3 tests/benchmarks/generate_dataset.py \
-    --output data/benchmark_in \
-    --count 500 \
-    --patients 50 \
-    --frames 100 \
-    --prefix PATIENT_MULTI_B
-
-# Run Benchmark (100GB) - verifies linear scaling
-python3 tests/benchmarks/run_stress_test.py \
-    --input data/benchmark_in \
-    --output data/benchmark_out \
-    --db benchmark.db
+# Run the Suite orchestrator directly
+python3 tests/benchmarks/benchmark_suite.py
 ```
 
 ## 5. Teardown
 
-Don't forget to delete the VM!
+**Important:** Delete the VM when finished to avoid storage costs for the 2TB disk.
 
 ```bash
-gcloud compute instances delete gantry-benchmark
+gcloud compute instances delete gantry-benchmark --zone=us-central1-a
 ```
