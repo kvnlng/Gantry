@@ -15,7 +15,12 @@ class TestRedactionParallel(unittest.TestCase):
         self.session = DicomSession(self.db_path)
 
     def tearDown(self):
-        # self.session.store_backend.close() does not exist/needed as connections are short-lived
+        # Ensure thread/db resources are released
+        if hasattr(self.session, "store_backend"):
+            self.session.store_backend.stop()
+        
+        # Give a momentary pause for OS file handle release (Windows/sometimes Linux)
+        import time; time.sleep(0.1)
         shutil.rmtree(self.test_dir)
 
     def test_parallel_execution_speedup_and_safety(self):
