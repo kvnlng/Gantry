@@ -105,11 +105,20 @@ class RedactionService:
             if verbose: self.logger.info(f"Machine {serial} has no redaction zones configured. Skipping.")
             return
 
-        # Check if we even have this machine in our store
-        # (Optimization: Don't load pixels if machine isn't in the dataset)
-        targets = self.index.get_by_machine(serial)
+        # Check matches in store
+        targets = []
+        if serial == "*":
+            # Wildcard: Apply to ALL machines
+            for sn_key in self.index._index:
+                targets.extend(self.index.get_by_machine(sn_key))
+        else:
+            # Exact Match
+            targets = self.index.get_by_machine(serial)
+
         if not targets:
-            if verbose: self.logger.warning(f"Config rule exists for {serial}, but no matching images found in Session.")
+            # Only warn if not wildcard (wildcard yielding 0 means empty store, which is fine)
+            if verbose and serial != "*": 
+                self.logger.warning(f"Config rule exists for {serial}, but no matching images found in Session.")
             return
 
         if verbose: self.logger.info(f"Applying config rules for Machine: {serial} ({len(targets)} images)...")
