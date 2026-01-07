@@ -7,18 +7,12 @@ import subprocess
 import shutil
 
 # Phases configuration: (Total Instances, Phase Label)
-# We assume cumulative growth.
-# User asked for "Increase size 3 fold" for Phase 3.
-# Phase 1: 50,000 (Baseline)
-# Phase 2: 100,000 (2x)
-# Phase 3: 300,000 (6x?) or 150k (3x of baseline)?
-# Let's interpret "increase size of test 3 fold" as adding a 3rd phase that is 3x larger than PREVIOUS? or Total?
-# Let's do: 50k -> 100k -> 300k.
 
 PHASES = [
-    {"target_count": 500, "label": "Phase 1 (500 Files)"},
-    {"target_count": 1000, "label": "Phase 2 (1000 Files)"},
-    {"target_count": 1500, "label": "Phase 3 (1500 Files)"}
+    {"target_count": 1, "label": "Phase 0 (1 Files)"},
+    {"target_count": 10, "label": "Phase 1 (10 Files)"},
+    {"target_count": 100, "label": "Phase 2 (100 Files)"},
+    {"target_count": 1000, "label": "Phase 3 (1000 Files)"},
 ]
 
 DATA_DIR = "data/benchmark_in"

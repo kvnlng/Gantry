@@ -74,7 +74,7 @@ pip install -q -e .
 # --- Execution ---
 echo '[Remote] Starting Scalability Benchmark Suite...'
 # Use the venv python (which is now linked to 3.13t if selected)
-python tests/benchmarks/benchmark_suite.py
+python -Xgil=0 tests/benchmarks/benchmark_suite.py
 "
 
 # 3. Execute Remote Command

@@ -106,12 +106,21 @@ class DicomSession:
         self.key_manager = None
         self.reversibility_service = None
         
-        # Auto-detect key
         if os.path.exists("gantry.key"):
             self.enable_reversible_anonymization("gantry.key")
 
         get_logger().info(f"Session started. {len(self.store.patients)} patients loaded.")
 
+    def close(self):
+        """
+        Cleanly shuts down the session, stopping background threads and flushing queues.
+        """
+        print("Closing session persistence...")
+        if hasattr(self, 'persistence_manager'):
+            self.persistence_manager.shutdown()
+        if hasattr(self, 'store_backend'):
+            self.store_backend.stop() # Stops audit thread
+            
     def save(self):
         """
         Persists the current session state to the database in the background.

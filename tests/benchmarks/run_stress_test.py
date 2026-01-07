@@ -54,6 +54,7 @@ def run_benchmark(input_dir, output_dir, db_path, return_stats=False, compress_e
     print(f"Examine Duration: {duration_examine:.2f}s")
 
     # [4] Configure (Create & Load)
+    # [4] Configure (Create & Load)
     print("\n[Step 4] Configure")
     # Write a dynamic config compatible with generated data (Manufacturer="GantryGen")
     config_path = "stress_config.yaml"
@@ -65,7 +66,7 @@ date_jitter:
   max_days: -1
 remove_private_tags: true
 machines:
-  - manufacturer: "GantryGen"
+  - manufacturer: "*"  # Target ALL manufacturers to ensure full load
     serial_number: "*"
     redaction_zones:
       - [0, 10, 0, 10] # Tiny region to test ROI logic
@@ -152,6 +153,12 @@ machines:
     print("Resource Usage:")
     report_resource_usage("Final")
     print("="*60)
+    
+    # Ensure Shutdown
+    try:
+        sess.close()
+    except Exception as e:
+        print(f"Warning: Failed to close session: {e}")
 
     if return_stats:
         return {
