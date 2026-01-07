@@ -45,18 +45,18 @@ if ! dpkg -s python3.13-nogil >/dev/null 2>&1; then
 fi
 
 # Detect generic python or free-threaded binary
-PY_BIN="python3.13"
+PY_BIN=\"python3.13\"
 if command -v python3.13t &> /dev/null; then
-    PY_BIN="python3.13t"
-    echo "[Remote] Found Free-Threaded Python: $PY_BIN"
+    PY_BIN=\"python3.13t\"
+    echo \"[Remote] Found Free-Threaded Python: \$PY_BIN\"
 elif command -v python3.13-nogil &> /dev/null; then
-    PY_BIN="python3.13-nogil"
-    echo "[Remote] Found Free-Threaded Python: $PY_BIN"
+    PY_BIN=\"python3.13-nogil\"
+    echo \"[Remote] Found Free-Threaded Python: \$PY_BIN\"
 fi
 
 if [ ! -d 'venv' ]; then
-    echo "[Remote] Creating virtual environment with $PY_BIN..."
-    $PY_BIN -m venv venv
+    echo \"[Remote] Creating virtual environment with \$PY_BIN...\"
+    \$PY_BIN -m venv venv
 fi
 
 source venv/bin/activate
