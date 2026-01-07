@@ -9,6 +9,8 @@ __pycache__/
 .vscode/
 
 data/
+gantry.key
+stress_config.yaml
 
 # C extensions
 *.so
