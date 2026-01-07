@@ -15,24 +15,36 @@ echo "VM: $VM_NAME ($ZONE)"
 echo "Scenario: $SCENARIO"
 echo "-------------------------------------"
 
-# 1. Define Remote Support Function
+# 1. Sync Code (Local -> Remote)
+echo "[1/3] Packaging and Syncing local code..."
+# Create a temporary tarball, excluding heavy/ignored items
+tar -czf /tmp/gantry_payload.tar.gz \
+    --exclude='.git' \
+    --exclude='venv' \
+    --exclude='data' \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --exclude='.DS_Store' \
+    .
+
+# Upload to VM
+gcloud compute scp --zone=$ZONE /tmp/gantry_payload.tar.gz $VM_NAME:~/
+
+# 2. Define Remote Support Function
 # We embed this script to run on the remote machine to handle setup + execution
 REMOTE_SCRIPT="
 set -e
 
-# --- Git Sync ---
+# --- Code Extraction ---
 if [ ! -d \"$REMOTE_DIR\" ]; then
-    echo '[Remote] Cloning repository...'
-    git clone https://github.com/kvnlng/Gantry.git $REMOTE_DIR
+    mkdir -p $REMOTE_DIR
 fi
 
-cd $REMOTE_DIR
-echo '[Remote] Syncing with origin/main...'
-git fetch origin
-git reset --hard origin/main
+echo '[Remote] Extracting updated code...'
+tar -xzf ~/gantry_payload.tar.gz -C $REMOTE_DIR --overwrite
 
-# --- Bootstrap ---
-echo '[Remote] Checking environment...'
+cd $REMOTE_DIR
+
 # --- Bootstrap ---
 echo '[Remote] Checking environment...'
 if ! dpkg -s python3.14-nogil >/dev/null 2>&1; then
