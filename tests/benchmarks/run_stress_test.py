@@ -23,7 +23,7 @@ def report_resource_usage(stage_name):
     # Safer to just print raw.
     print(f"[{stage_name}] Max RSS: {usage.ru_maxrss} (units OS dependent)")
     
-def run_benchmark(input_dir, output_dir, db_path):
+def run_benchmark(input_dir, output_dir, db_path, return_stats=False):
     print(f"--- Starting Safety Pipeline Stress Test ---")
     print(f"Input: {input_dir}")
     print(f"Output: {output_dir}")
@@ -150,6 +150,22 @@ machines:
     print("Resource Usage:")
     report_resource_usage("Final")
     print("="*60)
+
+    if return_stats:
+        return {
+            "Ingest Duration": duration_ingest,
+            "Examine Duration": duration_examine,
+            "Audit Duration": duration_audit,
+            "Backup Duration": duration_backup,
+            "Anonymize Duration": duration_anonymize,
+            "Redact Duration": duration_redact,
+            "Export Duration": duration_export,
+            "Total Time": total_time,
+            "Total Instances": total_instances,
+            "Overall Rate": fps_overall,
+            "Ingest Rate": fps_ingest,
+            "Export Rate": fps_export
+        }
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

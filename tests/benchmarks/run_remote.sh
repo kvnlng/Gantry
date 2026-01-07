@@ -52,36 +52,9 @@ pip install -q psutil
 pip install -q -e .
 
 # --- Execution ---
-echo '[Remote] Starting Benchmark Scenario: $SCENARIO'
-case '$SCENARIO' in
-  A)
-    rm -rf data/* benchmark.db
-    python3 tests/benchmarks/generate_dataset.py --output data/benchmark_in --count 100000 --patients 1000 --frames 1
-    python3 tests/benchmarks/run_stress_test.py --input data/benchmark_in --output data/benchmark_out --db benchmark.db
-    ;;
-  B)
-    rm -rf data/* benchmark.db
-    python3 tests/benchmarks/generate_dataset.py --output data/benchmark_in --count 50000 --patients 500 --frames 1 --prefix PATIENT_SINGLE
-    python3 tests/benchmarks/generate_dataset.py --output data/benchmark_in --count 500 --patients 50 --frames 100 --prefix PATIENT_MULTI
-    python3 tests/benchmarks/run_stress_test.py --input data/benchmark_in --output data/benchmark_out --db benchmark.db
-    ;;
-  C)
-    rm -rf data/* benchmark.db
-    echo '--- Phase 1: 50GB ---'
-    python3 tests/benchmarks/generate_dataset.py --output data/benchmark_in --count 50000 --patients 500 --frames 1 --prefix PATIENT_SINGLE_A
-    python3 tests/benchmarks/generate_dataset.py --output data/benchmark_in --count 500 --patients 50 --frames 100 --prefix PATIENT_MULTI_A
-    python3 tests/benchmarks/run_stress_test.py --input data/benchmark_in --output data/benchmark_out --db benchmark.db
-    
-    echo '--- Phase 2: 100GB ---'
-    python3 tests/benchmarks/generate_dataset.py --output data/benchmark_in --count 50000 --patients 500 --frames 1 --prefix PATIENT_SINGLE_B
-    python3 tests/benchmarks/generate_dataset.py --output data/benchmark_in --count 500 --patients 50 --frames 100 --prefix PATIENT_MULTI_B
-    python3 tests/benchmarks/run_stress_test.py --input data/benchmark_in --output data/benchmark_out --db benchmark.db
-    ;;
-  *)
-    echo 'Error: Unknown scenario'
-    exit 1
-    ;;
-esac
+echo '[Remote] Starting Scalability Benchmark Suite...'
+# We ensure the suite script is executable or just run with python
+python3 tests/benchmarks/benchmark_suite.py
 "
 
 # 3. Execute Remote Command
