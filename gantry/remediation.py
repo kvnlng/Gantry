@@ -77,6 +77,7 @@ class RemediationService:
             # 2. Python Object Attribute support (Patient.patient_name)
             elif hasattr(entity, proposal.target_attr):
                 setattr(entity, proposal.target_attr, proposal.new_value)
+                if hasattr(entity, "_dirty"): entity._dirty = True
                 details = f"Remediated {finding.entity_uid}: {proposal.target_attr} -> {proposal.new_value}"
                 action_type = "REMEDIATION_REPLACE"
 
@@ -99,6 +100,7 @@ class RemediationService:
                      entity.set_attr(proposal.target_attr, new_date)
                 else:
                      setattr(entity, proposal.target_attr, new_date)
+                     if hasattr(entity, "_dirty"): entity._dirty = True
                 
                 # Update tracking flag if it's a Study or Instance (or any entity with the flag)
                 if hasattr(entity, "date_shifted"):
@@ -125,6 +127,7 @@ class RemediationService:
             # 2. Python Object Attribute
             elif hasattr(entity, proposal.target_attr):
                  setattr(entity, proposal.target_attr, None)
+                 if hasattr(entity, "_dirty"): entity._dirty = True
                  details = f"Cleared Attribute {proposal.target_attr} on {finding.entity_uid}"
                  action_type = "REMEDIATION_REMOVE"
 

@@ -102,6 +102,7 @@ def worker_generate_series(args):
     ds.SeriesInstanceUID = series_uid
     ds.Manufacturer = manufacturer
     ds.ManufacturerModelName = manufacturer + "_Scanner"
+    ds.DeviceSerialNumber = "GEN_" + manufacturer[:3].upper() + "_001"
     
     # Expand Frames if needed
     if num_frames > 1:

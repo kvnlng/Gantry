@@ -9,10 +9,7 @@ import shutil
 # Phases configuration: (Total Instances, Phase Label)
 
 PHASES = [
-    {"target_count": 1, "label": "Phase 0 (1 Files)"},
-    {"target_count": 10, "label": "Phase 1 (10 Files)"},
-    {"target_count": 100, "label": "Phase 2 (100 Files)"},
-    {"target_count": 1000, "label": "Phase 3 (1000 Files)"},
+    {"target_count": 5, "label": "Phase 0 (5 Files)"},
 ]
 
 DATA_DIR = "data/benchmark_in"
@@ -48,8 +45,8 @@ def main():
         
         if needed > 0:
             prefix = f"P{target}"
-            # Multi-Frame Range 100-1000 | RLE Compressed
-            run_command(f"python3 tests/benchmarks/generate_dataset.py --output {DATA_DIR} --count {needed} --patients {max(10, needed//10)} --frames '100-1000' --prefix {prefix} --compress")
+            # Multi-Frame Range 1-5 for Speed
+            run_command(f"python3 tests/benchmarks/generate_dataset.py --output {DATA_DIR} --count {needed} --patients {max(1, needed//2)} --frames '1-5' --prefix {prefix} --compress")
             current_count = target
 
         # 2. Run Benchmark

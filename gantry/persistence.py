@@ -528,7 +528,9 @@ class SqliteStore:
                         if getattr(st, '_dirty', True):
                             cur.execute("""
                                 INSERT INTO studies (patient_id_fk, study_instance_uid, study_date) VALUES (?, ?, ?)
-                                ON CONFLICT(study_instance_uid) DO UPDATE SET study_date=excluded.study_date
+                                ON CONFLICT(study_instance_uid) DO UPDATE SET 
+                                    study_date=excluded.study_date,
+                                    patient_id_fk=excluded.patient_id_fk
                             """, (p_pk, st.study_instance_uid, st.study_date))
                             saved_st += 1
                         
@@ -550,7 +552,8 @@ class SqliteStore:
                                         series_number=excluded.series_number,
                                         manufacturer=excluded.manufacturer,
                                         model_name=excluded.model_name,
-                                        device_serial_number=excluded.device_serial_number
+                                        device_serial_number=excluded.device_serial_number,
+                                        study_id_fk=excluded.study_id_fk
                                 """, (st_pk, se.series_instance_uid, se.modality, se.series_number, man, mod, sn))
                                 saved_se += 1
 

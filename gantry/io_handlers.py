@@ -762,6 +762,9 @@ class DicomExporter:
                 ds.add_new(0x04000520, 'UI', v)
                 continue
 
+            if t.startswith("_") or "," not in t:
+                continue
+
             g, e = map(lambda x: int(x, 16), t.split(','))
             
             # Skip Command Set elements (Group 0000) which are illegal for file persistence

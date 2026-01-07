@@ -11,6 +11,7 @@ __pycache__/
 data/
 gantry.key
 stress_config.yaml
+benchmark_results.csv
 
 # C extensions
 *.so
