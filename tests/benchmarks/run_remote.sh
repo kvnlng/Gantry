@@ -33,24 +33,26 @@ git reset --hard origin/main
 
 # --- Bootstrap ---
 echo '[Remote] Checking environment...'
-if ! dpkg -s python3.13-nogil >/dev/null 2>&1; then
-    echo '[Remote] Installing Python 3.13 (Free-Threaded)...'
+# --- Bootstrap ---
+echo '[Remote] Checking environment...'
+if ! dpkg -s python3.14-nogil >/dev/null 2>&1; then
+    echo '[Remote] Installing Python 3.14 (Free-Threaded)...'
     sudo apt-get update -qq
     sudo apt-get install -y -qq software-properties-common
     sudo add-apt-repository -y ppa:deadsnakes/ppa
     sudo apt-get update -qq
-    # Install standard 3.13 and experimental nogil/free-threaded build
-    # Note: Package name varies, usually python3.13-nogil in deadsnakes
-    sudo apt-get install -y -qq python3.13 python3.13-venv python3.13-dev python3.13-nogil
+    # Install standard 3.14 and experimental nogil/free-threaded build
+    # Note: Package name varies, usually python3.14-nogil in deadsnakes
+    sudo apt-get install -y -qq python3.14 python3.14-venv python3.14-dev python3.14-nogil
 fi
 
 # Detect generic python or free-threaded binary
-PY_BIN=\"python3.13\"
-if command -v python3.13t &> /dev/null; then
-    PY_BIN=\"python3.13t\"
+PY_BIN=\"python3.14\"
+if command -v python3.14t &> /dev/null; then
+    PY_BIN=\"python3.14t\"
     echo \"[Remote] Found Free-Threaded Python: \$PY_BIN\"
-elif command -v python3.13-nogil &> /dev/null; then
-    PY_BIN=\"python3.13-nogil\"
+elif command -v python3.14-nogil &> /dev/null; then
+    PY_BIN=\"python3.14-nogil\"
     echo \"[Remote] Found Free-Threaded Python: \$PY_BIN\"
 fi
 
