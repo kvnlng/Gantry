@@ -81,7 +81,7 @@ def worker_generate_series(args):
     """
     Generates a single series directory with N instances.
     """
-    study_dir, study_uid, series_uid, num_instances, patient_id, template_path = args
+    study_dir, study_uid, series_uid, num_instances, patient_id, template_path, manufacturer = args
     
     series_dir = os.path.join(study_dir, f"Series_{series_uid[-6:]}")
     os.makedirs(series_dir, exist_ok=True)
@@ -93,6 +93,8 @@ def worker_generate_series(args):
     ds.PatientID = patient_id
     ds.StudyInstanceUID = study_uid
     ds.SeriesInstanceUID = series_uid
+    ds.Manufacturer = manufacturer
+    ds.ManufacturerModelName = manufacturer + "_Scanner"
     
     generated_files = []
     
@@ -143,7 +145,12 @@ def generate_dataset(output_dir, total_instances, patients=100, series_per_study
         
         for s_idx in range(series_per_study):
             series_uid = generate_uid()
-            tasks.append((p_dir, study_uid, series_uid, instances_per_series, p_id, TEMPLATE_DS_PATH))
+            # Randomize Manufacturer
+            # 50% GantryGen (Target), 50% Others (Skip)
+            mfr_options = ["GantryGen", "Siemens", "GE", "Philips"]
+            mfr = random.choice(mfr_options)
+            
+            tasks.append((p_dir, study_uid, series_uid, instances_per_series, p_id, TEMPLATE_DS_PATH, mfr))
 
     # 3. Execute
     cpu_count = os.cpu_count() or 1

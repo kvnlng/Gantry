@@ -656,6 +656,17 @@ class SqliteStore:
             if hasattr(conn, "rollback"): conn.rollback()
             raise
 
+    def get_total_instances(self) -> int:
+        """Returns the total number of instances currently persisted."""
+        try:
+             with self._get_connection() as conn:
+                cur = conn.cursor()
+                row = cur.execute("SELECT COUNT(*) FROM instances").fetchone()
+                return row[0] if row else 0
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to count instances: {e}")
+            return 0
+
     def get_flattened_instances(self, patient_ids: List[str] = None):
         """
         Yields a flat dictionary for every instance in the DB (or filtered by patient_ids).

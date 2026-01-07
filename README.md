@@ -29,8 +29,6 @@ Gantry is designed for massive scale. Recent stress tests verify robust linear s
 - **Export Speed**: ~79 seconds (Streaming Write).
 - **Memory**: Peaks at 5.4GB, stable regardless of dataset size.
 
-- **Memory**: Peaks at 5.4GB, stable regardless of dataset size.
-
 The architecture uses O(1) memory streaming, ensuring it never runs out of RAM even when processing terabytes of data.
 
 #### Micro-Benchmarks (Metadata Operations)
