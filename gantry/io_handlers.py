@@ -704,7 +704,7 @@ class DicomExporter:
             logger.info(f"Starting global parallel export of {count_str} instances...")
             
         # Run parallel
-        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=10, show_progress=show_progress, total=total)
+        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=1, show_progress=show_progress, total=total)
         
         success_count = sum(1 for r in results if r is not None)
         logger.info(f"Export Complete. Success: {success_count}/{total or '?'}")
