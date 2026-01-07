@@ -46,6 +46,11 @@
 <ul class="current">
 <li class="toctree-l1 current"><a class="current reference internal" href="#">Gantry</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="#features">Features</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#performance">Performance</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#gb-scalability-test">100GB Scalability Test</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#micro-benchmarks-metadata-operations">Micro-Benchmarks (Metadata Operations)</a></li>
+</ul>
+</li>
 <li class="toctree-l2"><a class="reference internal" href="#architecture">Architecture</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#the-session-facade">1. The Session Facade</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#object-model">2. Object Model</a></li>
@@ -72,7 +77,6 @@
 <li class="toctree-l3"><a class="reference internal" href="#strict-codec-export-safety">Strict Codec &amp; Export Safety</a></li>
 </ul>
 </li>
-<li class="toctree-l2"><a class="reference internal" href="#performance-benchmarks">Performance &amp; Benchmarks</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#migration-tools">Migration Tools</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#clinical-trial-processor-ctp">Clinical Trial Processor (CTP)</a></li>
 </ul>
@@ -127,6 +131,46 @@
 <li><p><strong>Codecs</strong>: Robust support for JPEG Lossless, JPEG 2000, and other compressed formats via <code class="docutils literal notranslate"><span class="pre">imagecodecs</span></code>.</p></li>
 <li><p><strong>Free-threaded Python Ready</strong>: Fully compatible with Python 3.13t+ (no-GIL) for true parallelism.</p></li>
 </ul>
+</section>
+<section id="performance">
+<h2>Performance<a class="headerlink" href="#performance" title="Link to this heading"></a></h2>
+<p>Gantry is designed for massive scale. Recent stress tests verify robust linear scaling on datasets up to 100GB.</p>
+<p><img alt="Benchmark Scaling" src="docs/images/benchmark_scaling.png" /></p>
+<section id="gb-scalability-test">
+<h3>100GB Scalability Test<a class="headerlink" href="#gb-scalability-test" title="Link to this heading"></a></h3>
+<ul class="simple">
+<li><p><strong>Input</strong>: 101,000 files (50GB Single-Frame + 50GB Multi-Frame).</p></li>
+<li><p><strong>Import Speed</strong>: ~14 seconds (Index-only ingestion).</p></li>
+<li><p><strong>Export Speed</strong>: ~79 seconds (Streaming Write).</p></li>
+<li><p><strong>Memory</strong>: Peaks at 5.4GB, stable regardless of dataset size.</p></li>
+<li><p><strong>Memory</strong>: Peaks at 5.4GB, stable regardless of dataset size.</p></li>
+</ul>
+<p>The architecture uses O(1) memory streaming, ensuring it never runs out of RAM even when processing terabytes of data.</p>
+</section>
+<section id="micro-benchmarks-metadata-operations">
+<h3>Micro-Benchmarks (Metadata Operations)<a class="headerlink" href="#micro-benchmarks-metadata-operations" title="Link to this heading"></a></h3>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Operation</p></th>
+<th class="head"><p>Scale</p></th>
+<th class="head"><p>Time (Mac M3 Max)</p></th>
+<th class="head"><p>Throughput</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Identity Locking</strong></p></td>
+<td><p>100,000 Instances</p></td>
+<td><p>~0.13 s</p></td>
+<td><p><strong>769k / sec</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Persist Findings</strong></p></td>
+<td><p>100,000 Issues</p></td>
+<td><p>~0.13 s</p></td>
+<td><p><strong>770k / sec</strong></p></td>
+</tr>
+</tbody>
+</table>
+</section>
 </section>
 <section id="architecture">
 <h2>Architecture<a class="headerlink" href="#architecture" title="Link to this heading"></a></h2>
@@ -353,37 +397,6 @@ Exporting:  15%|██▌       | 15/100 [00:05&lt;00:30,  2.80patient/s]
 <li><p>Standard JPEG Baseline/Extended</p></li>
 </ul>
 </section>
-</section>
-<section id="performance-benchmarks">
-<h2>Performance &amp; Benchmarks<a class="headerlink" href="#performance-benchmarks" title="Link to this heading"></a></h2>
-<p>Gantry is optimized for high-throughput clinical environments.</p>
-<table class="docutils align-default">
-<thead>
-<tr class="row-odd"><th class="head"><p>Operation</p></th>
-<th class="head"><p>Scale</p></th>
-<th class="head"><p>Time (Mac M3 Max)</p></th>
-<th class="head"><p>Throughput</p></th>
-</tr>
-</thead>
-<tbody>
-<tr class="row-even"><td><p><strong>Identity Locking</strong></p></td>
-<td><p>100,000 Instances</p></td>
-<td><p>~0.13 s</p></td>
-<td><p><strong>769k / sec</strong></p></td>
-</tr>
-<tr class="row-odd"><td><p><strong>Persist Findings</strong></p></td>
-<td><p>100,000 Issues</p></td>
-<td><p>~0.13 s</p></td>
-<td><p><strong>770k / sec</strong></p></td>
-</tr>
-<tr class="row-even"><td><p><strong>Ingestion</strong></p></td>
-<td><p>-</p></td>
-<td><p>-</p></td>
-<td><p><strong>25k / sec</strong></p></td>
-</tr>
-</tbody>
-</table>
-<p><em>Note: Benchmarks run on Python 3.14t (Free-threaded).</em></p>
 </section>
 <section id="migration-tools">
 <h2>Migration Tools<a class="headerlink" href="#migration-tools" title="Link to this heading"></a></h2>
