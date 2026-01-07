@@ -50,7 +50,8 @@ def run_benchmark(input_dir, output_dir, db_path):
     print("\n[Step 3] Examine")
     t0 = time.time()
     sess.examine()
-    print(f"Examine Duration: {time.time() - t0:.2f}s")
+    duration_examine = time.time() - t0
+    print(f"Examine Duration: {duration_examine:.2f}s")
 
     # [4] Configure (Create & Load)
     print("\n[Step 4] Configure")
@@ -75,8 +76,9 @@ machines:
     print("\n[Step 5] Audit")
     t0 = time.time()
     report = sess.audit()
+    duration_audit = time.time() - t0
     print(f"Audit Found {len(report)} issues.")
-    print(f"Audit Duration: {time.time() - t0:.2f}s")
+    print(f"Audit Duration: {duration_audit:.2f}s")
 
     # [6] Backup (Reversibility)
     print("\n[Step 6] Backup Identity")
@@ -84,19 +86,22 @@ machines:
     sess.enable_reversible_anonymization()
     sess.lock_identities(report)
     sess.save()
-    print(f"Backup Duration: {time.time() - t0:.2f}s")
+    duration_backup = time.time() - t0
+    print(f"Backup Duration: {duration_backup:.2f}s")
     
     # [7] Anonymize (Metadata)
     print("\n[Step 7] Anonymize")
     t0 = time.time()
     sess.anonymize(report)
-    print(f"Anonymize Duration: {time.time() - t0:.2f}s")
+    duration_anonymize = time.time() - t0
+    print(f"Anonymize Duration: {duration_anonymize:.2f}s")
     
     # [8] Redact (Pixel Data)
     print("\n[Step 8] Redact")
     t0 = time.time()
     sess.redact()
-    print(f"Redact Duration: {time.time() - t0:.2f}s")
+    duration_redact = time.time() - t0
+    print(f"Redact Duration: {duration_redact:.2f}s")
     report_resource_usage("Post-Redact")
     
     # [9] Verify & Export (Cut Once)
@@ -107,10 +112,44 @@ machines:
     print(f"Export Duration: {duration_export:.2f}s")
     report_resource_usage("Post-Export")
     
-    print(f"\n--- Pipeline Complete ---")
-    print(f"Total Duration: {time.time() - start_global:.2f}s")
-    print(f"Ingest: {duration_ingest:.2f}s")
-    print(f"Export: {duration_export:.2f}s")
+    # Calculate Totals
+    total_time = time.time() - start_global
+    
+    # Get counts for throughput calculation
+    # We can infer from session.store
+    # (Checking private store objects is messy but acceptable for a benchmark script)
+    total_instances = 0
+    # A bit inefficient to recount, but safe.
+    # Alternatively, capture from sess.examine output if possible, but sess.examine prints to stdout.
+    # Let's count via SQL for speed if possible, or just iterate.
+    # Actually, we can just use the store backend directly.
+    total_instances = sess.store_backend.get_total_instances()
+
+    # Metrics
+    fps_ingest = total_instances / duration_ingest if duration_ingest > 0 else 0
+    fps_export = total_instances / duration_export if duration_export > 0 else 0
+    fps_overall = total_instances / total_time if total_time > 0 else 0
+
+    print("\n" + "="*60)
+    print(f"BENCHMARK REPORT")
+    print("="*60)
+    print(f"Total Instances: {total_instances}")
+    print(f"Total Time:      {total_time:.2f}s")
+    print(f"Overall Rate:    {fps_overall:.0f} inst/sec")
+    print("-" * 60)
+    print(f"{'STEP':<20} | {'DURATION':<10} | {'RATE (inst/s)':<15}")
+    print("-" * 60)
+    print(f"{'Ingest':<20} | {duration_ingest:<10.2f} | {fps_ingest:<15.0f}")
+    print(f"{'Examine':<20} | {duration_examine:<10.2f} | {'-':<15}")
+    print(f"{'Audit':<20} | {duration_audit:<10.2f} | {'-':<15}")
+    print(f"{'Backup':<20} | {duration_backup:<10.2f} | {'-':<15}")
+    print(f"{'Anonymize':<20} | {duration_anonymize:<10.2f} | {'-':<15}")
+    print(f"{'Redact':<20} | {duration_redact:<10.2f} | {'-':<15}")
+    print(f"{'Export':<20} | {duration_export:<10.2f} | {fps_export:<15.0f}")
+    print("-" * 60)
+    print("Resource Usage:")
+    report_resource_usage("Final")
+    print("="*60)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

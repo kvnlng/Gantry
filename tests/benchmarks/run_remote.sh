@@ -7,7 +7,7 @@ set -e
 
 VM_NAME="gantry-benchmark"
 ZONE="us-central1-a"
-REMOTE_DIR="~/Gantry"
+REMOTE_DIR="Gantry"
 SCENARIO=${1:-A}
 
 echo "--- Gantry Remote Benchmark Runner ---"
