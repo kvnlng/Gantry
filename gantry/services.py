@@ -137,14 +137,16 @@ class RedactionService:
                 self.logger.warning(f"Invalid ROI format in config: {roi}")
         
         if valid_rois:
-            self.redact_machine_instances(serial, valid_rois, show_progress=show_progress, verbose=verbose)
+            self.redact_machine_instances(serial, valid_rois, targets=targets, show_progress=show_progress, verbose=verbose)
 
-    def redact_machine_instances(self, machine_sn: str, rois: List[tuple], show_progress: bool = True, verbose: bool = False):
+    def redact_machine_instances(self, machine_sn: str, rois: List[tuple], targets: List[Instance] = None, show_progress: bool = True, verbose: bool = False):
         """
-        Applies a LIST of ROIs to all images from the specified machine.
+        Applies a LIST of ROIs to all images from the specified machine (or provided list of targets).
         Optimized to iterate images ONCE.
         """
-        targets = self.index.get_by_machine(machine_sn)
+        if targets is None:
+             targets = self.index.get_by_machine(machine_sn)
+             
         self.logger.info(f"Redacting {len(targets)} images for {machine_sn} ({len(rois)} zones)...")
         
         if self.store_backend and targets:
@@ -236,10 +238,17 @@ class RedactionService:
             slices[row_dim] = slice(r1, r2_clamped)
             slices[col_dim] = slice(c1, c2_clamped)
             
+            # Ensure Writability
+            if not arr.flags.writeable:
+                # Create a writable copy and update the instance
+                arr = arr.copy()
+                inst.set_pixel_data(arr)
+            
             # Apply Redaction
             arr[tuple(slices)] = 0
             return True
-        except:
+        except Exception as e:
+            # get_logger().warning(f"ROI Application Failed: {e}")
             return False
 
     def _apply_redaction_flags(self, inst: Instance):
