@@ -23,15 +23,6 @@ def load_unified_config(path: str) -> Dict[str, Any]:
     with open(path, "r") as f:
         data = yaml.safe_load(f)
         
-    # Handle Legacy Config (List of Rules)
-    if isinstance(data, list):
-        return {
-            "version": "1.0",
-            "machine_rules": data,
-            "phi_tags": {},
-            "date_jitter": 0
-        }
-
     # Handle Standard Config
     config = data
     
@@ -107,9 +98,8 @@ class ConfigLoader:
         data = ConfigLoader._load_yaml(filepath)
         
         rules = []
-        if isinstance(data, list):
-            rules = data # Old v0 list?
-        elif "machines" in data:
+        rules = []
+        if "machines" in data:
             rules = data["machines"] # v1 or v2
         else:
              get_logger().warning("Config Warning: Could not find 'machines' list.")
@@ -127,10 +117,6 @@ class ConfigLoader:
         if filepath:
             data = ConfigLoader._load_yaml(filepath)
             
-            # If it's a list (Legacy Rules), it definitely doesn't have PHI tags
-            if isinstance(data, list):
-                return {}
-             
             # Support v2 unified file used as simple PHI config
             if "phi_tags" in data:
                 return data["phi_tags"]
