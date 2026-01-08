@@ -23,29 +23,54 @@ class DicomItem:
     Base class for any entity that holds DICOM attributes and sequences.
     """
     # init=False to avoid constructor conflicts during inheritance
+    # init=False to avoid constructor conflicts during inheritance
     attributes: Dict[str, Any] = field(init=False)
     sequences: Dict[str, DicomSequence] = field(init=False)
-    _dirty: bool = field(init=False, default=True)
+    
+    # Versioning for robust persistence
+    _mod_count: int = field(init=False, default=0)
+    _saved_mod_count: int = field(init=False, default=-1)
 
     def __post_init__(self):
         self.attributes = {}
         self.sequences = {}
-        self._dirty = True
+        # Initial state is dirty (1 > 0)
+        self._mod_count = 1
+        self._saved_mod_count = 0
+
+    @property
+    def _dirty(self) -> bool:
+        return self._mod_count > self._saved_mod_count
+        
+    @_dirty.setter
+    def _dirty(self, value: bool):
+        # Legacy support: setting True increments version
+        if value:
+            self._mod_count += 1
+        else:
+            # Unsafe clear: assumes current state is saved
+            self._saved_mod_count = self._mod_count
+
+    def mark_saved(self, version_saved: int):
+        """Marks specific version as saved. Robust against concurrent edits."""
+        if version_saved > self._saved_mod_count:
+            self._saved_mod_count = version_saved
 
     def set_attr(self, tag: str, value: Any):
         """Sets a generic attribute by its hex tag (e.g., '0010,0010')."""
         self.attributes[tag] = value
-        self._dirty = True
+        self._mod_count += 1
 
     def add_sequence_item(self, tag: str, item: 'DicomItem'):
         """Appends a new item to a sequence, creating the sequence if needed."""
         if tag not in self.sequences:
             self.sequences[tag] = DicomSequence(tag=tag)
         self.sequences[tag].items.append(item)
-        self._dirty = True
+        self._mod_count += 1
 
     def mark_clean(self):
-        self._dirty = False
+        # Legacy: force clean
+        self._saved_mod_count = self._mod_count
         for seq in self.sequences.values():
             for item in seq.items:
                 item.mark_clean()
@@ -91,7 +116,10 @@ class Instance(DicomItem):
         # Inlined from DicomItem to avoid super() mismatch issues with slots/reloads
         self.attributes = {}
         self.sequences = {}
-        self._dirty = True
+        
+        # Versioning
+        self._mod_count = 1
+        self._saved_mod_count = 0
         
         self.set_attr("0008,0018", self.sop_instance_uid)
         self.set_attr("0008,0016", self.sop_class_uid)
@@ -251,7 +279,7 @@ class Instance(DicomItem):
         bits = array.itemsize * 8
         self.set_attr("0028,0100", bits)
         
-        self._dirty = True
+        self._mod_count += 1
 
 
 @dataclass(slots=True)
