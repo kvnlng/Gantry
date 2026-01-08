@@ -15,6 +15,7 @@ Gantry provides a high-performance, object-oriented interface for managing, anal
   - **Reversibility**: Optional cryptographic identity preservation.
 - **Codecs**: Robust support for JPEG Lossless, JPEG 2000, and other compressed formats via `imagecodecs`.
 - **Free-threaded Python Ready**: Fully compatible with Python 3.13t+ (no-GIL) for true parallelism.
+- **Deep Memory Management**: Automatic pixel offloading allows processing datasets far exceeding available RAM.
 
 ## Performance
 
