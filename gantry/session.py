@@ -131,6 +131,22 @@ class DicomSession:
         if hasattr(self, '_executor'):
             print("Shutting down process pool...")
             self._executor.shutdown(wait=True)
+
+    def _restart_executor(self, max_workers=None):
+        """
+        Restarts the internal process pool executor, potentially with fewer workers.
+        Useful for recovering from BrokenProcessPool errors (OOM).
+        """
+        get_logger().warning(f"Restarting ProcessPoolExecutor (max_workers={max_workers})...")
+        if self._executor:
+            try:
+                # Force kill old processes if they are stuck/broken
+                self._executor.shutdown(wait=False, cancel_futures=True)
+            except:
+                pass
+        
+        # Re-init
+        self._executor = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers)
             
     def save(self):
         """
@@ -758,7 +774,34 @@ class DicomSession:
         
         # 4. Execution Phase (Global Parallelism)
         if total_instances > 0:
-            success_count = DicomExporter.export_batch(export_tasks, show_progress=True, total=total_instances, executor=self._executor)
+            try:
+                success_count = DicomExporter.export_batch(export_tasks, show_progress=True, total=total_instances, executor=self._executor)
+            except concurrent.futures.process.BrokenProcessPool as e:
+                get_logger().error(f"Export Process Pool Crashed (likely OOM). Restarting with Safe Mode (Workers=4)... Error: {e}")
+                print("\n\n!! WORKER CRASH DETECTED !!")
+                print("The parallel executor crashed, likely due to Out-Of-Memory (OOM) on large images.")
+                print("Switching to SAFE MODE (Reduced Concurrency) and retrying...\n")
+                
+                # Restart with reduced workers (e.g. 4)
+                self._restart_executor(max_workers=4)
+                
+                # Generator was consumed?
+                # Ah, export_tasks is a generator if safe=True/DB stream. WE CANNOT RETRY GENERATOR.
+                # We need to recreate the generator.
+                
+                print("Re-queuing export tasks...")
+                # Re-run the generator logic
+                raw_tasks = DicomExporter.generate_export_from_db(
+                    self.persistence_manager.store_backend, 
+                    folder, 
+                    patient_ids, 
+                    compression
+                )
+                export_tasks_retry = safety_filter(raw_tasks) if safe else raw_tasks
+                
+                # Retry
+                success_count = DicomExporter.export_batch(export_tasks_retry, show_progress=True, total=total_instances, executor=self._executor)
+            
             # Note: skipped_count is only patient-level skips. Study-level skips aren't counted here explicitly 
             # unless we wrap the generator to count them, but that's complex for a simple log.
             get_logger().info(f"Export complete.")

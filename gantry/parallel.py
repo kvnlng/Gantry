@@ -29,8 +29,15 @@ def run_parallel(
     # Use max_workers = os.cpu_count() * 1.5 by default
     # This provides better throughput for I/O and compression heavy tasks
     if max_workers is None:
-        cpu_count = os.cpu_count() or 1
-        max_workers = int(cpu_count * 1.5)
+        if os.environ.get("GANTRY_MAX_WORKERS"):
+            try:
+                max_workers = int(os.environ["GANTRY_MAX_WORKERS"])
+            except ValueError:
+                pass
+        
+        if max_workers is None:
+            cpu_count = os.cpu_count() or 1
+            max_workers = int(cpu_count * 1.5)
 
     # Determine Strategy
     # Priority: Env Var -> Free-Threading Detection -> Default (Process)
