@@ -14,6 +14,9 @@ from .reversibility import ReversibilityService
 from .persistence_manager import PersistenceManager
 import json
 from .parallel import run_parallel
+import concurrent.futures
+import os
+
 
 
 def scan_worker(args):
@@ -109,6 +112,10 @@ class DicomSession:
         if os.path.exists("gantry.key"):
             self.enable_reversible_anonymization("gantry.key")
 
+        # Shared Global Executor for Process Consistency
+        # This prevents "UserWarning: resource_tracker: ... semaphore released"
+        self._executor = concurrent.futures.ProcessPoolExecutor(max_workers=None) # Default: CPU * 1.5
+
         get_logger().info(f"Session started. {len(self.store.patients)} patients loaded.")
 
     def close(self):
@@ -120,6 +127,10 @@ class DicomSession:
             self.persistence_manager.shutdown()
         if hasattr(self, 'store_backend'):
             self.store_backend.stop() # Stops audit thread
+            
+        if hasattr(self, '_executor'):
+            print("Shutting down process pool...")
+            self._executor.shutdown(wait=True)
             
     def save(self):
         """
@@ -509,7 +520,7 @@ class DicomSession:
         Scans a folder for .dcm files (recursively) and imports them into the session.
         """
         print(f"Ingesting from '{folder_path}'...")
-        DicomImporter.import_files([folder_path], self.store)
+        DicomImporter.import_files([folder_path], self.store, executor=self._executor)
         
         # Calculate stats
         n_p = len(self.store.patients)
@@ -747,7 +758,7 @@ class DicomSession:
         
         # 4. Execution Phase (Global Parallelism)
         if total_instances > 0:
-            success_count = DicomExporter.export_batch(export_tasks, show_progress=True, total=total_instances)
+            success_count = DicomExporter.export_batch(export_tasks, show_progress=True, total=total_instances, executor=self._executor)
             # Note: skipped_count is only patient-level skips. Study-level skips aren't counted here explicitly 
             # unless we wrap the generator to count them, but that's complex for a simple log.
             get_logger().info(f"Export complete.")
@@ -925,8 +936,25 @@ class DicomSession:
 
             print(f"Queued {len(all_tasks)} redaction tasks across {len(self.active_rules)} rules.")
             print(f"Executing using {max_workers} threads...")
+            # 2. Parallel Redaction (Granular)
+            get_logger().info(f"Starting granular redaction ({len(all_tasks)} tasks, workers={max_workers})...")
+        
+            # NOTE: We force threads for redaction because pixel manipulation in numpy releases GIL, 
+            # and pickling full objects for Processes is slower and less robust (pickling errors).
+            # However, for huge loads, Processes might be better. 
+            # BUT the user issue "semaphore leak" implies Processes were being used implicitly or somewhere else.
+            # Check 'force_threads'. Providing self._executor (ProcessPool) will conflict if force_threads=True.
+            # run_parallel logic: if executor is passed, it uses it.
+            # So we MUST NOT pass self._executor if we strictly want threads.
             
-            # Execute in parallel
+            # DECISION: Redaction currently uses force_threads=True.
+            # If we stick to threads, we don't use the shared ProcessPool.
+            # So we leave this call alone (creating a ThreadPool is cheap).
+            
+            # run_parallel(service.execute_redaction_task, all_tasks, desc="Redacting Pixels", max_workers=max_workers, force_threads=True)
+            # However, if we move to Processes later, we should use self._executor.
+            # For now, keep as is to avoid regression on the threading model.
+            
             run_parallel(service.execute_redaction_task, all_tasks, desc="Redacting Pixels", max_workers=max_workers, force_threads=True)
 
             # Save state after modification

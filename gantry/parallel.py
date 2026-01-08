@@ -15,12 +15,14 @@ def run_parallel(
     chunksize: int = 1,
     show_progress: bool = True,
     force_threads: bool = False,
-    total: int = None
+    total: int = None,
+    executor: Any = None
 ) -> List[R]:
     """
     Executes func(item) in parallel using ProcessPoolExecutor.
     Displays a tqdm progress bar unless show_progress=False.
     Supports generators (pass total=N for progress bar).
+    If 'executor' is passed, it uses that instance instead of creating a new one.
     """
     results = []
     
@@ -50,23 +52,33 @@ def run_parallel(
     
     # Optional: Log strategy (debug level only)
     # from .logger import get_logger
-    # get_logger().debug(f"run_parallel using {mode_name} (Free-Threaded: {use_threads})")
+    # get_logger().debug(f"run_parallel using {mode_name} (Shared: {executor is not None})")
 
-    with ExecutorClass(max_workers=max_workers) as executor:
-        # submit all
-        # We use map for simplicity, but as_completed allows earlier processing
-        # However, map preserves order which might be nice (though not strictly required here)
-        
-        # Note: items should be picklable (if using processes) / thread-safe (if using threads)
+    if executor is not None:
+        # Use shared executor (Caller manages lifecycle)
+        # Note: We must ensure the executor type matches the requested mode if possible,
+        # but typically the shared executor determines the mode.
+        # We ignore force_threads if shared executor is passed unless we want to enforce verify?
+        # For simplicity: Use whatever executor is passed.
         iterator = executor.map(func, items, chunksize=chunksize)
         
         if show_progress:
-            # If total is unknown and items is generator, tqdm will show just stats without bar
             if total is None and hasattr(items, '__len__'):
                 total = len(items)
-            
             results = list(tqdm(iterator, total=total, desc=desc))
         else:
             results = list(iterator)
+
+    else:
+        # Create new executor (Context Manager)
+        with ExecutorClass(max_workers=max_workers) as internal_executor:
+            iterator = internal_executor.map(func, items, chunksize=chunksize)
+            
+            if show_progress:
+                if total is None and hasattr(items, '__len__'):
+                    total = len(items)
+                results = list(tqdm(iterator, total=total, desc=desc))
+            else:
+                results = list(iterator)
 
     return results

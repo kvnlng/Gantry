@@ -120,7 +120,7 @@ class DicomImporter:
     optimized for parallel processing.
     """
     @staticmethod
-    def import_files(file_paths: List[str], store: DicomStore):
+    def import_files(file_paths: List[str], store: DicomStore, executor=None):
         """
         Parses a list of files or directories. Recurses into directories to find all files.
         """
@@ -159,7 +159,7 @@ class DicomImporter:
                     series_map[se.series_instance_uid] = se
 
         # 2. Parallel Execution
-        results = run_parallel(ingest_worker, new_files, desc="Ingesting", chunksize=10)
+        results = run_parallel(ingest_worker, new_files, desc="Ingesting", chunksize=10, executor=executor)
         
         # 3. Aggregation (Main Thread)
         count = 0
@@ -664,7 +664,7 @@ class DicomExporter:
         return contexts
 
     @staticmethod
-    def save_studies(patient: Patient, studies: List[Study], out_dir: str, compression: str = None, show_progress: bool = True):
+    def save_studies(patient: Patient, studies: List[Study], out_dir: str, compression: str = None, show_progress: bool = True, executor=None):
         """
         Exports a specific list of studies for a patient using parallel workers.
         compression: 'j2k' or None
@@ -685,14 +685,14 @@ class DicomExporter:
         if show_progress:
             logger.info(f"Starting parallel export of {len(export_tasks)} instances...")
             
-        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=10, show_progress=show_progress)
+        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=10, show_progress=show_progress, executor=executor)
         
         # results contains paths or Nones
         success_count = sum(1 for r in results if r is not None)
         logger.info(f"Export Complete. Success: {success_count}/{len(export_tasks)}")
 
     @staticmethod
-    def export_batch(export_tasks: Iterable[ExportContext], show_progress: bool = True, total: int = None):
+    def export_batch(export_tasks: Iterable[ExportContext], show_progress: bool = True, total: int = None, executor=None):
         """
         Exports a flat list of ExportContexts using parallel workers.
         """
@@ -704,7 +704,7 @@ class DicomExporter:
             logger.info(f"Starting global parallel export of {count_str} instances...")
             
         # Run parallel
-        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=1, show_progress=show_progress, total=total)
+        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=1, show_progress=show_progress, total=total, executor=executor)
         
         success_count = sum(1 for r in results if r is not None)
         logger.info(f"Export Complete. Success: {success_count}/{total or '?'}")
