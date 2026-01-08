@@ -74,5 +74,5 @@ def test_execute_config_integration(tmp_path, dummy_patient, config_file):
 
     # Assert
     # Verify the instance in memory is updated (Lazy loaded then updated)
-    assert inst.pixel_array[20, 20] == 0
+    assert inst.get_pixel_data()[20, 20] == 0
     assert os.path.exists(db_file)

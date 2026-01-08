@@ -39,8 +39,12 @@ class PersistenceManager:
             print("Restarting stopped Persistence Manager to process pending items...")
             self._start_worker()
 
-        if self.running and self.thread and self.thread.is_alive():
-             self.queue.join()
+        # Wait for queue to be empty, regardless of thread state
+        # (If thread dies during join, we might hang? No, task_done() is called in finally block)
+        # But if thread dies BEFORE get(), item remains.
+        # Our modified start_worker handles restart.
+        
+        self.queue.join()
 
     def save_async(self, patients: List[Patient]):
         """

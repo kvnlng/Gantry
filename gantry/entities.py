@@ -148,7 +148,10 @@ class Instance(DicomItem):
         if self._pixel_loader:
              try:
                  # Invoke callback (e.g. sidecar read)
-                 self.pixel_array = self._pixel_loader()
+                 arr = self._pixel_loader()
+                 # Use set_pixel_data to ensure attributes (rows, cols) are synced 
+                 # This is critical if the loader returns a raw array but attributes were not yet set/restored
+                 self.set_pixel_data(arr)
                  return self.pixel_array
              except Exception as e:
                  raise RuntimeError(f"Pixel Loader failed for {self.sop_instance_uid}: {e}")
@@ -242,6 +245,11 @@ class Instance(DicomItem):
         self.set_attr("0028,0002", samples)
         if frames > 1: self.set_attr("0028,0008", str(frames))
         if samples >= 3: self.set_attr("0028,0004", "RGB")
+        
+        # Ensure BitsAllocated matches array data type
+        # SidecarPixelLoader relies on this to determine uint8 vs uint16
+        bits = array.itemsize * 8
+        self.set_attr("0028,0100", bits)
         
         self._dirty = True
 
