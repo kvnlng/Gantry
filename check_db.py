@@ -2,7 +2,7 @@
 import sqlite3
 import os
 
-db_path = "/Volumes/PRO-G40/gitclones/Gantry/benchmark.db"
+db_path = "benchmark.db"
 if not os.path.exists(db_path):
     print(f"DB {db_path} does not exist!")
     exit(1)
