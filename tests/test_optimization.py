@@ -132,3 +132,46 @@ def test_batch_chunking(tmp_path):
     count = cur.fetchone()[0]
     assert count == 30
     conn.close()
+
+def test_lock_identities_wrapper_chunking(tmp_path):
+    """
+    Verify that calling the wrapper `lock_identities` (singular) with a list 
+    AND `auto_persist_chunk_size` correctly forwards the argument to `lock_identities_batch`
+    and results in memory clearing (empty return).
+    """
+    db_path = str(tmp_path / "wrapper.db")
+    key_path = str(tmp_path / "wrapper.key")
+    session = DicomSession(db_path)
+    session.enable_reversible_anonymization(key_path)
+    
+    # Create 2 patients
+    ids = ["W1", "W2"]
+    for pid in ids:
+        p = Patient(pid, f"Name {pid}")
+        st = Study(f"ST_{pid}", date(2023,1,1))
+        se = Series(f"SE_{pid}", "CT", 1)
+        inst = Instance(f"SOP_{pid}", "1.2.3", 1)
+        inst.file_path = None
+        se.instances.append(inst)
+        st.series.append(se)
+        p.studies.append(st)
+        session.store.patients.append(p)
+        
+    session.save()
+    session.persistence_manager.flush()
+    
+    # Act: Call wrapper with chunk size = 1
+    # Should trigger chunking: persist 1, clear 1.
+    res = session.lock_identities(ids, auto_persist_chunk_size=1)
+    
+    # Assert: Should return empty list because chunking happened
+    assert res == []
+    
+    # Verify persistence in DB
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("SELECT count(*) FROM instances WHERE attributes_json LIKE '%0400,0500%'")
+    count = cur.fetchone()[0]
+    assert count == 2
+    conn.close()
+

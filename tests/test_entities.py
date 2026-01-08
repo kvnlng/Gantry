@@ -56,3 +56,22 @@ def test_lazy_loading(tmp_path):
         mock_read.assert_called_once_with(inst.file_path)
         # Verify it cached the result
         assert inst.pixel_array is not None
+
+def test_pixel_bits_allocated():
+    """Verify that BitsAllocated is correctly inferred from dtype."""
+    inst = Instance()
+    
+    # Test uint8 (8 bits)
+    arr_uint8 = np.zeros((10, 10), dtype=np.uint8)
+    inst.set_pixel_data(arr_uint8)
+    assert inst.attributes["0028,0100"] == 8
+    
+    # Test uint16 (16 bits)
+    arr_uint16 = np.zeros((10, 10), dtype=np.uint16)
+    inst.set_pixel_data(arr_uint16)
+    assert inst.attributes["0028,0100"] == 16
+    
+    # Test int32 (32 bits) - rare for pixel data but good for robustness check
+    arr_int32 = np.zeros((10, 10), dtype=np.int32)
+    inst.set_pixel_data(arr_int32)
+    assert inst.attributes["0028,0100"] == 32

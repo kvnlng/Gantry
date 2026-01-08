@@ -168,17 +168,18 @@ class DicomSession:
         self.reversibility_service = ReversibilityService(self.key_manager)
         get_logger().info(f"Reversible anonymization enabled. Key: {key_path}")
 
-    def lock_identities(self, patient_id: str, persist: bool = False, _patient_obj: "Patient" = None, verbose: bool = True) -> List["Instance"]:
+    def lock_identities(self, patient_id: str, persist: bool = False, _patient_obj: "Patient" = None, verbose: bool = True, **kwargs) -> List["Instance"]:
         """
         Securely embeds the original patient name/ID into a private DICOM tag
         for all instances belonging to the specified patient.
         Must be called BEFORE anonymization.
         
         Args:
-            patient_id: The ID of the patient to preserve.
+            patient_id: The ID of the patient to preserve, OR a list/report for batch processing.
             persist: If True, writes changes to DB immediately. If False, returns instances for batch persistence.
             _patient_obj: Optimization argument to avoid O(N) lookup if patient is already known.
             verbose: If True, logs debug information. Set to False for batch operations.
+            **kwargs: Additional arguments passed to lock_identities_batch (e.g. auto_persist_chunk_size).
         """
         if not self.reversibility_service:
             raise RuntimeError("Reversible anonymization not enabled. Call enable_reversible_anonymization() first.")
@@ -186,7 +187,7 @@ class DicomSession:
         # Dispatch to batch method if a list is provided
         # This handles List[str] or List[Patient] automatically via lock_identities_batch logic
         if isinstance(patient_id, (list, tuple, set)) or hasattr(patient_id, 'findings'):
-            return self.lock_identities_batch(patient_id)
+            return self.lock_identities_batch(patient_id, **kwargs)
             
         if verbose:
             get_logger().debug(f"Preserving identity for {patient_id}...")
@@ -267,24 +268,25 @@ class DicomSession:
         # This replaces the O(N) lookup per patient inside the loop
         patient_map = {p.patient_id: p for p in self.store.patients}
         
-        for pid in tqdm(start_ids, desc="Locking Identities", unit="patient"):
-            p_obj = patient_map.get(pid)
-            if p_obj:
-                # Use verbose=False to avoid log spam
-                res = self.lock_identities(pid, persist=False, _patient_obj=p_obj, verbose=False)
-                
-                if auto_persist_chunk_size > 0:
-                    current_chunk.extend(res)
-                    if len(current_chunk) >= auto_persist_chunk_size:
-                        self.store_backend.update_attributes(current_chunk)
-                        count_instances_chunked += len(current_chunk)
-                        current_chunk = [] # Release memory
+        with tqdm(start_ids, desc="Locking Identities", unit="patient") as pbar:
+            for pid in pbar:
+                p_obj = patient_map.get(pid)
+                if p_obj:
+                    # Use verbose=False to avoid log spam
+                    res = self.lock_identities(pid, persist=False, _patient_obj=p_obj, verbose=False)
+                    
+                    if auto_persist_chunk_size > 0:
+                        current_chunk.extend(res)
+                        if len(current_chunk) >= auto_persist_chunk_size:
+                            self.store_backend.update_attributes(current_chunk)
+                            count_instances_chunked += len(current_chunk)
+                            current_chunk = [] # Release memory
+                    else:
+                        modified_instances.extend(res)
+                    
+                    count_patients += 1
                 else:
-                    modified_instances.extend(res)
-                
-                count_patients += 1
-            else:
-                 get_logger().error(f"Patient {pid} not found (batch processing).")
+                     get_logger().error(f"Patient {pid} not found (batch processing).")
             
         # Final cleanup
         if auto_persist_chunk_size > 0:
