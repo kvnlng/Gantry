@@ -2,51 +2,30 @@
 
 This document outlines the development plan for **Gantry**. We welcome contributions from the community to help us achieve these milestones!
 
-## 📍 Current Status: v0.4.1
-- [x] Core Object Model (`Patient` -> `Study` -> `Series` -> `Instance`)
-- [x] Basic Facade (`DicomSession`)
-- [x] Lazy Loading Pixel Data
-- [x] Basic Redaction by Machine Serial Number
-- [x] Configuration Validation & Safety Checks
-- [x] PHI Detection (Privacy Inspector)
-- [x] Consolidated Configuration Management
-- [x] Facade-based PHI Scanning
-- [x] Recursive Directory Import
-- [x] Configuration Scaffolding (Auto-Inventory)
-- [x] Standardized DICOM Derivation (UID Regeneration & Flags)
-- [x] Improved Documentation & Docstrings
-- [x] Comprehensive Logging System (File-based + Progress Bars)
-- [x] Automated PHI Remediation (Metadata Anonymization & Date Shifting)
-- [x] Robust Persistence Strategy (SQLite + Audit Trail)
-- [x] Robust JSON Persistence (Support for Bytes/Private Tags)
-- [x] Reversible Anonymization (Pseudonymization with Encrypted Private Tags)
-- [x] Parallel Processing (Multiprocessing for Import & PHI Scan)
-- [x] Optimized Batch UX (Deferred Persistence + Feedback)
-- [x] Advanced Configuration Actions (REMOVE / EMPTY)
-- [x] **YAML Configuration**: Full migration from JSON to YAML for configuration and scaffolding.
-- [x] **Redaction Robustness**: Aesthetic YAML output, flow-style lists, and "Burned In Annotation" warnings.
-- [x] **Standard De-Identification Tags**: Compliance with (0012,0063) and (0012,0064).
-- [x] **Audit Reliability**: Suppressed false positives for shifted dates and realized DB concurrency fixes.
+## 📍 Current Status: v0.5.2 (Stability & Performance)
+
+- [x] **Core Object Model**: `Patient` -> `Study` -> `Series` -> `Instance`
+- [x] **Split-Persistence Architecture**: Binary sidecar (`_pixels.bin`) for high-speed pixel storage.
+- [x] **Database Indexing**: O(1) lookups and scalable Joins via SQLite indexes.
+- [x] **Multithreaded Redaction**: Parallelized pixel redaction using `ThreadPoolExecutor`.
+- [x] **Free-Threaded Stability**: Full support for Python 3.14t (no-GIL) via versioned dirty tracking.
+- [x] **Deep Memory Management**: Automatic pixel offloading (`Instance.unload_pixel_data()`) to handle datasets exceeding RAM.
+- [x] **Async Audit Queue**: Non-blocking SQLite persistence for high-throughput auditing.
+- [x] **Custom Privacy Profiles**: Support for external YAML profiles.
+- [x] **Standard Privacy Profiles**: Built-in support for DICOM PS3.15 Annex E.
+- [x] **Legacy Config Removal**: Streamlined codebase by removing list-based config support.
 
 ---
 
 ## 🚀 Upcoming Milestones
 
-### v0.5.0 - Performance & Scalability
-Focus: Validating data integrity and ensuring system scales to massive datasets.
-- [x] **Pixel Redaction Verification**: Verify that zeroed-out pixels are truly zero (Verified via `test_redaction_parallel.py`).
-- [x] **Pixel Integrity Tests**: Add unit tests to verify `PhotometricInterpretation` and `SamplesPerPixel` are preserved after modification.
-- [x] **Memory Profiling**: Optimize `MachinePixelIndex` and `Entities` (using `__slots__`) to handle massive datasets.
-- [x] **Standard Privacy Profiles**: Built-in compliance profiles (e.g., DICOM PS3.15 Annex E) to simplify configuration.
-- [x] **Split-Persistence Architecture**: Introduced `sidecar.py` to store pixel data in an append-only binary file (`.bin`), keeping SQLite metadata lightweight.
-- [x] **Database Indexing**: Added indexes to Foreign Keys and Entity UIDs to ensure O(1) lookups and scalable Joins.
-- [x] **Multithreaded Redaction**: Parallelized `redact_pixels` using `ThreadPoolExecutor` to maximize CPU usage and throughput.
-- [x] **Custom Privacy Profiles**: Allow users to define their own reuseable profiles in external YAML files.
-- [ ] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.
-
 ### v0.6.0 - Analytics & Reporting
+
 Focus: Empowering users to understand their data through deep inspection on the object graph.
-- [ ] **Dataframe Export**: Expose a method to flatten `Patient -> Study -> Series -> Instance` hierarchy into a comprehensive Pandas DataFrame.
+
+- [ ] **Dataframe Export**: Expose a method to flatten `Patient -> Study -> Series -> Instance` hierarchy into a comprehensive parquet file.
+- [ ] **Sidecar Compaction**: Utility to vacuum/compact the `_pixels.bin` file to reclaim space from deleted or redacted images.
+- [ ] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.
 - [ ] **Metadata Querying**: Enable SQL-like querying on the dataframe (e.g., "Find all scans with `SliceThickness < 1.0` acquired by 'GE' scanners").
 - [ ] **Query-based Export**: Allow users to filter exports using criteria (e.g., `session.export(query="Modality=='CT' and SliceThickness > 5.0")`).
 - [ ] **Compliance Reporting**: Generate reports verifying dataset compliance against a selected privacy profile.
@@ -55,27 +34,36 @@ Focus: Empowering users to understand their data through deep inspection on the 
 - [ ] **Structured Reporting (SR) Support**: Support for deep parsing and anonymization of DICOM Structured Reports.
 
 ### v0.7.0 - The Connector (Networking)
+
 Focus: Integrating Gantry into clinical workflows via DIMSE services.
+
 - [ ] **PACS Integration**: Implement C-STORE, C-FIND, C-MOVE using `pynetdicom` to query and pull studies directly.
 - [ ] **Research Export Formats**: Native support for exporting to NIfTI and BIDS standards.
 
 ### v0.8.0 - Cloud Scale
+
 Focus: Native support for cloud storage to handle massive datasets.
+
 - [ ] **Persistence Abstraction**: Decouple storage logic to enable cloud backends and future plugins.
 - [ ] **Cloud Storage Adapters**: Native ingestion/export for S3, Google Cloud Storage, and Azure Blob.
 
 ### v1.0.0 - Production Release
+
 - [ ] **API Freeze**: Lock down the `DicomSession` interface.
 - [ ] **Documentation**: Complete API reference and tutorials on ReadTheDocs or Wiki.
 - [ ] **PyPI Release**: Publish package to the Python Package Index.
 
 ### v1.1.0 - Zero Code (CLI)
+
 Focus: Making Gantry accessible to non-programmers and CI pipelines.
+
 - [ ] **Gantry CLI**: A rich command-line interface for auditing and anonymizing datasets.
 
 ---
 
 ## 🔮 Future Ideas (Backlog)
+
 - **3D Defacing**: Algorithmically remove facial features from 3D volumes (MRI/CT).
 - **Plugin System**: Hooks for custom user scripts during ingest/audit/export loops.
-- GUI Wrapper for `DicomSession`.
+- **GUI Wrapper for `DicomSession`**.
+- **Official Docker Image**: Optimized container build for Gantry with pre-configured codecs and dependencies.

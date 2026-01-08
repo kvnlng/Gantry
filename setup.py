@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="gantry",
-    version="0.5.1",
+    version="0.5.2",
     description="A Python DICOM Object Model and Redaction Toolkit",
     author="Kevin Long",
     packages=find_packages(),
