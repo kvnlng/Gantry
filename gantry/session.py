@@ -906,8 +906,9 @@ class DicomSession:
             # Parallel Execution for Speed
             # Threading works well here because pixel I/O and NumPy ops release GIL.
             # Shared memory allows in-place modification of instances.
+            # OPTIMIZATION: Limited to 0.5x CPU or Max 8 to prevent OOM with large datasets
             cpu_count = os.cpu_count() or 1
-            max_workers = int(cpu_count * 1.5)
+            max_workers = max(1, min(int(cpu_count * 0.5), 8))
             print(f"Executing {len(self.active_rules)} rules using {max_workers} threads...")
             
             # Use run_parallel for consolidated progress bar

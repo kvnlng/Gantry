@@ -1,7 +1,10 @@
+---
+description: 
+---
 
 ---
 
-description: Run the 50GB Export Benchmark on Google Cloud
+description: Run the Benchmark on Google Cloud
 ---
 
 # High-Performance Export Stress Test (GCP)

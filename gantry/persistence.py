@@ -483,6 +483,39 @@ class SqliteStore:
                     self._deserialize_into(new_item, item_data)
                     target_item.add_sequence_item(tag, new_item)
 
+    def persist_pixel_data(self, instance: Instance):
+        """
+        Immediately persists pixel data to the sidecar to allow memory offloading.
+        Does NOT update the full instance record in the main DB (attributes/json), 
+        only the pixel linkage. 
+        """
+        if instance.pixel_array is None:
+            return
+
+        try:
+            # 1. Write to Sidecar
+            b_data = instance.pixel_array.tobytes()
+            # Determine suitable compression? Defaulting to zlib for swap.
+            # Ideally we respect original or config, but for swap zlib is safe/fast enough.
+            c_alg = 'zlib' 
+            
+            offset, length = self.sidecar.write_frame(b_data, c_alg)
+            
+            # 2. Update Instance Loader
+            # This allows instance.unload_pixel_data() to work safely
+            instance._pixel_loader = self._create_pixel_loader(offset, length, c_alg, instance)
+            
+            # 3. Optional: Persist the linkage to DB immediately?
+            # It's safer if we do, so if we crash, we know where the pixels are.
+            # However, if we don't save the attributes/UID changes, the DB is out of sync anyway.
+            # But the primary goal here is MEMORY MANAGEMENT.
+            # So updating the object state in memory (step 2) is sufficient for unload_pixel_data() to return True.
+            # The final session.save() will record the new offset/length into the DB instances table.
+            
+        except Exception as e:
+            self.logger.error(f"Failed to persist pixel swap for {instance.sop_instance_uid}: {e}")
+            raise e
+
     def save_all(self, patients: List[Patient]):
         """
         Persists the current state incrementally.
@@ -600,6 +633,11 @@ class SqliteStore:
                                          
                                          # Update loader so we can unload safely later
                                          inst._pixel_loader = self._create_pixel_loader(off, leng, c_alg, inst)
+                                    elif isinstance(inst._pixel_loader, SidecarPixelLoader):
+                                         # Already persisted (swapped), preserve metadata
+                                         p_offset = inst._pixel_loader.offset
+                                         p_length = inst._pixel_loader.length
+                                         p_alg = inst._pixel_loader.alg
                                     
                                     i_batch.append((
                                         se_pk, 

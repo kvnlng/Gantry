@@ -95,7 +95,7 @@ def ingest_worker(fp):
             'sdate': str(ds.get("StudyDate", "19000101")), # Kept original sdate
             'ser_id': ds.get("SeriesInstanceUID", "UnknownSeries"),
             'modality': ds.get("Modality", "OT"),
-            'sop': ds.SOPInstanceUID,
+            'sop': ds.get("SOPInstanceUID", None),
             'sop_class': str(ds.get("SOPClassUID", "")), # Kept original sop_class
             'man': ds.get("Manufacturer", ""),
             'model': ds.get("ManufacturerModelName", ""),

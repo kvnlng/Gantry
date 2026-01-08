@@ -200,6 +200,19 @@ class RedactionService:
 
             except Exception as e:
                 self.logger.error(f"  Failed {inst.sop_instance_uid}: {e}")
+            finally:
+                # OPTIMIZATION: Release memory immediately after processing
+                # If modified, we MUST persist pixels to sidecar, otherwise unload_pixel_data returns False (unsafe)
+                # We check for store_backend availability.
+                if self.store_backend and hasattr(self.store_backend, 'persist_pixel_data'):
+                     # We only strictly NEED to persist if we hold dirty pixels in memory.
+                     # But persist_pixel_data handles checks (returns if no pixels).
+                     try:
+                         self.store_backend.persist_pixel_data(inst)
+                     except Exception as pe:
+                         self.logger.error(f"Failed to persist swap for {inst.sop_instance_uid}: {pe}")
+
+                inst.unload_pixel_data()
 
     def _apply_roi_to_instance(self, inst: Instance, arr, roi: tuple) -> bool:
         """

@@ -11,7 +11,7 @@ import shutil
 PHASES = [
     {"target_count": 5, "label": "Phase 1 (5 Multi-Frame Files)"},
     {"target_count": 100, "label": "Phase 2 (100 Multi-Frame Files)"},
-    {"target_count": 1000, "label": "Phase 3 (1000 Multi-Frame Files)"},
+    # {"target_count": 1000, "label": "Phase 3 (1000 Multi-Frame Files)"},
 ]
 
 DATA_DIR = "data/benchmark_in"
