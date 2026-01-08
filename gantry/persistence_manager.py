@@ -33,6 +33,12 @@ class PersistenceManager:
 
     def flush(self):
         """Blocks until all tasks in the queue have been processed."""
+        # Check for silent crash: Worker is dead, but queue has items.
+        if (not self.thread or not self.thread.is_alive()) and not self.queue.empty():
+            get_logger().warning("PersistenceManager worker was found dead/stopped with pending items during flush. Restarting to process backlog.")
+            print("Restarting stopped Persistence Manager to process pending items...")
+            self._start_worker()
+
         if self.running and self.thread and self.thread.is_alive():
              self.queue.join()
 

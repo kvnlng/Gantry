@@ -87,6 +87,9 @@ pip install -q -e .
 echo '[Remote] Starting Scalability Benchmark Suite...'
 # Use the venv python (which is now linked to 3.13t if selected)
 # Use the venv python (which is now linked to 3.13t if selected)
+echo '[Remote] Verifying benchmark_suite.py version...'
+grep "frames" tests/benchmarks/benchmark_suite.py | head -n 5
+
 python -Xgil=0 tests/benchmarks/benchmark_suite.py
 "
 

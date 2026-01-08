@@ -83,3 +83,33 @@ def test_stale_sentinel(pm):
     # Verify P1 was processed
     assert len(pm.store_backend.saved_patients) == 1
     assert pm.store_backend.saved_patients[0].patient_id == "P1"
+
+def test_flush_recover_from_crash(pm):
+    """
+    Test that flush() detects if the worker is dead but queue has items,
+    and restarts it to ensure data is saved.
+    """
+    # 1. Kill the worker
+    pm.running = False 
+    # Wait for thread to die naturally or just proceed since running=False breaks the loop
+    # But we want to simulate a CRASH where the thread is dead but running might be True or False depending on how we track it.
+    # If the thread died unexpectedly, pm.running might still be True? 
+    # Actually, let's simulate the thread being dead.
+    if pm.thread.is_alive():
+        # Stop it gracefully first to ensure clean state
+        pm.shutdown()
+        
+    # 2. Inject work directly into queue (simulating work queued just before/during crash)
+    p = Patient("P_CRASH", "Crash Test")
+    pm.queue.put([p])
+    
+    # 3. Call flush()
+    # WITHOUT FIX: This should just return immediately because !is_alive(), leaving item in queue.
+    # WITH FIX: This should restart worker, process item, and then return.
+    pm.flush()
+    
+    # 4. Verification
+    assert pm.queue.empty(), "Queue should be empty after flush"
+    assert len(pm.store_backend.saved_patients) == 1
+    assert pm.store_backend.saved_patients[0].patient_id == "P_CRASH"
+
