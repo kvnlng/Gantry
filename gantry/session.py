@@ -911,14 +911,23 @@ class DicomSession:
             # OPTIMIZATION: Limited to 0.5x CPU or Max 8 to prevent OOM with large datasets
             cpu_count = os.cpu_count() or 1
             max_workers = max(1, min(int(cpu_count * 0.5), 8))
-            print(f"Executing {len(self.active_rules)} rules using {max_workers} threads...")
+            # Generate granular tasks for better load balancing
+            all_tasks = []
+            get_logger().info("Analyzing workload...")
+            for rule in self.active_rules:
+                tasks = service.prepare_redaction_tasks(rule)
+                all_tasks.extend(tasks)
+
+            if not all_tasks:
+                get_logger().warning("No matching images found for any loaded rules.")
+                print("No matching images found for any loaded rules.")
+                return
+
+            print(f"Queued {len(all_tasks)} redaction tasks across {len(self.active_rules)} rules.")
+            print(f"Executing using {max_workers} threads...")
             
-            # Use run_parallel for consolidated progress bar
-            # We use a partial to inject show_progress=False
-            from functools import partial
-            worker = partial(service.process_machine_rules, show_progress=False)
-            
-            run_parallel(worker, self.active_rules, desc="Redacting", max_workers=max_workers, force_threads=True)
+            # Execute in parallel
+            run_parallel(service.execute_redaction_task, all_tasks, desc="Redacting Pixels", max_workers=max_workers, force_threads=True)
 
             # Save state after modification
             # self._save()

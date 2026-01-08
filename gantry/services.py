@@ -90,6 +90,118 @@ class RedactionService:
         elif count > 0:
             self.logger.info(f"Verified {count} Burned In Annotations were remediated.")
 
+    def prepare_redaction_tasks(self, machine_rules: dict, verbose: bool = False) -> List[dict]:
+        """
+        Generates a list of fine-grained tasks (dicts) from a single machine rule.
+        Each task represents one instance to be redacted.
+        """
+        serial = machine_rules.get("serial_number")
+        zones = machine_rules.get("redaction_zones", [])
+
+        if not serial:
+            if verbose: self.logger.warning("Skipping rule with missing serial number.")
+            return []
+
+        if not zones:
+            if verbose: self.logger.info(f"Machine {serial} has no redaction zones configured. Skipping.")
+            return []
+
+        # Check matches in store
+        targets = []
+        if serial == "*":
+            # Wildcard: Apply to ALL machines
+            for sn_key in self.index._index:
+                targets.extend(self.index.get_by_machine(sn_key))
+        else:
+            # Exact Match
+            targets = self.index.get_by_machine(serial)
+
+        if not targets:
+            if verbose and serial != "*": 
+                self.logger.warning(f"Config rule exists for {serial}, but no matching images found in Session.")
+            return []
+
+        # Parse ROIs
+        valid_rois = []
+        for zone in zones:
+            if isinstance(zone, list):
+                roi = zone
+            else:
+                roi = zone.get("roi")
+            
+            if roi and len(roi) == 4:
+                valid_rois.append(tuple(roi))
+            else:
+                self.logger.warning(f"Invalid ROI format in config: {roi}")
+        
+        if not valid_rois:
+            return []
+
+        # Compute Hash
+        rois_stable = sorted(valid_rois)
+        config_str = json.dumps({"serial": serial, "rois": rois_stable}, sort_keys=True)
+        config_hash = hashlib.md5(config_str.encode('utf-8')).hexdigest()
+
+        # Create Tasks
+        tasks = []
+        for inst in targets:
+            tasks.append({
+                "instance": inst,
+                "rois": valid_rois,
+                "config_hash": config_hash,
+                "machine_sn": serial
+            })
+            
+        return tasks
+
+    def execute_redaction_task(self, task: dict):
+        """
+        Executes a single redaction task (one instance).
+        Designed to be run in a worker thread.
+        """
+        inst = task["instance"]
+        rois = task["rois"]
+        config_hash = task["config_hash"]
+        
+        try:
+            # Optimized: Skip if already redacted with same config
+            current_hash = inst.attributes.get("_GANTRY_REDACTION_HASH")
+            
+            if current_hash == config_hash:
+                # self.logger.debug(f"  Skipping {inst.sop_instance_uid}: Already redacted.")
+                return
+
+            # Triggers Lazy Load from disk
+            arr = inst.get_pixel_data()
+            
+            if arr is None:
+                return
+
+            modified = False
+            for roi in rois:
+                if self._apply_roi_to_instance(inst, arr, roi):
+                    modified = True
+            
+            if modified:
+                self._apply_redaction_flags(inst)
+                inst.regenerate_uid()
+                # Mark as redacted with this hash
+                inst.attributes["_GANTRY_REDACTION_HASH"] = config_hash
+                inst._dirty = True 
+                # self.logger.debug(f"  Modified {inst.sop_instance_uid}")
+
+        except Exception as e:
+            self.logger.error(f"  Failed {inst.sop_instance_uid}: {e}")
+        finally:
+            # Persistence & Memory Cleanup
+            if self.store_backend and hasattr(self.store_backend, 'persist_pixel_data'):
+                 try:
+                     self.store_backend.persist_pixel_data(inst)
+                 except Exception as pe:
+                     self.logger.error(f"Failed to persist swap for {inst.sop_instance_uid}: {pe}")
+
+            inst.unload_pixel_data()
+
     def process_machine_rules(self, machine_rules: dict, show_progress: bool = True, verbose: bool = False):
         """
         Applies all zones defined in a single machine config object.

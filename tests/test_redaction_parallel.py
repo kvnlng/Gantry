@@ -90,5 +90,51 @@ class TestRedactionParallel(unittest.TestCase):
                         # Just check a pixel outside.
                         self.assertEqual(arr[40, 40], 255, "Instance modified outside ROI")
 
+    def test_single_machine_parallel_execution(self):
+        """
+        Verifies that redaction runs in parallel for a SINGLE machine with many instances.
+        This tests the granular task splitting.
+        """
+        # Setup 1 machine with 50 instances
+        serial = "SingleMach"
+        p = Patient("P1", "PatientOne")
+        st = Study("S1", "20230101")
+        se = Series("Se1", "CT", 1)
+        se.equipment = Equipment("Man", "Mod", serial)
+        
+        for i in range(50):
+            inst = Instance(f"I{i}", f"1.2.3.{i}", 1)
+            
+            # Mock loader
+            def make_loader():
+                # Randomize slightly to simulating work? No need for correctness.
+                arr = np.zeros((50, 50), dtype=np.uint8) + 255
+                return lambda: arr
+            
+            inst._pixel_loader = make_loader()
+            se.instances.append(inst)
+            
+        st.series.append(se)
+        p.studies.append(st)
+        self.session.store.patients.append(p)
+
+        # 1 Rule
+        self.session.active_rules = [{
+            "serial_number": serial,
+            "redaction_zones": [[0, 10, 0, 10]]
+        }]
+        
+        # Execute
+        self.session.redact()
+        
+        # Verify
+        count_redacted = 0
+        for inst in se.instances:
+            arr = inst.get_pixel_data()
+            if np.all(arr[0:10, 0:10] == 0):
+                count_redacted += 1
+        
+        self.assertEqual(count_redacted, 50, "All 50 instances should be redacted")
+
 if __name__ == '__main__':
     unittest.main()
