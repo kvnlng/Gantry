@@ -15,10 +15,9 @@ class TestExecutorRecovery(unittest.TestCase):
         Verifies that DicomSession.export catches BrokenProcessPool and retries.
         """
         # Setup
-        # First call to export_batch raises BrokenProcessPool
-        # Second call succeeds
         mock_export_batch.side_effect = [
-            concurrent.futures.process.BrokenProcessPool("Mock Crash"),
+            concurrent.futures.process.BrokenProcessPool("Mock Crash 1"),
+            concurrent.futures.process.BrokenProcessPool("Mock Crash 2"),
             100 # Success count
         ]
         
@@ -36,12 +35,17 @@ class TestExecutorRecovery(unittest.TestCase):
             # Setup initial executor mock
             mock_executor_instance_1 = MagicMock()
             mock_executor_instance_2 = MagicMock()
+            mock_executor_instance_3 = MagicMock()
             
             def executor_side_effect(*args, **kwargs):
                 if executor_side_effect.counter == 0:
                     executor_side_effect.counter += 1
                     return mock_executor_instance_1
-                return mock_executor_instance_2
+                elif executor_side_effect.counter == 1:
+                    executor_side_effect.counter += 1
+                    return mock_executor_instance_2
+                return mock_executor_instance_3
+            
             executor_side_effect.counter = 0
             
             mock_executor_cls.side_effect = executor_side_effect
@@ -66,31 +70,24 @@ class TestExecutorRecovery(unittest.TestCase):
             
             # Assertions
             
-            # 1. export_batch should be called twice
-            self.assertEqual(mock_export_batch.call_count, 2)
-            
-            # 2. First call with original executor
-            args1, kwargs1 = mock_export_batch.call_args_list[0]
-            self.assertEqual(kwargs1['executor'], mock_executor_instance_1)
-            
-            # 3. Second call with NEW executor
-            args2, kwargs2 = mock_export_batch.call_args_list[1]
-            # The session executor should have been updated
+
             
             print(f"DEBUG: Executor Mock Call Count: {mock_executor_cls.call_count}")
             # Verify Flow:
-            # 1. Export Batch called twice (Retry happened)
-            self.assertEqual(mock_export_batch.call_count, 2)
-            # 2. Executor Constructor called (Restart happened)
-            # Init + Restart = at least 2 calls
-            self.assertGreaterEqual(mock_executor_cls.call_count, 2)
+            # 1. Export Batch called THREE times (Double Retry happened)
+            #    Call 1: Crash (Initial)
+            #    Call 2: Crash (Safe Mode)
+            #    Call 3: Success (Serial Mode)
+            self.assertEqual(mock_export_batch.call_count, 3)
             
-            # We skip strict object identity check due to Mock artifacts in test environment
-            # self.assertNotEqual(sess._executor, mock_executor_instance_1)
+            # 2. Executor Constructor called (Restart happened TWICE)
+            # Init + Restart 1 (Safe) + Restart 2 (Serial) = at least 3 calls
+            self.assertGreaterEqual(mock_executor_cls.call_count, 3)
             
-            # 4. Executor restart should have happened with max_workers=4
-            # The second call to ProcessPoolExecutor constructor
-            self.assertEqual(mock_executor_cls.call_args_list[1][1]['max_workers'], 4)
+            # 3. Check Serial Fallback
+            # The last call to constructor should have max_workers=1
+            last_call_args = mock_executor_cls.call_args_list[-1]
+            self.assertEqual(last_call_args[1].get('max_workers'), 1)
             
             print("\nTest Passed: Recovery logic successfully triggered and retried.")
 

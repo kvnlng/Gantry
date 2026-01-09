@@ -261,7 +261,12 @@ def _export_instance_worker(ctx: ExportContext) -> str:
              arr = inst.get_pixel_data()
              
         if arr is not None:
-            ds.PixelData = arr.tobytes()
+            # MEMORY OPTIMIZATION:
+            # If compression is requested, DO NOT convert to bytes here.
+            # Pass the numpy array to _finalize_dataset -> _compress_j2k directly.
+            # Only set PixelData if NOT compressing.
+            if not ctx.compression:
+                ds.PixelData = arr.tobytes()
             
             # Recalculate dimensions based on array shape
             # Logic mirrored from Instance.set_pixel_data
@@ -309,7 +314,7 @@ def _export_instance_worker(ctx: ExportContext) -> str:
             del ds["_GANTRY_REDACTION_HASH"]
 
         # Validate & Save
-        ds = DicomExporter._finalize_dataset(ds, ctx.compression) 
+        ds = DicomExporter._finalize_dataset(ds, ctx.compression, pixel_array=arr) 
         
         # Ensure dir exists (race safe)
         os.makedirs(os.path.dirname(ctx.output_path), exist_ok=True)
@@ -320,7 +325,7 @@ def _export_instance_worker(ctx: ExportContext) -> str:
         # Re-raise to be caught by parallel wrapper or handled
         raise RuntimeError(f"Export failed for {ctx.output_path}: {e}")
 
-def _compress_j2k(ds):
+def _compress_j2k(ds, pixel_array=None):
     """
     Compresses the pixel data of the dataset using JPEG 2000 Lossless (Pillow).
     Updates TransferSyntaxUID and PixelData.
@@ -335,35 +340,48 @@ def _compress_j2k(ds):
         except ImportError:
             from pydicom.encaps import encapsulate
         
-        if not hasattr(ds, 'PixelData'):
-            return
-
-        # 1. Get metadata
-        rows = ds.Rows
-        cols = ds.Columns
-        samples = ds.SamplesPerPixel
-        bits = ds.BitsAllocated
-        
-        # 2. Reconstruct Numpy Array from bytes (since we just set it in worker)
-        # Assuming Little Endian input for now (as set in _create_ds)
-        dt = np.uint16 if bits > 8 else np.uint8
-        arr = np.frombuffer(ds.PixelData, dtype=dt)
-        
-        # Reshape
-        # Correctly handle frames
-        frames = getattr(ds, "NumberOfFrames", 1)
-        
-        # Shape logic matching export worker
-        if frames > 1:
-            if samples > 1:
-                 arr = arr.reshape((frames, rows, cols, samples))
+        arr = pixel_array
+        if arr is None:
+            # Fallback to reconstructing from PixelData bytes if array not passed
+            if not hasattr(ds, 'PixelData'):
+                return
+                
+            # 1. Get metadata
+            rows = ds.Rows
+            cols = ds.Columns
+            samples = ds.SamplesPerPixel
+            bits = ds.BitsAllocated
+            
+            # 2. Reconstruct Numpy Array from bytes (since we just set it in worker)
+            # Assuming Little Endian input for now (as set in _create_ds)
+            dt = np.uint16 if bits > 8 else np.uint8
+            arr = np.frombuffer(ds.PixelData, dtype=dt)
+            
+            # Reshape
+            # Correctly handle frames
+            frames = getattr(ds, "NumberOfFrames", 1)
+            
+            # Shape logic matching export worker
+            if frames > 1:
+                if samples > 1:
+                     arr = arr.reshape((frames, rows, cols, samples))
+                else:
+                     arr = arr.reshape((frames, rows, cols))
             else:
-                 arr = arr.reshape((frames, rows, cols))
+                if samples > 1:
+                    arr = arr.reshape((rows, cols, samples))
+                else:
+                    arr = arr.reshape((rows, cols))
         else:
-            if samples > 1:
-                arr = arr.reshape((rows, cols, samples))
-            else:
-                arr = arr.reshape((rows, cols))
+            # Pre-calc frames if not in DS (though export worker sets them)
+            frames = getattr(ds, "NumberOfFrames", 1)
+            if frames == 1 and len(arr.shape) == 3 and ds.SamplesPerPixel == 1:
+                 # Standardize shape for encoding loop
+                 # If (Frames, H, W) where Frames=1
+                 pass
+            elif frames > 1 and len(arr.shape) == 3:
+                 # (Frames, H, W)
+                 pass
 
         # 3. Compress
         frames_data = []
@@ -711,7 +729,7 @@ class DicomExporter:
         return success_count
         
     @staticmethod
-    def _finalize_dataset(ds, compression=None):
+    def _finalize_dataset(ds, compression=None, pixel_array=None):
         """
         Finalizes the dataset before saving:
         1. Applies compression if requested.
@@ -719,7 +737,7 @@ class DicomExporter:
         Returns the dataset (modified) or raises RuntimeError if invalid.
         """
         if compression == 'j2k':
-            _compress_j2k(ds)
+            _compress_j2k(ds, pixel_array)
             
         errs = IODValidator.validate(ds)
         if errs:

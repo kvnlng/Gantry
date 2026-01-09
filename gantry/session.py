@@ -799,8 +799,28 @@ class DicomSession:
                 )
                 export_tasks_retry = safety_filter(raw_tasks) if safe else raw_tasks
                 
-                # Retry
-                success_count = DicomExporter.export_batch(export_tasks_retry, show_progress=True, total=total_instances, executor=self._executor)
+                # Retry (First Attempt: Safe Mode)
+                try:
+                    success_count = DicomExporter.export_batch(export_tasks_retry, show_progress=True, total=total_instances, executor=self._executor)
+                except concurrent.futures.process.BrokenProcessPool as e2:
+                    get_logger().error(f"Safe Mode Export Failed! Likely extreme memory pressure. Switching to SERIAL MODE (Worker=1)... Error: {e2}")
+                    print("\n!! SAFE MODE FAILED !!")
+                    print("Restarting with SERIAL execution (1 Worker). This will be slow but should succeed.\n")
+                    
+                    self._restart_executor(max_workers=1)
+                    
+                    # Re-queue again... (Generators are consumed)
+                    print("Re-queuing export tasks (Serial fallback)...")
+                    raw_tasks = DicomExporter.generate_export_from_db(
+                        self.persistence_manager.store_backend, 
+                        folder, 
+                        patient_ids, 
+                        compression
+                    )
+                    export_tasks_serial = safety_filter(raw_tasks) if safe else raw_tasks
+                    
+                    # Final Retry (Serial)
+                    success_count = DicomExporter.export_batch(export_tasks_serial, show_progress=True, total=total_instances, executor=self._executor)
             
             # Note: skipped_count is only patient-level skips. Study-level skips aren't counted here explicitly 
             # unless we wrap the generator to count them, but that's complex for a simple log.
