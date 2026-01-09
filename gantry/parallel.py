@@ -96,12 +96,35 @@ def run_parallel(
             with ctx.Pool(processes=max_workers, maxtasksperchild=maxtasksperchild) as pool:
                 iterator = pool.imap(func, items, chunksize=chunksize)
                 
+                # Manual iteration with timeout to catch hangs
+                # tqdm iterating over a timeout-check loop
+                
+                # Create iterator
+                it = pool.imap(func, items, chunksize=chunksize)
+                
+                pbar = None
                 if show_progress:
                     if total is None and hasattr(items, '__len__'):
                         total = len(items)
-                    results = list(tqdm(iterator, total=total, desc=desc))
-                else:
-                    results = list(iterator)
+                    pbar = tqdm(total=total, desc=desc)
+                
+                while True:
+                    try:
+                        # 60s timeout - if a single chunk takes longer than 60s, we suspect a hang
+                        # Note: J2K is slow, but not 60s slow.
+                        res = it.next(timeout=60)
+                        results.append(res)
+                        if pbar: pbar.update(1)
+                    except StopIteration:
+                        break
+                    except multiprocessing.TimeoutError:
+                        print("\n!! WORKER HANG DETECTED (Timeout 60s) !!")
+                        # We cannot easily identify WHICH worker hung here without more complex logic,
+                        # but we know the pool is stuck.
+                        # Raising error to abort the run.
+                        raise RuntimeError("Worker Pool Hung (Timeout)")
+                
+                if pbar: pbar.close()
         else:
             # Standard Executor (ThreadPool or ProcessPool)
             with ExecutorClass(max_workers=max_workers) as internal_executor:

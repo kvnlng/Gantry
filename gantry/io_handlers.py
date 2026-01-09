@@ -220,14 +220,14 @@ class ExportContext(NamedTuple):
     patient_attributes: Dict[str, Any]
     study_attributes: Dict[str, Any]
     series_attributes: Dict[str, Any]
-    pixel_array: Optional[Any] = None # Numpy array or None
     compression: Optional[str] = None # 'j2k' or None
 
-def _export_instance_worker(ctx: ExportContext) -> str:
+def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
     """
     Worker function to export a single instance.
     Returns the output path on success, raises Exception on failure.
     """
+    print(f"[Worker {os.getpid()}] STARTING {ctx.instance.sop_instance_uid}")
     try:
         inst = ctx.instance
         ds = DicomExporter._create_ds(inst)
@@ -318,6 +318,14 @@ def _export_instance_worker(ctx: ExportContext) -> str:
         
         # Ensure dir exists (race safe)
         os.makedirs(os.path.dirname(ctx.output_path), exist_ok=True)
+        ds.save_as(ctx.output_path)
+        
+        print(f"[Worker {os.getpid()}] FINISHED {ctx.instance.sop_instance_uid}")
+        return True
+    except Exception as e:
+        print(f"[Worker {os.getpid()}] FAILED {ctx.instance.sop_instance_uid}: {e}")
+        # raise e
+        return False
         ds.save_as(ctx.output_path)
         return ctx.output_path
             
