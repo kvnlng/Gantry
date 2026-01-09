@@ -220,6 +220,7 @@ class ExportContext(NamedTuple):
     patient_attributes: Dict[str, Any]
     study_attributes: Dict[str, Any]
     series_attributes: Dict[str, Any]
+    pixel_array: Optional[Any] = None # Numpy array or None
     compression: Optional[str] = None # 'j2k' or None
 
 def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
