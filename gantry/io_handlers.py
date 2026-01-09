@@ -228,7 +228,7 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
     Worker function to export a single instance.
     Returns the output path on success, raises Exception on failure.
     """
-    print(f"[Worker {os.getpid()}] STARTING {ctx.instance.sop_instance_uid}")
+    print(f"[Worker {os.getpid()}] STARTING {ctx.instance.sop_instance_uid}", flush=True)
     try:
         inst = ctx.instance
         ds = DicomExporter._create_ds(inst)
@@ -321,7 +321,7 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
         os.makedirs(os.path.dirname(ctx.output_path), exist_ok=True)
         ds.save_as(ctx.output_path)
         
-        print(f"[Worker {os.getpid()}] FINISHED {ctx.instance.sop_instance_uid}")
+        print(f"[Worker {os.getpid()}] FINISHED {ctx.instance.sop_instance_uid}", flush=True)
         return True
     except Exception as e:
         print(f"[Worker {os.getpid()}] FAILED {ctx.instance.sop_instance_uid}: {e}")

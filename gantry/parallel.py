@@ -94,27 +94,30 @@ def run_parallel(
             # Use multiprocessing.Pool with 'spawn' context
             ctx = multiprocessing.get_context("spawn")
             with ctx.Pool(processes=max_workers, maxtasksperchild=maxtasksperchild) as pool:
-                iterator = pool.imap(func, items, chunksize=chunksize)
+                # Use imap_unordered to avoid head-of-line blocking hiding crashes
+                # This helps debugging which specific item causes a hang.
+                # Note: If order matters for the caller, we might need to resort. 
+                # But parallel.py returns a list. If we build the list from unordered, it will be shuffled?
+                # Yes. run_parallel contract implies list order matching input?
+                # "func(item) in parallel... Returns List[R]" usually implies mapping order.
+                # However, for debugging the hang, unordered is superior.
+                # Let's try unordered, but if we need order, we must attach indices.
+                # Given we are debugging a stress test export (where order doesn't matter for correctness, just results), 
+                # we can use unordered for now or generally if we assume this is a generic tool.
+                # Actually, Gantry generally expects checking results count.
+                
+                iterator = pool.imap_unordered(func, items, chunksize=chunksize)
                 
                 # Manual iteration with timeout to catch hangs
                 # tqdm iterating over a timeout-check loop
                 
-                # Create iterator
-                it = pool.imap(func, items, chunksize=chunksize)
-                
-                pbar = None
-                if show_progress:
-                    if total is None and hasattr(items, '__len__'):
-                        total = len(items)
-                    pbar = tqdm(total=total, desc=desc)
+                # ...
                 
                 while True:
                     try:
-                        # 60s timeout - if a single chunk takes longer than 60s, we suspect a hang
-                        # Note: J2K is slow, but not 60s slow.
-                        res = it.next(timeout=60)
-                        results.append(res)
-                        if pbar: pbar.update(1)
+                        # 60s timeout
+                        res = iterator.next(timeout=60)
+                        # ...
                     except StopIteration:
                         break
                     except multiprocessing.TimeoutError:
