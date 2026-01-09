@@ -776,11 +776,11 @@ class DicomSession:
         # 4. Execution Phase (Global Parallelism)
         if total_instances > 0:
             # MEMORY LEAK MITIGATION:
-            # We use worker recycling (maxtasksperchild=10) via multiprocessing.Pool
+            # We use worker recycling (maxtasksperchild=100) via multiprocessing.Pool
             # This forces workers to restart periodically, clearing any leaked memory (e.g. from C-libs).
             # We do NOT use the shared self._executor for this, as ProcessPoolExecutor doesn't support recycling.
             try:
-                success_count = DicomExporter.export_batch(export_tasks, show_progress=True, total=total_instances, maxtasksperchild=10)
+                success_count = DicomExporter.export_batch(export_tasks, show_progress=True, total=total_instances, maxtasksperchild=100)
             except Exception as e:
                 get_logger().error(f"Export Failed! Error: {e}")
                 raise e

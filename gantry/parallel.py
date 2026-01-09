@@ -89,9 +89,11 @@ def run_parallel(
         
         # Special Case: If using Processes AND maxtasksperchild is requested,
         # we MUST use multiprocessing.Pool, because ProcessPoolExecutor doesn't support it.
+        # We also explicit use 'spawn' context for safety on all platforms when recycling.
         if not use_threads and maxtasksperchild is not None:
-            # Use multiprocessing.Pool
-            with multiprocessing.Pool(processes=max_workers, maxtasksperchild=maxtasksperchild) as pool:
+            # Use multiprocessing.Pool with 'spawn' context
+            ctx = multiprocessing.get_context("spawn")
+            with ctx.Pool(processes=max_workers, maxtasksperchild=maxtasksperchild) as pool:
                 iterator = pool.imap(func, items, chunksize=chunksize)
                 
                 if show_progress:

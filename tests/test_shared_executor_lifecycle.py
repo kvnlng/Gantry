@@ -95,7 +95,7 @@ class TestSharedExecutorLifecycle(unittest.TestCase):
             # We should check that maxtasksperchild passed is 10.
             
             self.assertIn('maxtasksperchild', kwargs)
-            self.assertEqual(kwargs['maxtasksperchild'], 10)
+            self.assertEqual(kwargs['maxtasksperchild'], 100)
             
             # If executor IS passed, it might be ignored or handled differently, but
             # our session logic explicitly does NOT pass self._executor for export_batch w/ recycling.
