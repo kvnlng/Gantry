@@ -1,6 +1,7 @@
 import concurrent.futures
 import os
 import sys
+import multiprocessing
 from tqdm import tqdm
 from typing import Callable, Iterable, List, Any, TypeVar
 
@@ -16,13 +17,15 @@ def run_parallel(
     show_progress: bool = True,
     force_threads: bool = False,
     total: int = None,
-    executor: Any = None
+    executor: Any = None,
+    maxtasksperchild: int = None
 ) -> List[R]:
     """
-    Executes func(item) in parallel using ProcessPoolExecutor.
+    Executes func(item) in parallel.
+    Uses ProcessPoolExecutor by default, or multiprocessing.Pool if maxtasksperchild is set.
     Displays a tqdm progress bar unless show_progress=False.
     Supports generators (pass total=N for progress bar).
-    If 'executor' is passed, it uses that instance instead of creating a new one.
+    If 'executor' is passed, it uses that instance.
     """
     results = []
     
@@ -67,7 +70,12 @@ def run_parallel(
         # but typically the shared executor determines the mode.
         # We ignore force_threads if shared executor is passed unless we want to enforce verify?
         # For simplicity: Use whatever executor is passed.
-        iterator = executor.map(func, items, chunksize=chunksize)
+        
+        # Check if it's a multiprocessing.Pool (has imap) or concurrent.futures.Executor (has map)
+        if hasattr(executor, 'imap'):
+            iterator = executor.imap(func, items, chunksize=chunksize)
+        else:
+            iterator = executor.map(func, items, chunksize=chunksize)
         
         if show_progress:
             if total is None and hasattr(items, '__len__'):
@@ -78,14 +86,30 @@ def run_parallel(
 
     else:
         # Create new executor (Context Manager)
-        with ExecutorClass(max_workers=max_workers) as internal_executor:
-            iterator = internal_executor.map(func, items, chunksize=chunksize)
-            
-            if show_progress:
-                if total is None and hasattr(items, '__len__'):
-                    total = len(items)
-                results = list(tqdm(iterator, total=total, desc=desc))
-            else:
-                results = list(iterator)
+        
+        # Special Case: If using Processes AND maxtasksperchild is requested,
+        # we MUST use multiprocessing.Pool, because ProcessPoolExecutor doesn't support it.
+        if not use_threads and maxtasksperchild is not None:
+            # Use multiprocessing.Pool
+            with multiprocessing.Pool(processes=max_workers, maxtasksperchild=maxtasksperchild) as pool:
+                iterator = pool.imap(func, items, chunksize=chunksize)
+                
+                if show_progress:
+                    if total is None and hasattr(items, '__len__'):
+                        total = len(items)
+                    results = list(tqdm(iterator, total=total, desc=desc))
+                else:
+                    results = list(iterator)
+        else:
+            # Standard Executor (ThreadPool or ProcessPool)
+            with ExecutorClass(max_workers=max_workers) as internal_executor:
+                iterator = internal_executor.map(func, items, chunksize=chunksize)
+                
+                if show_progress:
+                    if total is None and hasattr(items, '__len__'):
+                        total = len(items)
+                    results = list(tqdm(iterator, total=total, desc=desc))
+                else:
+                    results = list(iterator)
 
     return results

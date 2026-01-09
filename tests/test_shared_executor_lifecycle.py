@@ -86,10 +86,23 @@ class TestSharedExecutorLifecycle(unittest.TestCase):
             self.session.export("out_folder", safe=False)
             
             # Assert
+            # Assert
             self.assertTrue(mock_run_parallel.called)
             args, kwargs = mock_run_parallel.call_args
-            self.assertIn('executor', kwargs)
-            self.assertEqual(kwargs['executor'], self.session._executor)
+            
+            # MEMORY LEAK FIX: We now use maxtasksperchild=10, which requires a FRESH pool.
+            # So checking that it matches self.session._executor is now WRONG.
+            # We should check that maxtasksperchild passed is 10.
+            
+            self.assertIn('maxtasksperchild', kwargs)
+            self.assertEqual(kwargs['maxtasksperchild'], 10)
+            
+            # If executor IS passed, it might be ignored or handled differently, but
+            # our session logic explicitly does NOT pass self._executor for export_batch w/ recycling.
+            # In session.py we call export_batch(..., maxtasksperchild=10) and NO executor arg.
+            
+            passed_executor = kwargs.get('executor')
+            self.assertNotEqual(passed_executor, self.session._executor)
 
     @patch('gantry.io_handlers.run_parallel')
     @patch('os.path.isfile')
