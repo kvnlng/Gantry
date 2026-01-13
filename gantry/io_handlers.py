@@ -222,13 +222,18 @@ class ExportContext(NamedTuple):
     series_attributes: Dict[str, Any]
     pixel_array: Optional[Any] = None # Numpy array or None
     compression: Optional[str] = None # 'j2k' or None
+    # Zero-Copy Sidecar Support
+    sidecar_path: Optional[str] = None
+    pixel_offset: Optional[int] = None
+    pixel_length: Optional[int] = None
+    pixel_alg: Optional[str] = None
 
 def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
     """
     Worker function to export a single instance.
     Returns the output path on success, raises Exception on failure.
     """
-    print(f"[Worker {os.getpid()}] STARTING {ctx.instance.sop_instance_uid}", flush=True)
+
     try:
         inst = ctx.instance
         ds = DicomExporter._create_ds(inst)
@@ -257,7 +262,21 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
 
         # 4. Pixel Data
         # Use context-provided pixels (for in-memory objects) or load from file
+        # 4. Pixel Data
+        # Use context-provided pixels (for in-memory objects) or load from file
         arr = ctx.pixel_array
+        
+        # Zero-Copy Sidecar Loading
+        if arr is None and ctx.sidecar_path and ctx.pixel_offset is not None:
+             try:
+                 # Reconstruct standard SidecarPixelLoader
+                 loader = SidecarPixelLoader(ctx.sidecar_path, ctx.pixel_offset, ctx.pixel_length, ctx.pixel_alg, inst)
+                 arr = loader()
+                 # Ensure attributes are synced (loader usually returns raw array, shaping handled by loader but we double check)
+             except Exception as e:
+
+                 raise e
+
         if arr is None:
              arr = inst.get_pixel_data()
              
@@ -321,17 +340,8 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
         os.makedirs(os.path.dirname(ctx.output_path), exist_ok=True)
         ds.save_as(ctx.output_path)
         
-        print(f"[Worker {os.getpid()}] FINISHED {ctx.instance.sop_instance_uid}", flush=True)
         return True
     except Exception as e:
-        print(f"[Worker {os.getpid()}] FAILED {ctx.instance.sop_instance_uid}: {e}")
-        # raise e
-        return False
-        ds.save_as(ctx.output_path)
-        return ctx.output_path
-            
-    except Exception as e:
-        # Re-raise to be caught by parallel wrapper or handled
         raise RuntimeError(f"Export failed for {ctx.output_path}: {e}")
 
 def _compress_j2k(ds, pixel_array=None):
@@ -403,13 +413,13 @@ def _compress_j2k(ds, pixel_array=None):
             img.save(bio, format='JPEG2000', compression='lossless')
             return bio.getvalue()
 
+
         if frames > 1:
             for i in range(frames):
                 frames_data.append(encode_frame(arr[i]))
         else:
             frames_data.append(encode_frame(arr))
             
-        # 4. Encapsulate and Update DS
         ds.PixelData = encapsulate(frames_data)
         # ds.TransferSyntaxUID = JPEG2000Lossless # REMOVE: Group 2 tags must be in file_meta only
         ds.file_meta.TransferSyntaxUID = JPEG2000Lossless
@@ -453,6 +463,7 @@ class SidecarPixelLoader:
         from .sidecar import SidecarManager
         mgr = SidecarManager(self.sidecar_path)
         
+
         raw = mgr.read_frame(self.offset, self.length, self.alg)
         
         # Reconstruct based on attributes
@@ -676,6 +687,18 @@ class DicomExporter:
                     p_array = None
                     if inst.pixel_array is not None:
                          p_array = inst.pixel_array
+                    
+                    # Extract Sidecar Info if available (Zero-Copy)
+                    sc_path, sc_offset, sc_length, sc_alg = None, None, None, None
+                    if hasattr(inst, '_pixel_loader') and inst._pixel_loader:
+                        # Check if it's a SidecarPixelLoader
+                        # We duck-type check for attributes
+                        pl = inst._pixel_loader
+                        if hasattr(pl, 'sidecar_path') and hasattr(pl, 'offset'):
+                             sc_path = pl.sidecar_path
+                             sc_offset = pl.offset
+                             sc_length = pl.length
+                             sc_alg = pl.alg
 
                     # Add to queue
                     ctx = ExportContext(
@@ -685,7 +708,11 @@ class DicomExporter:
                         study_attributes=study_attrs,
                         series_attributes=series_attrs,
                         pixel_array=p_array,
-                        compression=compression
+                        compression=compression,
+                        sidecar_path=sc_path,
+                        pixel_offset=sc_offset,
+                        pixel_length=sc_length,
+                        pixel_alg=sc_alg
                     )
                     contexts.append(ctx)
         return contexts
@@ -719,7 +746,7 @@ class DicomExporter:
         logger.info(f"Export Complete. Success: {success_count}/{len(export_tasks)}")
 
     @staticmethod
-    def export_batch(export_tasks: Iterable[ExportContext], show_progress: bool = True, total: int = None, executor=None, maxtasksperchild: int = None):
+    def export_batch(export_tasks: Iterable[ExportContext], show_progress: bool = True, total: int = None, executor=None, maxtasksperchild: int = None, disable_gc: bool = False):
         """
         Exports a flat list of ExportContexts using parallel workers.
         """
@@ -731,7 +758,7 @@ class DicomExporter:
             logger.info(f"Starting global parallel export of {count_str} instances...")
             
         # Run parallel
-        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=1, show_progress=show_progress, total=total, executor=executor, maxtasksperchild=maxtasksperchild)
+        results = run_parallel(_export_instance_worker, export_tasks, desc="Exporting", chunksize=1, show_progress=show_progress, total=total, executor=executor, maxtasksperchild=maxtasksperchild, disable_gc=disable_gc)
         
         success_count = sum(1 for r in results if r is not None)
         logger.info(f"Export Complete. Success: {success_count}/{total or '?'}")

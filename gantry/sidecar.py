@@ -48,15 +48,37 @@ class SidecarManager:
         """
         Reads a frame from the sidecar.
         """
+        print(f"  -> Sidecar: Open {self.filepath} ({offset}:{length})", flush=True)
         with open(self.filepath, 'rb') as f:
+            # print(f"  -> Sidecar: Seek {offset}", flush=True)
             f.seek(offset)
+            # print(f"  -> Sidecar: Read {length}", flush=True)
             blob = f.read(length)
             
         if len(blob) != length:
             raise IOError(f"Incomplete read from sidecar. Expected {length}, got {len(blob)}.")
             
         if compression == 'zlib':
-            return zlib.decompress(blob)
+            print(f"[Worker {os.getpid()}] Sidecar: Decompress ({len(blob)} bytes)", flush=True)
+            try:
+                dobj = zlib.decompressobj()
+                chunks = []
+                chunk_size = 1024 * 1024 # 1MB chunks
+                total_in = len(blob)
+                
+                for i in range(0, total_in, chunk_size):
+                    # print(f"    dchunk {i}/{total_in}", flush=True)
+                    chunk_data = blob[i:i+chunk_size]
+                    chunks.append(dobj.decompress(chunk_data))
+                
+                chunks.append(dobj.flush())
+                res = b"".join(chunks)
+                
+                print(f"[Worker {os.getpid()}] Sidecar: Decompress Done (Expanded: {len(res)})", flush=True)
+                return res
+            except Exception as e:
+                print(f"[Worker {os.getpid()}] Sidecar: DECOMPRESS ERROR: {e}", flush=True)
+                raise e
         elif compression == 'raw':
             return blob
         else:

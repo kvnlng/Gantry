@@ -180,8 +180,11 @@ def generate_dataset(output_dir, total_instances, patients=100, series_per_study
         for s_idx in range(series_per_study):
             series_uid = generate_uid()
             # Randomize Manufacturer
-            # 50% GantryGen (Target), 50% Others (Skip)
-            mfr_options = ["GantryGen", "Siemens", "GE", "Philips"]
+            # Expanded to 8 types as requested
+            mfr_options = [
+                "GantryGen", "Siemens", "GE", "Philips", 
+                "Canon", "Toshiba", "Hitachi", "Fujifilm"
+            ]
             mfr = random.choice(mfr_options)
             
             # Determine frames for this series

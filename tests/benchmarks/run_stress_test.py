@@ -56,20 +56,37 @@ def run_benchmark(input_dir, output_dir, db_path, return_stats=False, compress_e
     # [4] Configure (Create & Load)
     # [4] Configure (Create & Load)
     print("\n[Step 4] Configure")
-    # Write a dynamic config compatible with generated data (Manufacturer="GantryGen")
+    # Write a dynamic config compatible with generated data
+    # Machines: GantryGen, Siemens, GE, Philips, Canon, Toshiba, Hitachi, Fujifilm
+    # Serial Format: GEN_{MFR}_001
+    
+    machines_list = [
+        "GantryGen", "Siemens", "GE", "Philips", 
+        "Canon", "Toshiba", "Hitachi", "Fujifilm"
+    ]
+    
+    machine_yaml_blocks = []
+    for mfr in machines_list:
+        # Match logic in generate_dataset.py
+        serial = f"GEN_{mfr[:3].upper()}_001"
+        block = f"""  - manufacturer: "{mfr}"
+    serial_number: "{serial}"
+    redaction_zones:
+      - [0, 10, 0, 10]"""
+        machine_yaml_blocks.append(block)
+        
+    machines_yaml = "\n".join(machine_yaml_blocks)
+
     config_path = "stress_config.yaml"
     with open(config_path, "w") as f:
-        f.write("""
+        f.write(f"""
 privacy_profile: "basic"
 date_jitter:
   min_days: -10
   max_days: -1
 remove_private_tags: true
 machines:
-  - manufacturer: "*"  # Target ALL manufacturers to ensure full load
-    serial_number: "*"
-    redaction_zones:
-      - [0, 10, 0, 10] # Tiny region to test ROI logic
+{machines_yaml}
 """)
     sess.load_config(config_path)
     
@@ -100,7 +117,7 @@ machines:
     # [8] Redact (Pixel Data)
     print("\n[Step 8] Redact")
     t0 = time.time()
-    sess.redact()
+    sess.redact(show_progress=False)
     duration_redact = time.time() - t0
     print(f"Redact Duration: {duration_redact:.2f}s")
     report_resource_usage("Post-Redact")
@@ -110,7 +127,7 @@ machines:
     t0 = time.time()
     # Default to j2k if compress requested, else None
     comp_method = 'j2k' if compress_export else None
-    sess.export(output_dir, safe=True, compression=comp_method)
+    sess.export(output_dir, safe=True, compression=comp_method, show_progress=False)
     duration_export = time.time() - t0
     print(f"Export Duration: {duration_export:.2f}s")
     report_resource_usage("Post-Export")

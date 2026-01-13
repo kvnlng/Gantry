@@ -90,7 +90,9 @@ echo '[Remote] Starting Scalability Benchmark Suite...'
 echo '[Remote] Verifying benchmark_suite.py version...'
 grep "frames" tests/benchmarks/benchmark_suite.py | head -n 5
 
-python -Xgil=0 tests/benchmarks/benchmark_suite.py
+# Reliance on new default (CPU * 1)
+# With 2GB/Core recommendation, this should be safe on balanced VMs
+python -Xgil=0 tests/benchmarks/benchmark_suite.py --reuse
 "
 
 # 3. Execute Remote Command

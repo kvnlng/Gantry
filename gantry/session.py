@@ -652,7 +652,7 @@ class DicomSession:
                         
         get_logger().info(f" stamped {count} instances.")
 
-    def export(self, folder, safe=False, compression=None):
+    def export(self, folder, safe=False, compression=None, show_progress=True):
         """
         Exports the current state of all patients to a folder.
         If safe=True, performs a fresh PHI scan and ONLY exports clean data.
@@ -780,10 +780,16 @@ class DicomSession:
             # This forces workers to restart periodically, clearing any leaked memory (e.g. from C-libs).
             # We do NOT use the shared self._executor for this, as ProcessPoolExecutor doesn't support recycling.
             try:
-                success_count = DicomExporter.export_batch(export_tasks, show_progress=True, total=total_instances, maxtasksperchild=100)
+                # Optimized for stability: maxtasksperchild=25 clears memory frequently
+                # GC Optimization: Disable GC in workers
+                success_count = DicomExporter.export_batch(export_tasks, show_progress=show_progress, total=total_instances, maxtasksperchild=25, disable_gc=True)
             except Exception as e:
                 get_logger().error(f"Export Failed! Error: {e}")
                 raise e
+            finally:
+                # Main process GC trigger
+                import gc
+                gc.collect()
             
             # Note: skipped_count is only patient-level skips. Study-level skips aren't counted here explicitly 
             # unless we wrap the generator to count them, but that's complex for a simple log.
@@ -927,7 +933,7 @@ class DicomSession:
         print(f"\nSummary: Execution will modify approximately {match_count} images.")
         print("---------------------------------------")
 
-    def redact(self):
+    def redact(self, show_progress=True):
         """
         User Action: 'Apply the currently loaded rules to the pixel data.'
         """
@@ -981,7 +987,14 @@ class DicomSession:
             # However, if we move to Processes later, we should use self._executor.
             # For now, keep as is to avoid regression on the threading model.
             
-            run_parallel(service.execute_redaction_task, all_tasks, desc="Redacting Pixels", max_workers=max_workers, force_threads=True)
+            # Enable GC Optimization
+            import gc
+            gc.disable()
+            try:
+                run_parallel(service.execute_redaction_task, all_tasks, desc="Redacting Pixels", max_workers=max_workers, force_threads=True, progress=show_progress)
+            finally:
+                gc.enable()
+                gc.collect()
 
             # Save state after modification
             # self._save()

@@ -8,6 +8,10 @@ from typing import Callable, Iterable, List, Any, TypeVar
 T = TypeVar('T')
 R = TypeVar('R')
 
+def _gc_off():
+    import gc
+    gc.disable()
+
 def run_parallel(
     func: Callable[[T], R],
     items: Iterable[T],
@@ -18,7 +22,9 @@ def run_parallel(
     force_threads: bool = False,
     total: int = None,
     executor: Any = None,
-    maxtasksperchild: int = None
+    maxtasksperchild: int = None,
+    progress: bool = None,  # Alias for show_progress
+    disable_gc: bool = False # Disable GC in worker processes
 ) -> List[R]:
     """
     Executes func(item) in parallel.
@@ -27,6 +33,10 @@ def run_parallel(
     Supports generators (pass total=N for progress bar).
     If 'executor' is passed, it uses that instance.
     """
+    
+    # Alias handling
+    if progress is not None:
+        show_progress = progress
     results = []
     
     # Use max_workers = os.cpu_count() * 1.5 by default
@@ -40,7 +50,8 @@ def run_parallel(
         
         if max_workers is None:
             cpu_count = os.cpu_count() or 1
-            max_workers = int(cpu_count * 1.5)
+            # User requested 1:1 CPU mapping for stability/predictability
+            max_workers = cpu_count
 
     # Determine Strategy
     # Priority: Env Var -> Free-Threading Detection -> Default (Process)
@@ -56,6 +67,10 @@ def run_parallel(
         if hasattr(sys, "_is_gil_enabled") and not sys._is_gil_enabled():
             use_threads = True
     
+    # CRITICAL FIX: If maxtasksperchild is requested, we MUST use processes to support recycling.
+    # This overrides the Free-Threading default preference for threads.
+    if maxtasksperchild is not None:
+        use_threads = False
 
     ExecutorClass = concurrent.futures.ThreadPoolExecutor if use_threads else concurrent.futures.ProcessPoolExecutor
     mode_name = "Threads" if use_threads else "Processes"
@@ -93,7 +108,12 @@ def run_parallel(
         if not use_threads and maxtasksperchild is not None:
             # Use multiprocessing.Pool with 'spawn' context
             ctx = multiprocessing.get_context("spawn")
-            with ctx.Pool(processes=max_workers, maxtasksperchild=maxtasksperchild) as pool:
+            
+            init = None
+            if disable_gc:
+                init = _gc_off
+
+            with ctx.Pool(processes=max_workers, maxtasksperchild=maxtasksperchild, initializer=init) as pool:
                 # Use imap_unordered to avoid head-of-line blocking hiding crashes
                 # This helps debugging which specific item causes a hang.
                 # Note: If order matters for the caller, we might need to resort. 
@@ -106,22 +126,32 @@ def run_parallel(
                 # we can use unordered for now or generally if we assume this is a generic tool.
                 # Actually, Gantry generally expects checking results count.
                 
-                iterator = pool.imap_unordered(func, items, chunksize=chunksize)
+                # Manual iteration with timeout to catch hangs
+                # tqdm iterating over a timeout-check loop
                 
                 # Manual iteration with timeout to catch hangs
                 # tqdm iterating over a timeout-check loop
                 
-                # ...
+                # Create iterator
+                iterator = pool.imap_unordered(func, items, chunksize=chunksize)
+                
+                pbar = None
+                if show_progress:
+                    if total is None and hasattr(items, '__len__'):
+                        total = len(items)
+                    pbar = tqdm(total=total, desc=desc)
                 
                 while True:
                     try:
-                        # 60s timeout
-                        res = iterator.next(timeout=60)
-                        # ...
+                        # 600s timeout (increased for heavy J2K compression on large multiframe)
+                        res = iterator.next(timeout=600)
+                        results.append(res)
+                        if pbar:
+                            pbar.update(1)
                     except StopIteration:
                         break
                     except multiprocessing.TimeoutError:
-                        print("\n!! WORKER HANG DETECTED (Timeout 60s) !!")
+                        print("\n!! WORKER HANG DETECTED (Timeout 600s) !!")
                         # We cannot easily identify WHICH worker hung here without more complex logic,
                         # but we know the pool is stuck.
                         # Raising error to abort the run.
@@ -130,7 +160,17 @@ def run_parallel(
                 if pbar: pbar.close()
         else:
             # Standard Executor (ThreadPool or ProcessPool)
-            with ExecutorClass(max_workers=max_workers) as internal_executor:
+            
+            init = None
+            if disable_gc and not use_threads:
+                 init = _gc_off
+            
+            # ProcessPoolExecutor accepts initializer in 3.7+
+            kwargs = {'max_workers': max_workers}
+            if not use_threads and init:
+                kwargs['initializer'] = init
+
+            with ExecutorClass(**kwargs) as internal_executor:
                 iterator = internal_executor.map(func, items, chunksize=chunksize)
                 
                 if show_progress:
@@ -139,5 +179,6 @@ def run_parallel(
                     results = list(tqdm(iterator, total=total, desc=desc))
                 else:
                     results = list(iterator)
+
 
     return results
