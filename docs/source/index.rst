@@ -6,6 +6,7 @@ Welcome to Gantry's documentation!
    :caption: Contents:
 
    readme
+   analytics
    modules
 
 Indices and tables

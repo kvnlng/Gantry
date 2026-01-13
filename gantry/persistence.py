@@ -743,9 +743,9 @@ class SqliteStore:
             self.logger.error(f"Failed to count instances: {e}")
             return 0
 
-    def get_flattened_instances(self, patient_ids: List[str] = None):
+    def get_flattened_instances(self, patient_ids: List[str] = None, instance_uids: List[str] = None):
         """
-        Yields a flat dictionary for every instance in the DB (or filtered by patient_ids).
+        Yields a flat dictionary for every instance in the DB (or filtered by patient_ids/instance_uids).
         Ideal for streaming exports or analysis without loading the entire graph into RAM.
         """
         # We use a managed connection that stays open during iteration
@@ -766,11 +766,21 @@ class SqliteStore:
                 JOIN patients p ON st.patient_id_fk = p.id
             """
             
+            conditions = []
             params = []
+            
             if patient_ids:
                 placeholders = ",".join("?" for _ in patient_ids)
-                query += f" WHERE p.patient_id IN ({placeholders})"
+                conditions.append(f"p.patient_id IN ({placeholders})")
                 params.extend(patient_ids)
+                
+            if instance_uids:
+                placeholders = ",".join("?" for _ in instance_uids)
+                conditions.append(f"i.sop_instance_uid IN ({placeholders})")
+                params.extend(instance_uids)
+            
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
                 
             # Execute generator
             cursor = cur.execute(query, params)

@@ -12,6 +12,7 @@ setup(
         "tqdm>=4.65.0",
         "cryptography>=41.0.0",
         "pandas>=2.0.0",
+        "pyarrow>=14.0.0",
         "PyYAML>=6.0",
         "pillow>=10.0.0",
         "imagecodecs>=2023.0.0"

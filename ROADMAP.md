@@ -23,7 +23,8 @@ This document outlines the development plan for **Gantry**. We welcome contribut
 
 Focus: Empowering users to understand their data through deep inspection on the object graph.
 
-- [ ] **Dataframe Export**: Expose a method to flatten `Patient -> Study -> Series -> Instance` hierarchy into a comprehensive parquet file.
+- [x] **Dataframe Export**: Expose a method to flatten `Patient -> Study -> Series -> Instance` hierarchy into a comprehensive parquet file.
+- [x] **Query-based Export**: Export subsets of data based on metadata queries (e.g., "Modality == 'CT'").
 - [ ] **Sidecar Compaction**: Utility to vacuum/compact the `_pixels.bin` file to reclaim space from deleted or redacted images.
 - [ ] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.
 - [ ] **Metadata Querying**: Enable SQL-like querying on the dataframe (e.g., "Find all scans with `SliceThickness < 1.0` acquired by 'GE' scanners").
