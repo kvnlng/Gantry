@@ -65,7 +65,7 @@ class PersistenceManager:
         self.queue.put(snapshot)
 
     def _worker(self):
-        while self.running:
+        while True:
             try:
                 # Wait for work
                 patients = self.queue.get(timeout=1.0) 
@@ -89,11 +89,13 @@ class PersistenceManager:
                     self.queue.task_done()
                     
             except queue.Empty:
-                continue
-            except Exception as e:
-                get_logger().error(f"Worker crashed: {e}")
-                    
-            except queue.Empty:
+                # Check exit condition periodically if using timeout, 
+                # but we rely on sentinel for clean shutdown.
+                # However, if running becomes False (force kill?) and no sentinel?
+                # shutdown() sends sentinel.
+                if not self.running and self.queue.empty():
+                     # Fallback exit? No, stick to sentinel.
+                     pass
                 continue
             except Exception as e:
                 get_logger().error(f"Worker crashed: {e}")
