@@ -285,6 +285,27 @@ Supported Transfer Syntaxes:
 - RLE Lossless
 - Standard JPEG Baseline/Extended
 
+## Analytics & Export
+
+Gantry supports **Exploratory Data Analysis (EDA)**. You can interrogate your cohort using Pandas and perform targeted exports based on metadata criteria.
+
+```python
+# 1. Get a DataFrame of the cohort
+df = session.export_dataframe(expand_metadata=True)
+
+# 2. Filter using Pandas
+target_df = df[ (df.Modality == 'CT') & (df.SliceThickness > 2.5) ]
+
+# 3. Export only the subset
+session.export("export_thick_cts", subset=target_df)
+```
+
+You can also export the full inventory to Parquet for external tools (Tableau, PowerBI):
+
+```python
+session.export_dataframe("cohort.parquet", expand_metadata=True)
+```
+
 ## Migration Tools
 
 ### Clinical Trial Processor (CTP)

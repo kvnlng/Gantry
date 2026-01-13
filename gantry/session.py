@@ -621,6 +621,91 @@ class DicomSession:
         
         return pd.DataFrame(rows)
 
+    def export_dataframe(self, output_path: str = None, expand_metadata: bool = False) -> 'pd.DataFrame':
+        """
+        Exports the comprehensive session inventory to a Pandas DataFrame or Parquet file.
+        The dataframe contains a flattened hierarchy of Patient -> Study -> Series -> Instance.
+        
+        Args:
+            output_path: If provided, saves the dataframe to a parquet file (e.g. "export.parquet").
+            expand_metadata: If True, parses the 'attributes_json' column into separate columns for deep inspection.
+                             Warning: This can increase memory usage significantly.
+        
+        Returns:
+            pd.DataFrame: The resulting dataframe.
+        """
+        import pandas as pd
+        import json
+        
+        get_logger().info("Generating comprehensive dataframe from persistence layer...")
+        
+        # Stream data from SQLite
+        # We convert the generator to a list for DataFrame construction.
+        # For massive datasets, this might need Chunking, but for < 1M rows RAM is usually fine.
+        rows = list(self.store_backend.get_flattened_instances())
+        
+        if not rows:
+            get_logger().warning("No data found to export.")
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(rows)
+        
+        # Normalize Column Names to match DICOM Keywords where possible
+        # SQL returns snake_case, we want PascalCase for consistency with DICOM Attributes
+        rename_map = {
+            "patient_id": "PatientID",
+            "patient_name": "PatientName",
+            "study_instance_uid": "StudyInstanceUID",
+            "study_date": "StudyDate",
+            "series_instance_uid": "SeriesInstanceUID",
+            "modality": "Modality",
+            "series_number": "SeriesNumber",
+            "manufacturer": "Manufacturer",
+            "model_name": "ManufacturerModelName",
+            "device_serial_number": "DeviceSerialNumber",
+            "sop_instance_uid": "SOPInstanceUID",
+            "sop_class_uid": "SOPClassUID",
+            "instance_number": "InstanceNumber",
+            "file_path": "FilePath"
+        }
+        df.rename(columns=rename_map, inplace=True)
+        
+        if expand_metadata and 'attributes_json' in df.columns:
+            get_logger().info("Expanding metadata attributes (this may take a moment)...")
+            
+            def safe_load(x):
+                try: 
+                    return json.loads(x) if x else {}
+                except: 
+                    return {}
+            
+            # normalize expects a list of dicts
+            meta_dicts = df['attributes_json'].apply(safe_load).tolist()
+            meta_df = pd.json_normalize(meta_dicts)
+            
+            # Reset indices to ensure alignment (should be aligned by default but safe to be sure)
+            df = df.reset_index(drop=True)
+            meta_df = meta_df.reset_index(drop=True)
+            
+            # Combine and drop the raw json
+            df = pd.concat([df.drop(columns=['attributes_json']), meta_df], axis=1)
+            
+        if output_path:
+            get_logger().info(f"Saving dataframe to parquet at {output_path}...")
+            # usage of pyarrow is implicit via engine='pyarrow' default in recent pandas or auto-detect
+            try:
+                df.to_parquet(output_path, index=False)
+            except ImportError:
+                 # Fallback/Helpful error
+                 raise ImportError("pyarrow is required for parquet export. Please run 'pip install pyarrow'.")
+                 
+            # If size is reasonable, maybe also print it?
+            import os
+            sz = os.path.getsize(output_path) / (1024 * 1024)
+            get_logger().info(f"Parquet export complete ({sz:.2f} MB).")
+            
+        return df
+
     def redact_by_machine(self, serial_number, roi):
         """
         Manually triggers redaction for a machine.
@@ -652,27 +737,34 @@ class DicomSession:
                         
         get_logger().info(f" stamped {count} instances.")
 
-    def export(self, folder, safe=False, compression=None, show_progress=True):
+    def export(self, folder, safe=False, compression=None, subset=None, show_progress=True):
         """
         Exports the current state of all patients to a folder.
         If safe=True, performs a fresh PHI scan and ONLY exports clean data.
         compression: 'j2k' (JPEG 2000 Lossless) or None (Uncompressed)
+        subset: Optional filter. Can be:
+                - pd.DataFrame: A dataframe containing 'sop_instance_uid' column.
+                - str: A pandas querystring (e.g. "Modality == 'CT'") applied to the full index.
+                - List[str]: A list of SOPInstanceUIDs to export.
         """
         # AUTO-OPTIMIZATION: Ensure clean memory before spawning processes
         get_logger().info("Preparing for export (Auto-Save & Memory Release)...")
-        print("Preparing for export (saving & releasing memory)...")
+        if show_progress:
+            print("Preparing for export (saving & releasing memory)...")
         self.save()
         self.persistence_manager.flush()
         self.release_memory()
         
         get_logger().info(f"Exporting session to {folder} (safe={safe})...")
-        print("Exporting...")
+        if show_progress:
+            print("Exporting...")
 
         dirty_patients = set()
         dirty_studies = set()
 
         if safe:
-            print("Running safety scan...")
+            if show_progress:
+                print("Running safety scan...")
             report = self.audit()
             for finding in report:
                 if finding.entity_type == "Patient":
@@ -717,34 +809,92 @@ class DicomSession:
                 get_logger().warning(msg)
                 print(msg)
 
-            exported_count = 0
+        # Handle Subsetting
+        instance_uids = None
+        if subset is not None:
+            get_logger().info("Applying subset filter to export...")
+            import pandas as pd
+            
+            if isinstance(subset, pd.DataFrame):
+                if 'sop_instance_uid' not in subset.columns:
+                     # Check if index is UID? 
+                     # For now, require column
+                     # Or maybe 'SOPInstanceUID' (DICOM standard case)
+                     if 'SOPInstanceUID' in subset.columns:
+                         instance_uids = subset['SOPInstanceUID'].tolist()
+                     else:
+                         raise ValueError("Subset DataFrame must contain 'sop_instance_uid' or 'SOPInstanceUID' column.")
+                else:
+                     instance_uids = subset['sop_instance_uid'].tolist()
+                     
+            elif isinstance(subset, str):
+                # Query String -> Generate DF -> Filter
+                # Note: This loads full dataframe into memory to filter. 
+                # Optimization: Could we push query to SQL? 
+                # SQL is hard because attributes are JSON.
+                # So we export_dataframe() then query.
+                df = self.export_dataframe(expand_metadata=True) # Expand needed for meaningful queries
+                df_filtered = df.query(subset)
+                # handle both cases just in case
+                if 'SOPInstanceUID' in df_filtered.columns:
+                    instance_uids = df_filtered['SOPInstanceUID'].tolist()
+                elif 'sop_instance_uid' in df_filtered.columns:
+                    instance_uids = df_filtered['sop_instance_uid'].tolist()
+                else:
+                    # Fallback to index if it happens to be the key? Unlikely for now.
+                    raise ValueError("Column 'SOPInstanceUID' missing from internal dataframe.")
+                get_logger().info(f"Query '{subset}' matched {len(instance_uids)} instances.")
+                
+            elif isinstance(subset, list):
+                instance_uids = subset
+                
+            if not instance_uids and instance_uids is not None:
+                get_logger().warning("Subset filter resulted in 0 instances. Nothing to export.")
+                return
+
+        exported_count = 0
         skipped_count = 0
         
         # 1. Calculate Scope & Total (In-Memory Helper)
         patient_ids = []
         total_instances = 0
         
-        for p in self.store.patients:
-            # Check Patient Level (Early Filter for ID list)
-            if safe and p.patient_id in dirty_patients:
-                get_logger().warning(f"Skipping Dirty Patient: {p.patient_id}")
-                skipped_count += getattr(p, 'instance_count', 0) # Estimate
-                continue
+        # NOTE: If instance_uids is set, we can't easily count total_instances based on patients loop 
+        # unless we do a DB count query.
+        # But for progress bar, we need a count.
+        if instance_uids:
+            total_instances = len(instance_uids)
+            # We don't populate patient_ids here because we pass instance_uids specifically.
+            # But the exporter supports patient_ids AND instance_uids.
+            # If we omit patient_ids, it searches all patients (inefficient SQL?).
+            # SqliteStore.get_flattened_instances currently:
+            # - if patient_ids: WHERE p.id IN ...
+            # - if instance_uids: WHERE i.uid IN ...
+            # Either works. If we have instance_uids, we don't need patient_ids.
+            # Although passing patient_ids reduces search space if we know them.
+            # Deriving patient_ids from instance_uids is expensive without a query.
+            # So we just pass instance_uids.
+        else:
+            for p in self.store.patients:
+                # Check Patient Level (Early Filter for ID list)
+                if safe and p.patient_id in dirty_patients:
+                    get_logger().warning(f"Skipping Dirty Patient: {p.patient_id}")
+                    skipped_count += getattr(p, 'instance_count', 0) # Estimate
+                    continue
+                    
+                patient_ids.append(p.patient_id)
                 
-            patient_ids.append(p.patient_id)
-            
-            # Count instances for progress bar
-            # If safe=True, we technically should check study cleanliness too for accurate count
-            if safe:
-                p_inst_count = 0
-                for st in p.studies:
-                    if st.study_instance_uid not in dirty_studies:
-                        p_inst_count += sum(len(se.instances) for se in st.series)
-                total_instances += p_inst_count
-            else:
-                total_instances += sum(sum(len(se.instances) for se in st.series) for st in p.studies)
+                # Count instances for progress bar
+                if safe:
+                    p_inst_count = 0
+                    for st in p.studies:
+                        if st.study_instance_uid not in dirty_studies:
+                            p_inst_count += sum(len(se.instances) for se in st.series)
+                    total_instances += p_inst_count
+                else:
+                    total_instances += sum(sum(len(se.instances) for se in st.series) for st in p.studies)
 
-        if not patient_ids:
+        if not patient_ids and not instance_uids:
             get_logger().warning("No valid patients to export.")
             return
 
@@ -754,8 +904,9 @@ class DicomSession:
         raw_tasks = DicomExporter.generate_export_from_db(
             self.persistence_manager.store_backend, 
             folder, 
-            patient_ids, 
-            compression
+            patient_ids=patient_ids if not instance_uids else None, 
+            compression=compression,
+            instance_uids=instance_uids
         )
         
         # 3. Apply Safety Filter (Lazy)

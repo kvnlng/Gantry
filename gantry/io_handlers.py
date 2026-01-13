@@ -503,12 +503,12 @@ class DicomExporter:
         DicomExporter.save_studies(patient, patient.studies, out_dir)
 
     @staticmethod
-    def generate_export_from_db(store_backend, out_dir: str, patient_ids: List[str] = None, compression: str = None):
+    def generate_export_from_db(store_backend, out_dir: str, patient_ids: List[str] = None, compression: str = None, instance_uids: List[str] = None):
         """
         Generator that yields ExportContext objects directly from the DB.
         O(1) Memory usage.
         """
-        for row in store_backend.get_flattened_instances(patient_ids):
+        for row in store_backend.get_flattened_instances(patient_ids, instance_uids):
             # 1. Rehydrate Attributes
             attrs = {}
             if row['attributes_json']:
