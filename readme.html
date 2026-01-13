@@ -8,7 +8,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Gantry &mdash; Gantry 0.1.0 documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
-      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=e59714d7" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
 
   
       <script src="_static/jquery.js?v=5d32c60e"></script>
@@ -58,6 +58,7 @@
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="#installation">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#system-requirements">System Requirements</a></li>
 <li class="toctree-l2"><a class="reference internal" href="#quick-start">Quick Start</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#initialize-a-session">1. Initialize a Session</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#ingest-examine">2. Ingest &amp; Examine</a></li>
@@ -114,6 +115,7 @@
   <section id="gantry">
 <h1>Gantry<a class="headerlink" href="#gantry" title="Link to this heading"></a></h1>
 <p><strong>A Python DICOM Object Model and Redaction Toolkit.</strong></p>
+<p><img alt="Gantry" src="docs/images/IMG_0653.jpeg" /></p>
 <p>Gantry provides a high-performance, object-oriented interface for managing, analyzing, and de-identifying DICOM datasets. It is designed for large-scale ingestion, precise pixel redaction, and strict PHI compliance.</p>
 <section id="features">
 <h2>Features<a class="headerlink" href="#features" title="Link to this heading"></a></h2>
@@ -229,6 +231,19 @@ pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </s
 </pre></div>
 </div>
 <p><em>Note: The <code class="docutils literal notranslate"><span class="pre">imagecodecs</span></code> dependency is included and strongly recommended for handling JPEG Lossless and other compressed Transfer Syntaxes.</em></p>
+</section>
+<section id="system-requirements">
+<h2>System Requirements<a class="headerlink" href="#system-requirements" title="Link to this heading"></a></h2>
+<p>Gantry’s parallel processing engine is designed to maximize CPU utilization. However, heavy operations like JPEG 2000 compression require significant memory per worker.</p>
+<ul class="simple">
+<li><p><strong>Memory</strong>: Gantry is memory-intensive during specific operations (e.g., Pixel Redaction, J2K Export).</p>
+<ul>
+<li><p><strong>Minimum</strong>: 2GB RAM per vCPU.</p></li>
+<li><p><strong>Recommended (Heavy Workloads)</strong>: 8GB RAM per vCPU (e.g., for massive multi-frame J2K compression).</p></li>
+</ul>
+</li>
+<li><p><strong>Concurrency</strong>: By default, Gantry uses all available cores (<code class="docutils literal notranslate"><span class="pre">1:1</span></code> ratio). Use <code class="docutils literal notranslate"><span class="pre">GANTRY_MAX_WORKERS</span></code> env var to limit this if OOM occurs.</p></li>
+</ul>
 </section>
 <section id="quick-start">
 <h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading"></a></h2>
