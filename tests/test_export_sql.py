@@ -17,8 +17,10 @@ def session(tmp_path):
     sess = DicomSession()
     db_path = tmp_path / "test_gantry.db"
     sess.persistence_manager.db_path = str(db_path)
-    # Re-init store backend
-    sess.persistence_manager.store_backend = SqliteStore(str(db_path))
+    # Re-init store backend on session AND persistence manager
+    new_store = SqliteStore(str(db_path))
+    sess.persistence_manager.store_backend = new_store
+    sess.store_backend = new_store
     # Clear in-memory store
     sess.store.patients = []
     return sess
@@ -173,10 +175,11 @@ def test_export_parquet(session, tmp_path):
     
     session.store.patients.append(p)
     session.save()
+    session.persistence_manager.flush()
     
     # 2. Export
     out_file = tmp_path / "data.parquet"
-    session.export_to_parquet(str(out_file))
+    session.export_dataframe(str(out_file))
     
     # 3. Verify
     assert out_file.exists()
@@ -184,4 +187,4 @@ def test_export_parquet(session, tmp_path):
     # Read back check
     df = pandas.read_parquet(out_file)
     assert len(df) == 1
-    assert df.iloc[0]['patient_name'] == "Parquet Patient"
+    assert df.iloc[0]['PatientName'] == "Parquet Patient"

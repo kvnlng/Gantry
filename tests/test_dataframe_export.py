@@ -39,10 +39,10 @@ def test_export_dataframe_basic(session_with_data):
     df = session_with_data.export_dataframe()
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 1
-    assert df.iloc[0]['patient_id'] == "P1"
-    assert df.iloc[0]['sop_instance_uid'] == "I1"
+    assert df.iloc[0]['PatientID'] == "P1"
+    assert df.iloc[0]['SOPInstanceUID'] == "I1"
     # Check default columns exist
-    expected_cols = ['patient_id', 'study_instance_uid', 'series_instance_uid', 'sop_instance_uid']
+    expected_cols = ['PatientID', 'StudyInstanceUID', 'SeriesInstanceUID', 'SOPInstanceUID']
     for col in expected_cols:
         assert col in df.columns
 
@@ -55,7 +55,7 @@ def test_export_dataframe_parquet(session_with_data, tmp_path):
     # Verify we can read it back
     df_read = pd.read_parquet(output_path)
     assert len(df_read) == 1
-    assert df_read.iloc[0]['patient_id'] == "P1"
+    assert df_read.iloc[0]['PatientID'] == "P1"
 
 def test_export_dataframe_expand_metadata(session_with_data):
     # This requires us to modify the implementation to actually parse the JSON if expand_metadata=True
