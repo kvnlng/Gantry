@@ -2427,7 +2427,17 @@ Also manages the Audit Log.</p>
 <span class="normal"><a href="#__codelineno-0-896">896</a></span>
 <span class="normal"><a href="#__codelineno-0-897">897</a></span>
 <span class="normal"><a href="#__codelineno-0-898">898</a></span>
-<span class="normal"><a href="#__codelineno-0-899">899</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-59" name="__codelineno-0-59"></a><span class="k">class</span><span class="w"> </span><span class="nc">SqliteStore</span><span class="p">:</span>
+<span class="normal"><a href="#__codelineno-0-899">899</a></span>
+<span class="normal"><a href="#__codelineno-0-900">900</a></span>
+<span class="normal"><a href="#__codelineno-0-901">901</a></span>
+<span class="normal"><a href="#__codelineno-0-902">902</a></span>
+<span class="normal"><a href="#__codelineno-0-903">903</a></span>
+<span class="normal"><a href="#__codelineno-0-904">904</a></span>
+<span class="normal"><a href="#__codelineno-0-905">905</a></span>
+<span class="normal"><a href="#__codelineno-0-906">906</a></span>
+<span class="normal"><a href="#__codelineno-0-907">907</a></span>
+<span class="normal"><a href="#__codelineno-0-908">908</a></span>
+<span class="normal"><a href="#__codelineno-0-909">909</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-59" name="__codelineno-0-59"></a><span class="k">class</span><span class="w"> </span><span class="nc">SqliteStore</span><span class="p">:</span>
 <a id="__codelineno-0-60" name="__codelineno-0-60"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <a id="__codelineno-0-61" name="__codelineno-0-61"></a><span class="sd">    Handles persistence of the Object Graph to a SQLite database.</span>
 <a id="__codelineno-0-62" name="__codelineno-0-62"></a><span class="sd">    Also manages the Audit Log.</span>
@@ -3114,9 +3124,9 @@ Also manages the Audit Log.</p>
 <a id="__codelineno-0-743" name="__codelineno-0-743"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to count instances: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 <a id="__codelineno-0-744" name="__codelineno-0-744"></a>            <span class="k">return</span> <span class="mi">0</span>
 <a id="__codelineno-0-745" name="__codelineno-0-745"></a>
-<a id="__codelineno-0-746" name="__codelineno-0-746"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_flattened_instances</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patient_ids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+<a id="__codelineno-0-746" name="__codelineno-0-746"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_flattened_instances</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patient_ids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">instance_uids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
 <a id="__codelineno-0-747" name="__codelineno-0-747"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<a id="__codelineno-0-748" name="__codelineno-0-748"></a><span class="sd">        Yields a flat dictionary for every instance in the DB (or filtered by patient_ids).</span>
+<a id="__codelineno-0-748" name="__codelineno-0-748"></a><span class="sd">        Yields a flat dictionary for every instance in the DB (or filtered by patient_ids/instance_uids).</span>
 <a id="__codelineno-0-749" name="__codelineno-0-749"></a><span class="sd">        Ideal for streaming exports or analysis without loading the entire graph into RAM.</span>
 <a id="__codelineno-0-750" name="__codelineno-0-750"></a><span class="sd">        &quot;&quot;&quot;</span>
 <a id="__codelineno-0-751" name="__codelineno-0-751"></a>        <span class="c1"># We use a managed connection that stays open during iteration</span>
@@ -3137,137 +3147,147 @@ Also manages the Audit Log.</p>
 <a id="__codelineno-0-766" name="__codelineno-0-766"></a><span class="s2">                JOIN patients p ON st.patient_id_fk = p.id</span>
 <a id="__codelineno-0-767" name="__codelineno-0-767"></a><span class="s2">            &quot;&quot;&quot;</span>
 <a id="__codelineno-0-768" name="__codelineno-0-768"></a>
-<a id="__codelineno-0-769" name="__codelineno-0-769"></a>            <span class="n">params</span> <span class="o">=</span> <span class="p">[]</span>
-<a id="__codelineno-0-770" name="__codelineno-0-770"></a>            <span class="k">if</span> <span class="n">patient_ids</span><span class="p">:</span>
-<a id="__codelineno-0-771" name="__codelineno-0-771"></a>                <span class="n">placeholders</span> <span class="o">=</span> <span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;?&quot;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">patient_ids</span><span class="p">)</span>
-<a id="__codelineno-0-772" name="__codelineno-0-772"></a>                <span class="n">query</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">&quot; WHERE p.patient_id IN (</span><span class="si">{</span><span class="n">placeholders</span><span class="si">}</span><span class="s2">)&quot;</span>
-<a id="__codelineno-0-773" name="__codelineno-0-773"></a>                <span class="n">params</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">patient_ids</span><span class="p">)</span>
-<a id="__codelineno-0-774" name="__codelineno-0-774"></a>
-<a id="__codelineno-0-775" name="__codelineno-0-775"></a>            <span class="c1"># Execute generator</span>
-<a id="__codelineno-0-776" name="__codelineno-0-776"></a>            <span class="n">cursor</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
-<a id="__codelineno-0-777" name="__codelineno-0-777"></a>
-<a id="__codelineno-0-778" name="__codelineno-0-778"></a>            <span class="c1"># We can map columns to names</span>
-<a id="__codelineno-0-779" name="__codelineno-0-779"></a>            <span class="n">cols</span> <span class="o">=</span> <span class="p">[</span><span class="n">desc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">desc</span> <span class="ow">in</span> <span class="n">cursor</span><span class="o">.</span><span class="n">description</span><span class="p">]</span>
-<a id="__codelineno-0-780" name="__codelineno-0-780"></a>
-<a id="__codelineno-0-781" name="__codelineno-0-781"></a>            <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">cursor</span><span class="p">:</span>
-<a id="__codelineno-0-782" name="__codelineno-0-782"></a>                <span class="k">yield</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">cols</span><span class="p">,</span> <span class="n">row</span><span class="p">))</span>
-<a id="__codelineno-0-783" name="__codelineno-0-783"></a>
+<a id="__codelineno-0-769" name="__codelineno-0-769"></a>            <span class="n">conditions</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-0-770" name="__codelineno-0-770"></a>            <span class="n">params</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-0-771" name="__codelineno-0-771"></a>
+<a id="__codelineno-0-772" name="__codelineno-0-772"></a>            <span class="k">if</span> <span class="n">patient_ids</span><span class="p">:</span>
+<a id="__codelineno-0-773" name="__codelineno-0-773"></a>                <span class="n">placeholders</span> <span class="o">=</span> <span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;?&quot;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">patient_ids</span><span class="p">)</span>
+<a id="__codelineno-0-774" name="__codelineno-0-774"></a>                <span class="n">conditions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;p.patient_id IN (</span><span class="si">{</span><span class="n">placeholders</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-775" name="__codelineno-0-775"></a>                <span class="n">params</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">patient_ids</span><span class="p">)</span>
+<a id="__codelineno-0-776" name="__codelineno-0-776"></a>
+<a id="__codelineno-0-777" name="__codelineno-0-777"></a>            <span class="k">if</span> <span class="n">instance_uids</span><span class="p">:</span>
+<a id="__codelineno-0-778" name="__codelineno-0-778"></a>                <span class="n">placeholders</span> <span class="o">=</span> <span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;?&quot;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">instance_uids</span><span class="p">)</span>
+<a id="__codelineno-0-779" name="__codelineno-0-779"></a>                <span class="n">conditions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;i.sop_instance_uid IN (</span><span class="si">{</span><span class="n">placeholders</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-780" name="__codelineno-0-780"></a>                <span class="n">params</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">instance_uids</span><span class="p">)</span>
+<a id="__codelineno-0-781" name="__codelineno-0-781"></a>
+<a id="__codelineno-0-782" name="__codelineno-0-782"></a>            <span class="k">if</span> <span class="n">conditions</span><span class="p">:</span>
+<a id="__codelineno-0-783" name="__codelineno-0-783"></a>                <span class="n">query</span> <span class="o">+=</span> <span class="s2">&quot; WHERE &quot;</span> <span class="o">+</span> <span class="s2">&quot; AND &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">conditions</span><span class="p">)</span>
 <a id="__codelineno-0-784" name="__codelineno-0-784"></a>
-<a id="__codelineno-0-785" name="__codelineno-0-785"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">update_attributes</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">instances</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Patient</span><span class="p">]):</span>
-<a id="__codelineno-0-786" name="__codelineno-0-786"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
-<a id="__codelineno-0-787" name="__codelineno-0-787"></a><span class="sd">        Efficiently updates the attributes_json for a list of instances.</span>
-<a id="__codelineno-0-788" name="__codelineno-0-788"></a><span class="sd">        &quot;&quot;&quot;</span>
-<a id="__codelineno-0-789" name="__codelineno-0-789"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">instances</span><span class="p">:</span>
-<a id="__codelineno-0-790" name="__codelineno-0-790"></a>            <span class="k">return</span>
-<a id="__codelineno-0-791" name="__codelineno-0-791"></a>
-<a id="__codelineno-0-792" name="__codelineno-0-792"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Updating attributes for </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">instances</span><span class="p">)</span><span class="si">}</span><span class="s2"> instances...&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-793" name="__codelineno-0-793"></a>        <span class="k">try</span><span class="p">:</span>
-<a id="__codelineno-0-794" name="__codelineno-0-794"></a>            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_connection</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
-<a id="__codelineno-0-795" name="__codelineno-0-795"></a>                <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
-<a id="__codelineno-0-796" name="__codelineno-0-796"></a>
-<a id="__codelineno-0-797" name="__codelineno-0-797"></a>                <span class="c1"># Pre-calculate data for executemany</span>
-<a id="__codelineno-0-798" name="__codelineno-0-798"></a>                <span class="n">data</span> <span class="o">=</span> <span class="p">[]</span>
-<a id="__codelineno-0-799" name="__codelineno-0-799"></a>                <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">instances</span><span class="p">:</span>
-<a id="__codelineno-0-800" name="__codelineno-0-800"></a>                    <span class="c1"># Serialize attributes AND sequences</span>
-<a id="__codelineno-0-801" name="__codelineno-0-801"></a>                    <span class="n">full_data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_serialize_item</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
-<a id="__codelineno-0-802" name="__codelineno-0-802"></a>                    <span class="n">attrs_json</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">full_data</span><span class="p">,</span> <span class="bp">cls</span><span class="o">=</span><span class="n">GantryJSONEncoder</span><span class="p">)</span>
-<a id="__codelineno-0-803" name="__codelineno-0-803"></a>                    <span class="n">data</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">attrs_json</span><span class="p">,</span> <span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="p">))</span>
-<a id="__codelineno-0-804" name="__codelineno-0-804"></a>
-<a id="__codelineno-0-805" name="__codelineno-0-805"></a>                <span class="n">cur</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
-<a id="__codelineno-0-806" name="__codelineno-0-806"></a><span class="s2">                    UPDATE instances </span>
-<a id="__codelineno-0-807" name="__codelineno-0-807"></a><span class="s2">                    SET attributes_json = ? </span>
-<a id="__codelineno-0-808" name="__codelineno-0-808"></a><span class="s2">                    WHERE sop_instance_uid = ?</span>
-<a id="__codelineno-0-809" name="__codelineno-0-809"></a><span class="s2">                &quot;&quot;&quot;</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
-<a id="__codelineno-0-810" name="__codelineno-0-810"></a>
-<a id="__codelineno-0-811" name="__codelineno-0-811"></a>                <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
-<a id="__codelineno-0-812" name="__codelineno-0-812"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Update complete.&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-813" name="__codelineno-0-813"></a>
-<a id="__codelineno-0-814" name="__codelineno-0-814"></a>        <span class="k">except</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Error</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-<a id="__codelineno-0-815" name="__codelineno-0-815"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to update attributes: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-816" name="__codelineno-0-816"></a>
-<a id="__codelineno-0-817" name="__codelineno-0-817"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">save_findings</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">findings</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">PhiFinding</span><span class="p">]):</span>
-<a id="__codelineno-0-818" name="__codelineno-0-818"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Persists PHI findings to the database.&quot;&quot;&quot;</span>
-<a id="__codelineno-0-819" name="__codelineno-0-819"></a>        <span class="n">timestamp</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+<a id="__codelineno-0-785" name="__codelineno-0-785"></a>            <span class="c1"># Execute generator</span>
+<a id="__codelineno-0-786" name="__codelineno-0-786"></a>            <span class="n">cursor</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+<a id="__codelineno-0-787" name="__codelineno-0-787"></a>
+<a id="__codelineno-0-788" name="__codelineno-0-788"></a>            <span class="c1"># We can map columns to names</span>
+<a id="__codelineno-0-789" name="__codelineno-0-789"></a>            <span class="n">cols</span> <span class="o">=</span> <span class="p">[</span><span class="n">desc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">desc</span> <span class="ow">in</span> <span class="n">cursor</span><span class="o">.</span><span class="n">description</span><span class="p">]</span>
+<a id="__codelineno-0-790" name="__codelineno-0-790"></a>
+<a id="__codelineno-0-791" name="__codelineno-0-791"></a>            <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">cursor</span><span class="p">:</span>
+<a id="__codelineno-0-792" name="__codelineno-0-792"></a>                <span class="k">yield</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">cols</span><span class="p">,</span> <span class="n">row</span><span class="p">))</span>
+<a id="__codelineno-0-793" name="__codelineno-0-793"></a>
+<a id="__codelineno-0-794" name="__codelineno-0-794"></a>
+<a id="__codelineno-0-795" name="__codelineno-0-795"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">update_attributes</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">instances</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Patient</span><span class="p">]):</span>
+<a id="__codelineno-0-796" name="__codelineno-0-796"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<a id="__codelineno-0-797" name="__codelineno-0-797"></a><span class="sd">        Efficiently updates the attributes_json for a list of instances.</span>
+<a id="__codelineno-0-798" name="__codelineno-0-798"></a><span class="sd">        &quot;&quot;&quot;</span>
+<a id="__codelineno-0-799" name="__codelineno-0-799"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">instances</span><span class="p">:</span>
+<a id="__codelineno-0-800" name="__codelineno-0-800"></a>            <span class="k">return</span>
+<a id="__codelineno-0-801" name="__codelineno-0-801"></a>
+<a id="__codelineno-0-802" name="__codelineno-0-802"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Updating attributes for </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">instances</span><span class="p">)</span><span class="si">}</span><span class="s2"> instances...&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-803" name="__codelineno-0-803"></a>        <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-0-804" name="__codelineno-0-804"></a>            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_connection</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
+<a id="__codelineno-0-805" name="__codelineno-0-805"></a>                <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+<a id="__codelineno-0-806" name="__codelineno-0-806"></a>
+<a id="__codelineno-0-807" name="__codelineno-0-807"></a>                <span class="c1"># Pre-calculate data for executemany</span>
+<a id="__codelineno-0-808" name="__codelineno-0-808"></a>                <span class="n">data</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-0-809" name="__codelineno-0-809"></a>                <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">instances</span><span class="p">:</span>
+<a id="__codelineno-0-810" name="__codelineno-0-810"></a>                    <span class="c1"># Serialize attributes AND sequences</span>
+<a id="__codelineno-0-811" name="__codelineno-0-811"></a>                    <span class="n">full_data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_serialize_item</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
+<a id="__codelineno-0-812" name="__codelineno-0-812"></a>                    <span class="n">attrs_json</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">full_data</span><span class="p">,</span> <span class="bp">cls</span><span class="o">=</span><span class="n">GantryJSONEncoder</span><span class="p">)</span>
+<a id="__codelineno-0-813" name="__codelineno-0-813"></a>                    <span class="n">data</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">attrs_json</span><span class="p">,</span> <span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="p">))</span>
+<a id="__codelineno-0-814" name="__codelineno-0-814"></a>
+<a id="__codelineno-0-815" name="__codelineno-0-815"></a>                <span class="n">cur</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<a id="__codelineno-0-816" name="__codelineno-0-816"></a><span class="s2">                    UPDATE instances </span>
+<a id="__codelineno-0-817" name="__codelineno-0-817"></a><span class="s2">                    SET attributes_json = ? </span>
+<a id="__codelineno-0-818" name="__codelineno-0-818"></a><span class="s2">                    WHERE sop_instance_uid = ?</span>
+<a id="__codelineno-0-819" name="__codelineno-0-819"></a><span class="s2">                &quot;&quot;&quot;</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
 <a id="__codelineno-0-820" name="__codelineno-0-820"></a>
-<a id="__codelineno-0-821" name="__codelineno-0-821"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">findings</span><span class="p">:</span>
-<a id="__codelineno-0-822" name="__codelineno-0-822"></a>            <span class="k">return</span>
+<a id="__codelineno-0-821" name="__codelineno-0-821"></a>                <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+<a id="__codelineno-0-822" name="__codelineno-0-822"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Update complete.&quot;</span><span class="p">)</span>
 <a id="__codelineno-0-823" name="__codelineno-0-823"></a>
-<a id="__codelineno-0-824" name="__codelineno-0-824"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Saving </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">findings</span><span class="p">)</span><span class="si">}</span><span class="s2"> PHI findings...&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-825" name="__codelineno-0-825"></a>
-<a id="__codelineno-0-826" name="__codelineno-0-826"></a>        <span class="k">try</span><span class="p">:</span>
-<a id="__codelineno-0-827" name="__codelineno-0-827"></a>            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_connection</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
-<a id="__codelineno-0-828" name="__codelineno-0-828"></a>                <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
-<a id="__codelineno-0-829" name="__codelineno-0-829"></a>
-<a id="__codelineno-0-830" name="__codelineno-0-830"></a>                <span class="c1"># Prepare Data Generator for Batch Insert (Memory Efficient)</span>
-<a id="__codelineno-0-831" name="__codelineno-0-831"></a>                <span class="k">def</span><span class="w"> </span><span class="nf">findings_generator</span><span class="p">():</span>
-<a id="__codelineno-0-832" name="__codelineno-0-832"></a>                    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">findings</span><span class="p">:</span>
-<a id="__codelineno-0-833" name="__codelineno-0-833"></a>                        <span class="n">rem_action</span> <span class="o">=</span> <span class="kc">None</span>
-<a id="__codelineno-0-834" name="__codelineno-0-834"></a>                        <span class="n">rem_value</span> <span class="o">=</span> <span class="kc">None</span>
-<a id="__codelineno-0-835" name="__codelineno-0-835"></a>                        <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">remediation_proposal</span><span class="p">:</span>
-<a id="__codelineno-0-836" name="__codelineno-0-836"></a>                            <span class="n">rem_action</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">remediation_proposal</span><span class="o">.</span><span class="n">action_type</span>
-<a id="__codelineno-0-837" name="__codelineno-0-837"></a>                            <span class="n">rem_value</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">remediation_proposal</span><span class="o">.</span><span class="n">new_value</span><span class="p">)</span>
-<a id="__codelineno-0-838" name="__codelineno-0-838"></a>
-<a id="__codelineno-0-839" name="__codelineno-0-839"></a>                        <span class="k">yield</span> <span class="p">(</span>
-<a id="__codelineno-0-840" name="__codelineno-0-840"></a>                            <span class="n">timestamp</span><span class="p">,</span> 
-<a id="__codelineno-0-841" name="__codelineno-0-841"></a>                            <span class="n">f</span><span class="o">.</span><span class="n">entity_uid</span><span class="p">,</span> 
-<a id="__codelineno-0-842" name="__codelineno-0-842"></a>                            <span class="n">f</span><span class="o">.</span><span class="n">entity_type</span><span class="p">,</span> 
-<a id="__codelineno-0-843" name="__codelineno-0-843"></a>                            <span class="n">f</span><span class="o">.</span><span class="n">field_name</span><span class="p">,</span> 
-<a id="__codelineno-0-844" name="__codelineno-0-844"></a>                            <span class="nb">str</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">value</span><span class="p">),</span> 
-<a id="__codelineno-0-845" name="__codelineno-0-845"></a>                            <span class="n">f</span><span class="o">.</span><span class="n">reason</span><span class="p">,</span> 
-<a id="__codelineno-0-846" name="__codelineno-0-846"></a>                            <span class="n">f</span><span class="o">.</span><span class="n">patient_id</span><span class="p">,</span> 
-<a id="__codelineno-0-847" name="__codelineno-0-847"></a>                            <span class="n">rem_action</span><span class="p">,</span> 
-<a id="__codelineno-0-848" name="__codelineno-0-848"></a>                            <span class="n">rem_value</span><span class="p">,</span> 
-<a id="__codelineno-0-849" name="__codelineno-0-849"></a>                            <span class="s2">&quot;</span><span class="si">{}</span><span class="s2">&quot;</span>
-<a id="__codelineno-0-850" name="__codelineno-0-850"></a>                        <span class="p">)</span>
-<a id="__codelineno-0-851" name="__codelineno-0-851"></a>
-<a id="__codelineno-0-852" name="__codelineno-0-852"></a>                <span class="n">cur</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
-<a id="__codelineno-0-853" name="__codelineno-0-853"></a><span class="s2">                    INSERT INTO phi_findings </span>
-<a id="__codelineno-0-854" name="__codelineno-0-854"></a><span class="s2">                    (timestamp, entity_uid, entity_type, field_name, value, reason, patient_id, remediation_action, remediation_value, details_json) </span>
-<a id="__codelineno-0-855" name="__codelineno-0-855"></a><span class="s2">                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)</span>
-<a id="__codelineno-0-856" name="__codelineno-0-856"></a><span class="s2">                &quot;&quot;&quot;</span><span class="p">,</span> <span class="n">findings_generator</span><span class="p">())</span>
-<a id="__codelineno-0-857" name="__codelineno-0-857"></a>
-<a id="__codelineno-0-858" name="__codelineno-0-858"></a>                <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
-<a id="__codelineno-0-859" name="__codelineno-0-859"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Findings saved.&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-860" name="__codelineno-0-860"></a>
-<a id="__codelineno-0-861" name="__codelineno-0-861"></a>        <span class="k">except</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Error</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-<a id="__codelineno-0-862" name="__codelineno-0-862"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to save findings: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-863" name="__codelineno-0-863"></a>
-<a id="__codelineno-0-864" name="__codelineno-0-864"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">load_findings</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">PhiFinding</span><span class="p">]:</span>
-<a id="__codelineno-0-865" name="__codelineno-0-865"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Loads all findings from the database.&quot;&quot;&quot;</span>
-<a id="__codelineno-0-866" name="__codelineno-0-866"></a>        <span class="n">findings</span> <span class="o">=</span> <span class="p">[]</span>
-<a id="__codelineno-0-867" name="__codelineno-0-867"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">db_path</span> <span class="o">!=</span> <span class="s2">&quot;:memory:&quot;</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">db_path</span><span class="p">):</span>
-<a id="__codelineno-0-868" name="__codelineno-0-868"></a>            <span class="k">return</span> <span class="n">findings</span>
-<a id="__codelineno-0-869" name="__codelineno-0-869"></a>
-<a id="__codelineno-0-870" name="__codelineno-0-870"></a>        <span class="k">try</span><span class="p">:</span>
-<a id="__codelineno-0-871" name="__codelineno-0-871"></a>             <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_connection</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
-<a id="__codelineno-0-872" name="__codelineno-0-872"></a>                <span class="c1"># conn.row_factory = sqlite3.Row</span>
-<a id="__codelineno-0-873" name="__codelineno-0-873"></a>                <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
-<a id="__codelineno-0-874" name="__codelineno-0-874"></a>                <span class="c1"># Check if table exists (backward compatibility for old DBs if init didnt run on them)</span>
-<a id="__codelineno-0-875" name="__codelineno-0-875"></a>                <span class="c1"># But _init_db runs on __init__, so schema should be there.</span>
-<a id="__codelineno-0-876" name="__codelineno-0-876"></a>
-<a id="__codelineno-0-877" name="__codelineno-0-877"></a>                <span class="n">rows</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT * FROM phi_findings ORDER BY id&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
-<a id="__codelineno-0-878" name="__codelineno-0-878"></a>
-<a id="__codelineno-0-879" name="__codelineno-0-879"></a>                <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">:</span>
-<a id="__codelineno-0-880" name="__codelineno-0-880"></a>                    <span class="k">if</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;remediation_action&#39;</span><span class="p">]:</span>
-<a id="__codelineno-0-881" name="__codelineno-0-881"></a>                        <span class="n">prop</span> <span class="o">=</span> <span class="n">PhiRemediation</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;remediation_action&#39;</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;field_name&#39;</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;remediation_value&#39;</span><span class="p">],</span> <span class="kc">None</span><span class="p">)</span> 
-<a id="__codelineno-0-882" name="__codelineno-0-882"></a>                    <span class="k">else</span><span class="p">:</span> 
-<a id="__codelineno-0-883" name="__codelineno-0-883"></a>                        <span class="n">prop</span> <span class="o">=</span> <span class="kc">None</span>
-<a id="__codelineno-0-884" name="__codelineno-0-884"></a>
-<a id="__codelineno-0-885" name="__codelineno-0-885"></a>                    <span class="n">f</span> <span class="o">=</span> <span class="n">PhiFinding</span><span class="p">(</span>
-<a id="__codelineno-0-886" name="__codelineno-0-886"></a>                        <span class="n">entity_uid</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;entity_uid&#39;</span><span class="p">],</span>
-<a id="__codelineno-0-887" name="__codelineno-0-887"></a>                        <span class="n">entity_type</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;entity_type&#39;</span><span class="p">],</span>
-<a id="__codelineno-0-888" name="__codelineno-0-888"></a>                        <span class="n">field_name</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;field_name&#39;</span><span class="p">],</span>
-<a id="__codelineno-0-889" name="__codelineno-0-889"></a>                        <span class="n">value</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;value&#39;</span><span class="p">],</span>
-<a id="__codelineno-0-890" name="__codelineno-0-890"></a>                        <span class="n">reason</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;reason&#39;</span><span class="p">],</span>
-<a id="__codelineno-0-891" name="__codelineno-0-891"></a>                        <span class="n">patient_id</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;patient_id&#39;</span><span class="p">],</span>
-<a id="__codelineno-0-892" name="__codelineno-0-892"></a>                        <span class="n">remediation_proposal</span><span class="o">=</span><span class="n">prop</span>
-<a id="__codelineno-0-893" name="__codelineno-0-893"></a>                    <span class="p">)</span>
-<a id="__codelineno-0-894" name="__codelineno-0-894"></a>                    <span class="n">findings</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
-<a id="__codelineno-0-895" name="__codelineno-0-895"></a>
-<a id="__codelineno-0-896" name="__codelineno-0-896"></a>        <span class="k">except</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Error</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-<a id="__codelineno-0-897" name="__codelineno-0-897"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to load findings: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-898" name="__codelineno-0-898"></a>
-<a id="__codelineno-0-899" name="__codelineno-0-899"></a>        <span class="k">return</span> <span class="n">findings</span>
+<a id="__codelineno-0-824" name="__codelineno-0-824"></a>        <span class="k">except</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Error</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+<a id="__codelineno-0-825" name="__codelineno-0-825"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to update attributes: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-826" name="__codelineno-0-826"></a>
+<a id="__codelineno-0-827" name="__codelineno-0-827"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">save_findings</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">findings</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">PhiFinding</span><span class="p">]):</span>
+<a id="__codelineno-0-828" name="__codelineno-0-828"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Persists PHI findings to the database.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-829" name="__codelineno-0-829"></a>        <span class="n">timestamp</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+<a id="__codelineno-0-830" name="__codelineno-0-830"></a>
+<a id="__codelineno-0-831" name="__codelineno-0-831"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">findings</span><span class="p">:</span>
+<a id="__codelineno-0-832" name="__codelineno-0-832"></a>            <span class="k">return</span>
+<a id="__codelineno-0-833" name="__codelineno-0-833"></a>
+<a id="__codelineno-0-834" name="__codelineno-0-834"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Saving </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">findings</span><span class="p">)</span><span class="si">}</span><span class="s2"> PHI findings...&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-835" name="__codelineno-0-835"></a>
+<a id="__codelineno-0-836" name="__codelineno-0-836"></a>        <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-0-837" name="__codelineno-0-837"></a>            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_connection</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
+<a id="__codelineno-0-838" name="__codelineno-0-838"></a>                <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+<a id="__codelineno-0-839" name="__codelineno-0-839"></a>
+<a id="__codelineno-0-840" name="__codelineno-0-840"></a>                <span class="c1"># Prepare Data Generator for Batch Insert (Memory Efficient)</span>
+<a id="__codelineno-0-841" name="__codelineno-0-841"></a>                <span class="k">def</span><span class="w"> </span><span class="nf">findings_generator</span><span class="p">():</span>
+<a id="__codelineno-0-842" name="__codelineno-0-842"></a>                    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">findings</span><span class="p">:</span>
+<a id="__codelineno-0-843" name="__codelineno-0-843"></a>                        <span class="n">rem_action</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-0-844" name="__codelineno-0-844"></a>                        <span class="n">rem_value</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-0-845" name="__codelineno-0-845"></a>                        <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">remediation_proposal</span><span class="p">:</span>
+<a id="__codelineno-0-846" name="__codelineno-0-846"></a>                            <span class="n">rem_action</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">remediation_proposal</span><span class="o">.</span><span class="n">action_type</span>
+<a id="__codelineno-0-847" name="__codelineno-0-847"></a>                            <span class="n">rem_value</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">remediation_proposal</span><span class="o">.</span><span class="n">new_value</span><span class="p">)</span>
+<a id="__codelineno-0-848" name="__codelineno-0-848"></a>
+<a id="__codelineno-0-849" name="__codelineno-0-849"></a>                        <span class="k">yield</span> <span class="p">(</span>
+<a id="__codelineno-0-850" name="__codelineno-0-850"></a>                            <span class="n">timestamp</span><span class="p">,</span> 
+<a id="__codelineno-0-851" name="__codelineno-0-851"></a>                            <span class="n">f</span><span class="o">.</span><span class="n">entity_uid</span><span class="p">,</span> 
+<a id="__codelineno-0-852" name="__codelineno-0-852"></a>                            <span class="n">f</span><span class="o">.</span><span class="n">entity_type</span><span class="p">,</span> 
+<a id="__codelineno-0-853" name="__codelineno-0-853"></a>                            <span class="n">f</span><span class="o">.</span><span class="n">field_name</span><span class="p">,</span> 
+<a id="__codelineno-0-854" name="__codelineno-0-854"></a>                            <span class="nb">str</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">value</span><span class="p">),</span> 
+<a id="__codelineno-0-855" name="__codelineno-0-855"></a>                            <span class="n">f</span><span class="o">.</span><span class="n">reason</span><span class="p">,</span> 
+<a id="__codelineno-0-856" name="__codelineno-0-856"></a>                            <span class="n">f</span><span class="o">.</span><span class="n">patient_id</span><span class="p">,</span> 
+<a id="__codelineno-0-857" name="__codelineno-0-857"></a>                            <span class="n">rem_action</span><span class="p">,</span> 
+<a id="__codelineno-0-858" name="__codelineno-0-858"></a>                            <span class="n">rem_value</span><span class="p">,</span> 
+<a id="__codelineno-0-859" name="__codelineno-0-859"></a>                            <span class="s2">&quot;</span><span class="si">{}</span><span class="s2">&quot;</span>
+<a id="__codelineno-0-860" name="__codelineno-0-860"></a>                        <span class="p">)</span>
+<a id="__codelineno-0-861" name="__codelineno-0-861"></a>
+<a id="__codelineno-0-862" name="__codelineno-0-862"></a>                <span class="n">cur</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<a id="__codelineno-0-863" name="__codelineno-0-863"></a><span class="s2">                    INSERT INTO phi_findings </span>
+<a id="__codelineno-0-864" name="__codelineno-0-864"></a><span class="s2">                    (timestamp, entity_uid, entity_type, field_name, value, reason, patient_id, remediation_action, remediation_value, details_json) </span>
+<a id="__codelineno-0-865" name="__codelineno-0-865"></a><span class="s2">                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)</span>
+<a id="__codelineno-0-866" name="__codelineno-0-866"></a><span class="s2">                &quot;&quot;&quot;</span><span class="p">,</span> <span class="n">findings_generator</span><span class="p">())</span>
+<a id="__codelineno-0-867" name="__codelineno-0-867"></a>
+<a id="__codelineno-0-868" name="__codelineno-0-868"></a>                <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+<a id="__codelineno-0-869" name="__codelineno-0-869"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Findings saved.&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-870" name="__codelineno-0-870"></a>
+<a id="__codelineno-0-871" name="__codelineno-0-871"></a>        <span class="k">except</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Error</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+<a id="__codelineno-0-872" name="__codelineno-0-872"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to save findings: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-873" name="__codelineno-0-873"></a>
+<a id="__codelineno-0-874" name="__codelineno-0-874"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">load_findings</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">PhiFinding</span><span class="p">]:</span>
+<a id="__codelineno-0-875" name="__codelineno-0-875"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Loads all findings from the database.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-876" name="__codelineno-0-876"></a>        <span class="n">findings</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-0-877" name="__codelineno-0-877"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">db_path</span> <span class="o">!=</span> <span class="s2">&quot;:memory:&quot;</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">db_path</span><span class="p">):</span>
+<a id="__codelineno-0-878" name="__codelineno-0-878"></a>            <span class="k">return</span> <span class="n">findings</span>
+<a id="__codelineno-0-879" name="__codelineno-0-879"></a>
+<a id="__codelineno-0-880" name="__codelineno-0-880"></a>        <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-0-881" name="__codelineno-0-881"></a>             <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_connection</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
+<a id="__codelineno-0-882" name="__codelineno-0-882"></a>                <span class="c1"># conn.row_factory = sqlite3.Row</span>
+<a id="__codelineno-0-883" name="__codelineno-0-883"></a>                <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+<a id="__codelineno-0-884" name="__codelineno-0-884"></a>                <span class="c1"># Check if table exists (backward compatibility for old DBs if init didnt run on them)</span>
+<a id="__codelineno-0-885" name="__codelineno-0-885"></a>                <span class="c1"># But _init_db runs on __init__, so schema should be there.</span>
+<a id="__codelineno-0-886" name="__codelineno-0-886"></a>
+<a id="__codelineno-0-887" name="__codelineno-0-887"></a>                <span class="n">rows</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT * FROM phi_findings ORDER BY id&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+<a id="__codelineno-0-888" name="__codelineno-0-888"></a>
+<a id="__codelineno-0-889" name="__codelineno-0-889"></a>                <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">:</span>
+<a id="__codelineno-0-890" name="__codelineno-0-890"></a>                    <span class="k">if</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;remediation_action&#39;</span><span class="p">]:</span>
+<a id="__codelineno-0-891" name="__codelineno-0-891"></a>                        <span class="n">prop</span> <span class="o">=</span> <span class="n">PhiRemediation</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;remediation_action&#39;</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;field_name&#39;</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;remediation_value&#39;</span><span class="p">],</span> <span class="kc">None</span><span class="p">)</span> 
+<a id="__codelineno-0-892" name="__codelineno-0-892"></a>                    <span class="k">else</span><span class="p">:</span> 
+<a id="__codelineno-0-893" name="__codelineno-0-893"></a>                        <span class="n">prop</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-0-894" name="__codelineno-0-894"></a>
+<a id="__codelineno-0-895" name="__codelineno-0-895"></a>                    <span class="n">f</span> <span class="o">=</span> <span class="n">PhiFinding</span><span class="p">(</span>
+<a id="__codelineno-0-896" name="__codelineno-0-896"></a>                        <span class="n">entity_uid</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;entity_uid&#39;</span><span class="p">],</span>
+<a id="__codelineno-0-897" name="__codelineno-0-897"></a>                        <span class="n">entity_type</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;entity_type&#39;</span><span class="p">],</span>
+<a id="__codelineno-0-898" name="__codelineno-0-898"></a>                        <span class="n">field_name</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;field_name&#39;</span><span class="p">],</span>
+<a id="__codelineno-0-899" name="__codelineno-0-899"></a>                        <span class="n">value</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;value&#39;</span><span class="p">],</span>
+<a id="__codelineno-0-900" name="__codelineno-0-900"></a>                        <span class="n">reason</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;reason&#39;</span><span class="p">],</span>
+<a id="__codelineno-0-901" name="__codelineno-0-901"></a>                        <span class="n">patient_id</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;patient_id&#39;</span><span class="p">],</span>
+<a id="__codelineno-0-902" name="__codelineno-0-902"></a>                        <span class="n">remediation_proposal</span><span class="o">=</span><span class="n">prop</span>
+<a id="__codelineno-0-903" name="__codelineno-0-903"></a>                    <span class="p">)</span>
+<a id="__codelineno-0-904" name="__codelineno-0-904"></a>                    <span class="n">findings</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+<a id="__codelineno-0-905" name="__codelineno-0-905"></a>
+<a id="__codelineno-0-906" name="__codelineno-0-906"></a>        <span class="k">except</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Error</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+<a id="__codelineno-0-907" name="__codelineno-0-907"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to load findings: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-908" name="__codelineno-0-908"></a>
+<a id="__codelineno-0-909" name="__codelineno-0-909"></a>        <span class="k">return</span> <span class="n">findings</span>
 </code></pre></div></td></tr></table></div>
               </details>
 
@@ -3288,14 +3308,14 @@ Also manages the Audit Log.</p>
 
 
 <h4 id="gantry.persistence.SqliteStore.get_flattened_instances" class="doc doc-heading">
-            <code class="highlight language-python"><span class="n">get_flattened_instances</span><span class="p">(</span><span class="n">patient_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
+            <code class="highlight language-python"><span class="n">get_flattened_instances</span><span class="p">(</span><span class="n">patient_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">instance_uids</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
 
 </h4>
 
 
     <div class="doc doc-contents ">
 
-        <p>Yields a flat dictionary for every instance in the DB (or filtered by patient_ids).
+        <p>Yields a flat dictionary for every instance in the DB (or filtered by patient_ids/instance_uids).
 Ideal for streaming exports or analysis without loading the entire graph into RAM.</p>
 
 
@@ -3337,9 +3357,19 @@ Ideal for streaming exports or analysis without loading the entire graph into RA
 <span class="normal"><a href="#__codelineno-0-779">779</a></span>
 <span class="normal"><a href="#__codelineno-0-780">780</a></span>
 <span class="normal"><a href="#__codelineno-0-781">781</a></span>
-<span class="normal"><a href="#__codelineno-0-782">782</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-746" name="__codelineno-0-746"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_flattened_instances</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patient_ids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+<span class="normal"><a href="#__codelineno-0-782">782</a></span>
+<span class="normal"><a href="#__codelineno-0-783">783</a></span>
+<span class="normal"><a href="#__codelineno-0-784">784</a></span>
+<span class="normal"><a href="#__codelineno-0-785">785</a></span>
+<span class="normal"><a href="#__codelineno-0-786">786</a></span>
+<span class="normal"><a href="#__codelineno-0-787">787</a></span>
+<span class="normal"><a href="#__codelineno-0-788">788</a></span>
+<span class="normal"><a href="#__codelineno-0-789">789</a></span>
+<span class="normal"><a href="#__codelineno-0-790">790</a></span>
+<span class="normal"><a href="#__codelineno-0-791">791</a></span>
+<span class="normal"><a href="#__codelineno-0-792">792</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-746" name="__codelineno-0-746"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_flattened_instances</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">patient_ids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">instance_uids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
 <a id="__codelineno-0-747" name="__codelineno-0-747"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<a id="__codelineno-0-748" name="__codelineno-0-748"></a><span class="sd">    Yields a flat dictionary for every instance in the DB (or filtered by patient_ids).</span>
+<a id="__codelineno-0-748" name="__codelineno-0-748"></a><span class="sd">    Yields a flat dictionary for every instance in the DB (or filtered by patient_ids/instance_uids).</span>
 <a id="__codelineno-0-749" name="__codelineno-0-749"></a><span class="sd">    Ideal for streaming exports or analysis without loading the entire graph into RAM.</span>
 <a id="__codelineno-0-750" name="__codelineno-0-750"></a><span class="sd">    &quot;&quot;&quot;</span>
 <a id="__codelineno-0-751" name="__codelineno-0-751"></a>    <span class="c1"># We use a managed connection that stays open during iteration</span>
@@ -3360,20 +3390,30 @@ Ideal for streaming exports or analysis without loading the entire graph into RA
 <a id="__codelineno-0-766" name="__codelineno-0-766"></a><span class="s2">            JOIN patients p ON st.patient_id_fk = p.id</span>
 <a id="__codelineno-0-767" name="__codelineno-0-767"></a><span class="s2">        &quot;&quot;&quot;</span>
 <a id="__codelineno-0-768" name="__codelineno-0-768"></a>
-<a id="__codelineno-0-769" name="__codelineno-0-769"></a>        <span class="n">params</span> <span class="o">=</span> <span class="p">[]</span>
-<a id="__codelineno-0-770" name="__codelineno-0-770"></a>        <span class="k">if</span> <span class="n">patient_ids</span><span class="p">:</span>
-<a id="__codelineno-0-771" name="__codelineno-0-771"></a>            <span class="n">placeholders</span> <span class="o">=</span> <span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;?&quot;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">patient_ids</span><span class="p">)</span>
-<a id="__codelineno-0-772" name="__codelineno-0-772"></a>            <span class="n">query</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">&quot; WHERE p.patient_id IN (</span><span class="si">{</span><span class="n">placeholders</span><span class="si">}</span><span class="s2">)&quot;</span>
-<a id="__codelineno-0-773" name="__codelineno-0-773"></a>            <span class="n">params</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">patient_ids</span><span class="p">)</span>
-<a id="__codelineno-0-774" name="__codelineno-0-774"></a>
-<a id="__codelineno-0-775" name="__codelineno-0-775"></a>        <span class="c1"># Execute generator</span>
-<a id="__codelineno-0-776" name="__codelineno-0-776"></a>        <span class="n">cursor</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
-<a id="__codelineno-0-777" name="__codelineno-0-777"></a>
-<a id="__codelineno-0-778" name="__codelineno-0-778"></a>        <span class="c1"># We can map columns to names</span>
-<a id="__codelineno-0-779" name="__codelineno-0-779"></a>        <span class="n">cols</span> <span class="o">=</span> <span class="p">[</span><span class="n">desc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">desc</span> <span class="ow">in</span> <span class="n">cursor</span><span class="o">.</span><span class="n">description</span><span class="p">]</span>
-<a id="__codelineno-0-780" name="__codelineno-0-780"></a>
-<a id="__codelineno-0-781" name="__codelineno-0-781"></a>        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">cursor</span><span class="p">:</span>
-<a id="__codelineno-0-782" name="__codelineno-0-782"></a>            <span class="k">yield</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">cols</span><span class="p">,</span> <span class="n">row</span><span class="p">))</span>
+<a id="__codelineno-0-769" name="__codelineno-0-769"></a>        <span class="n">conditions</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-0-770" name="__codelineno-0-770"></a>        <span class="n">params</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-0-771" name="__codelineno-0-771"></a>
+<a id="__codelineno-0-772" name="__codelineno-0-772"></a>        <span class="k">if</span> <span class="n">patient_ids</span><span class="p">:</span>
+<a id="__codelineno-0-773" name="__codelineno-0-773"></a>            <span class="n">placeholders</span> <span class="o">=</span> <span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;?&quot;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">patient_ids</span><span class="p">)</span>
+<a id="__codelineno-0-774" name="__codelineno-0-774"></a>            <span class="n">conditions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;p.patient_id IN (</span><span class="si">{</span><span class="n">placeholders</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-775" name="__codelineno-0-775"></a>            <span class="n">params</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">patient_ids</span><span class="p">)</span>
+<a id="__codelineno-0-776" name="__codelineno-0-776"></a>
+<a id="__codelineno-0-777" name="__codelineno-0-777"></a>        <span class="k">if</span> <span class="n">instance_uids</span><span class="p">:</span>
+<a id="__codelineno-0-778" name="__codelineno-0-778"></a>            <span class="n">placeholders</span> <span class="o">=</span> <span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;?&quot;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">instance_uids</span><span class="p">)</span>
+<a id="__codelineno-0-779" name="__codelineno-0-779"></a>            <span class="n">conditions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;i.sop_instance_uid IN (</span><span class="si">{</span><span class="n">placeholders</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-780" name="__codelineno-0-780"></a>            <span class="n">params</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">instance_uids</span><span class="p">)</span>
+<a id="__codelineno-0-781" name="__codelineno-0-781"></a>
+<a id="__codelineno-0-782" name="__codelineno-0-782"></a>        <span class="k">if</span> <span class="n">conditions</span><span class="p">:</span>
+<a id="__codelineno-0-783" name="__codelineno-0-783"></a>            <span class="n">query</span> <span class="o">+=</span> <span class="s2">&quot; WHERE &quot;</span> <span class="o">+</span> <span class="s2">&quot; AND &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">conditions</span><span class="p">)</span>
+<a id="__codelineno-0-784" name="__codelineno-0-784"></a>
+<a id="__codelineno-0-785" name="__codelineno-0-785"></a>        <span class="c1"># Execute generator</span>
+<a id="__codelineno-0-786" name="__codelineno-0-786"></a>        <span class="n">cursor</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">query</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+<a id="__codelineno-0-787" name="__codelineno-0-787"></a>
+<a id="__codelineno-0-788" name="__codelineno-0-788"></a>        <span class="c1"># We can map columns to names</span>
+<a id="__codelineno-0-789" name="__codelineno-0-789"></a>        <span class="n">cols</span> <span class="o">=</span> <span class="p">[</span><span class="n">desc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">desc</span> <span class="ow">in</span> <span class="n">cursor</span><span class="o">.</span><span class="n">description</span><span class="p">]</span>
+<a id="__codelineno-0-790" name="__codelineno-0-790"></a>
+<a id="__codelineno-0-791" name="__codelineno-0-791"></a>        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">cursor</span><span class="p">:</span>
+<a id="__codelineno-0-792" name="__codelineno-0-792"></a>            <span class="k">yield</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">cols</span><span class="p">,</span> <span class="n">row</span><span class="p">))</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -3647,17 +3687,7 @@ Returns a list of Patient objects.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>gantry/persistence.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-864">864</a></span>
-<span class="normal"><a href="#__codelineno-0-865">865</a></span>
-<span class="normal"><a href="#__codelineno-0-866">866</a></span>
-<span class="normal"><a href="#__codelineno-0-867">867</a></span>
-<span class="normal"><a href="#__codelineno-0-868">868</a></span>
-<span class="normal"><a href="#__codelineno-0-869">869</a></span>
-<span class="normal"><a href="#__codelineno-0-870">870</a></span>
-<span class="normal"><a href="#__codelineno-0-871">871</a></span>
-<span class="normal"><a href="#__codelineno-0-872">872</a></span>
-<span class="normal"><a href="#__codelineno-0-873">873</a></span>
-<span class="normal"><a href="#__codelineno-0-874">874</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-874">874</a></span>
 <span class="normal"><a href="#__codelineno-0-875">875</a></span>
 <span class="normal"><a href="#__codelineno-0-876">876</a></span>
 <span class="normal"><a href="#__codelineno-0-877">877</a></span>
@@ -3682,42 +3712,52 @@ Returns a list of Patient objects.</p>
 <span class="normal"><a href="#__codelineno-0-896">896</a></span>
 <span class="normal"><a href="#__codelineno-0-897">897</a></span>
 <span class="normal"><a href="#__codelineno-0-898">898</a></span>
-<span class="normal"><a href="#__codelineno-0-899">899</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-864" name="__codelineno-0-864"></a><span class="k">def</span><span class="w"> </span><span class="nf">load_findings</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">PhiFinding</span><span class="p">]:</span>
-<a id="__codelineno-0-865" name="__codelineno-0-865"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Loads all findings from the database.&quot;&quot;&quot;</span>
-<a id="__codelineno-0-866" name="__codelineno-0-866"></a>    <span class="n">findings</span> <span class="o">=</span> <span class="p">[]</span>
-<a id="__codelineno-0-867" name="__codelineno-0-867"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">db_path</span> <span class="o">!=</span> <span class="s2">&quot;:memory:&quot;</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">db_path</span><span class="p">):</span>
-<a id="__codelineno-0-868" name="__codelineno-0-868"></a>        <span class="k">return</span> <span class="n">findings</span>
-<a id="__codelineno-0-869" name="__codelineno-0-869"></a>
-<a id="__codelineno-0-870" name="__codelineno-0-870"></a>    <span class="k">try</span><span class="p">:</span>
-<a id="__codelineno-0-871" name="__codelineno-0-871"></a>         <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_connection</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
-<a id="__codelineno-0-872" name="__codelineno-0-872"></a>            <span class="c1"># conn.row_factory = sqlite3.Row</span>
-<a id="__codelineno-0-873" name="__codelineno-0-873"></a>            <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
-<a id="__codelineno-0-874" name="__codelineno-0-874"></a>            <span class="c1"># Check if table exists (backward compatibility for old DBs if init didnt run on them)</span>
-<a id="__codelineno-0-875" name="__codelineno-0-875"></a>            <span class="c1"># But _init_db runs on __init__, so schema should be there.</span>
-<a id="__codelineno-0-876" name="__codelineno-0-876"></a>
-<a id="__codelineno-0-877" name="__codelineno-0-877"></a>            <span class="n">rows</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT * FROM phi_findings ORDER BY id&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
-<a id="__codelineno-0-878" name="__codelineno-0-878"></a>
-<a id="__codelineno-0-879" name="__codelineno-0-879"></a>            <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">:</span>
-<a id="__codelineno-0-880" name="__codelineno-0-880"></a>                <span class="k">if</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;remediation_action&#39;</span><span class="p">]:</span>
-<a id="__codelineno-0-881" name="__codelineno-0-881"></a>                    <span class="n">prop</span> <span class="o">=</span> <span class="n">PhiRemediation</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;remediation_action&#39;</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;field_name&#39;</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;remediation_value&#39;</span><span class="p">],</span> <span class="kc">None</span><span class="p">)</span> 
-<a id="__codelineno-0-882" name="__codelineno-0-882"></a>                <span class="k">else</span><span class="p">:</span> 
-<a id="__codelineno-0-883" name="__codelineno-0-883"></a>                    <span class="n">prop</span> <span class="o">=</span> <span class="kc">None</span>
-<a id="__codelineno-0-884" name="__codelineno-0-884"></a>
-<a id="__codelineno-0-885" name="__codelineno-0-885"></a>                <span class="n">f</span> <span class="o">=</span> <span class="n">PhiFinding</span><span class="p">(</span>
-<a id="__codelineno-0-886" name="__codelineno-0-886"></a>                    <span class="n">entity_uid</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;entity_uid&#39;</span><span class="p">],</span>
-<a id="__codelineno-0-887" name="__codelineno-0-887"></a>                    <span class="n">entity_type</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;entity_type&#39;</span><span class="p">],</span>
-<a id="__codelineno-0-888" name="__codelineno-0-888"></a>                    <span class="n">field_name</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;field_name&#39;</span><span class="p">],</span>
-<a id="__codelineno-0-889" name="__codelineno-0-889"></a>                    <span class="n">value</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;value&#39;</span><span class="p">],</span>
-<a id="__codelineno-0-890" name="__codelineno-0-890"></a>                    <span class="n">reason</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;reason&#39;</span><span class="p">],</span>
-<a id="__codelineno-0-891" name="__codelineno-0-891"></a>                    <span class="n">patient_id</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;patient_id&#39;</span><span class="p">],</span>
-<a id="__codelineno-0-892" name="__codelineno-0-892"></a>                    <span class="n">remediation_proposal</span><span class="o">=</span><span class="n">prop</span>
-<a id="__codelineno-0-893" name="__codelineno-0-893"></a>                <span class="p">)</span>
-<a id="__codelineno-0-894" name="__codelineno-0-894"></a>                <span class="n">findings</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
-<a id="__codelineno-0-895" name="__codelineno-0-895"></a>
-<a id="__codelineno-0-896" name="__codelineno-0-896"></a>    <span class="k">except</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Error</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-<a id="__codelineno-0-897" name="__codelineno-0-897"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to load findings: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-898" name="__codelineno-0-898"></a>
-<a id="__codelineno-0-899" name="__codelineno-0-899"></a>    <span class="k">return</span> <span class="n">findings</span>
+<span class="normal"><a href="#__codelineno-0-899">899</a></span>
+<span class="normal"><a href="#__codelineno-0-900">900</a></span>
+<span class="normal"><a href="#__codelineno-0-901">901</a></span>
+<span class="normal"><a href="#__codelineno-0-902">902</a></span>
+<span class="normal"><a href="#__codelineno-0-903">903</a></span>
+<span class="normal"><a href="#__codelineno-0-904">904</a></span>
+<span class="normal"><a href="#__codelineno-0-905">905</a></span>
+<span class="normal"><a href="#__codelineno-0-906">906</a></span>
+<span class="normal"><a href="#__codelineno-0-907">907</a></span>
+<span class="normal"><a href="#__codelineno-0-908">908</a></span>
+<span class="normal"><a href="#__codelineno-0-909">909</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-874" name="__codelineno-0-874"></a><span class="k">def</span><span class="w"> </span><span class="nf">load_findings</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">PhiFinding</span><span class="p">]:</span>
+<a id="__codelineno-0-875" name="__codelineno-0-875"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Loads all findings from the database.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-876" name="__codelineno-0-876"></a>    <span class="n">findings</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-0-877" name="__codelineno-0-877"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">db_path</span> <span class="o">!=</span> <span class="s2">&quot;:memory:&quot;</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">db_path</span><span class="p">):</span>
+<a id="__codelineno-0-878" name="__codelineno-0-878"></a>        <span class="k">return</span> <span class="n">findings</span>
+<a id="__codelineno-0-879" name="__codelineno-0-879"></a>
+<a id="__codelineno-0-880" name="__codelineno-0-880"></a>    <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-0-881" name="__codelineno-0-881"></a>         <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_connection</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
+<a id="__codelineno-0-882" name="__codelineno-0-882"></a>            <span class="c1"># conn.row_factory = sqlite3.Row</span>
+<a id="__codelineno-0-883" name="__codelineno-0-883"></a>            <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+<a id="__codelineno-0-884" name="__codelineno-0-884"></a>            <span class="c1"># Check if table exists (backward compatibility for old DBs if init didnt run on them)</span>
+<a id="__codelineno-0-885" name="__codelineno-0-885"></a>            <span class="c1"># But _init_db runs on __init__, so schema should be there.</span>
+<a id="__codelineno-0-886" name="__codelineno-0-886"></a>
+<a id="__codelineno-0-887" name="__codelineno-0-887"></a>            <span class="n">rows</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT * FROM phi_findings ORDER BY id&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+<a id="__codelineno-0-888" name="__codelineno-0-888"></a>
+<a id="__codelineno-0-889" name="__codelineno-0-889"></a>            <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">:</span>
+<a id="__codelineno-0-890" name="__codelineno-0-890"></a>                <span class="k">if</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;remediation_action&#39;</span><span class="p">]:</span>
+<a id="__codelineno-0-891" name="__codelineno-0-891"></a>                    <span class="n">prop</span> <span class="o">=</span> <span class="n">PhiRemediation</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;remediation_action&#39;</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;field_name&#39;</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;remediation_value&#39;</span><span class="p">],</span> <span class="kc">None</span><span class="p">)</span> 
+<a id="__codelineno-0-892" name="__codelineno-0-892"></a>                <span class="k">else</span><span class="p">:</span> 
+<a id="__codelineno-0-893" name="__codelineno-0-893"></a>                    <span class="n">prop</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-0-894" name="__codelineno-0-894"></a>
+<a id="__codelineno-0-895" name="__codelineno-0-895"></a>                <span class="n">f</span> <span class="o">=</span> <span class="n">PhiFinding</span><span class="p">(</span>
+<a id="__codelineno-0-896" name="__codelineno-0-896"></a>                    <span class="n">entity_uid</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;entity_uid&#39;</span><span class="p">],</span>
+<a id="__codelineno-0-897" name="__codelineno-0-897"></a>                    <span class="n">entity_type</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;entity_type&#39;</span><span class="p">],</span>
+<a id="__codelineno-0-898" name="__codelineno-0-898"></a>                    <span class="n">field_name</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;field_name&#39;</span><span class="p">],</span>
+<a id="__codelineno-0-899" name="__codelineno-0-899"></a>                    <span class="n">value</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;value&#39;</span><span class="p">],</span>
+<a id="__codelineno-0-900" name="__codelineno-0-900"></a>                    <span class="n">reason</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;reason&#39;</span><span class="p">],</span>
+<a id="__codelineno-0-901" name="__codelineno-0-901"></a>                    <span class="n">patient_id</span><span class="o">=</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;patient_id&#39;</span><span class="p">],</span>
+<a id="__codelineno-0-902" name="__codelineno-0-902"></a>                    <span class="n">remediation_proposal</span><span class="o">=</span><span class="n">prop</span>
+<a id="__codelineno-0-903" name="__codelineno-0-903"></a>                <span class="p">)</span>
+<a id="__codelineno-0-904" name="__codelineno-0-904"></a>                <span class="n">findings</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+<a id="__codelineno-0-905" name="__codelineno-0-905"></a>
+<a id="__codelineno-0-906" name="__codelineno-0-906"></a>    <span class="k">except</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Error</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+<a id="__codelineno-0-907" name="__codelineno-0-907"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to load findings: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-908" name="__codelineno-0-908"></a>
+<a id="__codelineno-0-909" name="__codelineno-0-909"></a>    <span class="k">return</span> <span class="n">findings</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -4515,17 +4555,7 @@ Strategy: UPSERT dirty items.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>gantry/persistence.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-817">817</a></span>
-<span class="normal"><a href="#__codelineno-0-818">818</a></span>
-<span class="normal"><a href="#__codelineno-0-819">819</a></span>
-<span class="normal"><a href="#__codelineno-0-820">820</a></span>
-<span class="normal"><a href="#__codelineno-0-821">821</a></span>
-<span class="normal"><a href="#__codelineno-0-822">822</a></span>
-<span class="normal"><a href="#__codelineno-0-823">823</a></span>
-<span class="normal"><a href="#__codelineno-0-824">824</a></span>
-<span class="normal"><a href="#__codelineno-0-825">825</a></span>
-<span class="normal"><a href="#__codelineno-0-826">826</a></span>
-<span class="normal"><a href="#__codelineno-0-827">827</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-827">827</a></span>
 <span class="normal"><a href="#__codelineno-0-828">828</a></span>
 <span class="normal"><a href="#__codelineno-0-829">829</a></span>
 <span class="normal"><a href="#__codelineno-0-830">830</a></span>
@@ -4560,52 +4590,62 @@ Strategy: UPSERT dirty items.</p>
 <span class="normal"><a href="#__codelineno-0-859">859</a></span>
 <span class="normal"><a href="#__codelineno-0-860">860</a></span>
 <span class="normal"><a href="#__codelineno-0-861">861</a></span>
-<span class="normal"><a href="#__codelineno-0-862">862</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-817" name="__codelineno-0-817"></a><span class="k">def</span><span class="w"> </span><span class="nf">save_findings</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">findings</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">PhiFinding</span><span class="p">]):</span>
-<a id="__codelineno-0-818" name="__codelineno-0-818"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Persists PHI findings to the database.&quot;&quot;&quot;</span>
-<a id="__codelineno-0-819" name="__codelineno-0-819"></a>    <span class="n">timestamp</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
-<a id="__codelineno-0-820" name="__codelineno-0-820"></a>
-<a id="__codelineno-0-821" name="__codelineno-0-821"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">findings</span><span class="p">:</span>
-<a id="__codelineno-0-822" name="__codelineno-0-822"></a>        <span class="k">return</span>
-<a id="__codelineno-0-823" name="__codelineno-0-823"></a>
-<a id="__codelineno-0-824" name="__codelineno-0-824"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Saving </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">findings</span><span class="p">)</span><span class="si">}</span><span class="s2"> PHI findings...&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-825" name="__codelineno-0-825"></a>
-<a id="__codelineno-0-826" name="__codelineno-0-826"></a>    <span class="k">try</span><span class="p">:</span>
-<a id="__codelineno-0-827" name="__codelineno-0-827"></a>        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_connection</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
-<a id="__codelineno-0-828" name="__codelineno-0-828"></a>            <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
-<a id="__codelineno-0-829" name="__codelineno-0-829"></a>
-<a id="__codelineno-0-830" name="__codelineno-0-830"></a>            <span class="c1"># Prepare Data Generator for Batch Insert (Memory Efficient)</span>
-<a id="__codelineno-0-831" name="__codelineno-0-831"></a>            <span class="k">def</span><span class="w"> </span><span class="nf">findings_generator</span><span class="p">():</span>
-<a id="__codelineno-0-832" name="__codelineno-0-832"></a>                <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">findings</span><span class="p">:</span>
-<a id="__codelineno-0-833" name="__codelineno-0-833"></a>                    <span class="n">rem_action</span> <span class="o">=</span> <span class="kc">None</span>
-<a id="__codelineno-0-834" name="__codelineno-0-834"></a>                    <span class="n">rem_value</span> <span class="o">=</span> <span class="kc">None</span>
-<a id="__codelineno-0-835" name="__codelineno-0-835"></a>                    <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">remediation_proposal</span><span class="p">:</span>
-<a id="__codelineno-0-836" name="__codelineno-0-836"></a>                        <span class="n">rem_action</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">remediation_proposal</span><span class="o">.</span><span class="n">action_type</span>
-<a id="__codelineno-0-837" name="__codelineno-0-837"></a>                        <span class="n">rem_value</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">remediation_proposal</span><span class="o">.</span><span class="n">new_value</span><span class="p">)</span>
-<a id="__codelineno-0-838" name="__codelineno-0-838"></a>
-<a id="__codelineno-0-839" name="__codelineno-0-839"></a>                    <span class="k">yield</span> <span class="p">(</span>
-<a id="__codelineno-0-840" name="__codelineno-0-840"></a>                        <span class="n">timestamp</span><span class="p">,</span> 
-<a id="__codelineno-0-841" name="__codelineno-0-841"></a>                        <span class="n">f</span><span class="o">.</span><span class="n">entity_uid</span><span class="p">,</span> 
-<a id="__codelineno-0-842" name="__codelineno-0-842"></a>                        <span class="n">f</span><span class="o">.</span><span class="n">entity_type</span><span class="p">,</span> 
-<a id="__codelineno-0-843" name="__codelineno-0-843"></a>                        <span class="n">f</span><span class="o">.</span><span class="n">field_name</span><span class="p">,</span> 
-<a id="__codelineno-0-844" name="__codelineno-0-844"></a>                        <span class="nb">str</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">value</span><span class="p">),</span> 
-<a id="__codelineno-0-845" name="__codelineno-0-845"></a>                        <span class="n">f</span><span class="o">.</span><span class="n">reason</span><span class="p">,</span> 
-<a id="__codelineno-0-846" name="__codelineno-0-846"></a>                        <span class="n">f</span><span class="o">.</span><span class="n">patient_id</span><span class="p">,</span> 
-<a id="__codelineno-0-847" name="__codelineno-0-847"></a>                        <span class="n">rem_action</span><span class="p">,</span> 
-<a id="__codelineno-0-848" name="__codelineno-0-848"></a>                        <span class="n">rem_value</span><span class="p">,</span> 
-<a id="__codelineno-0-849" name="__codelineno-0-849"></a>                        <span class="s2">&quot;</span><span class="si">{}</span><span class="s2">&quot;</span>
-<a id="__codelineno-0-850" name="__codelineno-0-850"></a>                    <span class="p">)</span>
-<a id="__codelineno-0-851" name="__codelineno-0-851"></a>
-<a id="__codelineno-0-852" name="__codelineno-0-852"></a>            <span class="n">cur</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
-<a id="__codelineno-0-853" name="__codelineno-0-853"></a><span class="s2">                INSERT INTO phi_findings </span>
-<a id="__codelineno-0-854" name="__codelineno-0-854"></a><span class="s2">                (timestamp, entity_uid, entity_type, field_name, value, reason, patient_id, remediation_action, remediation_value, details_json) </span>
-<a id="__codelineno-0-855" name="__codelineno-0-855"></a><span class="s2">                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)</span>
-<a id="__codelineno-0-856" name="__codelineno-0-856"></a><span class="s2">            &quot;&quot;&quot;</span><span class="p">,</span> <span class="n">findings_generator</span><span class="p">())</span>
-<a id="__codelineno-0-857" name="__codelineno-0-857"></a>
-<a id="__codelineno-0-858" name="__codelineno-0-858"></a>            <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
-<a id="__codelineno-0-859" name="__codelineno-0-859"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Findings saved.&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-860" name="__codelineno-0-860"></a>
-<a id="__codelineno-0-861" name="__codelineno-0-861"></a>    <span class="k">except</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Error</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-<a id="__codelineno-0-862" name="__codelineno-0-862"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to save findings: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-862">862</a></span>
+<span class="normal"><a href="#__codelineno-0-863">863</a></span>
+<span class="normal"><a href="#__codelineno-0-864">864</a></span>
+<span class="normal"><a href="#__codelineno-0-865">865</a></span>
+<span class="normal"><a href="#__codelineno-0-866">866</a></span>
+<span class="normal"><a href="#__codelineno-0-867">867</a></span>
+<span class="normal"><a href="#__codelineno-0-868">868</a></span>
+<span class="normal"><a href="#__codelineno-0-869">869</a></span>
+<span class="normal"><a href="#__codelineno-0-870">870</a></span>
+<span class="normal"><a href="#__codelineno-0-871">871</a></span>
+<span class="normal"><a href="#__codelineno-0-872">872</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-827" name="__codelineno-0-827"></a><span class="k">def</span><span class="w"> </span><span class="nf">save_findings</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">findings</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">PhiFinding</span><span class="p">]):</span>
+<a id="__codelineno-0-828" name="__codelineno-0-828"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Persists PHI findings to the database.&quot;&quot;&quot;</span>
+<a id="__codelineno-0-829" name="__codelineno-0-829"></a>    <span class="n">timestamp</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+<a id="__codelineno-0-830" name="__codelineno-0-830"></a>
+<a id="__codelineno-0-831" name="__codelineno-0-831"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">findings</span><span class="p">:</span>
+<a id="__codelineno-0-832" name="__codelineno-0-832"></a>        <span class="k">return</span>
+<a id="__codelineno-0-833" name="__codelineno-0-833"></a>
+<a id="__codelineno-0-834" name="__codelineno-0-834"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Saving </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">findings</span><span class="p">)</span><span class="si">}</span><span class="s2"> PHI findings...&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-835" name="__codelineno-0-835"></a>
+<a id="__codelineno-0-836" name="__codelineno-0-836"></a>    <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-0-837" name="__codelineno-0-837"></a>        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_connection</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
+<a id="__codelineno-0-838" name="__codelineno-0-838"></a>            <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+<a id="__codelineno-0-839" name="__codelineno-0-839"></a>
+<a id="__codelineno-0-840" name="__codelineno-0-840"></a>            <span class="c1"># Prepare Data Generator for Batch Insert (Memory Efficient)</span>
+<a id="__codelineno-0-841" name="__codelineno-0-841"></a>            <span class="k">def</span><span class="w"> </span><span class="nf">findings_generator</span><span class="p">():</span>
+<a id="__codelineno-0-842" name="__codelineno-0-842"></a>                <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">findings</span><span class="p">:</span>
+<a id="__codelineno-0-843" name="__codelineno-0-843"></a>                    <span class="n">rem_action</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-0-844" name="__codelineno-0-844"></a>                    <span class="n">rem_value</span> <span class="o">=</span> <span class="kc">None</span>
+<a id="__codelineno-0-845" name="__codelineno-0-845"></a>                    <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">remediation_proposal</span><span class="p">:</span>
+<a id="__codelineno-0-846" name="__codelineno-0-846"></a>                        <span class="n">rem_action</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">remediation_proposal</span><span class="o">.</span><span class="n">action_type</span>
+<a id="__codelineno-0-847" name="__codelineno-0-847"></a>                        <span class="n">rem_value</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">remediation_proposal</span><span class="o">.</span><span class="n">new_value</span><span class="p">)</span>
+<a id="__codelineno-0-848" name="__codelineno-0-848"></a>
+<a id="__codelineno-0-849" name="__codelineno-0-849"></a>                    <span class="k">yield</span> <span class="p">(</span>
+<a id="__codelineno-0-850" name="__codelineno-0-850"></a>                        <span class="n">timestamp</span><span class="p">,</span> 
+<a id="__codelineno-0-851" name="__codelineno-0-851"></a>                        <span class="n">f</span><span class="o">.</span><span class="n">entity_uid</span><span class="p">,</span> 
+<a id="__codelineno-0-852" name="__codelineno-0-852"></a>                        <span class="n">f</span><span class="o">.</span><span class="n">entity_type</span><span class="p">,</span> 
+<a id="__codelineno-0-853" name="__codelineno-0-853"></a>                        <span class="n">f</span><span class="o">.</span><span class="n">field_name</span><span class="p">,</span> 
+<a id="__codelineno-0-854" name="__codelineno-0-854"></a>                        <span class="nb">str</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">value</span><span class="p">),</span> 
+<a id="__codelineno-0-855" name="__codelineno-0-855"></a>                        <span class="n">f</span><span class="o">.</span><span class="n">reason</span><span class="p">,</span> 
+<a id="__codelineno-0-856" name="__codelineno-0-856"></a>                        <span class="n">f</span><span class="o">.</span><span class="n">patient_id</span><span class="p">,</span> 
+<a id="__codelineno-0-857" name="__codelineno-0-857"></a>                        <span class="n">rem_action</span><span class="p">,</span> 
+<a id="__codelineno-0-858" name="__codelineno-0-858"></a>                        <span class="n">rem_value</span><span class="p">,</span> 
+<a id="__codelineno-0-859" name="__codelineno-0-859"></a>                        <span class="s2">&quot;</span><span class="si">{}</span><span class="s2">&quot;</span>
+<a id="__codelineno-0-860" name="__codelineno-0-860"></a>                    <span class="p">)</span>
+<a id="__codelineno-0-861" name="__codelineno-0-861"></a>
+<a id="__codelineno-0-862" name="__codelineno-0-862"></a>            <span class="n">cur</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<a id="__codelineno-0-863" name="__codelineno-0-863"></a><span class="s2">                INSERT INTO phi_findings </span>
+<a id="__codelineno-0-864" name="__codelineno-0-864"></a><span class="s2">                (timestamp, entity_uid, entity_type, field_name, value, reason, patient_id, remediation_action, remediation_value, details_json) </span>
+<a id="__codelineno-0-865" name="__codelineno-0-865"></a><span class="s2">                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)</span>
+<a id="__codelineno-0-866" name="__codelineno-0-866"></a><span class="s2">            &quot;&quot;&quot;</span><span class="p">,</span> <span class="n">findings_generator</span><span class="p">())</span>
+<a id="__codelineno-0-867" name="__codelineno-0-867"></a>
+<a id="__codelineno-0-868" name="__codelineno-0-868"></a>            <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+<a id="__codelineno-0-869" name="__codelineno-0-869"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Findings saved.&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-870" name="__codelineno-0-870"></a>
+<a id="__codelineno-0-871" name="__codelineno-0-871"></a>    <span class="k">except</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Error</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+<a id="__codelineno-0-872" name="__codelineno-0-872"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to save findings: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -4659,17 +4699,7 @@ Strategy: UPSERT dirty items.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>gantry/persistence.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-785">785</a></span>
-<span class="normal"><a href="#__codelineno-0-786">786</a></span>
-<span class="normal"><a href="#__codelineno-0-787">787</a></span>
-<span class="normal"><a href="#__codelineno-0-788">788</a></span>
-<span class="normal"><a href="#__codelineno-0-789">789</a></span>
-<span class="normal"><a href="#__codelineno-0-790">790</a></span>
-<span class="normal"><a href="#__codelineno-0-791">791</a></span>
-<span class="normal"><a href="#__codelineno-0-792">792</a></span>
-<span class="normal"><a href="#__codelineno-0-793">793</a></span>
-<span class="normal"><a href="#__codelineno-0-794">794</a></span>
-<span class="normal"><a href="#__codelineno-0-795">795</a></span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-795">795</a></span>
 <span class="normal"><a href="#__codelineno-0-796">796</a></span>
 <span class="normal"><a href="#__codelineno-0-797">797</a></span>
 <span class="normal"><a href="#__codelineno-0-798">798</a></span>
@@ -4689,37 +4719,47 @@ Strategy: UPSERT dirty items.</p>
 <span class="normal"><a href="#__codelineno-0-812">812</a></span>
 <span class="normal"><a href="#__codelineno-0-813">813</a></span>
 <span class="normal"><a href="#__codelineno-0-814">814</a></span>
-<span class="normal"><a href="#__codelineno-0-815">815</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-785" name="__codelineno-0-785"></a><span class="k">def</span><span class="w"> </span><span class="nf">update_attributes</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">instances</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Patient</span><span class="p">]):</span>
-<a id="__codelineno-0-786" name="__codelineno-0-786"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-<a id="__codelineno-0-787" name="__codelineno-0-787"></a><span class="sd">    Efficiently updates the attributes_json for a list of instances.</span>
-<a id="__codelineno-0-788" name="__codelineno-0-788"></a><span class="sd">    &quot;&quot;&quot;</span>
-<a id="__codelineno-0-789" name="__codelineno-0-789"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">instances</span><span class="p">:</span>
-<a id="__codelineno-0-790" name="__codelineno-0-790"></a>        <span class="k">return</span>
-<a id="__codelineno-0-791" name="__codelineno-0-791"></a>
-<a id="__codelineno-0-792" name="__codelineno-0-792"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Updating attributes for </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">instances</span><span class="p">)</span><span class="si">}</span><span class="s2"> instances...&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-793" name="__codelineno-0-793"></a>    <span class="k">try</span><span class="p">:</span>
-<a id="__codelineno-0-794" name="__codelineno-0-794"></a>        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_connection</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
-<a id="__codelineno-0-795" name="__codelineno-0-795"></a>            <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
-<a id="__codelineno-0-796" name="__codelineno-0-796"></a>
-<a id="__codelineno-0-797" name="__codelineno-0-797"></a>            <span class="c1"># Pre-calculate data for executemany</span>
-<a id="__codelineno-0-798" name="__codelineno-0-798"></a>            <span class="n">data</span> <span class="o">=</span> <span class="p">[]</span>
-<a id="__codelineno-0-799" name="__codelineno-0-799"></a>            <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">instances</span><span class="p">:</span>
-<a id="__codelineno-0-800" name="__codelineno-0-800"></a>                <span class="c1"># Serialize attributes AND sequences</span>
-<a id="__codelineno-0-801" name="__codelineno-0-801"></a>                <span class="n">full_data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_serialize_item</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
-<a id="__codelineno-0-802" name="__codelineno-0-802"></a>                <span class="n">attrs_json</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">full_data</span><span class="p">,</span> <span class="bp">cls</span><span class="o">=</span><span class="n">GantryJSONEncoder</span><span class="p">)</span>
-<a id="__codelineno-0-803" name="__codelineno-0-803"></a>                <span class="n">data</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">attrs_json</span><span class="p">,</span> <span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="p">))</span>
-<a id="__codelineno-0-804" name="__codelineno-0-804"></a>
-<a id="__codelineno-0-805" name="__codelineno-0-805"></a>            <span class="n">cur</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
-<a id="__codelineno-0-806" name="__codelineno-0-806"></a><span class="s2">                UPDATE instances </span>
-<a id="__codelineno-0-807" name="__codelineno-0-807"></a><span class="s2">                SET attributes_json = ? </span>
-<a id="__codelineno-0-808" name="__codelineno-0-808"></a><span class="s2">                WHERE sop_instance_uid = ?</span>
-<a id="__codelineno-0-809" name="__codelineno-0-809"></a><span class="s2">            &quot;&quot;&quot;</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
-<a id="__codelineno-0-810" name="__codelineno-0-810"></a>
-<a id="__codelineno-0-811" name="__codelineno-0-811"></a>            <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
-<a id="__codelineno-0-812" name="__codelineno-0-812"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Update complete.&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-813" name="__codelineno-0-813"></a>
-<a id="__codelineno-0-814" name="__codelineno-0-814"></a>    <span class="k">except</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Error</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-<a id="__codelineno-0-815" name="__codelineno-0-815"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to update attributes: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-815">815</a></span>
+<span class="normal"><a href="#__codelineno-0-816">816</a></span>
+<span class="normal"><a href="#__codelineno-0-817">817</a></span>
+<span class="normal"><a href="#__codelineno-0-818">818</a></span>
+<span class="normal"><a href="#__codelineno-0-819">819</a></span>
+<span class="normal"><a href="#__codelineno-0-820">820</a></span>
+<span class="normal"><a href="#__codelineno-0-821">821</a></span>
+<span class="normal"><a href="#__codelineno-0-822">822</a></span>
+<span class="normal"><a href="#__codelineno-0-823">823</a></span>
+<span class="normal"><a href="#__codelineno-0-824">824</a></span>
+<span class="normal"><a href="#__codelineno-0-825">825</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-795" name="__codelineno-0-795"></a><span class="k">def</span><span class="w"> </span><span class="nf">update_attributes</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">instances</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Patient</span><span class="p">]):</span>
+<a id="__codelineno-0-796" name="__codelineno-0-796"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<a id="__codelineno-0-797" name="__codelineno-0-797"></a><span class="sd">    Efficiently updates the attributes_json for a list of instances.</span>
+<a id="__codelineno-0-798" name="__codelineno-0-798"></a><span class="sd">    &quot;&quot;&quot;</span>
+<a id="__codelineno-0-799" name="__codelineno-0-799"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">instances</span><span class="p">:</span>
+<a id="__codelineno-0-800" name="__codelineno-0-800"></a>        <span class="k">return</span>
+<a id="__codelineno-0-801" name="__codelineno-0-801"></a>
+<a id="__codelineno-0-802" name="__codelineno-0-802"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Updating attributes for </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">instances</span><span class="p">)</span><span class="si">}</span><span class="s2"> instances...&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-803" name="__codelineno-0-803"></a>    <span class="k">try</span><span class="p">:</span>
+<a id="__codelineno-0-804" name="__codelineno-0-804"></a>        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_connection</span><span class="p">()</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
+<a id="__codelineno-0-805" name="__codelineno-0-805"></a>            <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+<a id="__codelineno-0-806" name="__codelineno-0-806"></a>
+<a id="__codelineno-0-807" name="__codelineno-0-807"></a>            <span class="c1"># Pre-calculate data for executemany</span>
+<a id="__codelineno-0-808" name="__codelineno-0-808"></a>            <span class="n">data</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-0-809" name="__codelineno-0-809"></a>            <span class="k">for</span> <span class="n">inst</span> <span class="ow">in</span> <span class="n">instances</span><span class="p">:</span>
+<a id="__codelineno-0-810" name="__codelineno-0-810"></a>                <span class="c1"># Serialize attributes AND sequences</span>
+<a id="__codelineno-0-811" name="__codelineno-0-811"></a>                <span class="n">full_data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_serialize_item</span><span class="p">(</span><span class="n">inst</span><span class="p">)</span>
+<a id="__codelineno-0-812" name="__codelineno-0-812"></a>                <span class="n">attrs_json</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">full_data</span><span class="p">,</span> <span class="bp">cls</span><span class="o">=</span><span class="n">GantryJSONEncoder</span><span class="p">)</span>
+<a id="__codelineno-0-813" name="__codelineno-0-813"></a>                <span class="n">data</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">attrs_json</span><span class="p">,</span> <span class="n">inst</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="p">))</span>
+<a id="__codelineno-0-814" name="__codelineno-0-814"></a>
+<a id="__codelineno-0-815" name="__codelineno-0-815"></a>            <span class="n">cur</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<a id="__codelineno-0-816" name="__codelineno-0-816"></a><span class="s2">                UPDATE instances </span>
+<a id="__codelineno-0-817" name="__codelineno-0-817"></a><span class="s2">                SET attributes_json = ? </span>
+<a id="__codelineno-0-818" name="__codelineno-0-818"></a><span class="s2">                WHERE sop_instance_uid = ?</span>
+<a id="__codelineno-0-819" name="__codelineno-0-819"></a><span class="s2">            &quot;&quot;&quot;</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
+<a id="__codelineno-0-820" name="__codelineno-0-820"></a>
+<a id="__codelineno-0-821" name="__codelineno-0-821"></a>            <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+<a id="__codelineno-0-822" name="__codelineno-0-822"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Update complete.&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-823" name="__codelineno-0-823"></a>
+<a id="__codelineno-0-824" name="__codelineno-0-824"></a>    <span class="k">except</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">Error</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+<a id="__codelineno-0-825" name="__codelineno-0-825"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Failed to update attributes: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
