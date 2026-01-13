@@ -1,0 +1,79 @@
+site_name: Gantry
+site_description: A high-performance Python DICOM Object Model and Redaction Toolkit.
+site_url: https://kevinlong.github.io/Gantry/
+repo_url: https://github.com/kvnlng/Gantry
+repo_name: kvnlng/Gantry
+edit_uri: edit/main/docs_site/
+
+theme:
+  name: material
+  palette: 
+    - scheme: default
+      primary: teal
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - toc.follow
+    - content.code.copy
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - awesome-pages
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            show_root_heading: true
+            show_source: true
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - attr_list
+  - md_in_html
+
+docs_dir: docs_site
+
+nav:
+  - Home: index.md
+  - Features:
+      - 'Performance': performance.md
+      - 'Architecture': architecture.md
+  - Guides:
+      - 'Installation': installation.md
+      - 'Quick Start': quickstart.md
+      - 'Configuration': configuration.md
+      - 'Migration Tools': migration.md
+  - API Reference:
+      - 'Session': api/session.md
+      - 'Entities': api/entities.md
+      - 'Persistence': api/persistence.md
+  - Project Info:
+      - 'Changelog': changelog.md
+      - 'Roadmap': roadmap.md
