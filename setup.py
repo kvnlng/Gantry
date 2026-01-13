@@ -19,10 +19,10 @@ setup(
     python_requires=">=3.9",
     extras_require={
         "docs": [
-            "sphinx>=7.0.0",
-            "sphinx_rtd_theme>=2.0.0",
-            "myst_parser>=2.0.0",
-            "sphinx-autobuild>=2021.3.14"
+            "mkdocs>=1.5.0",
+            "mkdocs-material>=9.0.0",
+            "mkdocstrings[python]>=0.20.0",
+            "mkdocs-awesome-pages-plugin>=2.8.0"
         ]
     }
 )
