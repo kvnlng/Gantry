@@ -89,12 +89,13 @@ Gantry enforces a strict checkpoint system to ensure data safety:
 Gantry requires **Python 3.9+**.
 
 ```bash
-# Clone the repository
+# Install directly from GitHub (Recommended for users)
+pip install "git+https://github.com/kvnlng/Gantry.git"
+
+# OR Clone and install from source
 git clone https://github.com/kvnlng/Gantry.git
 cd Gantry
-
-# Install with dependencies (including codecs)
-pip install -e .
+pip install .
 ```
 
 *Note: The `imagecodecs` dependency is included and strongly recommended for handling JPEG Lossless and other compressed Transfer Syntaxes.*
@@ -322,11 +323,3 @@ This parser extracts:
 - Manufacturer/Model matching criteria.
 - Redaction zones (automatically converting `x,y,w,h` to `r1,r2,c1,c2`).
 
-## Running Tests
-
-Gantry uses `pytest` for its test suite.
-
-```bash
-pip install -r requirements-dev.txt
-pytest
-```
