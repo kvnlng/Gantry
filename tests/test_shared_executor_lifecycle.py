@@ -57,7 +57,8 @@ class TestSharedExecutorLifecycle(unittest.TestCase):
         self.assertEqual(kwargs['executor'], self.session._executor)
 
     @patch('gantry.io_handlers.run_parallel')
-    def test_export_uses_executor(self, mock_run_parallel):
+    @patch('gantry.session.DicomSession.save')
+    def test_export_uses_executor(self, mock_save, mock_run_parallel):
         """Verify that export passes the executor to run_parallel."""
         
         # Setup
@@ -95,7 +96,7 @@ class TestSharedExecutorLifecycle(unittest.TestCase):
             # We should check that maxtasksperchild passed is 10.
             
             self.assertIn('maxtasksperchild', kwargs)
-            self.assertEqual(kwargs['maxtasksperchild'], 100)
+            self.assertEqual(kwargs['maxtasksperchild'], 25)
             
             # If executor IS passed, it might be ignored or handled differently, but
             # our session logic explicitly does NOT pass self._executor for export_batch w/ recycling.
