@@ -41,6 +41,33 @@ The architecture uses O(1) memory streaming, ensuring it never runs out of RAM e
 | **Identity Locking** | 100,000 Instances | ~0.13 s | **769k / sec** |
 | **Persist Findings** | 100,000 Issues | ~0.13 s | **770k / sec** |
 
+| **Persist Findings** | 100,000 Issues | ~0.13 s | **770k / sec** |
+
+## Compliance & Certification
+
+Gantry isn't just a toolkit; it's a certification engine.
+
+### 1. Automated Compliance Reports (`v1.2+`)
+
+Generate single-step, audit-ready Markdown reports for HIPAA/GDPR documentation. Reports include:
+
+- **Cohort Manifest**: Summary of all processed patients/studies.
+- **Audit Trail**: Aggregated counts of every action (Anonymize, Redact, Export).
+- **Exceptions**: Explicit listing of any warnings or errors encountered.
+- **Validation Status**: Automatic `PASS`/`REVIEW_REQUIRED` grading.
+
+```python
+# Generate a formal report after processing
+session.generate_report("compliance_report.md")
+```
+
+### 2. Safety Checks
+
+Gantry automatically screens for high-risk attributes:
+
+- **Burned-In Annotation Check**: Flags images where `BurnedInAnnotation (0028,0301)` is "YES", enforcing manual review.
+- **Exception Tracking**: Captures all system errors during batch processing for the final report.
+
 ## Architecture
 
 Gantry acts as a smart indexing layer over your raw DICOM files. It does *not* modify your original data. Instead, it builds a lightweight metadata index (SQLite) and exposes a clean Python Object Model for manipulation.
@@ -82,7 +109,9 @@ Gantry enforces a strict checkpoint system to ensure data safety:
 6. **Anonymize**: Apply remediation to metadata (in-memory).
 7. **Redact**: Scrub pixel data for specific machines (in-memory).
 8. **Verify**: Re-audit the session to ensure a clean state.
-9. **Export**: Write clean DICOM files to disk.
+9. **Verify**: Re-audit the session to ensure a clean state.
+10. **Report**: Generate a signed Compliance Report (Manifest, Exceptions, Audit Trail).
+11. **Export**: Write clean DICOM files to disk.
 
 ## Installation
 
@@ -325,4 +354,3 @@ This parser extracts:
 
 - Manufacturer/Model matching criteria.
 - Redaction zones (automatically converting `x,y,w,h` to `r1,r2,c1,c2`).
-

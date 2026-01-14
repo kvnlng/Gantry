@@ -47,6 +47,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Redaction**: Fixed crash when `get_pixel_data` returns `None` (missing file).
 - **Redaction**: Fixed "Completely Outside" warning logic for RGB images (interpreting Channels as Columns).
 
+## [0.5.4] - 2026-01-14
+
+### Added
+
+- **Compliance Reporting**: Added `session.generate_report()` to produce HIPAA/GDPR-ready Markdown reports containing:
+  - **Cohort Manifest**: Summary of processed studies.
+  - **Audit Trail**: Aggregated counts of all remediation actions.
+  - **Exception Tracking**: Detailed listing of warnings and errors.
+  - **Safety Checks**: Automated detection of high-risk tags (e.g., `BurnedInAnnotation=YES`).
+- **Safety**: Added automatic validation failure in reports if "Burned-In Annotation" is detected without explicit handling.
+
+### Fixed
+
+- **Export Bug**: Resolved issue where `DeviceSerialNumber` (0018,1000) was dropped during export, preventing machine detection in subsequent runs.
+- **UX**: Suppressed excessive console output from `lock_identities` in interactive environments.
+- **Regression**: Fixed `ingest` method visibility in `DicomSession`.
+
 ## [0.5.3] - 2026-01-13
 
 ### Fixed
