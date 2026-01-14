@@ -50,7 +50,9 @@ To enable reversible anonymization, generate a cryptographic key and "lock" the 
 session.enable_reversible_anonymization()
 
 # cryptographically lock identities for all patients found in the audit
-session.lock_identities(report)
+# cryptographically lock identities for all patients found in the audit
+# Optional: Specify custom tags to preserve (defaults to Name, ID, DOB, Sex, Accession)
+session.lock_identities(report, tags_to_lock=["0010,0010", "0010,0020", "0010,0030"])
 session.save()
 ```
 
@@ -96,6 +98,10 @@ session = Session("my_project.db")
 session.enable_reversible_anonymization("gantry.key")
 
 # Recover the original PatientName and PatientID
-original_id = session.recover_patient_identity("ANON_12345")
-print(f"Original Identity: {original_id}")
+# Recover the original identity and restore attributes in-memory
+# restore=True (default) automatically updates all instances with original values
+session.recover_patient_identity("ANON_12345", restore=True)
+
+# Now, accessing p.patient_name or instance attributes returns original data
+print(f"Restored: {session.store.patients[0].patient_name}")
 ```

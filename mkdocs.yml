@@ -70,6 +70,7 @@ nav:
       - 'Quick Start': quickstart.md
       - 'Configuration': configuration.md
       - 'Migration Tools': migration.md
+      - 'Analytics & Reporting': analytics.md
   - API Reference:
       - 'Session': api/session.md
       - 'Entities': api/entities.md

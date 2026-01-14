@@ -255,11 +255,41 @@ class DicomSession:
             get_logger().error(f"Patient {patient_id} not found.")
             return LockingResult([])
 
+        # Determine Tags to Lock (Default + Custom)
+        default_tags = [
+            "0010,0010", # PatientName
+            "0010,0020", # PatientID
+            "0010,0030", # PatientBirthDate
+            "0010,0040", # PatientSex
+            "0008,0050"  # AccessionNumber
+        ]
+        
+        tags_to_lock = kwargs.get("tags_to_lock", default_tags)
+        
+        # Capture Original Values from First Instance
+        original_attrs = {}
+        first_instance = None
+        
+        # Locate first instance efficiently
+        for st in patient.studies:
+            for se in st.series:
+                if se.instances:
+                    first_instance = se.instances[0]
+                    break
+            if first_instance: break
+            
+        if first_instance:
+            for tag in tags_to_lock:
+                val = first_instance.attributes.get(tag)
+                if val is not None:
+                     original_attrs[tag] = val
+        else:
+             # Fallback to Patient object properties if no instances (unlikely)
+             # But Patient object only has name/id
+             if "0010,0010" in tags_to_lock: original_attrs["0010,0010"] = patient.patient_name
+             if "0010,0020" in tags_to_lock: original_attrs["0010,0020"] = patient.patient_id
+
         cnt = 0
-        original_attrs = {
-            "PatientName": patient.patient_name,
-            "PatientID": patient.patient_id
-        }
         
         # Optimization: Encrypt once per patient
         token = self.reversibility_service.generate_identity_token(original_attributes=original_attrs)
@@ -275,7 +305,7 @@ class DicomSession:
         
         if persist and modified_instances:
             self.store_backend.update_attributes(modified_instances)
-            get_logger().info(f"Secured identity in {cnt} instances for {patient_id}.")
+            get_logger().info(f"Secured identity (tags: {list(original_attrs.keys())}) in {cnt} instances for {patient_id}.")
             
         return LockingResult(modified_instances)
 
@@ -357,19 +387,7 @@ class DicomSession:
         get_logger().info(f"Batch preserved identity for {count_patients} patients ({len(modified_instances)} instances).")
         return LockingResult(modified_instances)
 
-    def recover_patient_identity(self, patient_id: str):
-        """
-        ... existing ...
-        """
-        return self._recover_identity_logic(patient_id) # Simplify for brevity if needed, but I should just replace the loop
 
-    def _recover_identity_logic(self, patient_id: str):
-        """
-        Internal helper to execute the identity recovery logic.
-        (Placeholder for shared logic between single/batch recovery).
-        """
-        # implementation details
-        pass
 
     def _make_lightweight_copy(self, patient: "Patient") -> "Patient":
         """
@@ -625,19 +643,23 @@ class DicomSession:
                 if f.entity_uid in instance_map:
                     f.entity = instance_map[f.entity_uid]
 
-    def recover_patient_identity(self, patient_id: str):
+    def recover_patient_identity(self, patient_id: str, restore: bool = True):
         """
-        Attempts to decrypt and read original identity from the first instance found.
+        Attempts to recover original identity from the encrypted token.
+        
+        Args:
+            patient_id: The PatientID to recover.
+            restore: If True, applies the recovered attributes back to ALL instances in memory.
         """
         if not self.reversibility_service:
             raise RuntimeError("Reversibility not enabled.")
 
         p = next((x for x in self.store.patients if x.patient_id == patient_id), None)
         if not p:
-            print("Patient not found.")
+            print(f"Patient {patient_id} not found.")
             return
 
-        # Locate first instance
+        # Locate first instance to get the token
         first_inst = None
         for st in p.studies:
             for se in st.series:
@@ -649,12 +671,32 @@ class DicomSession:
             print("No instances found for patient.")
             return
 
-        original = self.reversibility_service.recover_original_data(first_inst)
-        if original:
+        original_attrs = self.reversibility_service.recover_original_data(first_inst)
+        
+        if original_attrs:
             print("Recovered Identity:")
-            print(json.dumps(original, indent=2))
+            print(json.dumps(original_attrs, indent=2))
+            
+            if restore:
+                count = 0
+                for st in p.studies:
+                    for se in st.series:
+                        for inst in se.instances:
+                            for tag, val in original_attrs.items():
+                                inst.set_attr(tag, val)
+                            count += 1
+                
+                # Update Patient Object top-level properties if Name/ID changed
+                if "0010,0010" in original_attrs:
+                    p.patient_name = original_attrs["0010,0010"]
+                if "0010,0020" in original_attrs:
+                    # Changing ID might break map integrity if store relies on it, but usually fine for display
+                    p.patient_id = original_attrs["0010,0020"]
+                    
+                get_logger().info(f"Restored identity attributes to {count} instances.")
+                print(f"Success: Restored identity to {count} instances in memory.")
         else:
-            print("No encrypted identity found or decryption failed.")
+            print("No encrypted identity token found or decryption failed.")
 
     def ingest(self, folder_path):
         """
