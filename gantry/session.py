@@ -1,5 +1,6 @@
 import glob
 from typing import List, Optional, Dict, Any, Union
+import datetime
 from .io_handlers import DicomStore, DicomImporter, DicomExporter
 from .services import RedactionService
 from .config_manager import ConfigLoader
@@ -7,6 +8,7 @@ from .privacy import PhiInspector, PhiFinding
 from .remediation import RemediationService
 
 from .logger import configure_logger, get_logger
+from .reporting import ComplianceReport, get_renderer
 
 from .persistence import SqliteStore
 from .crypto import KeyManager
@@ -66,6 +68,13 @@ def scan_worker(args):
         
     return findings
 
+class LockingResult(list):
+    """
+    A list subclass that suppresses verbose REPL output for large datasets.
+    """
+    def __repr__(self):
+        return f"<LockingResult: {len(self)} instances secured>"
+
 class DicomSession:
     """
     The Main Facade for the Gantry library.
@@ -116,7 +125,23 @@ class DicomSession:
         # This prevents "UserWarning: resource_tracker: ... semaphore released"
         self._executor = concurrent.futures.ProcessPoolExecutor(max_workers=None) # Default: CPU * 1.5
 
+        if db_exists:
+            print(f"Loaded session from {persistence_file}")
+            
         get_logger().info(f"Session started. {len(self.store.patients)} patients loaded.")
+
+    def ingest(self, directory: str):
+        """
+        Ingests DICOM files from a directory into the session store.
+        """
+        print(f"Ingesting from {directory}...")
+        # Supports parallel ingestion via shared executor
+        from .io_handlers import DicomImporter
+        DicomImporter.import_files([directory], self.store, executor=self._executor)
+        
+        # Persist immediately
+        self.save()
+        print(f"Ingestion complete. {len(self.store.patients)} patients in store.")
 
     def close(self):
         """
@@ -195,7 +220,7 @@ class DicomSession:
         self.reversibility_service = ReversibilityService(self.key_manager)
         get_logger().info(f"Reversible anonymization enabled. Key: {key_path}")
 
-    def lock_identities(self, patient_id: str, persist: bool = False, _patient_obj: "Patient" = None, verbose: bool = True, **kwargs) -> List["Instance"]:
+    def lock_identities(self, patient_id: str, persist: bool = False, _patient_obj: "Patient" = None, verbose: bool = True, **kwargs) -> Union[List["Instance"], LockingResult]:
         """
         Securely embeds the original patient name/ID into a private DICOM tag
         for all instances belonging to the specified patient.
@@ -228,7 +253,7 @@ class DicomSession:
         
         if not patient:
             get_logger().error(f"Patient {patient_id} not found.")
-            return []
+            return LockingResult([])
 
         cnt = 0
         original_attrs = {
@@ -252,9 +277,9 @@ class DicomSession:
             self.store_backend.update_attributes(modified_instances)
             get_logger().info(f"Secured identity in {cnt} instances for {patient_id}.")
             
-        return modified_instances
+        return LockingResult(modified_instances)
 
-    def lock_identities_batch(self, patient_ids: Union[List[str], "PhiReport", List["PhiFinding"]], auto_persist_chunk_size: int = 0) -> List["Instance"]:
+    def lock_identities_batch(self, patient_ids: Union[List[str], "PhiReport", List["PhiFinding"]], auto_persist_chunk_size: int = 0) -> Union[List["Instance"], LockingResult]:
         """
         Batch process multiple patients to lock identities.
         Returns a list of all modified instances (unless auto_persist_chunk_size is used).
@@ -314,7 +339,7 @@ class DicomSession:
                     count_patients += 1
                 else:
                      get_logger().error(f"Patient {pid} not found (batch processing).")
-            
+        
         # Final cleanup
         if auto_persist_chunk_size > 0:
             if current_chunk:
@@ -322,15 +347,15 @@ class DicomSession:
                 count_instances_chunked += len(current_chunk)
             
             get_logger().info(f"Batch preserved identity for {count_patients} patients ({count_instances_chunked} instances). Persisted incrementally.")
-            return []
+            return LockingResult([])
              
         if modified_instances:
              msg = f"Preserved identity for {len(modified_instances)} instances."
-             print(f"\n{msg}\nRemember to call .save() to persist changes.")
+             # print(f"\n{msg}\nRemember to call .save() to persist changes.") # Suppress print, logger is enough
              get_logger().info(msg)
              
         get_logger().info(f"Batch preserved identity for {count_patients} patients ({len(modified_instances)} instances).")
-        return modified_instances
+        return LockingResult(modified_instances)
 
     def recover_patient_identity(self, patient_id: str):
         """
@@ -463,6 +488,106 @@ class DicomSession:
             findings = report.findings
             
         self.store_backend.save_findings(findings)
+
+    def generate_report(self, output_path: str, format: str = "markdown") -> None:
+        """
+        Generates a formal Compliance Report for the current session.
+        
+        Args:
+            output_path (str): Path to write the report file.
+            format (str): Output format ('markdown' or 'md'). Default is 'markdown'.
+        """
+        get_logger().info(f"Generating Compliance Report ({format}) to {output_path}...")
+        
+        # 1. Gather Statistics
+        n_p = len(self.store.patients)
+        n_st = sum(len(p.studies) for p in self.store.patients)
+        n_se = sum(len(st.series) for p in self.store.patients for st in p.studies)
+        n_i = sum(len(se.instances) for p in self.store.patients for st in p.studies for se in st.series)
+        
+        
+        # 2. Gather Audit Logs & Exceptions
+        audit_summary = self.store_backend.get_audit_summary()
+        exceptions = self.store_backend.get_audit_errors()
+        
+        # Check for unsafe attributes (BurnedInAnnotation)
+        unsafe_items = self.store_backend.check_unsafe_attributes()
+        if unsafe_items:
+            for uid, fpath, msg in unsafe_items:
+                # Add to exceptions as a warning
+                # Format: (timestamp, action, details)
+                # We don't have a timestamp for the state check, so use "Current State" or generate one
+                exceptions.append((datetime.datetime.now().isoformat(), "COMPLIANCE_CHECK", f"{msg} - {uid}"))
+        
+        # 3. Determine Context
+        privacy_profile = "See Config" 
+        
+        try:
+            from importlib.metadata import version
+            ver = version("gantry")
+        except:
+            ver = "0.0.0"
+
+        # 4. Generate Manifest Summary
+        # Show top 5 studies by instance count
+        manifest_lines = []
+        studies = []
+        for p in self.store.patients:
+            studies.extend(p.studies)
+        
+        # Sort by instance count descending
+        sorted_studies = sorted(studies, key=lambda s: sum(len(se.instances) for se in s.series), reverse=True)
+        top_studies = sorted_studies[:10]
+        
+        if top_studies:
+            manifest_lines.append("| Study UID | Patient ID | Instance Count |")
+            manifest_lines.append("| :--- | :--- | :--- |")
+            for st in top_studies:
+                # Find patient for this study (inefficient but safe)
+                # actually we have st.patient_id_fk in DB but not on object easily without backref traversal or expensive search
+                # But we iterated patients above.
+                # Let's just use st.study_instance_uid
+                # Wait, Study object doesn't link back to patient in memory graph by default unless we set it?
+                # Actually, we iterated `p.studies`. We can capture P there.
+                pass 
+            
+            # Re-do loop to capture PatientID
+            study_info = []
+            for p in self.store.patients:
+                for st in p.studies:
+                    c = sum(len(se.instances) for se in st.series)
+                    study_info.append((st.study_instance_uid, p.patient_id, c))
+            
+            study_info.sort(key=lambda x: x[2], reverse=True)
+            
+            for suid, pid, count in study_info[:10]:
+                manifest_lines.append(f"| {suid} | {pid} | {count} |")
+            
+            if len(study_info) > 10:
+                manifest_lines.append(f"\n*...and {len(study_info)-10} more studies.*")
+        else:
+            manifest_lines.append("*No studies found.*")
+            
+        manifest_summary = "\n".join(manifest_lines)
+
+        # 5. Build Report DTO
+        report = ComplianceReport(
+            gantry_version=ver,
+            project_name=os.path.basename(self.persistence_file),
+            privacy_profile=privacy_profile,
+            total_patients=n_p,
+            total_studies=n_st,
+            total_series=n_se,
+            total_instances=n_i,
+            audit_summary=audit_summary,
+            exceptions=exceptions,
+            manifest_summary=manifest_summary,
+            validation_status="PASS" if audit_summary and not exceptions else "REVIEW_REQUIRED"
+        )
+        
+        # 6. Render
+        renderer = get_renderer(format)
+        renderer.render(report, output_path)
 
     def _rehydrate_findings(self, findings):
         """

@@ -25,14 +25,12 @@ Focus: Empowering users to understand their data through deep inspection on the 
 
 - [x] **Dataframe Export**: Expose a method to flatten `Patient -> Study -> Series -> Instance` hierarchy into a comprehensive parquet file.
 - [x] **Query-based Export**: Export subsets of data based on metadata queries (e.g., "Modality == 'CT'").
-- [ ] **Sidecar Compaction**: Utility to vacuum/compact the `_pixels.bin` file to reclaim space from deleted or redacted images.
 - [ ] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.
-- [ ] **Metadata Querying**: Enable SQL-like querying on the dataframe (e.g., "Find all scans with `SliceThickness < 1.0` acquired by 'GE' scanners").
-- [ ] **Query-based Export**: Allow users to filter exports using criteria (e.g., `session.export(query="Modality=='CT' and SliceThickness > 5.0")`).
 - [ ] **Compliance Reporting**: Generate reports verifying dataset compliance against a selected privacy profile.
 - [ ] **Export Manifest**: Automatic generation of visual (HTML) and machine-readable (CSV/JSON) manifests listing all exported files and their key metadata.
 - [ ] **Audit Reporting**: Export comprehensive CSV reports of the session inventory, including details on what was redacted or modified.
 - [ ] **Structured Reporting (SR) Support**: Support for deep parsing and anonymization of DICOM Structured Reports.
+- [ ] **Sidecar Compaction**: Utility to vacuum/compact the `_pixels.bin` file to reclaim space from deleted or redacted images.
 
 ### v0.7.0 - The Connector (Networking)
 

@@ -250,11 +250,103 @@ class SqliteStore:
         self._stop_event.set()
         if self._audit_thread.is_alive():
             self._audit_thread.join(timeout=2.0)
+        self.flush_audit_queue()
+
+    def flush_audit_queue(self):
+        """Manually processes all pending items in the audit queue."""
+        batch = []
+        while not self.audit_queue.empty():
+            try:
+                batch.append(self.audit_queue.get_nowait())
+            except queue.Empty:
+                break
+        
+        if batch:
+            self.log_audit_batch(batch)
 
     def log_audit(self, action_type: str, entity_uid: str, details: str):
         """Records an action in the audit log (Async)."""
         # Push to queue instead of writing directly
         self.audit_queue.put((action_type, entity_uid, details))
+
+    def get_audit_summary(self) -> Dict[str, int]:
+        """
+        Returns an aggregated summary of actions from the audit log.
+        Returns:
+            Dict[str, int]: e.g., {'ANONYMIZE': 500, 'EXPORT': 500}
+        """
+    def get_audit_summary(self) -> Dict[str, int]:
+        """
+        Returns an aggregated summary of actions from the audit log.
+        Stops and restarts the background audit worker to ensure consistency.
+        Returns:
+            Dict[str, int]: e.g., {'ANONYMIZE': 500, 'EXPORT': 500}
+        """
+        # Stop worker to ensure all in-flight batches are written
+        # This joins the thread and flushes the queue.
+        self.stop()
+        
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                try:
+                    cursor.execute("SELECT action_type, COUNT(*) FROM audit_log GROUP BY action_type")
+                    rows = cursor.fetchall()
+                    return {row[0]: row[1] for row in rows}
+                except sqlite3.OperationalError:
+                    return {}
+        finally:
+            # Restart the worker
+            self._stop_event.clear()
+            self._audit_thread = threading.Thread(target=self._audit_worker, daemon=True, name="AuditWorker")
+            self._audit_thread.start()
+
+
+    def get_audit_errors(self) -> List[tuple]:
+        """
+        Retrieves all audit logs with type ERROR or WARNING.
+        Returns:
+            List[tuple]: (timestamp, action_type, details)
+        """
+        self.flush_audit_queue()
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT timestamp, action_type, details 
+                    FROM audit_log 
+                    WHERE action_type IN ('ERROR', 'WARNING')
+                    ORDER BY timestamp ASC
+                """)
+                return cursor.fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+    def check_unsafe_attributes(self) -> List[tuple]:
+        """
+        Scans for instances with potentially unsafe attributes (e.g., BurnedInAnnotation="YES").
+        Returns:
+            List[tuple]: (sop_instance_uid, file_path, details)
+        """
+        unsafe = []
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                # Naive text search in JSON. 
+                # matches "0028,0301": "YES"
+                # We need to be careful about spacing in JSON serialization, but standard json.dumps usually does ": "
+                # A safer broad check is %0028,0301%YES%
+                cursor.execute("""
+                    SELECT sop_instance_uid, file_path 
+                    FROM instances 
+                    WHERE attributes_json LIKE '%"0028,0301": "YES"%'
+                """)
+                rows = cursor.fetchall()
+                for r in rows:
+                    unsafe.append((r[0], r[1], "BurnedInAnnotation FLAGGED as YES"))
+        except sqlite3.OperationalError:
+            pass
+        return unsafe
 
     def log_audit_batch(self, entries: List[tuple]):
         """

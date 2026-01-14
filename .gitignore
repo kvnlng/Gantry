@@ -8,6 +8,7 @@ __pycache__/
 .DS_Store
 .vscode/
 .agent/
+test_data/
 
 data/
 gantry.key
