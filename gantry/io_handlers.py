@@ -259,6 +259,8 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
             ds.Manufacturer = ctx.series_attributes["Manufacturer"]
         if ctx.series_attributes.get("ManufacturerModelName"):
             ds.ManufacturerModelName = ctx.series_attributes["ManufacturerModelName"]
+        if ctx.series_attributes.get("DeviceSerialNumber"):
+            ds.DeviceSerialNumber = ctx.series_attributes["DeviceSerialNumber"]
 
         # 4. Pixel Data
         # Use context-provided pixels (for in-memory objects) or load from file
@@ -588,7 +590,8 @@ class DicomExporter:
                 "Modality": row['modality'],
                 "SeriesNumber": row['series_number'],
                 "Manufacturer": row['manufacturer'],
-                "ManufacturerModelName": row['model_name']
+                "ManufacturerModelName": row['model_name'],
+                "DeviceSerialNumber": row['device_serial_number']
             }
             
             # 6. Output Path Logic
@@ -652,6 +655,7 @@ class DicomExporter:
                     if se.equipment:
                         series_attrs["Manufacturer"] = se.equipment.manufacturer
                         series_attrs["ManufacturerModelName"] = se.equipment.model_name
+                        series_attrs["DeviceSerialNumber"] = se.equipment.device_serial_number
                         
                     # Calculate Output Path
                     # 1. Subject Folder

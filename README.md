@@ -197,6 +197,30 @@ Exporting session to output_folder (safe=True)...
 Exporting:  15%|██▌       | 15/100 [00:05<00:30,  2.80patient/s]
 ```
 
+### 5a. Analytics & Export
+
+Gantry supports **Exploratory Data Analysis (EDA)**. You can interrogate your cohort using Pandas and perform targeted exports based on metadata criteria.
+
+```python
+# 0. Ensure that data is persisted to disk
+session.save()
+
+# 1. Get a DataFrame of the cohort
+df = session.export_dataframe(expand_metadata=True)
+
+# 2. Filter using Pandas
+target_df = df[ (df.Modality == 'CT') & (df.SliceThickness > 2.5) ]
+
+# 3. Export only the subset
+session.export("export_thick_cts", subset=target_df)
+```
+
+You can also export the full inventory to Parquet for external tools (Tableau, PowerBI):
+
+```python
+session.export_dataframe("cohort.parquet", expand_metadata=True)
+```
+
 ### 6. Recover Identity (Optional)
 
 If you have a valid key (`gantry.key`) and need to retrieve the original identity of an anonymized patient:
@@ -285,27 +309,6 @@ Supported Transfer Syntaxes:
 - JPEG-LS
 - RLE Lossless
 - Standard JPEG Baseline/Extended
-
-## Analytics & Export
-
-Gantry supports **Exploratory Data Analysis (EDA)**. You can interrogate your cohort using Pandas and perform targeted exports based on metadata criteria.
-
-```python
-# 1. Get a DataFrame of the cohort
-df = session.export_dataframe(expand_metadata=True)
-
-# 2. Filter using Pandas
-target_df = df[ (df.Modality == 'CT') & (df.SliceThickness > 2.5) ]
-
-# 3. Export only the subset
-session.export("export_thick_cts", subset=target_df)
-```
-
-You can also export the full inventory to Parquet for external tools (Tableau, PowerBI):
-
-```python
-session.export_dataframe("cohort.parquet", expand_metadata=True)
-```
 
 ## Migration Tools
 
