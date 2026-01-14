@@ -674,8 +674,8 @@ class DicomSession:
         original_attrs = self.reversibility_service.recover_original_data(first_inst)
         
         if original_attrs:
-            print("Recovered Identity:")
-            print(json.dumps(original_attrs, indent=2))
+            # print("Recovered Identity:")
+            # print(json.dumps(original_attrs, indent=2))
             
             if restore:
                 count = 0
