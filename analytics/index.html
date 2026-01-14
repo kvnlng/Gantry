@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://kevinlong.github.io/Gantry/configuration/">
+        <link rel="canonical" href="https://kevinlong.github.io/Gantry/analytics/">
       
       
-        <link rel="prev" href="../quickstart/">
+        <link rel="prev" href="../migration/">
       
       
-        <link rel="next" href="../migration/">
+        <link rel="next" href="../api/session/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Configuration - Gantry</title>
+        <title>Analytics & Reporting - Gantry</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#configuration" class="md-skip">
+        <a href="#analytics-reporting" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Configuration
+              Analytics & Reporting
             
           </span>
         </div>
@@ -626,37 +626,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Configuration
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
         
   
   
@@ -672,87 +645,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#example-configyaml" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Example config.yaml
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#advanced-features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Advanced Features
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Advanced Features">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#pixel-redaction" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Pixel Redaction
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#reversible-anonymization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Reversible Anonymization
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#strict-codec-export-safety" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Strict Codec &amp; Export Safety
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -790,10 +682,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../analytics/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analytics & Reporting
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -809,6 +728,115 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#compliance-reports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compliance Reports
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cohort-analysis-eda" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cohort Analysis (EDA)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cohort Analysis (EDA)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-export-to-pandas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Export to Pandas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-parquet-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Parquet Export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#query-based-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Query-Based Export
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Query-Based Export">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#use-case-export-only-thick-slice-cts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use Case: "Export only thick-slice CTs"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-case-export-list-of-accession-numbers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use Case: "Export List of Accession Numbers"
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1110,10 +1138,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#example-configyaml" class="md-nav__link">
+  <a href="#compliance-reports" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Example config.yaml
+        Compliance Reports
       
     </span>
   </a>
@@ -1121,22 +1149,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#advanced-features" class="md-nav__link">
+  <a href="#cohort-analysis-eda" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Advanced Features
+        Cohort Analysis (EDA)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Advanced Features">
+    <nav class="md-nav" aria-label="Cohort Analysis (EDA)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#pixel-redaction" class="md-nav__link">
+  <a href="#1-export-to-pandas" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Pixel Redaction
+        1. Export to Pandas
       
     </span>
   </a>
@@ -1144,10 +1172,38 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#reversible-anonymization" class="md-nav__link">
+  <a href="#2-parquet-export" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reversible Anonymization
+        2. Parquet Export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#query-based-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Query-Based Export
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Query-Based Export">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#use-case-export-only-thick-slice-cts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Use Case: "Export only thick-slice CTs"
       
     </span>
   </a>
@@ -1155,10 +1211,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#strict-codec-export-safety" class="md-nav__link">
+  <a href="#use-case-export-list-of-accession-numbers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Strict Codec &amp; Export Safety
+        Use Case: "Export List of Accession Numbers"
       
     </span>
   </a>
@@ -1190,63 +1246,70 @@
   
 
 
-<h1 id="configuration">Configuration</h1>
-<p>Gantry uses a <strong>Unified YAML Configuration</strong> to control all aspects of de-identification.</p>
-<h2 id="example-configyaml">Example <code>config.yaml</code></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># 1. Privacy Profile (Optional)</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1"># Defines the baseline set of tags to remove/clean.</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># Options:</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1">#   - &quot;basic&quot;: DICOM PS3.15 Annex E Basic Profile (Partial De-Id)</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1">#   - &quot;comprehensive&quot;: Full De-Identification (Most conservative)</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1">#   - &quot;/path/to/profile.yaml&quot;: Load a custom set of rules from an external file</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="nt">privacy_profile</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;basic&quot;</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># 2. Date Jitter</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># Shift all dates by a random amount within this range (consistent per Patient).</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="nt">date_jitter</span><span class="p">:</span>
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">  </span><span class="nt">min_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-30</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">  </span><span class="nt">max_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-10</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="c1"># 3. Private Tags</span>
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="c1"># Whether to remove all private dicom tags (odd groups).</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="nt">remove_private_tags</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>
-<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="c1"># 4. Custom PHI Tags (Overrides Profile)</span>
-<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="nt">phi_tags</span><span class="p">:</span>
-<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">  </span><span class="s">&quot;0010,0010&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="s">&quot;action&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;REMOVE&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;name&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;PatientName&quot;</span><span class="w"> </span><span class="p p-Indicator">}</span>
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">  </span><span class="s">&quot;0010,0020&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="s">&quot;action&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;REPLACE&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;name&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;PatientID&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;value&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;ANON_{id}&quot;</span><span class="w"> </span><span class="p p-Indicator">}</span>
-<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>
-<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="c1"># 5. Pixel Redaction Rules (Machine Specific)</span>
-<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="nt">machines</span><span class="p">:</span>
-<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">serial_number</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;DEV12345&quot;</span>
-<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">    </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;UltraSound</span><span class="nv"> </span><span class="s">Pro&quot;</span>
-<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">    </span><span class="nt">redaction_zones</span><span class="p">:</span>
-<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">800</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="c1"># ROI: [row_start, row_end, col_start, col_end]</span>
+<h1 id="analytics-reporting">Analytics &amp; Reporting</h1>
+<p>Gantry is designed not just for de-identification, but for understanding your data. It includes built-in tools for compliance verification, cohort analysis, and data exploration.</p>
+<h2 id="compliance-reports">Compliance Reports</h2>
+<p>For regulatory audits (HIPAA/GDPR), Gantry can generate a formal <strong>Compliance Report</strong>. This single-document artifact summarizes the entire session, ensuring transparent documentation of your de-identification process.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Generate a Markdown report</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">session</span><span class="o">.</span><span class="n">generate_report</span><span class="p">(</span><span class="s2">&quot;compliance_report.md&quot;</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="advanced-features">Advanced Features</h2>
-<h3 id="pixel-redaction">Pixel Redaction</h3>
-<p>Gantry can scrub burned-in PHI from pixels based on matching the equipment's <code>DeviceSerialNumber</code>. Define <code>redaction_zones</code> in your config to automatically verify and scrub these regions during export/anonymization.</p>
-<h3 id="reversible-anonymization">Reversible Anonymization</h3>
-<p>To maintain a secure link back to the original identity:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Enable encryption (generates &#39;gantry.key&#39;)</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">session</span><span class="o">.</span><span class="n">enable_reversible_anonymization</span><span class="p">()</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Lock identities BEFORE anonymization to store encrypted original data</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">session</span><span class="o">.</span><span class="n">lock_identities</span><span class="p">(</span><span class="s2">&quot;PATIENT_123&quot;</span><span class="p">)</span>
+<p>The report includes:</p>
+<ol>
+<li><strong>Validation Status</strong>: Uses Gantry's internal audit logic to grade the session (PASS / REVIEW_REQUIRED).</li>
+<li><strong>Audit Trail</strong>: Aggregated counts of actions taken (e.g., number of patients anonymized, pixels redacted).</li>
+<li><strong>Exceptions</strong>: A detailed list of any warnings or errors encountered (e.g., "Corrupt pixel data in File X", "Burned-In Annotation found").</li>
+<li><strong>Manifest</strong>: A summary of the processed cohort (Top studies by size).</li>
+</ol>
+<div class="admonition tip">
+<p class="admonition-title">Format Options</p>
+<p>Currently, Gantry supports Markdown (<code>.md</code>) reports. PDF support is planned for future releases via Pandoc integration.</p>
+</div>
+<hr />
+<h2 id="cohort-analysis-eda">Cohort Analysis (EDA)</h2>
+<p>Gantry treats your DICOM data as a <strong>structured database</strong>, not just a pile of files. You can leverage the <code>export_dataframe</code> method to extract a flattened inventory of your cohort for analysis with Pandas, Jupyter, or Tableau.</p>
+<h3 id="1-export-to-pandas">1. Export to Pandas</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Export inventory to a Pandas DataFrame</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="c1"># expand_metadata=True parses the JSON attributes into columns</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">df</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">export_dataframe</span><span class="p">(</span><span class="n">expand_metadata</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1"># Inspect the data</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="s1">&#39;Modality&#39;</span><span class="p">)[</span><span class="s1">&#39;InstanceCount&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span>
 </code></pre></div>
-<p>Users can later recover the identity if they possess the correct key:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">session</span><span class="o">.</span><span class="n">recover_patient_identity</span><span class="p">(</span><span class="s2">&quot;ANON_123&quot;</span><span class="p">)</span>
+<h3 id="2-parquet-export">2. Parquet Export</h3>
+<p>For massive datasets (100k+ images), exporting to Parquet is recommended for performance and compatibility with external BI tools (PowerBI, Tableau, Apache Spark).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Export full cohort to Parquet</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">session</span><span class="o">.</span><span class="n">export_to_parquet</span><span class="p">(</span><span class="s2">&quot;cohort_inventory.parquet&quot;</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="strict-codec-export-safety">Strict Codec &amp; Export Safety</h3>
-<p>Gantry performs strict validation during export. If a compressed image cannot be decompressed (e.g., due to missing codecs or corruption), the export <strong>will fail</strong> rather than passing through unverified data. This ensures 100% PHI safety.</p>
-<p>Supported Transfer Syntaxes:</p>
-<ul>
-<li>JPEG Lossless (Process 14, SV1)</li>
-<li>JPEG 2000 (Lossless &amp; Lossy)</li>
-<li>JPEG-LS</li>
-<li>RLE Lossless</li>
-<li>Standard JPEG Baseline/Extended</li>
-</ul>
+<hr />
+<h2 id="query-based-export">Query-Based Export</h2>
+<p>One of Gantry's most powerful features is <strong>Query-Based Export</strong>. Instead of exporting the entire session, you can filter the export using Pandas-style queries or a subset DataFrame.</p>
+<h3 id="use-case-export-only-thick-slice-cts">Use Case: "Export only thick-slice CTs"</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># 1. Get the inventory</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">df</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">export_dataframe</span><span class="p">(</span><span class="n">expand_metadata</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># 2. Define your criteria (Standard Pandas syntax)</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="c1"># e.g., Keep only CT scans with SliceThickness &gt; 2.5mm</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">subset</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span> 
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s1">&#39;Modality&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;CT&#39;</span><span class="p">)</span> <span class="o">&amp;</span> 
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="s1">&#39;SliceThickness&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mf">2.5</span><span class="p">)</span> 
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">]</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Filtering: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">subset</span><span class="p">)</span><span class="si">}</span><span class="s2"> instances.&quot;</span><span class="p">)</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="c1"># 3. Feed the subset back into the exporter</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="n">session</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">&quot;export_thick_cts&quot;</span><span class="p">,</span> <span class="n">subset</span><span class="o">=</span><span class="n">subset</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="use-case-export-list-of-accession-numbers">Use Case: "Export List of Accession Numbers"</h3>
+<p>You can also filter by a list of strict identifiers if you have an external manifest.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Filter by Series Instance UIDs</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">target_series</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;1.2.840...&quot;</span><span class="p">,</span> <span class="s2">&quot;1.2.840...&quot;</span><span class="p">]</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Filter the dataframe</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">subset</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="n">df</span><span class="p">[</span><span class="s1">&#39;SeriesInstanceUID&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span><span class="n">target_series</span><span class="p">)]</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">session</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">&quot;export_selected_series&quot;</span><span class="p">,</span> <span class="n">subset</span><span class="o">=</span><span class="n">subset</span><span class="p">)</span>
+</code></pre></div>
 
 
 
