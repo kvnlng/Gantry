@@ -109,9 +109,8 @@ Gantry enforces a strict checkpoint system to ensure data safety:
 6. **Anonymize**: Apply remediation to metadata (in-memory).
 7. **Redact**: Scrub pixel data for specific machines (in-memory).
 8. **Verify**: Re-audit the session to ensure a clean state.
-9. **Verify**: Re-audit the session to ensure a clean state.
-10. **Report**: Generate a signed Compliance Report (Manifest, Exceptions, Audit Trail).
-11. **Export**: Write clean DICOM files to disk.
+9. **Report**: Generate a signed Compliance Report (Manifest, Exceptions, Audit Trail).
+10. **Export**: Write clean DICOM files to disk.
 
 ## Installation
 
