@@ -23,6 +23,8 @@ def test_optimization_preservation(tmp_path):
     for i in range(5):
         inst = Instance(f"SOP_{i}", "1.2.3", i)
         inst.file_path = None
+        inst.set_attr("0010,0010", "Optimization Test") # Name
+        inst.set_attr("0010,0020", pid) # ID
         instances.append(inst)
         se.instances.append(inst)
         
@@ -70,6 +72,8 @@ def test_batch_reversibility(tmp_path):
         se = Series(f"SE_{pid}", "CT", 1)
         inst = Instance(f"SOP_{pid}", "1.2.3", 1)
         inst.file_path = None
+        inst.set_attr("0010,0010", f"Name {pid}")
+        inst.set_attr("0010,0020", pid)
         se.instances.append(inst)
         st.series.append(se)
         p.studies.append(st)
@@ -109,6 +113,8 @@ def test_batch_chunking(tmp_path):
         for i in range(10):
             inst = Instance(f"SOP_{pid}_{i}", "1.2.3", i)
             inst.file_path = None
+            inst.set_attr("0010,0010", f"Name {pid}")
+            inst.set_attr("0010,0020", pid)
             se.instances.append(inst)
         st.series.append(se)
         p.studies.append(st)
@@ -152,6 +158,8 @@ def test_lock_identities_wrapper_chunking(tmp_path):
         se = Series(f"SE_{pid}", "CT", 1)
         inst = Instance(f"SOP_{pid}", "1.2.3", 1)
         inst.file_path = None
+        inst.set_attr("0010,0010", f"Name {pid}")
+        inst.set_attr("0010,0020", pid)
         se.instances.append(inst)
         st.series.append(se)
         p.studies.append(st)

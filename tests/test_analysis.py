@@ -46,6 +46,8 @@ def test_batch_preserve_from_report(tmp_path):
     se = Series("SE1", "CT", 1)
     inst = Instance("I1", "1.2.3", 1)
     inst.file_path = None
+    inst.set_attr("0010,0010", "Batch Patient")
+    inst.set_attr("0010,0020", pid)
     se.instances.append(inst)
     st.series.append(se)
     p.studies.append(st)
