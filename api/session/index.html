@@ -3424,8 +3424,8 @@ Manages the lifecycle of the DicomStore (Load/Import/Redact/Export/Save).</p>
 <a id="__codelineno-0-674" name="__codelineno-0-674"></a>        <span class="n">original_attrs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">reversibility_service</span><span class="o">.</span><span class="n">recover_original_data</span><span class="p">(</span><span class="n">first_inst</span><span class="p">)</span>
 <a id="__codelineno-0-675" name="__codelineno-0-675"></a>
 <a id="__codelineno-0-676" name="__codelineno-0-676"></a>        <span class="k">if</span> <span class="n">original_attrs</span><span class="p">:</span>
-<a id="__codelineno-0-677" name="__codelineno-0-677"></a>            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Recovered Identity:&quot;</span><span class="p">)</span>
-<a id="__codelineno-0-678" name="__codelineno-0-678"></a>            <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">original_attrs</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+<a id="__codelineno-0-677" name="__codelineno-0-677"></a>            <span class="c1"># print(&quot;Recovered Identity:&quot;)</span>
+<a id="__codelineno-0-678" name="__codelineno-0-678"></a>            <span class="c1"># print(json.dumps(original_attrs, indent=2))</span>
 <a id="__codelineno-0-679" name="__codelineno-0-679"></a>
 <a id="__codelineno-0-680" name="__codelineno-0-680"></a>            <span class="k">if</span> <span class="n">restore</span><span class="p">:</span>
 <a id="__codelineno-0-681" name="__codelineno-0-681"></a>                <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
