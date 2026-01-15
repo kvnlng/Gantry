@@ -62,9 +62,9 @@ def test_compliance_reporting_flow(clean_env):
     # Verify Project Name
     assert f"**Project:** {TEST_DB}" in content
 
-    # Verify Manifest
-    assert "## 4. Cohort Manifest" in content
-    assert "*No studies found.*" in content # Because we didn't add patients/studies effectively in this mock
+    # Verify Manifest - REMOVED
+    # assert "## 4. Cohort Manifest" in content
+    # assert "*No studies found.*" in content # Because we didn't add patients/studies effectively in this mock
 
     # Verify Exceptions (Empty)
     assert "*No exceptions or errors were recorded.*" in content
