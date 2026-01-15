@@ -3,7 +3,7 @@ import numpy as np
 import pydicom
 from pydicom.uid import generate_uid
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, Tuple
 
 
 # --- Base Classes ---
