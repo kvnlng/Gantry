@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#configuration" class="md-skip">
+        <a href="#configuration-guide" class="md-skip">
           Skip to content
         </a>
       
@@ -689,10 +689,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#example-configyaml" class="md-nav__link">
+  <a href="#quick-reference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Example config.yaml
+        Quick Reference
       
     </span>
   </a>
@@ -700,22 +700,33 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#advanced-features" class="md-nav__link">
+  <a href="#complete-example" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Advanced Features
+        Complete Example
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Advanced Features">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detailed-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detailed Options
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Detailed Options">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#pixel-redaction" class="md-nav__link">
+  <a href="#1-privacy-profile" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Pixel Redaction
+        1. Privacy Profile
       
     </span>
   </a>
@@ -723,10 +734,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#reversible-anonymization" class="md-nav__link">
+  <a href="#2-date-jitter" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reversible Anonymization
+        2. Date Jitter
       
     </span>
   </a>
@@ -734,10 +745,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#strict-codec-export-safety" class="md-nav__link">
+  <a href="#3-private-tags" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Strict Codec &amp; Export Safety
+        3. Private Tags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-phi-tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. PHI Tags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-pixel-redaction-machines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Pixel Redaction (Machines)
       
     </span>
   </a>
@@ -1110,10 +1143,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#example-configyaml" class="md-nav__link">
+  <a href="#quick-reference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Example config.yaml
+        Quick Reference
       
     </span>
   </a>
@@ -1121,22 +1154,33 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#advanced-features" class="md-nav__link">
+  <a href="#complete-example" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Advanced Features
+        Complete Example
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Advanced Features">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detailed-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detailed Options
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Detailed Options">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#pixel-redaction" class="md-nav__link">
+  <a href="#1-privacy-profile" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Pixel Redaction
+        1. Privacy Profile
       
     </span>
   </a>
@@ -1144,10 +1188,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#reversible-anonymization" class="md-nav__link">
+  <a href="#2-date-jitter" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Reversible Anonymization
+        2. Date Jitter
       
     </span>
   </a>
@@ -1155,10 +1199,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#strict-codec-export-safety" class="md-nav__link">
+  <a href="#3-private-tags" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Strict Codec &amp; Export Safety
+        3. Private Tags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-phi-tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. PHI Tags
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-pixel-redaction-machines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Pixel Redaction (Machines)
       
     </span>
   </a>
@@ -1190,62 +1256,169 @@
   
 
 
-<h1 id="configuration">Configuration</h1>
-<p>Gantry uses a <strong>Unified YAML Configuration</strong> to control all aspects of de-identification.</p>
-<h2 id="example-configyaml">Example <code>config.yaml</code></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># 1. Privacy Profile (Optional)</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1"># Defines the baseline set of tags to remove/clean.</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># Options:</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1">#   - &quot;basic&quot;: DICOM PS3.15 Annex E Basic Profile (Partial De-Id)</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1">#   - &quot;comprehensive&quot;: Full De-Identification (Most conservative)</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1">#   - &quot;/path/to/profile.yaml&quot;: Load a custom set of rules from an external file</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="nt">privacy_profile</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;basic&quot;</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="c1"># 2. Date Jitter</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># Shift all dates by a random amount within this range (consistent per Patient).</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="nt">date_jitter</span><span class="p">:</span>
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">  </span><span class="nt">min_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-30</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">  </span><span class="nt">max_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-10</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="c1"># 3. Private Tags</span>
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="c1"># Whether to remove all private dicom tags (odd groups).</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="nt">remove_private_tags</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>
-<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="c1"># 4. Custom PHI Tags (Overrides Profile)</span>
-<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="nt">phi_tags</span><span class="p">:</span>
-<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">  </span><span class="s">&quot;0010,0010&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="s">&quot;action&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;REMOVE&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;name&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;PatientName&quot;</span><span class="w"> </span><span class="p p-Indicator">}</span>
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">  </span><span class="s">&quot;0010,0020&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="s">&quot;action&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;REPLACE&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;name&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;PatientID&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;value&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;ANON_{id}&quot;</span><span class="w"> </span><span class="p p-Indicator">}</span>
-<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>
-<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="c1"># 5. Pixel Redaction Rules (Machine Specific)</span>
-<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="nt">machines</span><span class="p">:</span>
-<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">serial_number</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;DEV12345&quot;</span>
-<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">    </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;UltraSound</span><span class="nv"> </span><span class="s">Pro&quot;</span>
-<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">    </span><span class="nt">redaction_zones</span><span class="p">:</span>
-<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">800</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="c1"># ROI: [row_start, row_end, col_start, col_end]</span>
+<h1 id="configuration-guide">Configuration Guide</h1>
+<p>Gantry uses a <strong>Unified YAML Configuration</strong> (v2.0) to control all aspects of de-identification, including PHI tag rules, date shifting, and pixel redaction.</p>
+<p>This file allows you to define a reproducible privacy policy that can be shared across your team or version controlled.</p>
+<h2 id="quick-reference">Quick Reference</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Section</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong><a href="#1-privacy-profile">privacy_profile</a></strong></td>
+<td style="text-align: left;">Base set of rules (e.g., "basic", "comprehensive").</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><a href="#2-date-jitter">date_jitter</a></strong></td>
+<td style="text-align: left;">Randomly shifts dates to preserve intervals while hiding exact dates.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><a href="#3-private-tags">remove_private_tags</a></strong></td>
+<td style="text-align: left;">Removes vendor-specific private tags (odd groups).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><a href="#4-phi-tags">phi_tags</a></strong></td>
+<td style="text-align: left;">overrides or adds specific tag rules (e.g., <code>PatientName</code>).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><a href="#5-pixel-redaction-machines">machines</a></strong></td>
+<td style="text-align: left;">Defines burn-in redaction zones for specific equipment.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="complete-example">Complete Example</h2>
+<p>Save this as <code>gantry_config.yaml</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># 1. Privacy Profile (Base Rules)</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1"># Options: &quot;basic&quot;, &quot;comprehensive&quot;, or path to external YAML</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nt">privacy_profile</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;basic&quot;</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># 2. Date Jitter</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Shifts all dates by a random amount within this range.</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># The shift is deterministic per-patient (consistent across studies).</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="nt">date_jitter</span><span class="p">:</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span><span class="nt">min_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-30</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="nt">max_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-10</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="c1"># 3. Private Tags</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="c1"># Remove all odd-group tags (vendor specific) unless whitelisted?</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="nt">remove_private_tags</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="c1"># 4. Custom PHI Tags (Overrides Profile)</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="nt">phi_tags</span><span class="p">:</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">  </span><span class="s">&quot;0010,0010&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">    </span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;REMOVE&quot;</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;PatientName&quot;</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">  </span><span class="s">&quot;0010,0020&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">    </span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;REPLACE&quot;</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;PatientID&quot;</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="w">    </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;ANONYMIZED&quot;</span><span class="w"> </span><span class="c1"># Matches default if omitted</span>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">  </span><span class="s">&quot;0008,0080&quot;</span><span class="p p-Indicator">:</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">    </span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;KEEP&quot;</span><span class="w"> </span><span class="c1"># Exception: Keep InstitutionName</span>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="c1"># 5. Pixel Redaction Rules (Machine Specific)</span>
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="nt">machines</span><span class="p">:</span>
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">serial_number</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;US-12345&quot;</span>
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="w">    </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Voluson</span><span class="nv"> </span><span class="s">E10&quot;</span>
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="w">    </span><span class="nt">redaction_zones</span><span class="p">:</span>
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="w">      </span><span class="c1"># [row_start, row_end, col_start, col_end]</span>
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">800</span><span class="p p-Indicator">]</span><span class="w">   </span><span class="c1"># Top Banner</span>
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">900</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1024</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">400</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="c1"># Bottom Left Details</span>
 </code></pre></div>
-<h2 id="advanced-features">Advanced Features</h2>
-<h3 id="pixel-redaction">Pixel Redaction</h3>
-<p>Gantry can scrub burned-in PHI from pixels based on matching the equipment's <code>DeviceSerialNumber</code>. Define <code>redaction_zones</code> in your config to automatically verify and scrub these regions during export/anonymization.</p>
-<h3 id="reversible-anonymization">Reversible Anonymization</h3>
-<p>To maintain a secure link back to the original identity:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Enable encryption (generates &#39;gantry.key&#39;)</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">session</span><span class="o">.</span><span class="n">enable_reversible_anonymization</span><span class="p">()</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Lock identities BEFORE anonymization to store encrypted original data</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">session</span><span class="o">.</span><span class="n">lock_identities</span><span class="p">(</span><span class="s2">&quot;PATIENT_123&quot;</span><span class="p">)</span>
+<hr />
+<h2 id="detailed-options">Detailed Options</h2>
+<h3 id="1-privacy-profile">1. Privacy Profile</h3>
+<p>Sets the baseline behavior for thousands of DICOM tags.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">privacy_profile</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;comprehensive&quot;</span>
 </code></pre></div>
-<p>Users can later recover the identity if they possess the correct key:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">session</span><span class="o">.</span><span class="n">recover_patient_identity</span><span class="p">(</span><span class="s2">&quot;ANON_123&quot;</span><span class="p">)</span>
-</code></pre></div>
-<h3 id="strict-codec-export-safety">Strict Codec &amp; Export Safety</h3>
-<p>Gantry performs strict validation during export. If a compressed image cannot be decompressed (e.g., due to missing codecs or corruption), the export <strong>will fail</strong> rather than passing through unverified data. This ensures 100% PHI safety.</p>
-<p>Supported Transfer Syntaxes:</p>
 <ul>
-<li>JPEG Lossless (Process 14, SV1)</li>
-<li>JPEG 2000 (Lossless &amp; Lossy)</li>
-<li>JPEG-LS</li>
-<li>RLE Lossless</li>
-<li>Standard JPEG Baseline/Extended</li>
+<li><strong><code>basic</code></strong>: Implements the <em>DICOM PS3.15 Annex E Basic Profile</em>. Retains some descriptors but removes direct identifiers.</li>
+<li><strong><code>comprehensive</code></strong>: Aggressive de-identification. Removes almost all non-structural text fields.</li>
+<li><strong>External File</strong>: You can provide a path to another YAML file (e.g., <code>./profiles/my_hospital_standard.yaml</code>) to inherit its rules.</li>
+</ul>
+<h3 id="2-date-jitter">2. Date Jitter</h3>
+<p>Shifts all date attributes (<code>DA</code>, <code>DT</code>) by a random number of days.</p>
+<ul>
+<li><strong>Logic</strong>: Gantry generates a secret random offset for each <code>PatientID</code>. This offset is consistent for that patient across all their studies and series, preserving temporal relationships (intervals) while hiding the absolute dates.</li>
+<li>
+<p><strong>Config</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">date_jitter</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">min_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-10</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">max_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
+</code></pre></div>
+</li>
+</ul>
+<h3 id="3-private-tags">3. Private Tags</h3>
+<p>DICOM Private Tags (Odd Group Numbers, e.g., <code>0009,xxxx</code>) often contain hidden PHI strings dumped by the machine.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">remove_private_tags</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<ul>
+<li><code>true</code>: Removes <strong>ALL</strong> private tags. (Recommended for safety).</li>
+<li><code>false</code>: Retains them (Use only if you are sure they are safe or strictly needed for analysis).</li>
+</ul>
+<h3 id="4-phi-tags">4. PHI Tags</h3>
+<p>Define specific rules for individual DICOM tags. Keys must be uppercase hex strings (e.g. <code>"0010,0010"</code>).</p>
+<p><strong>Supported Actions:</strong></p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Action</th>
+<th style="text-align: left;">Logic</th>
+<th style="text-align: left;">Example Config</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong><code>REPLACE</code></strong></td>
+<td style="text-align: left;">Replaces value with "ANONYMIZED" (or custom string).</td>
+<td style="text-align: left;"><code>action: "REPLACE", value: "Project-X"</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>REMOVE</code></strong></td>
+<td style="text-align: left;">Completely deletes the tag from the dataset.</td>
+<td style="text-align: left;"><code>action: "REMOVE"</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>EMPTY</code></strong></td>
+<td style="text-align: left;">Sets the tag value to an empty string.</td>
+<td style="text-align: left;"><code>action: "EMPTY"</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>SHIFT</code></strong></td>
+<td style="text-align: left;">Applies the per-patient Date Jitter offset (Dates only).</td>
+<td style="text-align: left;"><code>action: "SHIFT"</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>KEEP</code></strong></td>
+<td style="text-align: left;">Explicitly retains the original value (Exception to profile).</td>
+<td style="text-align: left;"><code>action: "KEEP"</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Example:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">phi_tags</span><span class="p">:</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="s">&quot;0008,1030&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="s">&quot;action&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;EMPTY&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;name&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;StudyDescription&quot;</span><span class="w"> </span><span class="p p-Indicator">}</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="s">&quot;0010,0030&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="s">&quot;action&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;SHIFT&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;name&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;PatientBirthDate&quot;</span><span class="w"> </span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<h3 id="5-pixel-redaction-machines">5. Pixel Redaction (Machines)</h3>
+<p>Automatically scrubs burned-in text (pixels) for specific devices. Gantry identifies the machine using the <code>DeviceSerialNumber</code> (0018,1000) tag.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">machines</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">serial_number</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;SN-9999&quot;</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Documentation</span><span class="nv"> </span><span class="s">Only&quot;</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">redaction_zones</span><span class="p">:</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">100</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">500</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<ul>
+<li><strong><code>serial_number</code></strong> (Required): Exact match for <code>0018,1000</code>.</li>
+<li><strong><code>redaction_zones</code></strong>: List of regions to zero out.</li>
+<li>Format: <code>[y1, y2, x1, x2]</code> (Row Start, Row End, Col Start, Col End).</li>
+<li>Coordinates are 0-indexed.</li>
 </ul>
 
 
