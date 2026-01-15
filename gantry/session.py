@@ -9,6 +9,7 @@ from .remediation import RemediationService
 
 from .logger import configure_logger, get_logger
 from .reporting import ComplianceReport, get_renderer
+from .manifest import Manifest, ManifestItem, generate_manifest_file
 
 from .persistence import SqliteStore
 from .crypto import KeyManager
@@ -546,49 +547,7 @@ class DicomSession:
         except:
             ver = "0.0.0"
 
-        # 4. Generate Manifest Summary
-        # Show top 5 studies by instance count
-        manifest_lines = []
-        studies = []
-        for p in self.store.patients:
-            studies.extend(p.studies)
-        
-        # Sort by instance count descending
-        sorted_studies = sorted(studies, key=lambda s: sum(len(se.instances) for se in s.series), reverse=True)
-        top_studies = sorted_studies[:10]
-        
-        if top_studies:
-            manifest_lines.append("| Study UID | Patient ID | Instance Count |")
-            manifest_lines.append("| :--- | :--- | :--- |")
-            for st in top_studies:
-                # Find patient for this study (inefficient but safe)
-                # actually we have st.patient_id_fk in DB but not on object easily without backref traversal or expensive search
-                # But we iterated patients above.
-                # Let's just use st.study_instance_uid
-                # Wait, Study object doesn't link back to patient in memory graph by default unless we set it?
-                # Actually, we iterated `p.studies`. We can capture P there.
-                pass 
-            
-            # Re-do loop to capture PatientID
-            study_info = []
-            for p in self.store.patients:
-                for st in p.studies:
-                    c = sum(len(se.instances) for se in st.series)
-                    study_info.append((st.study_instance_uid, p.patient_id, c))
-            
-            study_info.sort(key=lambda x: x[2], reverse=True)
-            
-            for suid, pid, count in study_info[:10]:
-                manifest_lines.append(f"| {suid} | {pid} | {count} |")
-            
-            if len(study_info) > 10:
-                manifest_lines.append(f"\n*...and {len(study_info)-10} more studies.*")
-        else:
-            manifest_lines.append("*No studies found.*")
-            
-        manifest_summary = "\n".join(manifest_lines)
-
-        # 5. Build Report DTO
+        # 4. Build Report DTO
         report = ComplianceReport(
             gantry_version=ver,
             project_name=os.path.basename(self.persistence_file),
@@ -599,13 +558,60 @@ class DicomSession:
             total_instances=n_i,
             audit_summary=audit_summary,
             exceptions=exceptions,
-            manifest_summary=manifest_summary,
             validation_status="PASS" if audit_summary and not exceptions else "REVIEW_REQUIRED"
         )
         
-        # 6. Render
         renderer = get_renderer(format)
         renderer.render(report, output_path)
+
+    def generate_manifest(self, output_path: str, format: str = "html") -> None:
+        """
+        Generates a visual (HTML) or machine-readable (JSON) manifest of all instances in the session.
+        
+        Args:
+            output_path (str): File path to write the manifest.
+            format (str): 'html' or 'json'.
+        """
+        get_logger().info(f"Generating Manifest ({format}) to {output_path}...")
+        
+        items = []
+        for p in self.store.patients:
+            for st in p.studies:
+                for se in st.series:
+                    # Get metadata if available
+                    modality = se.modality
+                    manufacturer = se.equipment.manufacturer if se.equipment else ""
+                    model = se.equipment.model_name if se.equipment else ""
+                    
+                    for inst in se.instances:
+                        # Attempt to get file path if it exists
+                        # Instance might not have a tracked file path if in-memory or loaded from DB without path tracking?
+                        # DB usually stores original path or we can assume it's the 'file_path' attr if we have it?
+                        # Instance definition in gantry/entities.py has file_path?
+                        # Assuming Instance has file_path.
+                        # It definitely has SOPInstanceUID.
+                        
+                        fpath = getattr(inst, 'file_path', "N/A")
+                        
+                        item = ManifestItem(
+                            patient_id=p.patient_id,
+                            study_instance_uid=st.study_instance_uid,
+                            series_instance_uid=se.series_instance_uid,
+                            sop_instance_uid=inst.sop_instance_uid,
+                            file_path=str(fpath),
+                            modality=modality,
+                            manufacturer=manufacturer,
+                            model_name=model
+                        )
+                        items.append(item)
+        
+        manifest = Manifest(
+            generated_at=datetime.datetime.now().isoformat(),
+            items=items,
+            project_name=os.path.basename(self.persistence_file)
+        )
+        
+        generate_manifest_file(manifest, output_path, format)
 
     def _rehydrate_findings(self, findings):
         """

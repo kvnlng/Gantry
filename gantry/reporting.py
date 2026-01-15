@@ -29,9 +29,6 @@ class ComplianceReport:
     # List of "ERROR" or "WARNING" logs: (timestamp, action, details)
     exceptions: list = field(default_factory=list)
 
-    # Manifest Summary
-    # e.g., "Top 10 Studies: ..." or a simple list/dict
-    manifest_summary: str = ""
 
     # Validation
     validation_status: str = "PENDING" # PASS, FAIL, PENDING
@@ -90,15 +87,9 @@ The following actions were recorded in the secure audit trail:
         else:
             md_content += f"\n## 3. Exceptions & Errors\n\n*No exceptions or errors were recorded.*\n"
 
-        # Cohort Manifest Section
-        md_content += f"""
-## 4. Cohort Manifest
-
-{report.manifest_summary if report.manifest_summary else "*No manifest data available.*"}
-"""
 
         md_content += f"""
-## 5. Validation & Verification
+## 4. Validation & Verification
 
 *   **Identified Issues:** {report.validation_issues}
 *   **Methodology:** The dataset was processed using the Gantry Safe Harbor pipeline. Pixel data was scanned against machine-specific redaction zones. Metadata was remediated according to DICOM PS3.15 {report.privacy_profile} profile.

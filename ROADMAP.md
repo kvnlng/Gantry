@@ -27,7 +27,7 @@ Focus: Empowering users to understand their data through deep inspection on the 
 - [x] **Query-based Export**: Export subsets of data based on metadata queries (e.g., "Modality == 'CT'").
 - [ ] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.
 - [ ] **Compliance Reporting**: Generate reports verifying dataset compliance against a selected privacy profile.
-- [ ] **Export Manifest**: Automatic generation of visual (HTML) and machine-readable (CSV/JSON) manifests listing all exported files and their key metadata.
+- [x] **Export Manifest**: Automatic generation of visual (HTML) and machine-readable (CSV/JSON) manifests listing all exported files and their key metadata.
 - [ ] **Audit Reporting**: Export comprehensive CSV reports of the session inventory, including details on what was redacted or modified.
 - [ ] **Structured Reporting (SR) Support**: Support for deep parsing and anonymization of DICOM Structured Reports.
 - [ ] **Sidecar Compaction**: Utility to vacuum/compact the `_pixels.bin` file to reclaim space from deleted or redacted images.
