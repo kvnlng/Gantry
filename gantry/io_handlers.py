@@ -296,9 +296,17 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
              try:
                  arr = inst.get_pixel_data()
              except FileNotFoundError:
-                 # Valid for non-image IODs (SR, encapsulated PDF, etc.)
-                 # We assume if the user created it without pixels, it's intentional.
-                 # Proceed without setting PixelData.
+                 # Check Modality to decide if we should fail or proceed
+                 # Image implementations MUST have pixels.
+                 # Non-image (SR, PR, KO, DOC) can proceed without.
+                 mod = inst.attributes.get("0008,0060", "OT")
+                 IMAGE_MODALITIES = {"CT", "MR", "US", "DX", "CR", "MG", "NM", "PT", "XA", "RF", "SC", "OT"}
+                 
+                 # If it claims to be an image but has no pixels, fail hard (Safety)
+                 if mod in IMAGE_MODALITIES:
+                     raise RuntimeError(f"Pixels missing for Image Modality {mod}")
+                 
+                 # Otherwise (SR, etc.), proceed
                  arr = None
              
         if arr is not None:
