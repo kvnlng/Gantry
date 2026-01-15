@@ -77,8 +77,8 @@ Gantry enforces a strict checkpoint system to ensure data safety:
 1. **Ingest**: Load raw data into the managed session index.
 2. **Examine**: Inventory the cohort and equipment.
 3. **Configure**: Define privacy tags and redaction rules.
-4. **Audit (Target)**: Measure PHI risks against the configuration.
-5. **Backup**: (Optional) Securely lock original identities for reversibility.
+4. **Audit**: Measure PHI risks against the configuration.
+5. **Backup**: (*Optional*) Securely lock original identities for reversibility.
 6. **Anonymize**: Apply remediation to metadata (in-memory).
 7. **Redact**: Scrub pixel data for specific machines (in-memory).
 8. **Verify**: Re-audit the session to ensure a clean state.
@@ -98,8 +98,6 @@ git clone https://github.com/kvnlng/Gantry.git
 cd Gantry
 pip install .
 ```
-
-*Note: The `imagecodecs` dependency is included and strongly recommended for handling JPEG Lossless and other compressed Transfer Syntaxes.*
 
 ## System Requirements
 
@@ -137,7 +135,15 @@ session.examine()
 
 ### 3. Configure & Audit
 
-Before changing anything, define your privacy rules. Use `create_config` to generate a scaffolding based on your inventory, then `audit` to scan that inventory against your rules. This "Measure Twice, Cut Once" approach lets you identify all PHI risks before applying any irreversible changes.
+Before changing anything, define your privacy rules. 
+
+1. Use `create_config` to generate a scaffolding based on your inventory
+
+2. Edit that config file for the required protocol [Configuration](#config)
+
+3. Use `audit` to scan your inventory against the rules you created in the config file
+
+This "Measure Twice, Cut Once" approach lets you identify all PHI risks before applying any irreversible changes.
 
 ```python
 # Create a default configuration file (v2.0 YAML)
@@ -217,7 +223,7 @@ target_df = df[ (df.Modality == 'CT') & (df.SliceThickness > 2.5) ]
 session.export("export_thick_cts", subset=target_df)
 ```
 
-You can also export the full inventory to Parquet for external tools (Tableau, PowerBI):
+You can also export the full inventory to Parquet for external tools
 
 ```python
 session.export_dataframe("cohort.parquet", expand_metadata=True)
@@ -234,14 +240,14 @@ session.enable_reversible_anonymization("gantry.key")
 
 # Recover the original PatientName and PatientID
 # Recover the original identity and restore attributes in-memory
-# restore=True (default) automatically updates all instances with original values
+# restore=True (default) automatically updates the instance with original values
 session.recover_patient_identity("ANON_12345", restore=True)
 
 # Now, accessing p.patient_name or instance attributes returns original data
 print(f"Restored: {session.store.patients[0].patient_name}")
 ```
 
-## Configuration
+## Configuration {#config}
 
 Gantry uses a **Unified YAML Configuration** to control all aspects of de-identification.
 
