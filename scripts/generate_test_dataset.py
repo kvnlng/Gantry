@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from gantry.builders import DicomBuilder
 from gantry.io_handlers import DicomExporter
-from gantry.entities import Patient
+from gantry.entities import Patient, DicomItem
 
 def generate_random_date(start_year=1950, end_year=2000):
     start_date = datetime.date(start_year, 1, 1)
@@ -23,28 +23,24 @@ def generate_random_date(start_year=1950, end_year=2000):
 
 def generate_phi() -> Dict[str, Any]:
     """Generates a dictionary of random PHI."""
-    # Since we can't use Faker, we'll roll our own simple one
-    first_names = ["James", "John", "Robert", "Michael", "William", "David", "Richard", "Joseph", "Thomas", "Charles", "Mary", "Patricia", "Jennifer", "Linda", "Elizabeth", "Barbara", "Susan", "Jessica", "Sarah", "Karen"]
-    last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson"]
-    institutions = ["General Hospital", "University Medical Center", "City Imaging", "Community Clinic", "Advanced Diagnostics"]
-    physicians = ["Dr. House", "Dr. Strange", "Dr. Who", "Dr. McCoy", "Dr. Grey", "Dr. Quinn"]
-    descriptions = ["Routine Checkup", "Follow-up", "Pre-op Assessment", "Emergency Scan", "Research Study"]
-
-    fn = random.choice(first_names)
-    ln = random.choice(last_names)
-    full_name = f"{ln}^{fn}"
+    import faker
+    fake = faker.Faker()
+    
+    sex = random.choice(["M", "F", "O"])
+    fname = fake.first_name_male() if sex == "M" else fake.first_name_female() if sex == "F" else fake.first_name()
+    lname = fake.last_name()
     
     return {
-        "PatientName": full_name,
-        "PatientID": f"PID-{random.randint(10000, 99999)}",
-        "PatientBirthDate": generate_random_date().strftime("%Y%m%d"),
-        "PatientSex": random.choice(["M", "F", "O"]),
-        "AccessionNumber": f"ACC-{random.randint(100000, 999999)}",
-        "StudyID": f"STY-{random.randint(1000, 9999)}",
-        "StudyDescription": f"{random.choice(descriptions)}",
-        "InstitutionName": random.choice(institutions),
-        "ReferringPhysicianName": random.choice(physicians),
-        "OperatorsName": random.choice(physicians),
+        "PatientName": f"{lname}^{fname}",
+        "PatientID": f"PID-{fake.numerify('#####')}",
+        "PatientBirthDate": fake.date_of_birth(minimum_age=18, maximum_age=90).strftime("%Y%m%d"),
+        "PatientSex": sex,
+        "AccessionNumber": f"ACC-{fake.numerify('######')}",
+        "StudyID": f"STY-{fake.numerify('####')}",
+        "StudyDescription": fake.bs().title(),
+        "InstitutionName": fake.company(),
+        "ReferringPhysicianName": f"Dr. {fake.name()}",
+        "OperatorsName": f"Tech {fake.last_name()}",
     }
 
 try:
@@ -164,7 +160,8 @@ def get_modality_specs(modality: str):
         "XA": (512, 512, 5, 1), # Multi-frame Mono
         "RF": (512, 512, 5, 1), # Multi-frame Mono
         "MG": (1024, 1024, 1, 1),
-        "OT": (128, 128, 1, 3)  # RGB
+        "OT": (128, 128, 1, 3),  # RGB
+        "SR": (0, 0, 0, 0) # Structure Report (No Pixels)
     }
     return specs.get(modality, (128, 128, 1, 1))
 
@@ -188,7 +185,9 @@ def main():
         "XA": [("GE", "Innova"), ("Siemens", "Artis")],
         "RF": [("GE", "Precision"), ("Siemens", "Luminos")],
         "MG": [("Hologic", "Selenia"), ("GE", "Senographe")],
-        "OT": [("Gantry", "Test")]
+        "MG": [("Hologic", "Selenia"), ("GE", "Senographe")],
+        "OT": [("Gantry", "Test")],
+        "SR": [("Gantry", "ReportSystem")]
     }
     
     patients = []
@@ -210,7 +209,10 @@ def main():
                 
                 # Create pixel data
                 # Included Burned-in Text
-                pixel_data = create_pixel_data(rows, cols, frames, samples, text=phi['PatientName'])
+                if mod == "SR":
+                    pixel_data = None
+                else:
+                    pixel_data = create_pixel_data(rows, cols, frames, samples, text=phi['PatientName'])
 
                 # Build the patient object graph
                 builder = DicomBuilder.start_patient(phi["PatientID"], phi["PatientName"])
@@ -228,7 +230,32 @@ def main():
                     # Ideally use correct SOP Class per modality but SC is universally accepted for test
                     
                     inst_builder = series_builder.add_instance(sop_uid, sop_class, k)
-                    inst_builder.set_pixel_data(pixel_data)
+                    
+                    if mod == "SR":
+                        # SR specific logic: No pixels, Add Content Sequence
+                        # (0040,A730) Content Sequence
+                        
+                        # 1. Main Text Content
+                        item1 = DicomItem()
+                        item1.set_attr("0040,A040", "TEXT") # ValueType
+                        item1.set_attr("0040,A160", f"History: Patient {phi['PatientName']} reports pain.") # TextValue (Sensitive!)
+                        item1.set_attr("0040,A043", "SEPARATE") # ConceptNameCodeSequence (simplified)
+                        
+                        # 2. Nested Content
+                        nested = DicomItem()
+                        nested.set_attr("0040,A040", "PNAME")
+                        nested.set_attr("0040,A123", "Dr. Smeagol") # PersonName (Sensitive!)
+                        
+                        item1.add_sequence_item("0040,A730", nested)
+                        
+                        # Add to instance directly
+                        inst_builder.instance.add_sequence_item("0040,A730", item1)
+                        
+                        inst_builder.set_attribute("0008,0060", "SR") # Modality
+                        inst_builder.set_attribute("0008,0016", "1.2.840.10008.5.1.4.1.1.88.11") # Basic Text SR
+                        
+                    else:
+                        inst_builder.set_pixel_data(pixel_data)
                     
                     # --- Set UIDs Explicitly in Dataset ---
                     inst_builder.set_attribute("0008,0018", sop_uid)

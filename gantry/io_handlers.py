@@ -293,7 +293,13 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
                  raise e
 
         if arr is None:
-             arr = inst.get_pixel_data()
+             try:
+                 arr = inst.get_pixel_data()
+             except FileNotFoundError:
+                 # Valid for non-image IODs (SR, encapsulated PDF, etc.)
+                 # We assume if the user created it without pixels, it's intentional.
+                 # Proceed without setting PixelData.
+                 arr = None
              
         if arr is not None:
             # MEMORY OPTIMIZATION:

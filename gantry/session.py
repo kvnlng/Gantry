@@ -1337,7 +1337,7 @@ class DicomSession:
 
     def create_config(self, output_path: str):
         """
-        Generates a unified v2 configuration file in YAML format.
+        Generates a unified configuration file in YAML format.
         Includes default PHI tags + Auto-detected machine inventory.
         """
         import yaml
