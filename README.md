@@ -2,8 +2,6 @@
 
 **A Python DICOM Object Model and Redaction Toolkit.**
 
-![Gantry](docs/images/IMG_0653.jpeg)
-
 Gantry provides a high-performance, object-oriented interface for managing, analyzing, and de-identifying DICOM datasets. It is designed for large-scale ingestion, precise pixel redaction, and strict PHI compliance.
 
 ## Features
@@ -23,7 +21,7 @@ Gantry provides a high-performance, object-oriented interface for managing, anal
 
 Gantry is designed for massive scale. Recent stress tests verify robust linear scaling on datasets up to 100GB.
 
-![Benchmark Scaling](docs/images/benchmark_scaling.png)
+![Benchmark Scaling](docs_site/images/benchmark_scaling.png)
 
 #### 100GB Scalability Test
 
