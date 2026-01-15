@@ -58,24 +58,37 @@ class DicomStore:
 
 from .parallel import run_parallel
 
-def populate_attrs(ds, item):
+def populate_attrs(ds, item, text_index: list = None):
     """Standalone function to populate attributes for pickle-compatibility in workers."""
+    
+    # Text-like VRs that might contain PHI
+    TEXT_VRS = {'PN', 'LO', 'SH', 'ST', 'LT', 'UT', 'DA', 'DT', 'TM', 'CS', 'AE', 'UI'} # UI included for linking checks? Maybe not UI usually.
+    # Updated VR list based on standard Anonymization profiles
+    TEXT_VRS = {'PN', 'LO', 'SH', 'ST', 'LT', 'UT', 'DA', 'DT', 'TM'}
+    
     for elem in ds:
         if elem.tag.group == 0x7fe0: continue  # Skip pixels
         tag = f"{elem.tag.group:04x},{elem.tag.element:04x}"
+        
         if elem.VR == 'SQ':
-            process_sequence(tag, elem, item)
+            process_sequence(tag, elem, item, text_index)
         elif elem.VR == 'PN':
             # Sanitize PersonName for pickle safety
-            item.set_attr(tag, str(elem.value))
+            val = str(elem.value)
+            item.set_attr(tag, val)
+            if text_index is not None:
+                text_index.append((item, tag))
         else:
             item.set_attr(tag, elem.value)
+            # Index if text
+            if text_index is not None and elem.VR in TEXT_VRS:
+                text_index.append((item, tag))
 
-def process_sequence(tag, elem, parent_item):
+def process_sequence(tag, elem, parent_item, text_index: list = None):
     """Recursively parses Sequence (SQ) items."""
     for ds_item in elem:
         seq_item = DicomItem()
-        populate_attrs(ds_item, seq_item)
+        populate_attrs(ds_item, seq_item, text_index)
         parent_item.add_sequence_item(tag, seq_item)
 
 def ingest_worker(fp):
@@ -108,7 +121,7 @@ def ingest_worker(fp):
 
         # Construct Instance
         inst = Instance(meta['sop'], meta['sop_class'], 0, file_path=fp)
-        populate_attrs(ds, inst)
+        populate_attrs(ds, inst, inst.text_index)
         
         return (meta, inst, None)
     except Exception as e:

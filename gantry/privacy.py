@@ -158,8 +158,21 @@ class PhiInspector:
     def _scan_instance(self, instance: Instance, patient_id: str) -> List[PhiFinding]:
         """
         Scans a single instance for PHI based on configured tags and private tag rules.
+        Uses cached `text_index` for O(1) access to all text nodes including nested sequences.
         """
         findings = []
+        
+        # 0. Determine Scan Targets
+        # If we have a text_index, we use that for targeted scanning.
+        # Otherwise fallback to iterating attributes (shallow scan).
+        scan_targets = []
+        if hasattr(instance, 'text_index') and instance.text_index:
+             # Tuple (item, tag)
+             scan_targets = instance.text_index
+        else:
+             # Fallback: List of (instance, tag) for direct attributes
+             scan_targets = [(instance, t) for t in instance.attributes.keys()]
+
         
         # 1. Private Tag Removal Logic
         if self.remove_private_tags:
@@ -197,8 +210,11 @@ class PhiInspector:
         if not self.phi_tags:
             return findings
 
-        for tag, config_val in self.phi_tags.items():
+        for item, tag in scan_targets:
             # Parse config
+            config_val = self.phi_tags.get(tag)
+            if not config_val: continue
+
             if isinstance(config_val, dict):
                 description = config_val.get("name", "Unknown Tag")
                 action_code = config_val.get("action", "REPLACE").upper()
@@ -206,8 +222,8 @@ class PhiInspector:
                 description = str(config_val)
                 action_code = "REPLACE"
 
-            # Check if tag exists in instance attributes
-            val = instance.attributes.get(tag)
+            # Check if tag exists in item items
+            val = item.attributes.get(tag)
             
             if val is None:
                 continue
@@ -229,6 +245,8 @@ class PhiInspector:
             elif action_code in ["SHIFT", "JITTER"]:
                  # Date Shifting
                  # If instance is already shifted, this is not a finding
+                 # We check the ROOT instance or study usually, but here we check the item itself? 
+                 # Date shifting is tricky for deep items. Usually we check if the overarching entity is shifted.
                  if hasattr(instance, "date_shifted") and instance.date_shifted:
                      needs_remediation = False
                  else:
@@ -254,12 +272,12 @@ class PhiInspector:
                 findings.append(PhiFinding(
                      entity_uid=instance.sop_instance_uid,
                      entity_type="Instance",
-                     field_name=description,
+                     field_name=f"{description} (Deep)" if item != instance else description,
                      value=val,
                      reason=f"Matched PHI Tag {tag} ({description})",
                      tag=tag,
                      patient_id=patient_id,
-                     entity=instance,
+                     entity=item, # Point to the specific deep item!
                      remediation_proposal=proposal
                 ))
         return findings

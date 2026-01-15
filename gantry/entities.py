@@ -112,6 +112,10 @@ class Instance(DicomItem):
     # Transient: Track if dates have been shifted in memory
     date_shifted: bool = field(default=False, init=False)
 
+    # Transient: Index of all text-based nodes for O(1) PHI scanning
+    # List of (DicomItem_Reference, Tag_String)
+    text_index: List[Tuple['DicomItem', str]] = field(default_factory=list, init=False, repr=False)
+
     def __post_init__(self):
         # Inlined from DicomItem to avoid super() mismatch issues with slots/reloads
         self.attributes = {}

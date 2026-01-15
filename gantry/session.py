@@ -388,8 +388,6 @@ class DicomSession:
         get_logger().info(f"Batch preserved identity for {count_patients} patients ({len(modified_instances)} instances).")
         return LockingResult(modified_instances)
 
-
-
     def _make_lightweight_copy(self, patient: "Patient") -> "Patient":
         """
         Creates a swallow copy of the patient graph with pixel data stripped.
@@ -700,7 +698,7 @@ class DicomSession:
                     p.patient_id = original_attrs["0010,0020"]
                     
                 get_logger().info(f"Restored identity attributes to {count} instances.")
-                print(f"Success: Restored identity to {count} instances in memory.")
+                # print(f"Success: Restored identity to {count} instances in memory.")
         else:
             print("No encrypted identity token found or decryption failed.")
 
