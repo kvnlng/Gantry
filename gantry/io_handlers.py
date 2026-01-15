@@ -144,6 +144,8 @@ class DicomImporter:
             elif os.path.isdir(path):
                 for root, _, filenames in os.walk(path):
                     for filename in filenames:
+                        if filename.startswith('.'):
+                            continue
                         all_files.append(os.path.join(root, filename))
         
         known_files = store.get_known_files()

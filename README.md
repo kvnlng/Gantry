@@ -272,32 +272,23 @@ Gantry uses a **Unified YAML Configuration** to control all aspects of de-identi
 
 ### Example `config.yaml`
 
-```yaml
+See the **[Complete Configuration Guide](docs_site/configuration.md)** for a full reference.
 
+```yaml
 # 1. Privacy Profile (Optional)
-# Defines the baseline set of tags to remove/clean.
-# Options:
-#   - "basic": DICOM PS3.15 Annex E Basic Profile (Partial De-Id)
-#   - "comprehensive": Full De-Identification (Most conservative)
-#   - "/path/to/profile.yaml": Load a custom set of rules from an external file
+# Options: "basic", "comprehensive", or path to external YAML
 privacy_profile: "basic"
 
 # 2. Date Jitter
-# Shift all dates by a random amount within this range (consistent per Patient).
 date_jitter:
   min_days: -30
   max_days: -10
 
-# 3. Private Tags
-# Whether to remove all private dicom tags (odd groups).
-remove_private_tags: true
-
-# 4. Custom PHI Tags (Overrides Profile)
+# 3. Custom PHI Tags
 phi_tags:
   "0010,0010": { "action": "REMOVE", "name": "PatientName" }
-  "0010,0020": { "action": "REPLACE", "name": "PatientID", "value": "ANON_{id}" }
 
-# 5. Pixel Redaction Rules (Machine Specific)
+# 4. Pixel Redaction Rules
 machines:
   - serial_number: "DEV12345"
     model_name: "UltraSound Pro"
