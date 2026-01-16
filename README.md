@@ -70,9 +70,9 @@ graph LR
 - **Series**: A scan or reconstruction (e.g., "ct_soft_kernel").
 - **Instance**: A single DICOM slice. **Pixel data is lazy-loaded**; the 500MB+ pixel array is only read from disk when you access `.pixel_array` or export.
 
-### 3. Safety Pipeline (The 8 Checkpoints)
+### 3. Safety Pipeline (The 10 Checkpoints)
 
-Gantry enforces a strict checkpoint system to ensure data safety:
+Gantry provides a system to ensure data safety:
 
 1. **Ingest**: Load raw data into the managed session index.
 2. **Examine**: Inventory the cohort and equipment.
@@ -139,7 +139,7 @@ Before changing anything, define your privacy rules.
 
 1. Use `create_config` to generate a scaffolding based on your inventory
 
-2. Edit that config file for the required protocol [Configuration](#config)
+2. Edit that config file for the required protocol [Configuration](#configuration)
 
 3. Use `audit` to scan your inventory against the rules you created in the config file
 
@@ -161,7 +161,7 @@ print(f"Found {len(report)} potential PHI issues.")
 
 ### 4. Backup Identity (Optional)
 
-To enable reversible anonymization, generate a cryptographic key and "lock" the original patient identities into a secure, encrypted DICOM tag. This must be done *before* anonymization.
+To enable reversible anonymization, generate a cryptographic key and "lock" the original patient identities into a secure, encrypted DICOM tag. This must be done *before* anonymization. Our CryptoEngine handles encryption and decryption of bytes using Fernet symmetric key (AES-128-CBC w/ HMAC-SHA256)
 
 ```python
 # Enable encryption (generates 'gantry.key')
@@ -247,7 +247,7 @@ session.recover_patient_identity("ANON_12345", restore=True)
 print(f"Restored: {session.store.patients[0].patient_name}")
 ```
 
-## Configuration {#config}
+## Configuration
 
 Gantry uses a **Unified YAML Configuration** to control all aspects of de-identification.
 
