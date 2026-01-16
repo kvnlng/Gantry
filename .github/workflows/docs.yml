@@ -38,6 +38,6 @@ jobs:
         path: ~/.cache 
         restore-keys: |
           mkdocs-material-
-    - run: pip install mkdocs-material mkdocs-awesome-pages-plugin mkdocstrings pymdown-extensions mkdocstrings_handlers-python
+    - run: pip install mkdocs-material mkdocs-awesome-pages-plugin mkdocstrings pymdown-extensions mkdocstrings-python
       timeout-minutes: 5
     - run: mkdocs gh-deploy
