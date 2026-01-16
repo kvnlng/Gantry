@@ -2,8 +2,9 @@ name: Gantry Tests
 
 on:
   push:
-    branches:
-      - main
+    paths:
+      - 'gantry/**'
+      - 'tests/**'
   workflow_dispatch:
 
 permissions:
