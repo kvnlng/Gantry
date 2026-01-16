@@ -20,6 +20,8 @@ jobs:
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
       timeout-minutes: 3
 
     - name: Set up Python 3.14
