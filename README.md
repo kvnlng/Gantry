@@ -23,7 +23,7 @@ Gantry is designed for massive scale. Recent stress tests verify robust linear s
 
 ![Benchmark Scaling](docs_site/images/benchmark_scaling.png)
 
-#### 100GB Scalability Test
+### 100GB Scalability Test
 
 - **Input**: 101,000 files (50GB Single-Frame + 50GB Multi-Frame).
 - **Import Speed**: ~14 seconds (Index-only ingestion).
@@ -34,12 +34,10 @@ The architecture uses O(1) memory streaming, ensuring it never runs out of RAM e
 
 #### Micro-Benchmarks (Metadata Operations)
 
-| Operation | Scale | Time (Mac M3 Max) | Throughput |
-|-----------|-------|-------------------|------------|
-| **Identity Locking** | 100,000 Instances | ~0.13 s | **769k / sec** |
-| **Persist Findings** | 100,000 Issues | ~0.13 s | **770k / sec** |
-
-
+| Operation            | Scale             | Time (Mac M3 Max) | Throughput     |
+|----------------------|-------------------|-------------------|----------------|
+| **Identity Locking** | 100,000 Instances | ~0.13 s           | **769k / sec** |
+| **Persist Findings** | 100,000 Issues    | ~0.13 s           | **770k / sec** |
 
 ## Architecture
 
@@ -135,7 +133,7 @@ session.examine()
 
 ### 3. Configure & Audit
 
-Before changing anything, define your privacy rules. 
+Before changing anything, define your privacy rules.
 
 1. Use `create_config` to generate a scaffolding based on your inventory
 
@@ -315,9 +313,7 @@ Supported Transfer Syntaxes:
 - RLE Lossless
 - Standard JPEG Baseline/Extended
 
-
 ## Compliance & Certification
-
 
 ### 1. Automated Compliance Reports
 
@@ -339,7 +335,6 @@ Gantry can screen for high-risk attributes:
 
 - **Burned-In Annotation Check**: Flags images where `BurnedInAnnotation (0028,0301)` is "YES", enforcing manual review.
 - **Exception Tracking**: Captures all system errors during batch processing for the final report.
-
 
 ## Migration Tools
 

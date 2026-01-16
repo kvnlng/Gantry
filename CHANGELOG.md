@@ -5,48 +5,6 @@ All notable changes to the "Gantry" project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.1] - 2025-12-31
-
-### Added
-
-- **Python 3.13t+ Support**: Full compatibility with Free-threaded Python (no-GIL).
-- **Benchmarks**: Documented performance achieving ~770k instances/sec for metadata operations.
-- **Migration Tools**: Added `gantry.utils.ctp_parser` to convert legacy CTP scripts to Gantry YAML.
-
-### Changed
-
-- **Dependencies**: Merged `[images]` extra into core install. Gantry now installs `pillow` and `imagecodecs` by default.
-- **Documentation**: Complete rewrite of `README.md` to reflect v2.0 Architecture.
-
-### Fixed
-
-- **Decompression**: Robust support for encapsulated Multi-Frame images and JPEG Lossless (Process 14) via `imagecodecs`.
-- **Robustness**: Implemented automatic fallback to installed codecs if standard `pydicom` handler discovery fails (e.g. environment path issues).
-- **Handling**: Fixed `UnboundLocalError` regressions in error reporting.
-- **Correctness**: Fixed bug where encapsulated pixel data was passed incorrectly to decoders.
-
-## [0.5.0] - 2025-12-18
-
-### Added
-
-- **Performance**:
-  - **Split-Persistence**: Introduced a binary sidecar (`_pixels.bin`) for high-speed append-only pixel storage, reducing SQLite metadata size by 99%+.
-  - **Database Indexing**: Added indexes to Foreign Keys (`patient_id_fk`, etc.) and `audit_log` for O(1) query performance.
-  - **Multithreaded Redaction**: `redact_pixels` now uses `ThreadPoolExecutor` to process Machine Rules in parallel, achieving near-linear speedup on multi-core systems.
-- **Optimization**:
-  - **Inverted Redaction Loop**: Refactored logic to iterate images once per machine (O(M)) instead of applying every rule to every image (O(NM)).
-  - **Empty Zone Skipping**: Automatically skips processing machines with no configured ROIs.
-- **Benchmarks**:
-  - Verified throughput of **140,000 metadata inserts/sec** and **580 MB/s pixel writes** in stress tests.
-- **UX**:
-  - Added realtime `tqdm` progress bars for redaction.
-
-### Fixed
-
-- **Multiprocessing**: Fixed "Pickling Error" on Windows/spawn start methods by creating lightweight copies of the object graph for worker communication.
-- **Redaction**: Fixed crash when `get_pixel_data` returns `None` (missing file).
-- **Redaction**: Fixed "Completely Outside" warning logic for RGB images (interpreting Channels as Columns).
-
 ## [0.5.4] - 2026-01-14
 
 ### Added
@@ -104,6 +62,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Logging Regression**: Fixed assertion failure in `test_full_logging_coverage` regarding suppressed log messages.
 - **NameError**: Fixed a variable scoping issue in `RedactionService.process_machine_rules`.
 - **Parallel Redaction Bugs**: Resolved `pickle` errors and state synchronization issues in parallel redaction by enforcing threading.
+
+## [0.5.1] - 2025-12-31
+
+### Added
+
+- **Python 3.13t+ Support**: Full compatibility with Free-threaded Python (no-GIL).
+- **Benchmarks**: Documented performance achieving ~770k instances/sec for metadata operations.
+- **Migration Tools**: Added `gantry.utils.ctp_parser` to convert legacy CTP scripts to Gantry YAML.
+
+### Changed
+
+- **Dependencies**: Merged `[images]` extra into core install. Gantry now installs `pillow` and `imagecodecs` by default.
+- **Documentation**: Complete rewrite of `README.md` to reflect v2.0 Architecture.
+
+### Fixed
+
+- **Decompression**: Robust support for encapsulated Multi-Frame images and JPEG Lossless (Process 14) via `imagecodecs`.
+- **Robustness**: Implemented automatic fallback to installed codecs if standard `pydicom` handler discovery fails (e.g. environment path issues).
+- **Handling**: Fixed `UnboundLocalError` regressions in error reporting.
+- **Correctness**: Fixed bug where encapsulated pixel data was passed incorrectly to decoders.
+
+## [0.5.0] - 2025-12-18
+
+### Added
+
+- **Performance**:
+  - **Split-Persistence**: Introduced a binary sidecar (`_pixels.bin`) for high-speed append-only pixel storage, reducing SQLite metadata size by 99%+.
+  - **Database Indexing**: Added indexes to Foreign Keys (`patient_id_fk`, etc.) and `audit_log` for O(1) query performance.
+  - **Multithreaded Redaction**: `redact_pixels` now uses `ThreadPoolExecutor` to process Machine Rules in parallel, achieving near-linear speedup on multi-core systems.
+- **Optimization**:
+  - **Inverted Redaction Loop**: Refactored logic to iterate images once per machine (O(M)) instead of applying every rule to every image (O(NM)).
+  - **Empty Zone Skipping**: Automatically skips processing machines with no configured ROIs.
+- **Benchmarks**:
+  - Verified throughput of **140,000 metadata inserts/sec** and **580 MB/s pixel writes** in stress tests.
+- **UX**:
+  - Added realtime `tqdm` progress bars for redaction.
+
+### Fixed
+
+- **Multiprocessing**: Fixed "Pickling Error" on Windows/spawn start methods by creating lightweight copies of the object graph for worker communication.
+- **Redaction**: Fixed crash when `get_pixel_data` returns `None` (missing file).
+- **Redaction**: Fixed "Completely Outside" warning logic for RGB images (interpreting Channels as Columns).
 
 ## [0.4.1] - 2025-12-12
 
