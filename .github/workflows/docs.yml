@@ -1,32 +1,42 @@
 name: Documentation
 
 on:
+  push:
+    paths:
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      timeout-minutes: 3
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
+    - name: Set up Python 3.14
+      uses: actions/setup-python@v6
+      timeout-minutes: 3
+      with:
+        python-version: "3.14"
 
-      - name: Install dependencies
-        run: |
-          pip install -e .[docs]
+    - name: Set cache id
+      run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV
 
-      - name: Build MkDocs Site
-        run: |
-          mkdocs build
-
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./site
+    - name: Install and Deploy MkDocs Material
+      uses: actions/cache@v4
+      with:
+        key: mkdocs-material-${{ env.cache_id }}
+        path: ~/.cache 
+        restore-keys: |
+          mkdocs-material-
+    - run: pip install mkdocs-material 
+    - run: mkdocs gh-deploy

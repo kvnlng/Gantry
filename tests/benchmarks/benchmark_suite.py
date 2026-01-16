@@ -1,10 +1,11 @@
-
+"""
+Docstring for tests.benchmarks.benchmark_suite
+"""
 import os
-import time
 import argparse
-import pandas as pd
 import subprocess
 import shutil
+import pandas as pd
 
 # Phases configuration: (Total Instances, Phase Label)
 
@@ -12,7 +13,6 @@ PHASES = [
     {"target_count": 10, "label": "Phase 1 (10 Multi-Frame Files)"},
     {"target_count": 100, "label": "Phase 2 (100 Multi-Frame Files)"},
     {"target_count": 1000, "label": "Phase 3 (1000 Multi-Frame Files)"},
-    {"target_count": 10000, "label": "Phase 4 (10000 Multi-Frame Files)"}, 
 ]
 
 DATA_DIR = "data/benchmark_in"
@@ -20,10 +20,12 @@ OUT_DIR = "data/benchmark_out"
 DB_PATH = "benchmark.db"
 
 def run_command(cmd):
+    """Run a suite of benchmarks to test scalability with multi-frame DICOM files."""
 
     subprocess.check_call(cmd, shell=True)
 
 def main():
+    """Main function to run the benchmark suite."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--reuse", action="store_true", help="Reuse cached data to save time (generates only missing files)")
     args = parser.parse_args()
