@@ -3,7 +3,7 @@ name: Documentation
 on:
   push:
     paths:
-      - 'docs/**'
+      - 'docs_dir/**'
   workflow_dispatch:
 
 permissions:
