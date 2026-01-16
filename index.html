@@ -430,10 +430,66 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#key-features" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Key Features
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#100gb-scalability-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        100GB Scalability Test
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="100GB Scalability Test">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#micro-benchmarks-metadata-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Micro-Benchmarks (Metadata Operations)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture
       
     </span>
   </a>
@@ -1055,10 +1111,66 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#key-features" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Key Features
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Performance">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#100gb-scalability-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        100GB Scalability Test
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="100GB Scalability Test">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#micro-benchmarks-metadata-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Micro-Benchmarks (Metadata Operations)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture
       
     </span>
   </a>
@@ -1089,7 +1201,7 @@
 <p><strong>A Python DICOM Object Model and Redaction Toolkit.</strong></p>
 <p><img alt="Gantry" src="images/IMG_0653.jpeg" /></p>
 <p>Gantry provides a high-performance, object-oriented interface for managing, analyzing, and de-identifying DICOM datasets. It is designed for large-scale ingestion, precise pixel redaction, and strict PHI compliance.</p>
-<h2 id="key-features">Key Features</h2>
+<h2 id="features">Features</h2>
 <ul>
 <li><strong>Object-Oriented API</strong>: Work with <code>Patient</code>, <code>Study</code>, <code>Series</code>, and <code>Instance</code> objects directly.</li>
 <li><strong>Persistent Sessions</strong>: All metadata is indexed in a SQLite database, allowing you to pause/resume large jobs and providing an audit trail.</li>
@@ -1102,6 +1214,44 @@
 <li><strong>Free-threaded Python Ready</strong>: Fully compatible with Python 3.13t+ (no-GIL) for true parallelism.</li>
 <li><strong>Deep Memory Management</strong>: Automatic pixel offloading allows processing datasets far exceeding available RAM.</li>
 </ul>
+<h2 id="performance">Performance</h2>
+<p>Gantry is designed for massive scale. Recent stress tests verify robust linear scaling on datasets up to 100GB.</p>
+<p><img alt="Benchmark Scaling" src="docs_site/images/benchmark_scaling.png" /></p>
+<h3 id="100gb-scalability-test">100GB Scalability Test</h3>
+<ul>
+<li><strong>Input</strong>: 101,000 files (50GB Single-Frame + 50GB Multi-Frame).</li>
+<li><strong>Import Speed</strong>: ~14 seconds (Index-only ingestion).</li>
+<li><strong>Export Speed</strong>: ~79 seconds (Streaming Write).</li>
+<li><strong>Memory</strong>: Peaks at 5.4GB, stable regardless of dataset size.</li>
+</ul>
+<p>The architecture uses O(1) memory streaming, ensuring it never runs out of RAM even when processing terabytes of data.</p>
+<h4 id="micro-benchmarks-metadata-operations">Micro-Benchmarks (Metadata Operations)</h4>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Scale</th>
+<th>Time (Mac M3 Max)</th>
+<th>Throughput</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Identity Locking</strong></td>
+<td>100,000 Instances</td>
+<td>~0.13 s</td>
+<td><strong>769k / sec</strong></td>
+</tr>
+<tr>
+<td><strong>Persist Findings</strong></td>
+<td>100,000 Issues</td>
+<td>~0.13 s</td>
+<td><strong>770k / sec</strong></td>
+</tr>
+</tbody>
+</table>
+<h2 id="architecture">Architecture</h2>
+<p>Gantry acts as a smart indexing layer over your raw DICOM files. It does <em>not</em> modify your original data. Instead, it builds a lightweight metadata index (SQLite) and exposes a clean Python Object Model for manipulation.</p>
 
 
 
