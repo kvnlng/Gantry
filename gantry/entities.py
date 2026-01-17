@@ -318,6 +318,7 @@ class Study:
     study_date: Any
     series: List[Series] = field(default_factory=list)
     date_shifted: bool = False
+    study_time: Optional[str] = None
     _dirty: bool = field(default=True, init=False)
 
     def __post_init__(self):

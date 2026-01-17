@@ -21,6 +21,7 @@ def test_reversible_anonymization_flow(tmp_path):
     p = Patient(pid, original_name)
     from datetime import date
     st = Study("ST_1", date(2023, 1, 1))
+    st.study_time = "120000" # Required Type 1 for Export
     se = Series("SE_1", "CT", 1)
     inst = Instance("SOP_1", "1.2.840.10008.5.1.4.1.1.2", 1)
     inst.file_path = None # In-memory only

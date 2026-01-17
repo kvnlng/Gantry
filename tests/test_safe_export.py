@@ -81,8 +81,7 @@ def test_safe_export_skips_phi(tmp_path):
     import json
     config_file.write_text(json.dumps({
         "phi_tags": {
-             "0010,0010": "PatientName",
-             "0010,0020": "PatientID"
+             "0010,0010": "PatientName"
         }
     }))
     

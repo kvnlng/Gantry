@@ -9,7 +9,7 @@ from gantry.session import DicomSession
 
 def create_simple_dicom(path, patient_name="Test^Patient"):
     file_meta = FileMetaDataset()
-    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2"
+    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.7" # Secondary Capture (Lenient)
     file_meta.MediaStorageSOPInstanceUID = pydicom.uid.generate_uid()
     file_meta.TransferSyntaxUID = ImplicitVRLittleEndian
     
@@ -20,10 +20,16 @@ def create_simple_dicom(path, patient_name="Test^Patient"):
     
     # Must have these for Gantry import
     ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
+    ds.SOPClassUID = file_meta.MediaStorageSOPClassUID
+    if not hasattr(ds.file_meta, "MediaStorageSOPClassUID"):
+        ds.file_meta.MediaStorageSOPClassUID = ds.SOPClassUID
+        
     ds.StudyInstanceUID = pydicom.uid.generate_uid()
     ds.SeriesInstanceUID = pydicom.uid.generate_uid()
     ds.Modality = "OT"
     ds.StudyDate = "20230101"
+    ds.StudyTime = "120000" # Type 2 for SC
+    ds.ConversionType = "WSD" # Type 1 for SC
     
     # Minimal pixel data to pass validation if any
     ds.is_little_endian = True

@@ -358,8 +358,8 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
         
         # Ensure dir exists (race safe)
         os.makedirs(os.path.dirname(ctx.output_path), exist_ok=True)
-        ds.save_as(ctx.output_path)
         
+        ds.save_as(ctx.output_path, write_like_original=False)
         return True
     except Exception as e:
         raise RuntimeError(f"Export failed for {ctx.output_path}: {e}")

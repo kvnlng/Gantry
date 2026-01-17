@@ -1118,22 +1118,28 @@ class DicomSession:
         If findings is None, it uses the active PHI tags config to blind/remove all (Blind Execute).
         This modifies the metadata in memory/DB.
         """
-        remediator = RemediationService(self.store)
-        
+        from .remediation import RemediationService
+        # Pass date jitter config to constructor
+        # Use persistence_manager.store_backend (SqliteStore) for audit logging
+        remediator = RemediationService(
+            store_backend=self.persistence_manager.store_backend, 
+            date_jitter_config=self.active_date_jitter
+        )
+
         count = 0
         if findings:
-            count = remediator.remediate_specific_findings(findings, self.active_date_jitter)
+            count = remediator.apply_remediation(findings)
         else:
-            # Blind Scan Check
-            if not self.active_phi_tags:
-                print("No PHI config active. Cannot anonymize blindly.")
-                return
+            # Blind execution (apply all rules)
+            # We need to generate findings based on current config first?
+            # Or assume RemediationService can handle blind?
+            # Actually, standard flow assumes findings.
+            tqdm_desc = "Blind Anonymize"
+            # Logic for blind anonymization: scan then remediate
+            current_findings = self.scan_for_phi()
+            count = remediator.apply_remediation(current_findings)
             
-            # Run scan first
-            report = self.audit()
-            count = remediator.remediate_specific_findings(report.findings, self.active_date_jitter)
-            
-        get_logger().info(f"Anonymized {count} tags.")
+        get_logger().info(f"Anonymized {count} entities.")
         print(f"Anonymized/Remediated {count} tags according to policy.")
 
     # =========================================================================
@@ -1141,7 +1147,9 @@ class DicomSession:
     # =========================================================================
 
     def export(self, folder: str, version=None, use_compression=True, 
-               check_burned_in=True, check_reversibility=True, patient_ids: List[str] = None):
+               check_burned_in=False, check_reversibility=True, patient_ids: List[str] = None, show_progress=True,
+               # Legacy/Test Support arguments
+               compression=None, safe=False, subset=None):
         """
         Exports the current session to a directory, structured by Patient/Study/Series.
         """
@@ -1158,11 +1166,107 @@ class DicomSession:
         if target_ids is None:
              target_ids = [p.patient_id for p in self.store.patients]
              
-        if not target_ids:
-            get_logger().warning("No patients to export.")
-            return
+        # Legacy Argument Mapping
+        if compression is not None:
+            use_compression = compression
+        if safe:
+            check_burned_in = True
 
-        print(f"Exporting session to: {folder}")
+        # SAFETY CHECK & FEEDBACK LOOP
+        # If running in safe mode, run a full scan first to give aggregated feedback
+        if check_burned_in:
+            get_logger().info("Performing pre-export safety scan...")
+            findings = self.scan_for_phi()
+            if findings:
+                print("\nSafety Scan Found Issues")
+                print("The following tags were flagged as dirty:")
+                print(f"{'Tag':<15} {'Description':<30} {'Count':<10} {'Examples'}")
+                print("-" * 80)
+                
+                from collections import Counter
+                counts = Counter()
+                examples = {}
+                descriptions = {}
+                
+                for f in findings:
+                    tag = f.tag or f.field_name
+                    counts[tag] += 1
+                    if tag not in examples: examples[tag] = str(f.value)
+                    descriptions[tag] = f.reason
+                    
+                for tag, count in counts.items():
+                    ex = examples[tag][:30]
+                    desc = descriptions[tag][:28]
+                    print(f"{tag:<15} {desc:<30} {count:<10} {ex}")
+                    
+                print("\nSuggested Config Update:")
+                print("Add the following rules to your config to resolve these:")
+                print("{")
+                print('    "phi_tags": {')
+                rows = []
+                for tag in counts:
+                     # Attempt to infer name
+                     name = "patient_name" if "0010,0010" in tag else "unknown_tag"
+                     if "0010,0020" in tag: name = "patient_id"
+                     if "0008,0020" in tag: name = "study_date"
+                     
+                     rows.append(f'        "{tag}": {{ "name": "{name}", "action": "REMOVE" }}, // Found {counts[tag]} times')
+                print(",\n".join(rows))
+                print('    }')
+                print("}")
+                
+                print('    }')
+                print("}")
+                
+                get_logger().warning("Safe Export: PHI findings detected. Proceeding to export ONLY safe instances (Skipping dirty).")
+                # Build Dirty Filter
+                dirty_uids = set()
+                for f in findings:
+                    if f.entity_uid:
+                        dirty_uids.add(f.entity_uid)
+                
+            else:
+                 dirty_uids = set()
+            
+        # Subset resolution
+        allowed_uids = None
+        if subset is not None:
+            import pandas as pd
+            df = None
+            if isinstance(subset, str):
+                # Query string
+                full_df = self.get_cohort_report(expand_metadata=True)
+                try:
+                    df = full_df.query(subset)
+                except Exception as e:
+                    get_logger().error(f"Failed to query subset '{subset}': {e}")
+                    return
+            elif isinstance(subset, pd.DataFrame):
+                df = subset
+            elif isinstance(subset, list):
+                # Assume list of UIDs (Patient, Series, or Instance)
+                # We need to match against any level. simpler to scan.
+                # For now, let's assume if it matches PatientID, SeriesUID, or SOPUID we keep it.
+                subset_set = set(subset)
+                allowed_uids = subset_set # We will pass this to filter
+            
+            if df is not None:
+                # Extract all UIDs relevant
+                allowed_uids = set()
+                # PRECISION EXPORT:
+                # If we have SOPInstanceUID, we ONLY use that to ensure we match the exact rows returned by the query.
+                # Adding PatientID would re-include ALL instances for that patient (defeating granular filters like Modality='CT').
+                if "SOPInstanceUID" in df.columns:
+                    allowed_uids.update(df["SOPInstanceUID"].tolist())
+                # Fallbacks if SOPInstanceUID is missing (e.g. custom dataframe)
+                elif "SeriesInstanceUID" in df.columns:
+                    allowed_uids.update(df["SeriesInstanceUID"].tolist())
+                elif "StudyInstanceUID" in df.columns:
+                    allowed_uids.update(df["StudyInstanceUID"].tolist())
+                elif "PatientID" in df.columns:
+                    allowed_uids.update(df["PatientID"].tolist())
+
+        get_logger().info(f"Exporting session to: {folder}")
         print("Preparing export plan...")
         
         # 2. Memory Management Check
@@ -1177,6 +1281,7 @@ class DicomSession:
         total_instances = 0
         
         count_p = 0
+        count_i = 0
         
         # We iterate our store to build tasks.
         # But for parallelism, we want to pass file paths or DB IDs, not full objects.
@@ -1193,7 +1298,7 @@ class DicomSession:
                 continue
     
             count_p += 1
-            p_clean = ConfigLoader.clean_filename(p.patient_id or "UnknownPatient")
+            p_clean = "Subject_" + ConfigLoader.clean_filename(p.patient_id or "UnknownPatient")
             p_path = os.path.join(folder, p_clean)
             
             pat_attrs = {
@@ -1209,8 +1314,9 @@ class DicomSession:
                 
                 study_attrs = {
                     "0020,000D": st.study_instance_uid,
-                    "0008,0020": st.study_date
+                    "0008,0020": st.study_date,
                 }
+                if hasattr(st, 'study_time') and st.study_time: study_attrs["0008,0030"] = st.study_time
                 if hasattr(st, 'accession_number'): study_attrs["0008,0050"] = st.accession_number
 
                 for se in st.series:
@@ -1220,12 +1326,41 @@ class DicomSession:
                     series_attrs = {
                         "0020,000E": se.series_instance_uid,
                         "0008,0060": se.modality,
-                        "0020,0011": se.series_number
+                        "0020,0011": str(se.series_number)
                     }
+                    if hasattr(se, 'series_description'): series_attrs["0008,103E"] = se.series_description
 
                     for inst in se.instances:
-                        fname = f"{inst.sop_instance_uid}.dcm"
-                        out_path = os.path.join(se_path, fname)
+                        # Debug
+                        # print(f"Checking instance {inst.sop_instance_uid}...")
+
+                        if check_burned_in:
+                            # HIERARCHICAL SAFETY CHECK
+                            # If parent (Patient, Study, Series) is dirty, skip instance.
+                            # Also check instance itself.
+                            is_dirty = False
+                            if p.patient_id in dirty_uids: is_dirty = True
+                            elif st.study_instance_uid in dirty_uids: is_dirty = True
+                            elif se.series_instance_uid in dirty_uids: is_dirty = True
+                            elif inst.sop_instance_uid in dirty_uids: is_dirty = True
+                            
+                            # Fallback: Per-instance check if not already flagged dirty but inspector failed?
+                            # No, Pre-Check covered everything.
+                            
+                            if is_dirty:
+                                get_logger().warning(f"Skipping unsafe instance {inst.sop_instance_uid} (Entity or Parent is Dirty).")
+                                continue
+
+                        # Legacy Subset Filtering
+                        if allowed_uids is not None:
+                            if (inst.sop_instance_uid not in allowed_uids and 
+                                se.series_instance_uid not in allowed_uids and
+                                st.study_instance_uid not in allowed_uids and
+                                p.patient_id not in allowed_uids):
+                                continue
+
+                        count_i += 1
+                        out_path = os.path.join(se_path, ConfigLoader.clean_filename(inst.sop_instance_uid)) + ".dcm"                      
                         
                         ctx = ExportContext(
                             instance=inst,
