@@ -44,3 +44,27 @@ The architecture uses O(1) memory streaming, ensuring it never runs out of RAM e
 ## Architecture
 
 Gantry acts as a smart indexing layer over your raw DICOM files. It does *not* modify your original data. Instead, it builds a lightweight metadata index (SQLite) and exposes a clean Python Object Model for manipulation.
+
+### 1. The Session Facade
+
+The `Session` object is your single entry point. It manages:
+
+- **Persistence**: Auto-saving state to `gantry.db`.
+- **Inventory**: Tracking Patients, Studies, and Series.
+- **Transactions**: Atomic persistence of changes.
+
+### 2. Object Model
+
+Gantry abstracts DICOM into a semantic hierarchy, removing the pain of manual tag iteration.
+
+```mermaid
+graph LR
+    Patient --> Study
+    Study --> Series
+    Series --> Instance
+    Instance --> Pixels((Pixel Data))
+```
+
+- **Patient**: Root entity (Name, ID).
+- **Study**: A distinct visit/exam.
+- **Series**: A scan or reconstruction (e.g., "ct_soft_kernel").
