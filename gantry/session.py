@@ -1,7 +1,7 @@
 import glob
 from typing import List, Optional, Dict, Any, Union
 import datetime
-from .io_handlers import DicomStore, DicomImporter, DicomExporter
+from .io_handlers import DicomStore, DicomImporter, DicomExporter, SidecarPixelLoader
 from .services import RedactionService
 from .config_manager import ConfigLoader
 from .privacy import PhiInspector, PhiFinding
@@ -19,11 +19,11 @@ import json
 from .parallel import run_parallel
 import concurrent.futures
 import os
-
-
+import sys
 
 def scan_worker(args):
     """
+    Worker function for parallel PHI scanning.
     Args:
         args: Tuple of (db_path, patient_id, config_source, remove_private) 
               OR (patient_obj, config_source, remove_private)
@@ -82,6 +82,9 @@ class DicomSession:
     Manages the lifecycle of the DicomStore (Load/Import/Redact/Export/Save).
     """
 
+    # =========================================================================
+    # 1. LIFECYCLE
+    # =========================================================================
 
     def __init__(self, persistence_file="gantry.db"):
         """
@@ -111,7 +114,7 @@ class DicomSession:
         self.store.patients = self.store_backend.load_all()
         
         self.active_rules: List[Dict[str, Any]] = []
-        self.active_phi_tags: Dict[str, str] = None
+        self.active_phi_tags: Dict[str, str] = {}
         self.active_date_jitter: Dict[str, int] = {"min_days": -365, "max_days": -1}
         self.active_remove_private_tags: bool = True
         
@@ -123,26 +126,12 @@ class DicomSession:
             self.enable_reversible_anonymization("gantry.key")
 
         # Shared Global Executor for Process Consistency
-        # This prevents "UserWarning: resource_tracker: ... semaphore released"
         self._executor = concurrent.futures.ProcessPoolExecutor(max_workers=None) # Default: CPU * 1.5
 
         if db_exists:
             print(f"Loaded session from {persistence_file}")
             
         get_logger().info(f"Session started. {len(self.store.patients)} patients loaded.")
-
-    def ingest(self, directory: str):
-        """
-        Ingests DICOM files from a directory into the session store.
-        """
-        print(f"Ingesting from {directory}...")
-        # Supports parallel ingestion via shared executor
-        from .io_handlers import DicomImporter
-        DicomImporter.import_files([directory], self.store, executor=self._executor)
-        
-        # Persist immediately
-        self.save()
-        print(f"Ingestion complete. {len(self.store.patients)} patients in store.")
 
     def close(self):
         """
@@ -157,6 +146,14 @@ class DicomSession:
         if hasattr(self, '_executor'):
             print("Shutting down process pool...")
             self._executor.shutdown(wait=True)
+
+    def save(self):
+        """
+        Persists the current session state to the database in the background.
+        User must call this manually to save changes.
+        """
+        if hasattr(self, 'persistence_manager'):
+            self.persistence_manager.save_async(self.store.patients)
 
     def _restart_executor(self, max_workers=None):
         """
@@ -173,13 +170,6 @@ class DicomSession:
         
         # Re-init
         self._executor = concurrent.futures.ProcessPoolExecutor(max_workers=max_workers)
-            
-    def save(self):
-        """
-        Persists the current session state to the database in the background.
-        User must call this manually to save changes.
-        """
-        self.persistence_manager.save_async(self.store.patients)
 
     def release_memory(self):
         """
@@ -212,539 +202,26 @@ class DicomSession:
         if freed > 0:
             print(f"Memory Cleanup: Released {freed} images from RAM.")
 
-    def enable_reversible_anonymization(self, key_path: str = "gantry.key"):
-        """
-        Initializes the encryption subsystem.
-        """
-        self.key_manager = KeyManager(key_path)
-        self.key_manager.load_or_generate_key()
-        self.reversibility_service = ReversibilityService(self.key_manager)
-        get_logger().info(f"Reversible anonymization enabled. Key: {key_path}")
-
-    def lock_identities(self, patient_id: str, persist: bool = False, _patient_obj: "Patient" = None, verbose: bool = True, **kwargs) -> Union[List["Instance"], LockingResult]:
-        """
-        Securely embeds the original patient name/ID into a private DICOM tag
-        for all instances belonging to the specified patient.
-        Must be called BEFORE anonymization.
-        
-        Args:
-            patient_id: The ID of the patient to preserve, OR a list/report for batch processing.
-            persist: If True, writes changes to DB immediately. If False, returns instances for batch persistence.
-            _patient_obj: Optimization argument to avoid O(N) lookup if patient is already known.
-            verbose: If True, logs debug information. Set to False for batch operations.
-            **kwargs: Additional arguments passed to lock_identities_batch (e.g. auto_persist_chunk_size).
-        """
-        if not self.reversibility_service:
-            raise RuntimeError("Reversible anonymization not enabled. Call enable_reversible_anonymization() first.")
-            
-        # Dispatch to batch method if a list is provided
-        # This handles List[str] or List[Patient] automatically via lock_identities_batch logic
-        if isinstance(patient_id, (list, tuple, set)) or hasattr(patient_id, 'findings'):
-            return self.lock_identities_batch(patient_id, **kwargs)
-            
-        if verbose:
-            get_logger().debug(f"Preserving identity for {patient_id}...")
-        
-        modified_instances = []
-        
-        if _patient_obj:
-            patient = _patient_obj
-        else:
-            patient = next((p for p in self.store.patients if p.patient_id == patient_id), None)
-        
-        if not patient:
-            get_logger().error(f"Patient {patient_id} not found.")
-            return LockingResult([])
-
-        # Determine Tags to Lock (Default + Custom)
-        default_tags = [
-            "0010,0010", # PatientName
-            "0010,0020", # PatientID
-            "0010,0030", # PatientBirthDate
-            "0010,0040", # PatientSex
-            "0008,0050"  # AccessionNumber
-        ]
-        
-        tags_to_lock = kwargs.get("tags_to_lock", default_tags)
-        
-        # Capture Original Values from First Instance
-        original_attrs = {}
-        first_instance = None
-        
-        # Locate first instance efficiently
-        for st in patient.studies:
-            for se in st.series:
-                if se.instances:
-                    first_instance = se.instances[0]
-                    break
-            if first_instance: break
-            
-        if first_instance:
-            for tag in tags_to_lock:
-                val = first_instance.attributes.get(tag)
-                if val is not None:
-                     original_attrs[tag] = val
-        else:
-             # Fallback to Patient object properties if no instances (unlikely)
-             # But Patient object only has name/id
-             if "0010,0010" in tags_to_lock: original_attrs["0010,0010"] = patient.patient_name
-             if "0010,0020" in tags_to_lock: original_attrs["0010,0020"] = patient.patient_id
-
-        cnt = 0
-        
-        # Optimization: Encrypt once per patient
-        token = self.reversibility_service.generate_identity_token(original_attributes=original_attrs)
-        
-        # Iterate deep
-        for st in patient.studies:
-            for se in st.series:
-                for inst in se.instances:
-                    # self.reversibility_service.embed_original_data(inst, original_attrs)
-                    self.reversibility_service.embed_identity_token(inst, token)
-                    modified_instances.append(inst)
-                    cnt += 1
-        
-        if persist and modified_instances:
-            self.store_backend.update_attributes(modified_instances)
-            get_logger().info(f"Secured identity (tags: {list(original_attrs.keys())}) in {cnt} instances for {patient_id}.")
-            
-        return LockingResult(modified_instances)
-
-    def lock_identities_batch(self, patient_ids: Union[List[str], "PhiReport", List["PhiFinding"]], auto_persist_chunk_size: int = 0) -> Union[List["Instance"], LockingResult]:
-        """
-        Batch process multiple patients to lock identities.
-        Returns a list of all modified instances (unless auto_persist_chunk_size is used).
-        
-        Args:
-            patient_ids: List of PatientIDs, OR a PhiReport/list of objects with patient_id.
-            auto_persist_chunk_size: If > 0, persists changes and releases memory every N instances.
-                                     IMPORTANT: Returns an empty list if enabled to prevent OOM.
-        """
-        if not self.reversibility_service:
-            raise RuntimeError("Reversible anonymization not enabled.")
-            
-        # Normalize input to a set of strings
-        normalized_ids = set()
-        
-        # Handle PhiReport or list containers
-        iterable_data = patient_ids
-        if hasattr(patient_ids, 'findings'): # PhiReport
-            iterable_data = patient_ids.findings
-            
-        for item in iterable_data:
-            if isinstance(item, str):
-                normalized_ids.add(item)
-            elif hasattr(item, 'patient_id') and item.patient_id:
-                 normalized_ids.add(item.patient_id)
-                 
-        start_ids = list(normalized_ids)
-        
-        modified_instances = [] # Only used if auto_persist_chunk_size == 0
-        current_chunk = []      # Used if auto_persist_chunk_size > 0
-        
-        count_patients = 0
-        count_instances_chunked = 0
-        
-        from tqdm import tqdm
-        
-        # Optimization: Create a lookup map for O(1) access
-        # This replaces the O(N) lookup per patient inside the loop
-        patient_map = {p.patient_id: p for p in self.store.patients}
-        
-        with tqdm(start_ids, desc="Locking Identities", unit="patient") as pbar:
-            for pid in pbar:
-                p_obj = patient_map.get(pid)
-                if p_obj:
-                    # Use verbose=False to avoid log spam
-                    res = self.lock_identities(pid, persist=False, _patient_obj=p_obj, verbose=False)
-                    
-                    if auto_persist_chunk_size > 0:
-                        current_chunk.extend(res)
-                        if len(current_chunk) >= auto_persist_chunk_size:
-                            self.store_backend.update_attributes(current_chunk)
-                            count_instances_chunked += len(current_chunk)
-                            current_chunk = [] # Release memory
-                    else:
-                        modified_instances.extend(res)
-                    
-                    count_patients += 1
-                else:
-                     get_logger().error(f"Patient {pid} not found (batch processing).")
-        
-        # Final cleanup
-        if auto_persist_chunk_size > 0:
-            if current_chunk:
-                self.store_backend.update_attributes(current_chunk)
-                count_instances_chunked += len(current_chunk)
-            
-            get_logger().info(f"Batch preserved identity for {count_patients} patients ({count_instances_chunked} instances). Persisted incrementally.")
-            return LockingResult([])
-             
-        if modified_instances:
-             msg = f"Preserved identity for {len(modified_instances)} instances."
-             # print(f"\n{msg}\nRemember to call .save() to persist changes.") # Suppress print, logger is enough
-             get_logger().info(msg)
-             
-        get_logger().info(f"Batch preserved identity for {count_patients} patients ({len(modified_instances)} instances).")
-        return LockingResult(modified_instances)
-
-    def _make_lightweight_copy(self, patient: "Patient") -> "Patient":
-        """
-        Creates a swallow copy of the patient graph with pixel data stripped.
-        Used to prevent IPC buffer overflows (Windows) when passing to workers.
-        """
-        from copy import copy
-        
-        # P -> St -> Se -> Inst
-        p_clone = copy(patient)
-        p_clone.studies = []
-        
-        for st in patient.studies:
-            st_clone = copy(st)
-            st_clone.series = []
-            p_clone.studies.append(st_clone)
-            
-            for se in st.series:
-                se_clone = copy(se)
-                se_clone.instances = []
-                st_clone.series.append(se_clone)
-                
-                for inst in se.instances:
-                    # Clone instance
-                    i_clone = copy(inst)
-                    # Strip heavy fields
-                    try:
-                        i_clone.pixel_array = None
-                        i_clone._pixel_loader = None
-                    except: 
-                        pass 
-                    
-                    se_clone.instances.append(i_clone)
-                    
-        return p_clone
-
-    def audit(self, config_path: str = None) -> "PhiReport":
-        """
-        Scans all patients in the session for potential PHI.
-        Uses cached `active_phi_tags` if config_path matches or is None, otherwise loads fresh.
-        Returns a PhiReport object (iterable, and convertible to DataFrame).
-        Checkpoint 4: Target.
-        """
-        from .privacy import PhiReport
-        
-        # Logic: If config_path is provided, we should probably load it temporarily for this scan?
-        # OR if config_path is None, use self.active_phi_tags
-        
-        tags_to_use = self.active_phi_tags
-        
-        if config_path:
-             # Just load tags for this run, don't overwrite session state unless load_config called?
-             # Actually, if user says audit("file.json"), they expect that file to control.
-             tags_to_use = ConfigLoader.load_phi_config(config_path)
-             # NOTE: If passing a config PATH to audit(), we might be missing the other unified settings 
-             # (date_jitter, etc.) unless we load them too.
-             # For now, audit() focuses on finding things based on TAGS.
-             # If the inspector needs to know about date jitter or private tags to Flag them correctly?
-             # Private tags -> YES. Jitter -> Maybe not for detection, but definitely for Remediation proposal.
-             
-             # Better approach: If config_path is Unified, load it all.
-             try:
-                 t, r, dj, rpt = ConfigLoader.load_unified_config(config_path)
-                 tags_to_use = t
-                 # We probably shouldn't overwrite session state side-effects here, 
-                 # but for the worker arguments we need to pass them.
-                 # Let's create a transient config object or just pass args.
-                 # For simplicity in this function, we'll stick to tags, but we should fix inspector init.
-             except:
-                 # Fallback to simple tags load
-                 tags_to_use = ConfigLoader.load_phi_config(config_path)
-
-        inspector = PhiInspector(config_tags=tags_to_use, remove_private_tags=self.active_remove_private_tags)
-        if not inspector.phi_tags:
-            get_logger().warning("PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
-        
-        get_logger().info("Scanning for PHI (Parallel)...")
-        
-        # Hybrid Approach:
-        # Pass lightweight object CLONES to avoid "Assert left > 0" IPC error
-        # AND to ensure we audit in-memory (unsaved) changes.
-        worker_args = []
-        for p in self.store.patients:
-            # Strip pixels to reduce size
-            light_p = self._make_lightweight_copy(p)
-            worker_args.append((light_p, tags_to_use, self.active_remove_private_tags))
-        
-        results = run_parallel(scan_worker, worker_args, desc="Scanning PHI")
-        
-        all_findings = []
-        for findings in results:
-            all_findings.extend(findings)
-            
-        # Rehydrate Entities!
-        self._rehydrate_findings(all_findings)
-            
-        get_logger().info(f"PHI Scan Complete. Found {len(all_findings)} issues.")
-            
-        return PhiReport(all_findings)
-
-    def scan_for_phi(self, config_path: str = None) -> "PhiReport":
-        """
-        DEPRECATED: Use audit() instead.
-        Alias for audit.
-        """
-        get_logger().warning("DeprecationWarning: scan_for_phi() is deprecated. Please use audit() instead.")
-        return self.audit(config_path)
-
-    def save_analysis(self, report):
-        """
-        Persists the results of a PHI analysis to the database.
-        report: PhiReport or List[PhiFinding]
-        """
-        findings = report
-        if hasattr(report, 'findings'):
-            findings = report.findings
-            
-        self.store_backend.save_findings(findings)
-
-    def generate_report(self, output_path: str, format: str = "markdown") -> None:
-        """
-        Generates a formal Compliance Report for the current session.
-        
-        Args:
-            output_path (str): Path to write the report file.
-            format (str): Output format ('markdown' or 'md'). Default is 'markdown'.
-        """
-        get_logger().info(f"Generating Compliance Report ({format}) to {output_path}...")
-        
-        # 1. Gather Statistics
-        n_p = len(self.store.patients)
-        n_st = sum(len(p.studies) for p in self.store.patients)
-        n_se = sum(len(st.series) for p in self.store.patients for st in p.studies)
-        n_i = sum(len(se.instances) for p in self.store.patients for st in p.studies for se in st.series)
-        
-        
-        # 2. Gather Audit Logs & Exceptions
-        audit_summary = self.store_backend.get_audit_summary()
-        exceptions = self.store_backend.get_audit_errors()
-        
-        # Check for unsafe attributes (BurnedInAnnotation)
-        unsafe_items = self.store_backend.check_unsafe_attributes()
-        if unsafe_items:
-            for uid, fpath, msg in unsafe_items:
-                # Add to exceptions as a warning
-                # Format: (timestamp, action, details)
-                # We don't have a timestamp for the state check, so use "Current State" or generate one
-                exceptions.append((datetime.datetime.now().isoformat(), "COMPLIANCE_CHECK", f"{msg} - {uid}"))
-        
-        # 3. Determine Context
-        privacy_profile = "See Config" 
-        
-        try:
-            from importlib.metadata import version
-            ver = version("gantry")
-        except:
-            ver = "0.0.0"
-
-        # 4. Build Report DTO
-        report = ComplianceReport(
-            gantry_version=ver,
-            project_name=os.path.basename(self.persistence_file),
-            privacy_profile=privacy_profile,
-            total_patients=n_p,
-            total_studies=n_st,
-            total_series=n_se,
-            total_instances=n_i,
-            audit_summary=audit_summary,
-            exceptions=exceptions,
-            validation_status="PASS" if audit_summary and not exceptions else "REVIEW_REQUIRED"
-        )
-        
-        renderer = get_renderer(format)
-        renderer.render(report, output_path)
-
-    def generate_manifest(self, output_path: str, format: str = "html") -> None:
-        """
-        Generates a visual (HTML) or machine-readable (JSON) manifest of all instances in the session.
-        
-        Args:
-            output_path (str): File path to write the manifest.
-            format (str): 'html' or 'json'.
-        """
-        get_logger().info(f"Generating Manifest ({format}) to {output_path}...")
-        
-        items = []
-        for p in self.store.patients:
-            for st in p.studies:
-                for se in st.series:
-                    # Get metadata if available
-                    modality = se.modality
-                    manufacturer = se.equipment.manufacturer if se.equipment else ""
-                    model = se.equipment.model_name if se.equipment else ""
-                    
-                    for inst in se.instances:
-                        # Attempt to get file path if it exists
-                        # Instance might not have a tracked file path if in-memory or loaded from DB without path tracking?
-                        # DB usually stores original path or we can assume it's the 'file_path' attr if we have it?
-                        # Instance definition in gantry/entities.py has file_path?
-                        # Assuming Instance has file_path.
-                        # It definitely has SOPInstanceUID.
-                        
-                        fpath = getattr(inst, 'file_path', "N/A")
-                        
-                        item = ManifestItem(
-                            patient_id=p.patient_id,
-                            study_instance_uid=st.study_instance_uid,
-                            series_instance_uid=se.series_instance_uid,
-                            sop_instance_uid=inst.sop_instance_uid,
-                            file_path=str(fpath),
-                            modality=modality,
-                            manufacturer=manufacturer,
-                            model_name=model
-                        )
-                        items.append(item)
-        
-        manifest = Manifest(
-            generated_at=datetime.datetime.now().isoformat(),
-            items=items,
-            project_name=os.path.basename(self.persistence_file)
-        )
-        
-        generate_manifest_file(manifest, output_path, format)
-
-    def _rehydrate_findings(self, findings):
-        """
-        Updates findings in-place to point to live objects in self.store
-        instead of the unpickled copies from workers.
-        """
-        # Create lookup maps
-        # Assuming entity_uid is unique per type.
-        # Patient
-        patient_map = {p.patient_id: p for p in self.store.patients}
-        
-        # Since traversing deep would be slow for every finding, we can do lazy or smart lookup
-        # Or just traverse once if needed.
-        # Most findings are on Patient or Study.
-        
-        # Let's map Studies
-        study_map = {}
-        instance_map = {}
-        
-        for p in self.store.patients:
-            for s in p.studies:
-                study_map[s.study_instance_uid] = s
-                for se in s.series:
-                    for i in se.instances:
-                        instance_map[i.sop_instance_uid] = i
-        
-        for f in findings:
-            if f.entity_type == "Patient":
-                if f.entity_uid in patient_map:
-                    f.entity = patient_map[f.entity_uid]
-            elif f.entity_type == "Study":
-                if f.entity_uid in study_map:
-                    f.entity = study_map[f.entity_uid]
-            elif f.entity_type == "Instance":
-                if f.entity_uid in instance_map:
-                    f.entity = instance_map[f.entity_uid]
-
-    def recover_patient_identity(self, patient_id: str, restore: bool = True):
-        """
-        Attempts to recover original identity from the encrypted token.
-        
-        Args:
-            patient_id: The PatientID to recover.
-            restore: If True, applies the recovered attributes back to ALL instances in memory.
-        """
-        if not self.reversibility_service:
-            raise RuntimeError("Reversibility not enabled.")
-
-        p = next((x for x in self.store.patients if x.patient_id == patient_id), None)
-        if not p:
-            print(f"Patient {patient_id} not found.")
-            return
-
-        # Locate first instance to get the token
-        first_inst = None
-        for st in p.studies:
-            for se in st.series:
-                if se.instances:
-                    first_inst = se.instances[0]
-                    break
-        
-        if not first_inst:
-            print("No instances found for patient.")
-            return
-
-        original_attrs = self.reversibility_service.recover_original_data(first_inst)
-        
-        if original_attrs:
-            # print("Recovered Identity:")
-            # print(json.dumps(original_attrs, indent=2))
-            
-            if restore:
-                count = 0
-                for st in p.studies:
-                    for se in st.series:
-                        for inst in se.instances:
-                            for tag, val in original_attrs.items():
-                                inst.set_attr(tag, val)
-                            count += 1
-                
-                # Update Patient Object top-level properties if Name/ID changed
-                if "0010,0010" in original_attrs:
-                    p.patient_name = original_attrs["0010,0010"]
-                if "0010,0020" in original_attrs:
-                    # Changing ID might break map integrity if store relies on it, but usually fine for display
-                    p.patient_id = original_attrs["0010,0020"]
-                    
-                get_logger().info(f"Restored identity attributes to {count} instances.")
-                # print(f"Success: Restored identity to {count} instances in memory.")
-        else:
-            print("No encrypted identity token found or decryption failed.")
-
-    def ingest(self, folder_path):
-        """
-        Scans a folder for .dcm files (recursively) and imports them into the session.
-        """
-        print(f"Ingesting from '{folder_path}'...")
-        DicomImporter.import_files([folder_path], self.store, executor=self._executor)
-        
-        # Calculate stats
-        n_p = len(self.store.patients)
-        n_st = sum(len(p.studies) for p in self.store.patients)
-        n_se = sum(len(st.series) for p in self.store.patients for st in p.studies)
-        n_i = sum(len(se.instances) for p in self.store.patients for st in p.studies for se in st.series)
-        
-        print("\nIngestion Complete.")
-        print("Summary:")
-        print(f"  - {n_p} Patients")
-        print(f"  - {n_st} Studies")
-        print(f"  - {n_se} Series")
-        print(f"  - {n_i} Instances")
-        print("Remember to call .save() to persist changes.\n")
-
     def examine(self):
         """Prints a summary of the session contents and equipment."""
         get_logger().info("Generating inventory report.")
         
         # 1. Object Counts
         n_p = len(self.store.patients)
-        n_st = 0
-        n_se = 0
-        n_i = 0
+        n_st = sum(len(p.studies) for p in self.store.patients)
+        n_se = sum(len(st.series) for p in self.store.patients for st in p.studies)
+        n_i = sum(len(se.instances) for p in self.store.patients for st in p.studies for se in st.series)
         
         # 2. Equipment Grouping
         eq_counts = {} # (man, model) -> count
         
         for p in self.store.patients:
-            n_st += len(p.studies)
-            for s in p.studies:
-                n_se += len(s.series)
-                for se in s.series:
-                    n_i += len(se.instances)
-                    if se.equipment:
-                        key = (se.equipment.manufacturer, se.equipment.model_name)
-                        eq_counts[key] = eq_counts.get(key, 0) + 1
+            for st in p.studies:
+                for se in st.series:
+                    for inst in se.instances:
+                        if se.equipment:
+                            key = (se.equipment.manufacturer, se.equipment.model_name)
+                            eq_counts[key] = eq_counts.get(key, 0) + 1
 
         print(f"\nInventory Summary:")
         print(f" Patients:  {n_p}")
@@ -759,433 +236,36 @@ class DicomSession:
             for (man, mod), count in sorted(eq_counts.items()):
                 print(f" - {man} - {mod} (Count: {count})")
 
-    def get_cohort_report(self) -> 'pd.DataFrame':
+    # =========================================================================
+    # 2. INGESTION
+    # =========================================================================
+
+    def ingest(self, directory: str):
         """
-        Returns a Pandas DataFrame containing flattened metadata for the current cohort.
-        Useful for analysis and QA.
+        Ingests DICOM files from a directory into the session store.
         """
-        import pandas as pd
-        rows = []
-        for p in self.store.patients:
-            for s in p.studies:
-                for se in s.series:
-                    # Basic row info
-                    row = {
-                        "PatientID": p.patient_id,
-                        "PatientName": p.patient_name,
-                        "StudyInstanceUID": s.study_instance_uid,
-                        "StudyDate": s.study_date,
-                        "SeriesInstanceUID": se.series_instance_uid,
-                        "Modality": se.modality,
-                        "InstanceCount": len(se.instances)
-                    }
-                    if se.equipment:
-                        row["Manufacturer"] = se.equipment.manufacturer
-                        row["Model"] = se.equipment.model_name
-                        row["DeviceSerial"] = se.equipment.device_serial_number
-                    else:
-                        row["Manufacturer"] = ""
-                        row["Model"] = ""
-                        row["DeviceSerial"] = ""
-                        
-                    rows.append(row)
+        print(f"Ingesting from '{directory}'...")
+        from .io_handlers import DicomImporter
+        DicomImporter.import_files([directory], self.store, executor=self._executor)
         
-        return pd.DataFrame(rows)
-
-    def export_dataframe(self, output_path: str = None, expand_metadata: bool = False) -> 'pd.DataFrame':
-        """
-        Exports the comprehensive session inventory to a Pandas DataFrame or Parquet file.
-        The dataframe contains a flattened hierarchy of Patient -> Study -> Series -> Instance.
-        
-        Args:
-            output_path: If provided, saves the dataframe to a parquet file (e.g. "export.parquet").
-            expand_metadata: If True, parses the 'attributes_json' column into separate columns for deep inspection.
-                             Warning: This can increase memory usage significantly.
-        
-        Returns:
-            pd.DataFrame: The resulting dataframe.
-        """
-        import pandas as pd
-        import json
-        
-        get_logger().info("Generating comprehensive dataframe from persistence layer...")
-        
-        # Stream data from SQLite
-        # We convert the generator to a list for DataFrame construction.
-        # For massive datasets, this might need Chunking, but for < 1M rows RAM is usually fine.
-        rows = list(self.store_backend.get_flattened_instances())
-        
-        if not rows:
-            get_logger().warning("No data found to export.")
-            return pd.DataFrame()
-            
-        df = pd.DataFrame(rows)
-        
-        # Normalize Column Names to match DICOM Keywords where possible
-        # SQL returns snake_case, we want PascalCase for consistency with DICOM Attributes
-        rename_map = {
-            "patient_id": "PatientID",
-            "patient_name": "PatientName",
-            "study_instance_uid": "StudyInstanceUID",
-            "study_date": "StudyDate",
-            "series_instance_uid": "SeriesInstanceUID",
-            "modality": "Modality",
-            "series_number": "SeriesNumber",
-            "manufacturer": "Manufacturer",
-            "model_name": "ManufacturerModelName",
-            "device_serial_number": "DeviceSerialNumber",
-            "sop_instance_uid": "SOPInstanceUID",
-            "sop_class_uid": "SOPClassUID",
-            "instance_number": "InstanceNumber",
-            "file_path": "FilePath"
-        }
-        df.rename(columns=rename_map, inplace=True)
-        
-        if expand_metadata and 'attributes_json' in df.columns:
-            get_logger().info("Expanding metadata attributes (this may take a moment)...")
-            
-            def safe_load(x):
-                try: 
-                    return json.loads(x) if x else {}
-                except: 
-                    return {}
-            
-            # normalize expects a list of dicts
-            meta_dicts = df['attributes_json'].apply(safe_load).tolist()
-            meta_df = pd.json_normalize(meta_dicts)
-            
-            # Reset indices to ensure alignment (should be aligned by default but safe to be sure)
-            df = df.reset_index(drop=True)
-            meta_df = meta_df.reset_index(drop=True)
-            
-            # Combine and drop the raw json
-            df = pd.concat([df.drop(columns=['attributes_json']), meta_df], axis=1)
-            
-        if output_path:
-            get_logger().info(f"Saving dataframe to parquet at {output_path}...")
-            # usage of pyarrow is implicit via engine='pyarrow' default in recent pandas or auto-detect
-            try:
-                df.to_parquet(output_path, index=False)
-            except ImportError:
-                 # Fallback/Helpful error
-                 raise ImportError("pyarrow is required for parquet export. Please run 'pip install pyarrow'.")
-                 
-            # If size is reasonable, maybe also print it?
-            import os
-            sz = os.path.getsize(output_path) / (1024 * 1024)
-            get_logger().info(f"Parquet export complete ({sz:.2f} MB).")
-            
-        return df
-
-    def redact_by_machine(self, serial_number, roi):
-        """
-        Manually triggers redaction for a machine.
-        roi: (r1, r2, c1, c2)
-        """
-        svc = RedactionService(self.store, self.store_backend)
-        svc.redact_machine_region(serial_number, roi)
-
-    def anonymize(self, findings: List[PhiFinding]):
-        """
-        Applies remediation to the current session based on findings.
-        Auto-logs to Audit Trail.
-        """
-        svc = RemediationService(self.store_backend, date_jitter_config=self.active_date_jitter)
-        svc.apply_remediation(findings)
-        
-        # Apply Global De-Identification Tags (compliance)
-        # We process ALL instances to ensure they are stamped
-        get_logger().info("Applying standard De-Identification Method tags...")
-        print("Stamping De-Identification Method tags...")
-        
-        count = 0
-        for p in self.store.patients:
-            for st in p.studies:
-                for se in st.series:
-                    for inst in se.instances:
-                        svc.add_global_deid_tags(inst)
-                        count += 1
-                        
-        get_logger().info(f" stamped {count} instances.")
-
-    def export(self, folder, safe=False, compression=None, subset=None, show_progress=True):
-        """
-        Exports the current state of all patients to a folder.
-        If safe=True, performs a fresh PHI scan and ONLY exports clean data.
-        compression: 'j2k' (JPEG 2000 Lossless) or None (Uncompressed)
-        subset: Optional filter. Can be:
-                - pd.DataFrame: A dataframe containing 'sop_instance_uid' column.
-                - str: A pandas querystring (e.g. "Modality == 'CT'") applied to the full index.
-                - List[str]: A list of SOPInstanceUIDs to export.
-        """
-        # AUTO-OPTIMIZATION: Ensure clean memory before spawning processes
-        get_logger().info("Preparing for export (Auto-Save & Memory Release)...")
-        if show_progress:
-            print("Preparing for export (saving & releasing memory)...")
-        self.save()
-        self.persistence_manager.flush()
-        self.release_memory()
-        
-        get_logger().info(f"Exporting session to {folder} (safe={safe})...")
-        if show_progress:
-            print("Exporting...")
-
-        dirty_patients = set()
-        dirty_studies = set()
-
-        if safe:
-            if show_progress:
-                print("Running safety scan...")
-            report = self.audit()
-            for finding in report:
-                if finding.entity_type == "Patient":
-                    dirty_patients.add(finding.entity_uid)
-                elif finding.entity_type == "Study":
-                    dirty_studies.add(finding.entity_uid)
-            
-            if dirty_patients or dirty_studies:
-                # Group findings by Tag
-                tag_summary = {} # tag -> {desc, count, example_val}
-                for finding in report:
-                    if finding.tag not in tag_summary:
-                        tag_summary[finding.tag] = {
-                            "desc": finding.field_name, 
-                            "count": 0, 
-                            "examples": set()
-                        }
-                    tag_summary[finding.tag]["count"] += 1
-                    if len(tag_summary[finding.tag]["examples"]) < 3:
-                        tag_summary[finding.tag]["examples"].add(str(finding.value))
-
-                msg = f"\nSafety Scan Found Issues: {len(dirty_patients)} Patients, {len(dirty_studies)} Studies contain PHI."
-                msg += "\nThe following tags were flagged as dirty:\n"
-                msg += f"{'Tag':<15} {'Description':<30} {'Count':<10} {'Examples'}\n"
-                msg += "-" * 80 + "\n"
-                
-                config_suggestion = {}
-                
-                for tag, info in tag_summary.items():
-                    examples = ", ".join(info['examples'])
-                    msg += f"{tag:<15} {info['desc']:<30} {info['count']:<10} {examples}\n"
-                    
-                    # Suggest REMOVE or KEEP based on ... usually REMOVE for PHI
-                    config_suggestion[tag] = {"action": "REMOVE", "name": info['desc']}
-
-                msg += "\nTo allow export, you must either REMOVE these tags or mark them as KEEP in your configuration.\n"
-                msg += "Suggested Config Update:\n"
-                import json
-                msg += json.dumps({"phi_tags": config_suggestion}, indent=4)
-                msg += "\n"
-
-                get_logger().warning(msg)
-                print(msg)
-
-        # Handle Subsetting
-        instance_uids = None
-        if subset is not None:
-            get_logger().info("Applying subset filter to export...")
-            import pandas as pd
-            
-            if isinstance(subset, pd.DataFrame):
-                if 'sop_instance_uid' not in subset.columns:
-                     # Check if index is UID? 
-                     # For now, require column
-                     # Or maybe 'SOPInstanceUID' (DICOM standard case)
-                     if 'SOPInstanceUID' in subset.columns:
-                         instance_uids = subset['SOPInstanceUID'].tolist()
-                     else:
-                         raise ValueError("Subset DataFrame must contain 'sop_instance_uid' or 'SOPInstanceUID' column.")
-                else:
-                     instance_uids = subset['sop_instance_uid'].tolist()
-                     
-            elif isinstance(subset, str):
-                # Query String -> Generate DF -> Filter
-                # Note: This loads full dataframe into memory to filter. 
-                # Optimization: Could we push query to SQL? 
-                # SQL is hard because attributes are JSON.
-                # So we export_dataframe() then query.
-                df = self.export_dataframe(expand_metadata=True) # Expand needed for meaningful queries
-                df_filtered = df.query(subset)
-                # handle both cases just in case
-                if 'SOPInstanceUID' in df_filtered.columns:
-                    instance_uids = df_filtered['SOPInstanceUID'].tolist()
-                elif 'sop_instance_uid' in df_filtered.columns:
-                    instance_uids = df_filtered['sop_instance_uid'].tolist()
-                else:
-                    # Fallback to index if it happens to be the key? Unlikely for now.
-                    raise ValueError("Column 'SOPInstanceUID' missing from internal dataframe.")
-                get_logger().info(f"Query '{subset}' matched {len(instance_uids)} instances.")
-                
-            elif isinstance(subset, list):
-                instance_uids = subset
-                
-            if not instance_uids and instance_uids is not None:
-                get_logger().warning("Subset filter resulted in 0 instances. Nothing to export.")
-                return
-
-        exported_count = 0
-        skipped_count = 0
-        
-        # 1. Calculate Scope & Total (In-Memory Helper)
-        patient_ids = []
-        total_instances = 0
-        
-        # NOTE: If instance_uids is set, we can't easily count total_instances based on patients loop 
-        # unless we do a DB count query.
-        # But for progress bar, we need a count.
-        if instance_uids:
-            total_instances = len(instance_uids)
-            # We don't populate patient_ids here because we pass instance_uids specifically.
-            # But the exporter supports patient_ids AND instance_uids.
-            # If we omit patient_ids, it searches all patients (inefficient SQL?).
-            # SqliteStore.get_flattened_instances currently:
-            # - if patient_ids: WHERE p.id IN ...
-            # - if instance_uids: WHERE i.uid IN ...
-            # Either works. If we have instance_uids, we don't need patient_ids.
-            # Although passing patient_ids reduces search space if we know them.
-            # Deriving patient_ids from instance_uids is expensive without a query.
-            # So we just pass instance_uids.
-        else:
-            for p in self.store.patients:
-                # Check Patient Level (Early Filter for ID list)
-                if safe and p.patient_id in dirty_patients:
-                    get_logger().warning(f"Skipping Dirty Patient: {p.patient_id}")
-                    skipped_count += getattr(p, 'instance_count', 0) # Estimate
-                    continue
-                    
-                patient_ids.append(p.patient_id)
-                
-                # Count instances for progress bar
-                if safe:
-                    p_inst_count = 0
-                    for st in p.studies:
-                        if st.study_instance_uid not in dirty_studies:
-                            p_inst_count += sum(len(se.instances) for se in st.series)
-                    total_instances += p_inst_count
-                else:
-                    total_instances += sum(sum(len(se.instances) for se in st.series) for st in p.studies)
-
-        if not patient_ids and not instance_uids:
-            get_logger().warning("No valid patients to export.")
-            return
-
-        # 2. Generate tasks (Streaming from DB)
-        get_logger().info(f"Queuing export for {total_instances} instances (SQL Streaming)...")
-        
-        raw_tasks = DicomExporter.generate_export_from_db(
-            self.persistence_manager.store_backend, 
-            folder, 
-            patient_ids=patient_ids if not instance_uids else None, 
-            compression=compression,
-            instance_uids=instance_uids
-        )
-        
-        # 3. Apply Safety Filter (Lazy)
-        # The DB generation is flattened, so we filter stream based on Context attributes
-        def safety_filter(generator):
-            for ctx in generator:
-                # We already filtered patient_ids list passed to SQL, 
-                # but we need to filter Studies if they are dirty.
-                if safe:
-                    uid = ctx.study_attributes.get("StudyInstanceUID")
-                    if uid and uid in dirty_studies:
-                        continue
-                yield ctx
-
-        export_tasks = safety_filter(raw_tasks) if safe else raw_tasks
-        
-        # 4. Execution Phase (Global Parallelism)
-        # 4. Execution Phase (Global Parallelism)
-        if total_instances > 0:
-            # MEMORY LEAK MITIGATION:
-            # We use worker recycling (maxtasksperchild=100) via multiprocessing.Pool
-            # This forces workers to restart periodically, clearing any leaked memory (e.g. from C-libs).
-            # We do NOT use the shared self._executor for this, as ProcessPoolExecutor doesn't support recycling.
-            try:
-                # Optimized for stability: maxtasksperchild=25 clears memory frequently
-                # GC Optimization: Disable GC in workers
-                success_count = DicomExporter.export_batch(export_tasks, show_progress=show_progress, total=total_instances, maxtasksperchild=25, disable_gc=True)
-            except Exception as e:
-                get_logger().error(f"Export Failed! Error: {e}")
-                raise e
-            finally:
-                # Main process GC trigger
-                import gc
-                gc.collect()
-            
-            # Note: skipped_count is only patient-level skips. Study-level skips aren't counted here explicitly 
-            # unless we wrap the generator to count them, but that's complex for a simple log.
-            get_logger().info(f"Export complete.")
-        else:
-            get_logger().warning("No instances queued for export.")
-            
-        print("Done.")
-
-    def export_to_parquet(self, output_path: str, patient_ids: List[str] = None):
-        """
-        [EXPERIMENTAL] Exports flattened metadata to a Parquet file.
-        
-        Requires 'pandas' and 'pyarrow' or 'fastparquet'.
-        
-        Args:
-            output_path (str): Destination .parquet file path.
-            patient_ids (List[str], optional): List of PatientIDs to filter. Defaults to None (all currently in store).
-        """
-        try:
-            import pandas as pd
-        except ImportError:
-            get_logger().error("export_to_parquet requires 'pandas' installed.")
-            raise ImportError("Please install pandas to use this feature: pip install pandas pyarrow")
-
-        # 1. Sync DB state
-        # If the user has unsaved changes, we should warn or auto-save.
-        # Currently, get_flattened_instances reads ONLY from DB.
-        # We'll auto-save just like normal export.
-        get_logger().info("Saving state before Parquet export...")
         self.save()
         
-        # 2. Stream Data
-        get_logger().info("Streaming data from database...")
+        # Calculate stats
+        n_p = len(self.store.patients)
+        n_st = sum(len(p.studies) for p in self.store.patients)
+        n_se = sum(len(st.series) for p in self.store.patients for st in p.studies)
+        n_i = sum(len(se.instances) for p in self.store.patients for st in p.studies for se in st.series)
         
-        # We assume if patient_ids is None, we export ALL loaded patients (which matches DB if we just saved)
-        # However, sess.store.patients might be a subset if we implemented partial loading later.
-        # But for now, session manages a cohort.
-        target_ids = patient_ids
-        if target_ids is None:
-             target_ids = [p.patient_id for p in self.store.patients]
-             
-        if not target_ids:
-            get_logger().warning("No patients to export.")
-            return
+        print(f"Ingestion complete. Saved session state.")
+        print("Summary:")
+        print(f"  - {n_p} Patients")
+        print(f"  - {n_st} Studies")
+        print(f"  - {n_se} Series")
+        print(f"  - {n_i} Instances")
 
-        generator = self.persistence_manager.store_backend.get_flattened_instances(target_ids)
-        
-        # Materialize generator to list for DataFrame creation
-        # Note: This loads metadata into RAM. If 1M rows, might be heavy, but Parquet export needs batching or full DF usually.
-        # For a prototype, full load is fine using our lightweight dicts.
-        rows = list(generator)
-        
-        if not rows:
-            get_logger().warning("No instances found for these patients.")
-            return
-            
-        df = pd.DataFrame(rows)
-        
-        # 3. Save
-        get_logger().info(f"Writing {len(df)} rows to {output_path}...")
-        
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-        
-        try:
-            df.to_parquet(output_path, index=False)
-            get_logger().info("Parquet export successful.")
-        except ImportError as e:
-             get_logger().error("Parquet engine (pyarrow or fastparquet) missing.")
-             raise e
-        except Exception as e:
-            get_logger().error(f"Failed to write parquet: {e}")
-            raise
+    # =========================================================================
+    # 3. CONFIGURATION
+    # =========================================================================
 
     def load_config(self, config_file: str):
         """
@@ -1254,86 +334,6 @@ class DicomSession:
 
         print(f"\nSummary: Execution will modify approximately {match_count} images.")
         print("---------------------------------------")
-
-    def redact(self, show_progress=True):
-        """
-        User Action: 'Apply the currently loaded rules to the pixel data.'
-        """
-        if not self.active_rules:
-            get_logger().warning("No configuration loaded. Use .load_config() first.")
-            print("No configuration loaded. Use .load_config() first.")
-            return
-
-        service = RedactionService(self.store, self.store_backend)
-
-        try:
-            from concurrent.futures import ThreadPoolExecutor
-            import os
-
-            # Parallel Execution for Speed
-            # Threading works well here because pixel I/O and NumPy ops release GIL.
-            # Shared memory allows in-place modification of instances.
-            # OPTIMIZATION: Limited to 0.5x CPU or Max 8 to prevent OOM with large datasets
-            cpu_count = os.cpu_count() or 1
-            max_workers = max(1, min(int(cpu_count * 0.5), 8))
-            # Generate granular tasks for better load balancing
-            all_tasks = []
-            get_logger().info("Analyzing workload...")
-            for rule in self.active_rules:
-                tasks = service.prepare_redaction_tasks(rule)
-                all_tasks.extend(tasks)
-
-            if not all_tasks:
-                get_logger().warning("No matching images found for any loaded rules.")
-                print("No matching images found for any loaded rules.")
-                return
-
-            print(f"Queued {len(all_tasks)} redaction tasks across {len(self.active_rules)} rules.")
-            print(f"Executing using {max_workers} threads...")
-            # 2. Parallel Redaction (Granular)
-            get_logger().info(f"Starting granular redaction ({len(all_tasks)} tasks, workers={max_workers})...")
-        
-            # NOTE: We force threads for redaction because pixel manipulation in numpy releases GIL, 
-            # and pickling full objects for Processes is slower and less robust (pickling errors).
-            # However, for huge loads, Processes might be better. 
-            # BUT the user issue "semaphore leak" implies Processes were being used implicitly or somewhere else.
-            # Check 'force_threads'. Providing self._executor (ProcessPool) will conflict if force_threads=True.
-            # run_parallel logic: if executor is passed, it uses it.
-            # So we MUST NOT pass self._executor if we strictly want threads.
-            
-            # DECISION: Redaction currently uses force_threads=True.
-            # If we stick to threads, we don't use the shared ProcessPool.
-            # So we leave this call alone (creating a ThreadPool is cheap).
-            
-            # run_parallel(service.execute_redaction_task, all_tasks, desc="Redacting Pixels", max_workers=max_workers, force_threads=True)
-            # However, if we move to Processes later, we should use self._executor.
-            # For now, keep as is to avoid regression on the threading model.
-            
-            # Enable GC Optimization
-            import gc
-            gc.disable()
-            try:
-                run_parallel(service.execute_redaction_task, all_tasks, desc="Redacting Pixels", max_workers=max_workers, force_threads=True, progress=show_progress)
-            finally:
-                gc.enable()
-                gc.collect()
-
-            # Save state after modification
-            # self._save()
-            # Run Safety Checks
-            service.scan_burned_in_annotations()
-
-            print("Execution Complete. Remember to call .save() to persist.")
-            # get_logger().info("Execution Complete. Session saved.")
-            print("Execution Complete. Session saved.")
-
-            # Clear rules after execution?
-            # Optional: Keep them if user wants to run again on new imports.
-            # self.active_rules = []
-
-        except Exception as e:
-            get_logger().error(f"Execution interrupted: {e}")
-            print(f"Execution interrupted: {e}")
 
     def create_config(self, output_path: str):
         """
@@ -1556,14 +556,6 @@ class DicomSession:
             if "redaction_zones" in m and isinstance(m["redaction_zones"], list):
                 # Wrap inner lists (zones) in FlowList
                 # And assume user wants [[...], [...]] so wrap outer too?
-                # User example: "redaction_zones: []" or "redaction_zones: [[...]]"
-                # If we wrap outer in FlowList, it becomes: redaction_zones: [[...], [...]]
-                # If we wrap inner in FlowList, it becomes:
-                # redaction_zones:
-                #   - [50, 420, ...]
-                #
-                # The user request "placed in brackets" usually implies flow style.
-                # Let's try wrapping OUTER list.
                 
                 zones = m["redaction_zones"]
                 new_zones = FlowList()
@@ -1581,8 +573,6 @@ class DicomSession:
             yaml_content = yaml.dump(data, sort_keys=False, default_flow_style=False, width=float("inf"))
             
             # Post-process: Convert "comment: ..." into "# ..."
-            # Matches:   comment: "Some text"
-            # or         comment: Some text
             import re
             lines = yaml_content.splitlines()
             new_lines = []
@@ -1594,20 +584,15 @@ class DicomSession:
                     content = match.group(2).strip()
                     
                     # Check for surrounding quotes and strip them
-                    # Handle single quotes (yaml uses '' escape)
                     if content.startswith("'") and content.endswith("'"):
                         content = content[1:-1]
                         content = content.replace("''", "'")
-                    # Handle double quotes (json style/yaml style with backslash)
                     elif content.startswith('"') and content.endswith('"'):
                         content = content[1:-1]
                         content = content.replace('\\"', '"')
                     
                     new_lines.append(f"{indent}# {content}")
                 else:
-                    # Aesthetic Improvement: Add spacing between list items
-                    # Check if line looks like the start of a new list entry (e.g. "- manufacturer: ...")
-                    # But exclude the very first one to avoid leading newline at top of file (or top of section)
                     if line.strip().startswith("- ") and len(new_lines) > 0 and new_lines[-1].strip() != "":
                          new_lines.append("")
                     
@@ -1642,3 +627,813 @@ class DicomSession:
         except Exception as e:
             get_logger().error(f"Failed to write scaffold: {e}")
 
+    # =========================================================================
+    # 4. AUDIT & ANALYSIS
+    # =========================================================================
+
+    def audit(self, config_path: str = None) -> "PhiReport":
+        """
+        Scans all patients in the session for potential PHI.
+        Uses cached `active_phi_tags` if config_path matches or is None, otherwise loads fresh.
+        Returns a PhiReport object (iterable, and convertible to DataFrame).
+        Checkpoint 4: Target.
+        """
+        from .privacy import PhiReport
+        
+        tags_to_use = self.active_phi_tags
+        
+        if config_path:
+             try:
+                 t, r, dj, rpt = ConfigLoader.load_unified_config(config_path)
+                 tags_to_use = t
+             except:
+                 # Fallback to simple tags load
+                 tags_to_use = ConfigLoader.load_phi_config(config_path)
+
+        inspector = PhiInspector(config_tags=tags_to_use, remove_private_tags=self.active_remove_private_tags)
+        if not inspector.phi_tags:
+            get_logger().warning("PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
+        
+        get_logger().info("Scanning for PHI (Parallel)...")
+        
+        # Hybrid Approach:
+        # Pass lightweight object CLONES to avoid "Assert left > 0" IPC error
+        # AND to ensure we audit in-memory (unsaved) changes.
+        worker_args = []
+        for p in self.store.patients:
+            # Strip pixels to reduce size
+            light_p = self._make_lightweight_copy(p)
+            worker_args.append((light_p, tags_to_use, self.active_remove_private_tags))
+        
+        results = run_parallel(scan_worker, worker_args, desc="Scanning PHI")
+        
+        all_findings = []
+        for findings in results:
+            all_findings.extend(findings)
+            
+        # Rehydrate Entities!
+        self._rehydrate_findings(all_findings)
+            
+        get_logger().info(f"PHI Scan Complete. Found {len(all_findings)} issues.")
+            
+        return PhiReport(all_findings)
+
+    def get_cohort_report(self, expand_metadata: bool = False) -> 'pd.DataFrame':
+        """
+        Returns a Pandas DataFrame containing flattened metadata for the current cohort.
+        Useful for analysis and QA.
+        """
+        import pandas as pd
+        rows = []
+        for p in self.store.patients:
+            for s in p.studies:
+                for se in s.series:
+                    manufacturer = se.equipment.manufacturer if se.equipment else ""
+                    model = se.equipment.model_name if se.equipment else ""
+                    device_serial = se.equipment.device_serial_number if se.equipment else ""
+                    
+                    for inst in se.instances:
+                        # Basic row info
+                        row = {
+                            "PatientID": p.patient_id,
+                            "PatientName": p.patient_name,
+                            "StudyInstanceUID": s.study_instance_uid,
+                            "StudyDate": s.study_date,
+                            "SeriesInstanceUID": se.series_instance_uid,
+                            "Modality": se.modality,
+                            "SOPInstanceUID": inst.sop_instance_uid,
+                            "Manufacturer": manufacturer,
+                            "Model": model,
+                            "DeviceSerial": device_serial
+                        }
+                        
+                        if expand_metadata and hasattr(inst, 'attributes') and inst.attributes:
+                             row.update(inst.attributes)
+
+                        rows.append(row)
+        
+        return pd.DataFrame(rows)
+
+    def generate_report(self, output_path: str, format: str = "markdown") -> None:
+        """
+        Generates a formal Compliance Report for the current session.
+        
+        Args:
+            output_path (str): Path to write the report file.
+            format (str): Output format ('markdown' or 'md'). Default is 'markdown'.
+        """
+        get_logger().info(f"Generating Compliance Report ({format}) to {output_path}...")
+        
+        # 1. Gather Statistics
+        n_p = len(self.store.patients)
+        n_st = sum(len(p.studies) for p in self.store.patients)
+        n_se = sum(len(st.series) for p in self.store.patients for st in p.studies)
+        n_i = sum(len(se.instances) for p in self.store.patients for st in p.studies for se in st.series)
+        
+        # 2. Gather Audit Logs & Exceptions
+        audit_summary = self.store_backend.get_audit_summary()
+        exceptions = self.store_backend.get_audit_errors()
+        
+        # Check for unsafe attributes (BurnedInAnnotation)
+        unsafe_items = self.store_backend.check_unsafe_attributes()
+        if unsafe_items:
+            for uid, fpath, msg in unsafe_items:
+                exceptions.append((datetime.datetime.now().isoformat(), "COMPLIANCE_CHECK", f"{msg} - {uid}"))
+        
+        # 3. Determine Context
+        privacy_profile = "See Config" 
+        try:
+            from importlib.metadata import version
+            ver = version("gantry")
+        except:
+            ver = "0.0.0"
+
+        # 4. Build Report DTO
+        report = ComplianceReport(
+            gantry_version=ver,
+            project_name=os.path.basename(self.persistence_file),
+            privacy_profile=privacy_profile,
+            total_patients=n_p,
+            total_studies=n_st,
+            total_series=n_se,
+            total_instances=n_i,
+            audit_summary=audit_summary,
+            exceptions=exceptions,
+            validation_status="PASS" if audit_summary and not exceptions else "REVIEW_REQUIRED"
+        )
+        
+        renderer = get_renderer(format)
+        renderer.render(report, output_path)
+
+    def generate_manifest(self, output_path: str, format: str = "html") -> None:
+        """
+        Generates a visual (HTML) or machine-readable (JSON) manifest of all instances in the session.
+        
+        Args:
+            output_path (str): File path to write the manifest.
+            format (str): 'html' or 'json'.
+        """
+        get_logger().info(f"Generating Manifest ({format}) to {output_path}...")
+        
+        items = []
+        for p in self.store.patients:
+            for st in p.studies:
+                for se in st.series:
+                    modality = se.modality
+                    manufacturer = se.equipment.manufacturer if se.equipment else ""
+                    model = se.equipment.model_name if se.equipment else ""
+                    
+                    for inst in se.instances:
+                        fpath = getattr(inst, 'file_path', "N/A")
+                        
+                        item = ManifestItem(
+                            patient_id=p.patient_id,
+                            study_instance_uid=st.study_instance_uid,
+                            series_instance_uid=se.series_instance_uid,
+                            sop_instance_uid=inst.sop_instance_uid,
+                            file_path=str(fpath),
+                            modality=modality,
+                            manufacturer=manufacturer,
+                            model_name=model
+                        )
+                        items.append(item)
+        
+        manifest = Manifest(
+            generated_at=datetime.datetime.now().isoformat(),
+            items=items,
+            project_name=os.path.basename(self.persistence_file)
+        )
+        
+        generate_manifest_file(manifest, output_path, format)
+
+    def save_analysis(self, report):
+        """
+        Persists the results of a PHI analysis to the database.
+        report: PhiReport or List[PhiFinding]
+        """
+        findings = report
+        if hasattr(report, 'findings'):
+            findings = report.findings
+            
+        self.store_backend.save_findings(findings)
+
+    # =========================================================================
+    # 5. PRIVACY & SECURITY
+    # =========================================================================
+
+    def lock_identities(self, patient_id: str, persist: bool = False, _patient_obj: "Patient" = None, verbose: bool = True, **kwargs) -> Union[List["Instance"], LockingResult]:
+        """
+        Securely embeds the original patient name/ID into a private DICOM tag
+        for all instances belonging to the specified patient.
+        Must be called BEFORE anonymization.
+        
+        Args:
+            patient_id: The ID of the patient to preserve, OR a list/report for batch processing.
+            persist: If True, writes changes to DB immediately. If False, returns instances for batch persistence.
+            _patient_obj: Optimization argument to avoid O(N) lookup if patient is already known.
+            verbose: If True, logs debug information. Set to False for batch operations.
+            **kwargs: Additional arguments passed to lock_identities_batch (e.g. auto_persist_chunk_size).
+        """
+        if not self.reversibility_service:
+            raise RuntimeError("Reversible anonymization not enabled. Call enable_reversible_anonymization() first.")
+            
+        # Dispatch to batch method if a list is provided
+        if isinstance(patient_id, (list, tuple, set)) or hasattr(patient_id, 'findings'):
+            return self.lock_identities_batch(patient_id, **kwargs)
+            
+        if verbose:
+            get_logger().debug(f"Preserving identity for {patient_id}...")
+        
+        modified_instances = []
+        
+        if _patient_obj:
+            patient = _patient_obj
+        else:
+            patient = next((p for p in self.store.patients if p.patient_id == patient_id), None)
+        
+        if not patient:
+            get_logger().error(f"Patient {patient_id} not found.")
+            return LockingResult([])
+
+        # Determine Tags to Lock (Default + Custom)
+        default_tags = [
+            "0010,0010", # PatientName
+            "0010,0020", # PatientID
+            "0010,0030", # PatientBirthDate
+            "0010,0040", # PatientSex
+            "0008,0050"  # AccessionNumber
+        ]
+        
+        tags_to_lock = kwargs.get("tags_to_lock", default_tags)
+        
+        # Capture Original Values from First Instance
+        original_attrs = {}
+        first_instance = None
+        
+        # Locate first instance efficiently
+        for st in patient.studies:
+            for se in st.series:
+                if se.instances:
+                    first_instance = se.instances[0]
+                    break
+            if first_instance: break
+            
+        if first_instance:
+            for tag in tags_to_lock:
+                val = first_instance.attributes.get(tag)
+                if val is not None:
+                     original_attrs[tag] = val
+        else:
+             # Fallback to Patient object properties if no instances (unlikely)
+             if "0010,0010" in tags_to_lock: original_attrs["0010,0010"] = patient.patient_name
+             if "0010,0020" in tags_to_lock: original_attrs["0010,0020"] = patient.patient_id
+
+        cnt = 0
+        
+        # Optimization: Encrypt once per patient
+        token = self.reversibility_service.generate_identity_token(original_attributes=original_attrs)
+        
+        # Iterate deep
+        for st in patient.studies:
+            for se in st.series:
+                for inst in se.instances:
+                    self.reversibility_service.embed_identity_token(inst, token)
+                    modified_instances.append(inst)
+                    cnt += 1
+        
+        if persist and modified_instances:
+            self.store_backend.update_attributes(modified_instances)
+            get_logger().info(f"Secured identity (tags: {list(original_attrs.keys())}) in {cnt} instances for {patient_id}.")
+            
+        return LockingResult(modified_instances)
+
+    def lock_identities_batch(self, patient_ids: Union[List[str], "PhiReport", List["PhiFinding"]], auto_persist_chunk_size: int = 0) -> Union[List["Instance"], LockingResult]:
+        """
+        Batch process multiple patients to lock identities.
+        Returns a list of all modified instances (unless auto_persist_chunk_size is used).
+        
+        Args:
+            patient_ids: List of PatientIDs, OR a PhiReport/list of objects with patient_id.
+            auto_persist_chunk_size: If > 0, persists changes and releases memory every N instances.
+                                     IMPORTANT: Returns an empty list if enabled to prevent OOM.
+        """
+        if not self.reversibility_service:
+            raise RuntimeError("Reversible anonymization not enabled.")
+            
+        # Normalize input to a set of strings
+        normalized_ids = set()
+        
+        # Handle PhiReport or list containers
+        iterable_data = patient_ids
+        if hasattr(patient_ids, 'findings'): # PhiReport
+            iterable_data = patient_ids.findings
+            
+        for item in iterable_data:
+            if isinstance(item, str):
+                normalized_ids.add(item)
+            elif hasattr(item, 'patient_id') and item.patient_id:
+                 normalized_ids.add(item.patient_id)
+                 
+        start_ids = list(normalized_ids)
+        
+        modified_instances = [] # Only used if auto_persist_chunk_size == 0
+        current_chunk = []      # Used if auto_persist_chunk_size > 0
+        
+        count_patients = 0
+        count_instances_chunked = 0
+        
+        from tqdm import tqdm
+        
+        # Optimization: Create a lookup map for O(1) access
+        patient_map = {p.patient_id: p for p in self.store.patients}
+        
+        with tqdm(start_ids, desc="Locking Identities", unit="patient") as pbar:
+            for pid in pbar:
+                p_obj = patient_map.get(pid)
+                if p_obj:
+                    # Use verbose=False to avoid log spam
+                    res = self.lock_identities(pid, persist=False, _patient_obj=p_obj, verbose=False)
+                    
+                    if auto_persist_chunk_size > 0:
+                        current_chunk.extend(res)
+                        if len(current_chunk) >= auto_persist_chunk_size:
+                            self.store_backend.update_attributes(current_chunk)
+                            count_instances_chunked += len(current_chunk)
+                            current_chunk = [] # Release memory
+                    else:
+                        modified_instances.extend(res)
+                    
+                    count_patients += 1
+                else:
+                     get_logger().error(f"Patient {pid} not found (batch processing).")
+        
+        # Final cleanup
+        if auto_persist_chunk_size > 0:
+            if current_chunk:
+                self.store_backend.update_attributes(current_chunk)
+                count_instances_chunked += len(current_chunk)
+            
+            get_logger().info(f"Batch preserved identity for {count_patients} patients ({count_instances_chunked} instances). Persisted incrementally.")
+            return LockingResult([])
+             
+        if modified_instances:
+             msg = f"Preserved identity for {len(modified_instances)} instances."
+             get_logger().info(msg)
+             
+        get_logger().info(f"Batch preserved identity for {count_patients} patients ({len(modified_instances)} instances).")
+        return LockingResult(modified_instances)
+
+    def recover_patient_identity(self, patient_id: str, restore: bool = True):
+        """
+        Attempts to recover original identity from the encrypted token.
+        
+        Args:
+            patient_id: The PatientID to recover.
+            restore: If True, applies the recovered attributes back to ALL instances in memory.
+        """
+        if not self.reversibility_service:
+            raise RuntimeError("Reversibility not enabled.")
+
+        p = next((x for x in self.store.patients if x.patient_id == patient_id), None)
+        if not p:
+            print(f"Patient {patient_id} not found.")
+            return
+
+        # Locate first instance to get the token
+        first_inst = None
+        for st in p.studies:
+            for se in st.series:
+                if se.instances:
+                    first_inst = se.instances[0]
+                    break
+        
+        if not first_inst:
+            print("No instances found for patient.")
+            return
+
+        original_attrs = self.reversibility_service.recover_original_data(first_inst)
+        
+        if original_attrs:
+            if restore:
+                count = 0
+                for st in p.studies:
+                    for se in st.series:
+                        for inst in se.instances:
+                            for tag, val in original_attrs.items():
+                                inst.set_attr(tag, val)
+                            count += 1
+                
+                # Update Patient Object top-level properties if Name/ID changed
+                if "0010,0010" in original_attrs:
+                    p.patient_name = original_attrs["0010,0010"]
+                if "0010,0020" in original_attrs:
+                    p.patient_id = original_attrs["0010,0020"]
+                    
+                get_logger().info(f"Restored identity attributes to {count} instances.")
+        else:
+            print("No encrypted identity token found or decryption failed.")
+
+    def enable_reversible_anonymization(self, key_path: str = "gantry.key"):
+        """
+        Initializes the encryption subsystem.
+        """
+        self.key_manager = KeyManager(key_path)
+        self.key_manager.load_or_generate_key()
+        self.reversibility_service = ReversibilityService(self.key_manager)
+        get_logger().info(f"Reversible anonymization enabled. Key: {key_path}")
+
+    # =========================================================================
+    # 6. REDACTION & REMEDIATION
+    # =========================================================================
+
+    def redact(self, show_progress=True):
+        """
+        User Action: 'Apply the currently loaded rules to the pixel data.'
+        """
+        if not self.active_rules:
+            get_logger().warning("No configuration loaded. Use .load_config() first.")
+            print("No configuration loaded. Use .load_config() first.")
+            return
+
+        service = RedactionService(self.store, self.store_backend)
+
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            import os
+
+            # Parallel Execution for Speed
+            # Threading works well here because pixel I/O and NumPy ops release GIL.
+            # Shared memory allows in-place modification of instances.
+            # OPTIMIZATION: Limited to 0.5x CPU or Max 8 to prevent OOM with large datasets
+            cpu_count = os.cpu_count() or 1
+            max_workers = max(1, min(int(cpu_count * 0.5), 8))
+            
+            # Generate granular tasks for better load balancing
+            all_tasks = []
+            get_logger().info("Analyzing workload...")
+            for rule in self.active_rules:
+                tasks = service.prepare_redaction_tasks(rule)
+                all_tasks.extend(tasks)
+
+            if not all_tasks:
+                get_logger().warning("No matching images found for any loaded rules.")
+                print("No matching images found for any loaded rules.")
+                return
+
+            print(f"Queued {len(all_tasks)} redaction tasks across {len(self.active_rules)} rules.")
+            print(f"Executing using {max_workers} threads...")
+            # 2. Parallel Redaction (Granular)
+            get_logger().info(f"Starting granular redaction ({len(all_tasks)} tasks, workers={max_workers})...")
+        
+            # Enable GC Optimization
+            import gc
+            gc.disable()
+            try:
+                run_parallel(service.execute_redaction_task, all_tasks, desc="Redacting Pixels", max_workers=max_workers, force_threads=True, progress=show_progress)
+            finally:
+                gc.enable()
+                gc.collect()
+
+            # Run Safety Checks
+            service.scan_burned_in_annotations()
+
+            print("Execution Complete. Remember to call .save() to persist.")
+            print("Execution Complete. Session saved.")
+
+        except Exception as e:
+            get_logger().error(f"Execution interrupted: {e}")
+            print(f"Execution interrupted: {e}")
+
+    def redact_by_machine(self, serial_number, roi):
+        """
+        Helper to run redaction for a single machine interactively.
+        roi: [y1, y2, x1, x2]
+        """
+        self.active_rules = [{"serial_number": serial_number, "redaction_zones": [roi]}]
+        self.redact()
+
+    def anonymize(self, findings: List[PhiFinding] = None):
+        """
+        Apply remediation Actions to the PHI Findings.
+        If findings is None, it uses the active PHI tags config to blind/remove all (Blind Execute).
+        This modifies the metadata in memory/DB.
+        """
+        remediator = RemediationService(self.store)
+        
+        count = 0
+        if findings:
+            count = remediator.remediate_specific_findings(findings, self.active_date_jitter)
+        else:
+            # Blind Scan Check
+            if not self.active_phi_tags:
+                print("No PHI config active. Cannot anonymize blindly.")
+                return
+            
+            # Run scan first
+            report = self.audit()
+            count = remediator.remediate_specific_findings(report.findings, self.active_date_jitter)
+            
+        get_logger().info(f"Anonymized {count} tags.")
+        print(f"Anonymized/Remediated {count} tags according to policy.")
+
+    # =========================================================================
+    # 7. EXPORT
+    # =========================================================================
+
+    def export(self, folder: str, version=None, use_compression=True, 
+               check_burned_in=True, check_reversibility=True, patient_ids: List[str] = None):
+        """
+        Exports the current session to a directory, structured by Patient/Study/Series.
+        """
+        import os
+        from .io_handlers import DicomExporter
+        
+        # 1. Validation Checks
+        if check_reversibility and self.reversibility_service:
+            # warn if we are exporting encrypted data without warning?
+            # Actually Gantry exports exactly what is in store (which might be encrypted).
+            pass
+            
+        target_ids = patient_ids
+        if target_ids is None:
+             target_ids = [p.patient_id for p in self.store.patients]
+             
+        if not target_ids:
+            get_logger().warning("No patients to export.")
+            return
+
+        print(f"Exporting session to: {folder}")
+        print("Preparing export plan...")
+        
+        # 2. Memory Management Check
+        # Before starting a massive export (which might load pixels), ensure we save pending changes
+        # and flush memory to avoid OOM if user did a lot of redaction.
+        print("Saving pending changes to free memory...")
+        self.save()
+        self.release_memory()
+        
+        # 3. Create Export Plan (Lightweight objects)
+        export_tasks = []
+        total_instances = 0
+        
+        count_p = 0
+        
+        # We iterate our store to build tasks.
+        # But for parallelism, we want to pass file paths or DB IDs, not full objects.
+        # DicomExporter needs (Instance -> OutputPath) mapping.
+        
+        # Pre-calculate paths
+        # Structure: Folder / Patient / Study / Series / Instance
+        
+        # Optimization: We can generate the plan using minimal metadata
+        from .io_handlers import ExportContext
+
+        for p in self.store.patients:
+            if p.patient_id not in target_ids:
+                continue
+    
+            count_p += 1
+            p_clean = ConfigLoader.clean_filename(p.patient_id or "UnknownPatient")
+            p_path = os.path.join(folder, p_clean)
+            
+            pat_attrs = {
+                "0010,0010": p.patient_name,
+                "0010,0020": p.patient_id
+            }
+            if hasattr(p, 'birth_date') and p.birth_date: pat_attrs["0010,0030"] = p.birth_date
+            if hasattr(p, 'sex') and p.sex: pat_attrs["0010,0040"] = p.sex
+
+            for st in p.studies:
+                st_clean = ConfigLoader.clean_filename(st.study_instance_uid or "UnknownStudy")
+                st_path = os.path.join(p_path, st_clean)
+                
+                study_attrs = {
+                    "0020,000D": st.study_instance_uid,
+                    "0008,0020": st.study_date
+                }
+                if hasattr(st, 'accession_number'): study_attrs["0008,0050"] = st.accession_number
+
+                for se in st.series:
+                    se_clean = ConfigLoader.clean_filename(se.series_instance_uid or "UnknownSeries")
+                    se_path = os.path.join(st_path, se_clean)
+                    
+                    series_attrs = {
+                        "0020,000E": se.series_instance_uid,
+                        "0008,0060": se.modality,
+                        "0020,0011": se.series_number
+                    }
+
+                    for inst in se.instances:
+                        fname = f"{inst.sop_instance_uid}.dcm"
+                        out_path = os.path.join(se_path, fname)
+                        
+                        ctx = ExportContext(
+                            instance=inst,
+                            output_path=out_path,
+                            patient_attributes=pat_attrs,
+                            study_attributes=study_attrs,
+                            series_attributes=series_attrs,
+                            compression='j2k' if use_compression else None
+                        )
+                        
+                        export_tasks.append(ctx)
+                        total_instances += 1
+
+        if not export_tasks:
+            get_logger().warning("No instances found to export.")
+            return
+
+        print(f"Exporting {total_instances} images from {count_p} patients...")
+        
+        # 4. Execute Export
+        # We use global run_parallel logic or specialized internal batcher?
+        # session.py line 1107 used DicomExporter.export_batch with maxtasksperchild=25
+        
+        chunk_size = 500 # Report progress every N
+        show_progress = True
+        
+        if total_instances > 0:
+            # MEMORY LEAK MITIGATION:
+            # We use worker recycling (maxtasksperchild=100) via multiprocessing.Pool
+            # This forces workers to restart periodically, clearing any leaked memory (e.g. from C-libs).
+            # We do NOT use the shared self._executor for this, as ProcessPoolExecutor doesn't support recycling.
+            try:
+                # Optimized for stability: maxtasksperchild=25 clears memory frequently
+                # GC Optimization: Disable GC in workers
+                success_count = DicomExporter.export_batch(export_tasks, show_progress=show_progress, total=total_instances, maxtasksperchild=25, disable_gc=True)
+            except Exception as e:
+                get_logger().error(f"Export Failed! Error: {e}")
+                raise e
+            finally:
+                # Main process GC trigger
+                import gc
+                gc.collect()
+            
+            get_logger().info(f"Export complete.")
+        else:
+            get_logger().warning("No instances queued for export.")
+            
+        print("Done.")
+
+    def export_dataframe(self, output_path: str = "export_metadata.csv", expand_metadata: bool = False):
+        """
+        Exports flat validation metadata to CSV or Parquet.
+        """
+        import pandas as pd
+        df = self.get_cohort_report(expand_metadata=expand_metadata)
+        
+        if output_path.endswith(".parquet"):
+            try:
+                # Requires pyarrow and pandas
+                df.to_parquet(output_path, index=False)
+            except Exception as e:
+                get_logger().error(f"Failed to export parquet: {e}")
+                raise e
+        else:
+            df.to_csv(output_path, index=False)
+            
+        print(f"Exported metadata to {output_path}")
+        return df
+
+    def export_to_parquet(self, output_path: str, patient_ids: List[str] = None):
+        """
+        [EXPERIMENTAL] Exports flattened metadata to a Parquet file.
+        Requires 'pandas' and 'pyarrow' or 'fastparquet'.
+        """
+        try:
+            import pandas as pd
+        except ImportError:
+            get_logger().error("export_to_parquet requires 'pandas' installed.")
+            raise ImportError("Please install pandas to use this feature: pip install pandas pyarrow")
+
+        # 1. Sync DB state
+        get_logger().info("Saving state before Parquet export...")
+        self.save()
+        
+        # 2. Stream Data
+        get_logger().info("Streaming data from database...")
+        
+        target_ids = patient_ids
+        if target_ids is None:
+             target_ids = [p.patient_id for p in self.store.patients]
+             
+        if not target_ids:
+            get_logger().warning("No patients to export.")
+            return
+
+        generator = self.persistence_manager.store_backend.get_flattened_instances(target_ids)
+        
+        rows = list(generator)
+        
+        if not rows:
+            get_logger().warning("No instances found for these patients.")
+            return
+            
+        df = pd.DataFrame(rows)
+        
+        # 3. Save
+        get_logger().info(f"Writing {len(df)} rows to {output_path}...")
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        
+        try:
+            df.to_parquet(output_path, index=False)
+            get_logger().info("Parquet export successful.")
+        except ImportError as e:
+             get_logger().error("Parquet engine (pyarrow or fastparquet) missing.")
+             raise e
+        except Exception as e:
+            get_logger().error(f"Failed to write parquet: {e}")
+            raise
+
+    # =========================================================================
+    # 8. INTERNAL HELPERS
+    # =========================================================================
+
+    def _rehydrate_findings(self, findings):
+        """
+        Updates findings in-place to point to live objects in self.store
+        instead of the unpickled copies from workers.
+        """
+        patient_map = {p.patient_id: p for p in self.store.patients}
+        study_map = {}
+        instance_map = {}
+        
+        for p in self.store.patients:
+            for s in p.studies:
+                study_map[s.study_instance_uid] = s
+                for se in s.series:
+                    for i in se.instances:
+                        instance_map[i.sop_instance_uid] = i
+        
+        for f in findings:
+            if f.entity_type == "Patient":
+                if f.entity_uid in patient_map:
+                    f.entity = patient_map[f.entity_uid]
+            elif f.entity_type == "Study":
+                if f.entity_uid in study_map:
+                    f.entity = study_map[f.entity_uid]
+            elif f.entity_type == "Instance":
+                if f.entity_uid in instance_map:
+                    f.entity = instance_map[f.entity_uid]
+
+    def _make_lightweight_copy(self, patient: "Patient") -> "Patient":
+        """
+        Creates a lightweight clone of the Patient object (and children)
+        stripped of heavy pixel data, for efficient IPC transfer.
+        Also attaches 'file_path' to instances to ensure workers can reload pixels if needed.
+        """
+        from .entities import Patient, Study, Series, Instance
+        
+        # Clone Patient
+        p_new = Patient(
+            patient_name=patient.patient_name,
+            patient_id=patient.patient_id
+        )
+        
+        for s in patient.studies:
+            s_new = Study(
+                study_instance_uid=s.study_instance_uid,
+                study_date=s.study_date
+            )
+            if hasattr(s, "date_shifted"):
+                s_new.date_shifted = s.date_shifted
+            
+            p_new.studies.append(s_new)
+            
+            for se in s.series:
+                se_new = Series(
+                    series_instance_uid=se.series_instance_uid,
+                    modality=se.modality,
+                    series_number=se.series_number
+                )
+                if se.equipment:
+                     se_new.equipment = se.equipment
+                s_new.series.append(se_new)
+                
+                for i in se.instances:
+                    # Clone Instance
+                    i_new = Instance(
+                        sop_instance_uid=i.sop_instance_uid,
+                        instance_number=i.instance_number,
+                        sop_class_uid=i.sop_class_uid,
+                        file_path=i.file_path
+                    )
+                    # Key: Ensure attributes are copied so workers can scan tags
+                    if hasattr(i, 'attributes'):
+                        i_new.attributes = i.attributes.copy()
+                    
+                    se_new.instances.append(i_new)
+        
+        return p_new
+
+    # =========================================================================
+    # 9. DEPRECATED
+    # =========================================================================
+
+    def scan_for_phi(self, config_path: str = None) -> "PhiReport":
+        """
+        Legacy alias for audit().
+        """
+        return self.audit(config_path)

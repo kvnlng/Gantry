@@ -138,6 +138,12 @@ class ConfigLoader:
             return {}
 
     @staticmethod
+    def clean_filename(filename: str) -> str:
+        import re
+        s = str(filename).strip().replace(" ", "_")
+        return re.sub(r'(?u)[^-\w.]', '', s)
+
+    @staticmethod
     def _load_yaml(filepath: str) -> Dict[str, Any]:
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Configuration file not found: {filepath}")

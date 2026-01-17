@@ -258,24 +258,13 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
         DicomExporter._merge_sequences(ds, inst.sequences)
         
         # 1. Patient Level
-        ds.PatientName = ctx.patient_attributes.get("PatientName", "")
-        ds.PatientID = ctx.patient_attributes.get("PatientID", "")
+        DicomExporter._merge(ds, ctx.patient_attributes)
         
         # 2. Study Level
-        ds.StudyInstanceUID = ctx.study_attributes.get("StudyInstanceUID", "")
-        ds.StudyDate = ctx.study_attributes.get("StudyDate", "")
-        ds.StudyTime = ctx.study_attributes.get("StudyTime", "")
+        DicomExporter._merge(ds, ctx.study_attributes)
         
         # 3. Series Level
-        ds.SeriesInstanceUID = ctx.series_attributes.get("SeriesInstanceUID", "")
-        ds.Modality = ctx.series_attributes.get("Modality", "")
-        ds.SeriesNumber = ctx.series_attributes.get("SeriesNumber", None)
-        if ctx.series_attributes.get("Manufacturer"):
-            ds.Manufacturer = ctx.series_attributes["Manufacturer"]
-        if ctx.series_attributes.get("ManufacturerModelName"):
-            ds.ManufacturerModelName = ctx.series_attributes["ManufacturerModelName"]
-        if ctx.series_attributes.get("DeviceSerialNumber"):
-            ds.DeviceSerialNumber = ctx.series_attributes["DeviceSerialNumber"]
+        DicomExporter._merge(ds, ctx.series_attributes)
 
         # 4. Pixel Data
         # Use context-provided pixels (for in-memory objects) or load from file
@@ -657,8 +646,8 @@ class DicomExporter:
                     
                     # Patient Attributes
                     pat_attrs = {
-                        "PatientName": patient.patient_name,
-                        "PatientID": patient.patient_id
+                        "0010,0010": patient.patient_name,
+                        "0010,0020": patient.patient_id
                     }
                     
                     # Study Attributes
@@ -670,21 +659,21 @@ class DicomExporter:
                             s_date_str = str(st.study_date)
                             
                     study_attrs = {
-                        "StudyInstanceUID": st.study_instance_uid,
-                        "StudyDate": s_date_str,
-                        "StudyTime": "120000"
+                        "0020,000D": st.study_instance_uid,
+                        "0008,0020": s_date_str,
+                        "0008,0030": "120000"
                     }
                     
                     # Series Attributes
                     series_attrs = {
-                        "SeriesInstanceUID": se.series_instance_uid,
-                        "Modality": se.modality,
-                        "SeriesNumber": se.series_number
+                        "0020,000E": se.series_instance_uid,
+                        "0008,0060": se.modality,
+                        "0020,0011": se.series_number
                     }
                     if se.equipment:
-                        series_attrs["Manufacturer"] = se.equipment.manufacturer
-                        series_attrs["ManufacturerModelName"] = se.equipment.model_name
-                        series_attrs["DeviceSerialNumber"] = se.equipment.device_serial_number
+                        series_attrs["0008,0070"] = se.equipment.manufacturer
+                        series_attrs["0008,1090"] = se.equipment.model_name
+                        series_attrs["0018,1000"] = se.equipment.device_serial_number
                         
                     # Calculate Output Path
                     # 1. Subject Folder
@@ -861,8 +850,8 @@ class DicomExporter:
             try:
                 vr = dictionary_VR(Tag(g, e))
                 ds.add_new(Tag(g, e), vr, v)
-            except:
-                pass
+            except Exception as e:
+                get_logger().warning(f"Failed to merge tag {t} ({v}): {e}")
 
     @staticmethod
     def _sanitize(filename: str) -> str:
