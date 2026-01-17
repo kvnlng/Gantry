@@ -1558,6 +1558,9 @@ class DicomSession:
                     # Key: Ensure attributes are copied so workers can scan tags
                     if hasattr(i, 'attributes'):
                         i_new.attributes = i.attributes.copy()
+                        
+                    if hasattr(i, "date_shifted"):
+                        i_new.date_shifted = i.date_shifted
                     
                     se_new.instances.append(i_new)
         

@@ -151,11 +151,11 @@ class PhiInspector:
             
             for series in study.series:
                 for instance in series.instances:
-                    findings.extend(self._scan_instance(instance, patient.patient_id))
+                    findings.extend(self._scan_instance(instance, patient.patient_id, study=study))
             
         return findings
 
-    def _scan_instance(self, instance: Instance, patient_id: str) -> List[PhiFinding]:
+    def _scan_instance(self, instance: Instance, patient_id: str, study: Study = None) -> List[PhiFinding]:
         """
         Scans a single instance for PHI based on configured tags and private tag rules.
         Uses cached `text_index` for O(1) access to all text nodes including nested sequences.
@@ -244,10 +244,14 @@ class PhiInspector:
                      new_val = ""
             elif action_code in ["SHIFT", "JITTER"]:
                  # Date Shifting
-                 # If instance is already shifted, this is not a finding
-                 # We check the ROOT instance or study usually, but here we check the item itself? 
-                 # Date shifting is tricky for deep items. Usually we check if the overarching entity is shifted.
+                 # If instance or its parent study is already shifted, this is not a finding
+                 is_shifted = False
                  if hasattr(instance, "date_shifted") and instance.date_shifted:
+                     is_shifted = True
+                 elif study and hasattr(study, "date_shifted") and study.date_shifted:
+                     is_shifted = True
+
+                 if is_shifted:
                      needs_remediation = False
                  else:
                      needs_remediation = True
