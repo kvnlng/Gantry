@@ -1309,7 +1309,19 @@ class DicomSession:
             if hasattr(p, 'sex') and p.sex: pat_attrs["0010,0040"] = p.sex
 
             for st in p.studies:
-                st_clean = ConfigLoader.clean_filename(st.study_instance_uid or "UnknownStudy")
+                # Hybrid Naming: Study_YYYYMMDD_Description_UIDSuffix
+                st_desc = "Study"
+                # Peek at first series->instance for description
+                try:
+                    if st.series and st.series[0].instances:
+                        st_desc = st.series[0].instances[0].attributes.get("0008,1030", "Study")
+                except: pass
+                
+                st_date = str(st.study_date or "NoDate")
+                st_uid_suffix = (st.study_instance_uid or "Unknown")[-5:]
+                
+                st_folder_name = f"Study_{st_date}_{st_desc}_{st_uid_suffix}"
+                st_clean = ConfigLoader.clean_filename(st_folder_name)
                 st_path = os.path.join(p_path, st_clean)
                 
                 study_attrs = {
@@ -1320,7 +1332,19 @@ class DicomSession:
                 if hasattr(st, 'accession_number'): study_attrs["0008,0050"] = st.accession_number
 
                 for se in st.series:
-                    se_clean = ConfigLoader.clean_filename(se.series_instance_uid or "UnknownSeries")
+                    # Hybrid Naming: Series_NUM_Modality_Description_UIDSuffix
+                    se_desc = "Series"
+                    try:
+                        if se.instances:
+                            se_desc = se.instances[0].attributes.get("0008,103e", "Series")
+                    except: pass
+                    
+                    se_num = str(se.series_number)
+                    se_mod = se.modality or "OT"
+                    se_uid_suffix = (se.series_instance_uid or "Unknown")[-5:]
+                    
+                    se_folder_name = f"Series_{se_num}_{se_mod}_{se_desc}_{se_uid_suffix}"
+                    se_clean = ConfigLoader.clean_filename(se_folder_name)
                     se_path = os.path.join(st_path, se_clean)
                     
                     series_attrs = {
