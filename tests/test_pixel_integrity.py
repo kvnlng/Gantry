@@ -9,7 +9,7 @@ from gantry.session import DicomSession
 
 def create_dicom(path, rows=10, cols=10, samples=1, photometric="MONOCHROME2", bits=16, pixel_data=None, instance_num=1):
     file_meta = FileMetaDataset()
-    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2"
+    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.7" # Secondary Capture
     file_meta.MediaStorageSOPInstanceUID = pydicom.uid.generate_uid()
     file_meta.TransferSyntaxUID = ImplicitVRLittleEndian
     
@@ -17,9 +17,11 @@ def create_dicom(path, rows=10, cols=10, samples=1, photometric="MONOCHROME2", b
     ds.PatientName = "TestIntegrity"
     ds.PatientID = "PID_INTEGRITY"
     ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
+    ds.SOPClassUID = file_meta.MediaStorageSOPClassUID # Ensure in dataset
     ds.SeriesInstanceUID = pydicom.uid.generate_uid()
     ds.StudyInstanceUID = pydicom.uid.generate_uid()
     ds.Modality = "OT"
+    ds.ConversionType = "WSD" # Mandatory for SC
     ds.StudyDate = "20230101"
     ds.SeriesNumber = instance_num
     ds.InstanceNumber = instance_num

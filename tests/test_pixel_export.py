@@ -30,9 +30,11 @@ def test_pixel_integrity(tmp_path):
     ds.PatientName = "TestRGB"
     ds.PatientID = "TestRGB"
     ds.SOPInstanceUID = "1.2.3.99"
+    ds.SOPClassUID = file_meta.MediaStorageSOPClassUID
     ds.SeriesInstanceUID = "1.2.99"
     ds.StudyInstanceUID = "1.99"
     ds.Modality = "OT"
+    ds.ConversionType = "WSD"
     
     ds.Rows = rows
     ds.Columns = cols
@@ -65,7 +67,7 @@ def test_pixel_integrity(tmp_path):
     session.ingest(str(input_dir))
     
     export_dir = tmp_path / "export_rgb"
-    session.export(str(export_dir))
+    session.export(str(export_dir), use_compression=False)
     
     # 4. Verify Output
     exported_files = list(export_dir.rglob("*.dcm"))

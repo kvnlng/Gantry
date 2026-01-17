@@ -100,6 +100,11 @@ def ingest_worker(fp):
     try:
         ds = pydicom.dcmread(fp, stop_before_pixels=True, force=True)
         
+        # Determine SOP Class UID with fallback to File Meta
+        sop_class = str(ds.get("SOPClassUID", ""))
+        if not sop_class and "MediaStorageSOPClassUID" in ds.file_meta:
+             sop_class = str(ds.file_meta.MediaStorageSOPClassUID)
+        
         # Extract Linking Metadata
         meta = {
             'pid': ds.get("PatientID", "UnknownPatient"),
@@ -109,7 +114,7 @@ def ingest_worker(fp):
             'ser_id': ds.get("SeriesInstanceUID", "UnknownSeries"),
             'modality': ds.get("Modality", "OT"),
             'sop': ds.get("SOPInstanceUID", None),
-            'sop_class': str(ds.get("SOPClassUID", "")), # Kept original sop_class
+            'sop_class': sop_class, # Kept original sop_class with fallback
             'man': ds.get("Manufacturer", ""),
             'model': ds.get("ManufacturerModelName", ""),
             'dev_sn': ds.get("DeviceSerialNumber", ""),
@@ -811,7 +816,12 @@ class DicomExporter:
     @staticmethod
     def _create_ds(inst):
         meta = FileMetaDataset()
-        meta.MediaStorageSOPClassUID = inst.sop_class_uid
+        # Fallback to attributes if sop_class_uid property is missing/empty
+        sop_class = inst.sop_class_uid
+        if not sop_class and "0008,0016" in inst.attributes:
+            sop_class = inst.attributes["0008,0016"]
+            
+        meta.MediaStorageSOPClassUID = sop_class
         meta.MediaStorageSOPInstanceUID = inst.sop_instance_uid
         meta.TransferSyntaxUID = ImplicitVRLittleEndian
         ds = FileDataset(None, {}, file_meta=meta, preamble=b"\0" * 128)

@@ -10,7 +10,7 @@ from gantry.entities import Instance
 def create_dcm(path, patient_id, study_uid, series_uid, sop_uid, seri_num=0, inst_num=1):
     """Helper to create a valid minimal DICOM file"""
     file_meta = FileMetaDataset()
-    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2" # CT Image
+    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.7" # Secondary Capture
     file_meta.MediaStorageSOPInstanceUID = sop_uid
     file_meta.TransferSyntaxUID = ImplicitVRLittleEndian
     
@@ -22,7 +22,9 @@ def create_dcm(path, patient_id, study_uid, series_uid, sop_uid, seri_num=0, ins
     ds.SeriesInstanceUID = series_uid
     ds.SeriesNumber = seri_num
     ds.SOPInstanceUID = sop_uid
-    ds.Modality = "CT"
+    ds.SOPClassUID = file_meta.MediaStorageSOPClassUID # Required in body
+    ds.Modality = "OT"
+    ds.ConversionType = "WSD" # Required for SC
     
     # Set Instance Number
     ds.InstanceNumber = inst_num
