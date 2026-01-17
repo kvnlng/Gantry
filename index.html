@@ -494,6 +494,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-the-session-facade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The Session Facade
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-object-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Object Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1175,6 +1203,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-the-session-facade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The Session Facade
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-object-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Object Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1252,6 +1308,25 @@
 </table>
 <h2 id="architecture">Architecture</h2>
 <p>Gantry acts as a smart indexing layer over your raw DICOM files. It does <em>not</em> modify your original data. Instead, it builds a lightweight metadata index (SQLite) and exposes a clean Python Object Model for manipulation.</p>
+<h3 id="1-the-session-facade">1. The Session Facade</h3>
+<p>The <code>Session</code> object is your single entry point. It manages:</p>
+<ul>
+<li><strong>Persistence</strong>: Auto-saving state to <code>gantry.db</code>.</li>
+<li><strong>Inventory</strong>: Tracking Patients, Studies, and Series.</li>
+<li><strong>Transactions</strong>: Atomic persistence of changes.</li>
+</ul>
+<h3 id="2-object-model">2. Object Model</h3>
+<p>Gantry abstracts DICOM into a semantic hierarchy, removing the pain of manual tag iteration.</p>
+<pre class="mermaid"><code>graph LR
+    Patient --&gt; Study
+    Study --&gt; Series
+    Series --&gt; Instance
+    Instance --&gt; Pixels((Pixel Data))</code></pre>
+<ul>
+<li><strong>Patient</strong>: Root entity (Name, ID).</li>
+<li><strong>Study</strong>: A distinct visit/exam.</li>
+<li><strong>Series</strong>: A scan or reconstruction (e.g., "ct_soft_kernel").</li>
+</ul>
 
 
 
