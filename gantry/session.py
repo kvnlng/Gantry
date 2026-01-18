@@ -97,14 +97,13 @@ class DicomSession:
         self.persistence_file = persistence_file
         
         # Check existence before SqliteStore potentially creates it
-        import os
         db_exists = os.path.exists(persistence_file)
         
         self.store_backend = SqliteStore(persistence_file)
         self.persistence_manager = PersistenceManager(self.store_backend)
         
         # Hydrate memory from DB
-        self.store = DicomStore() 
+        self.store = DicomStore()
         
         if db_exists:
             print(f"Loading session from {persistence_file}...")

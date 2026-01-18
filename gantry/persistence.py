@@ -27,7 +27,6 @@ class SidecarPixelLoader:
         self.instance = instance
 
     def __call__(self):
-        from .sidecar import SidecarManager
         mgr = SidecarManager(self.sidecar_path)
         
         raw = mgr.read_frame(self.offset, self.length, self.alg)
@@ -61,7 +60,7 @@ class SqliteStore:
     Handles persistence of the Object Graph to a SQLite database.
     Also manages the Audit Log.
     """
-    
+
     SCHEMA = """
     CREATE TABLE IF NOT EXISTS patients (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -189,6 +188,8 @@ class SqliteStore:
         else:
             # File-based DB: create fresh connection per transaction
             conn = sqlite3.connect(self.db_path, timeout=900.0)
+            conn.connection().execute("PRAGMA synchronous=NORMAL")
+            conn.commit()
             conn.row_factory = sqlite3.Row
             try:
                 yield conn
