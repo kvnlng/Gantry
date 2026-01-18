@@ -188,7 +188,7 @@ class SqliteStore:
         else:
             # File-based DB: create fresh connection per transaction
             conn = sqlite3.connect(self.db_path, timeout=900.0)
-            conn.connection().execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             conn.commit()
             conn.row_factory = sqlite3.Row
             try:
