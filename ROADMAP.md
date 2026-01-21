@@ -2,42 +2,31 @@
 
 This document outlines the development plan for **Gantry**. We welcome contributions from the community to help us achieve these milestones!
 
-## 📍 Current Status: v0.5.2 (Stability & Performance)
+## 📍 Current Status: v0.6.0 (Architecture & Analytics)
 
-- [x] **Core Object Model**: `Patient` -> `Study` -> `Series` -> `Instance`
-- [x] **Split-Persistence Architecture**: Binary sidecar (`_pixels.bin`) for high-speed pixel storage.
-- [x] **Database Indexing**: O(1) lookups and scalable Joins via SQLite indexes.
-- [x] **Multithreaded Redaction**: Parallelized pixel redaction using `ThreadPoolExecutor`.
-- [x] **Free-Threaded Stability**: Full support for Python 3.14t (no-GIL) via versioned dirty tracking.
-- [x] **Deep Memory Management**: Automatic pixel offloading (`Instance.unload_pixel_data()`) to handle datasets exceeding RAM.
-- [x] **Async Audit Queue**: Non-blocking SQLite persistence for high-throughput auditing.
-- [x] **Custom Privacy Profiles**: Support for external YAML profiles.
-- [x] **Standard Privacy Profiles**: Built-in support for DICOM PS3.15 Annex E.
+- [x] **Hybrid Persistence**: Split-storage (JSON + Table) for unlimited private tags.
+- [x] **Unified Configuration**: API-driven config management (`GantryConfiguration`).
+- [x] **Sidecar Offloading**: Eager binary extraction for fast session loading.
+- [x] **Compliance Reporting**: Generate reports verifying dataset compliance against a selected privacy profile.
+- [x] **Dataframe Export**: Expose a method to flatten `Patient -> Study -> Series -> Instance` hierarchy into a comprehensive parquet file.
+- [x] **Query-based Export**: Export subsets of data based on metadata queries (e.g., "Modality == 'CT'").
+- [x] **Export Manifest**: Automatic generation of visual (HTML) and machine-readable (CSV/JSON) manifests listing all exported files and their key metadata.
+- [x] **Structured Reporting (SR) Support**: Support for deep parsing and anonymization of DICOM Structured Reports.
 - [x] **Legacy Config Removal**: Streamlined codebase by removing list-based config support.
 
 ---
 
 ## 🚀 Upcoming Milestones
 
-### v0.6.0 - Analytics & Reporting
+### v0.7.0 - The Connector (Networking & Refinement)
 
-Focus: Empowering users to understand their data through deep inspection on the object graph.
-
-- [x] **Dataframe Export**: Expose a method to flatten `Patient -> Study -> Series -> Instance` hierarchy into a comprehensive parquet file.
-- [x] **Query-based Export**: Export subsets of data based on metadata queries (e.g., "Modality == 'CT'").
-- [ ] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.
-- [x] **Compliance Reporting**: Generate reports verifying dataset compliance against a selected privacy profile.
-- [x] **Export Manifest**: Automatic generation of visual (HTML) and machine-readable (CSV/JSON) manifests listing all exported files and their key metadata.
-- [ ] **Audit Reporting**: Export comprehensive CSV reports of the session inventory, including details on what was redacted or modified.
-- [x] **Structured Reporting (SR) Support**: Support for deep parsing and anonymization of DICOM Structured Reports.
-- [ ] **Sidecar Compaction**: Utility to vacuum/compact the `_pixels.bin` file to reclaim space from deleted or redacted images.
-
-### v0.7.0 - The Connector (Networking)
-
-Focus: Integrating Gantry into clinical workflows via DIMSE services.
+Focus: Integrating Gantry into clinical workflows and deepening analysis capabilities.
 
 - [ ] **PACS Integration**: Implement C-STORE, C-FIND, C-MOVE using `pynetdicom` to query and pull studies directly.
 - [ ] **Research Export Formats**: Native support for exporting to NIfTI and BIDS standards.
+- [ ] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.
+- [ ] **Audit Reporting**: Export comprehensive CSV reports of the session inventory, including details on what was redacted or modified.
+- [ ] **Sidecar Compaction**: Utility to vacuum/compact the `_pixels.bin` file to reclaim space from deleted or redacted images.
 
 ### v0.8.0 - Cloud Scale
 

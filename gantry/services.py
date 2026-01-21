@@ -163,19 +163,23 @@ class RedactionService:
         rois = task["rois"]
         config_hash = task["config_hash"]
         
+        # DEBUG
+        import sys
+        import os
+        print(f"DEBUG: Processing {inst.sop_instance_uid} in pid {os.getpid()}", file=sys.stderr)
+        
         try:
             # Optimized: Skip if already redacted with same config
             current_hash = inst.attributes.get("_GANTRY_REDACTION_HASH")
             
             if current_hash == config_hash:
-                # self.logger.debug(f"  Skipping {inst.sop_instance_uid}: Already redacted.")
-                return
+                return None
 
             # Triggers Lazy Load from disk
             arr = inst.get_pixel_data()
             
             if arr is None:
-                return
+                return None
 
             modified = False
             for roi in rois:
@@ -188,19 +192,42 @@ class RedactionService:
                 # Mark as redacted with this hash
                 inst.attributes["_GANTRY_REDACTION_HASH"] = config_hash
                 inst._dirty = True 
-                # self.logger.debug(f"  Modified {inst.sop_instance_uid}")
+            
+            # Prepare Mutated State to return (for Process Isolation)
+            mutation = {
+                "sop_uid": inst.sop_instance_uid,
+                "pixel_loader": inst._pixel_loader,
+                "pixel_hash": getattr(inst, "_pixel_hash", None),
+                "attributes": {
+                    "0008,0008": inst.attributes.get("0008,0008"),
+                    "0028,0301": inst.attributes.get("0028,0301"),
+                    "0008,2111": inst.attributes.get("0008,2111"),
+                    "_GANTRY_REDACTION_HASH": inst.attributes.get("_GANTRY_REDACTION_HASH"),
+                },
+                "sequences": {
+                    k: v for k, v in inst.sequences.items() if k == "0008,9215"
+                }
+            }
+            return mutation
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self.logger.error(f"  Failed {inst.sop_instance_uid}: {e}")
+            return None
         finally:
             # Persistence & Memory Cleanup
             if self.store_backend and hasattr(self.store_backend, 'persist_pixel_data'):
-                 try:
-                     self.store_backend.persist_pixel_data(inst)
-                 except Exception as pe:
-                     self.logger.error(f"Failed to persist swap for {inst.sop_instance_uid}: {pe}")
+                try:
+                    self.store_backend.persist_pixel_data(inst)
+                except Exception as pe:
+                    self.logger.error(f"Failed to persist swap for {inst.sop_instance_uid}: {pe}")
 
             inst.unload_pixel_data()
+            
+            # Explicit GC to handle large array fragmentation immediately
+            import gc
+            gc.collect()
 
     def process_machine_rules(self, machine_rules: dict, show_progress: bool = True, verbose: bool = False):
         """

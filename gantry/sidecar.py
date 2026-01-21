@@ -35,12 +35,19 @@ class SidecarManager:
         
         length = len(blob)
         
-        with self._lock:
-            with open(self.filepath, 'ab') as f:
+        # Process-Safe Locking using fcntl (POSIX)
+        import fcntl
+        
+        # We assume strict append mode
+        with open(self.filepath, 'ab') as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
                 offset = f.tell()
                 f.write(blob)
                 f.flush()
-                # os.fsync(f.fileno()) # Slow, but safe. Optional.
+                # os.fsync(f.fileno())
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
                 
         return offset, length
 
@@ -84,3 +91,16 @@ class SidecarManager:
             raise ValueError(f"Unsupported compression: {compression}")
 
     size = property(lambda self: os.path.getsize(self.filepath))
+
+    def __getstate__(self):
+        """Exclude lock from pickling."""
+        state = self.__dict__.copy()
+        # Remove the unpickleable lock
+        if '_lock' in state:
+            del state['_lock']
+        return state
+
+    def __setstate__(self, state):
+        """Recreate lock on unpickling."""
+        self.__dict__.update(state)
+        self._lock = Lock()

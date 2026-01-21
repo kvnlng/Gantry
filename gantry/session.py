@@ -112,10 +112,10 @@ class DicomSession:
             
         self.store.patients = self.store_backend.load_all()
         
-        self.active_rules: List[Dict[str, Any]] = []
-        self.active_phi_tags: Dict[str, str] = {}
-        self.active_date_jitter: Dict[str, int] = {"min_days": -365, "max_days": -1}
-        self.active_remove_private_tags: bool = True
+        # Initialize Configuration Object
+        from .configuration import GantryConfiguration
+        self.configuration = GantryConfiguration()
+
         
         # Reversibility
         self.key_manager = None
@@ -146,13 +146,17 @@ class DicomSession:
             print("Shutting down process pool...")
             self._executor.shutdown(wait=True)
 
-    def save(self):
+    def save(self, sync: bool = False):
         """
-        Persists the current session state to the database in the background.
-        User must call this manually to save changes.
+        Persists the current session state to the database.
+        :param sync: If True, blocks until save is complete.
         """
-        if hasattr(self, 'persistence_manager'):
-            self.persistence_manager.save_async(self.store.patients)
+        if sync and hasattr(self, 'store_backend'):
+             from .logger import get_logger
+             get_logger().info("Saving session (Synchronous)...")
+             self.store_backend.save_all(self.store.patients)
+        elif hasattr(self, 'persistence_manager'):
+             self.persistence_manager.save_async(self.store.patients)
 
     def _restart_executor(self, max_workers=None):
         """
@@ -245,9 +249,10 @@ class DicomSession:
         """
         print(f"Ingesting from '{directory}'...")
         from .io_handlers import DicomImporter
-        DicomImporter.import_files([directory], self.store, executor=self._executor)
+        # Pass Sidecar Manager for eager pixel writing
+        DicomImporter.import_files([directory], self.store, executor=self._executor, sidecar_manager=self.store_backend.sidecar)
         
-        self.save()
+        self.save(sync=True)
         
         # Calculate stats
         n_p = len(self.store.patients)
@@ -275,33 +280,36 @@ class DicomSession:
             get_logger().info(f"Loading configuration from {config_file}...")
             print(f"Loading configuration from {config_file}...")
             
-            # UNIFIED LOAD (v2)
+            # UNIFIED LOAD (v2) - Now loading into GantryConfiguration object
             tags, rules, jitter, remove_private = ConfigLoader.load_unified_config(config_file)
             
-            self.active_phi_tags = tags
-            self.active_rules = rules
-            self.active_date_jitter = jitter
-            self.active_remove_private_tags = remove_private
+            # Update the configuration object
+            self.configuration.phi_tags = tags
+            self.configuration.rules = rules
+            self.configuration.date_jitter = jitter
+            self.configuration.remove_private_tags = remove_private
             
-            get_logger().info(f"Loaded {len(self.active_rules)} machine rules and {len(self.active_phi_tags)} PHI tags.")
-            print(f"Configuration Loaded:\n - {len(self.active_rules)} Machine Redaction Rules\n - {len(self.active_phi_tags)} PHI Tags")
-            print(f" - Date Jitter: {self.active_date_jitter['min_days']} to {self.active_date_jitter['max_days']} days")
-            print(f" - Remove Private Tags: {self.active_remove_private_tags}")
+            get_logger().info(f"Loaded {len(self.configuration.rules)} machine rules and {len(self.configuration.phi_tags)} PHI tags.")
+            print(f"Configuration Loaded:\n - {len(self.configuration.rules)} Machine Redaction Rules\n - {len(self.configuration.phi_tags)} PHI Tags")
+            print(f" - Date Jitter: {self.configuration.date_jitter['min_days']} to {self.configuration.date_jitter['max_days']} days")
+            print(f" - Remove Private Tags: {self.configuration.remove_private_tags}")
             print("Tip: Run .audit() to check PHI, or .redact_pixels() to apply redaction.")
         except Exception as e:
             import traceback
             get_logger().error(f"Load failed: {e}")
             print(f"Load failed: {e}")
             print(traceback.format_exc())
-            self.active_rules = []
-            self.active_phi_tags = {}
+            # Reset on failure? OR keep previous? 
+            # Original behavior was reset.
+            self.configuration.rules = []
+            self.configuration.phi_tags = {}
 
     def preview_config(self):
         """
         User Action: 'Tell me what WOULD happen if I ran these rules.'
         checks the loaded rules against the current Store inventory.
         """
-        if not self.active_rules:
+        if not self.configuration.rules:
             get_logger().warning("No configuration loaded. Use .load_config() first.")
             print("No configuration loaded. Use .load_config() first.")
             return
@@ -314,7 +322,7 @@ class DicomSession:
 
         match_count = 0
 
-        for rule in self.active_rules:
+        for rule in self.configuration.rules:
             serial = rule.get("serial_number", "UNKNOWN")
             model = rule.get("model_name", "Unknown Model")
             zones = rule.get("redaction_zones", [])
@@ -362,7 +370,7 @@ class DicomSession:
         service = RedactionService(self.store)
         
         # 2. Identify what is already configured (Pixel Rules)
-        configured_serials = {rule.get("serial_number") for rule in self.active_rules}
+        configured_serials = {rule.get("serial_number") for rule in self.configuration.rules}
         
         # Load Knowledge Base for Machines
         kb_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "redaction_rules.json")
@@ -478,7 +486,7 @@ class DicomSession:
                     missing_configs.append(new_rule)
 
         # 4. Load PHI Tags Default (if not loaded)
-        phi_tags = self.active_phi_tags
+        phi_tags = self.configuration.phi_tags
         if not phi_tags:
              # Load default config for scaffold
              try:
@@ -531,15 +539,12 @@ class DicomSession:
             "privacy_profile": "basic",
             # No _instructions dict anymore, we use comments!
             "phi_tags": structured_tags,
-            "date_jitter": {
-                "min_days": -365,
-                "max_days": -1
-            },
-            "remove_private_tags": True,
-            "machines": missing_configs + self.active_rules
+            "date_jitter": self.configuration.date_jitter,
+            "remove_private_tags": self.configuration.remove_private_tags,
+            "machines": missing_configs + self.configuration.rules
         }
         
-        if not missing_configs and not self.active_rules:
+        if not missing_configs and not self.configuration.rules:
              print("No machines detected to scaffold.")
         
         # Pre-process data to ensure comments are single-line strings
@@ -601,6 +606,7 @@ class DicomSession:
             header = """# Gantry Privacy Configuration (v2.0)
 # ==========================================
 #
+#
 # privacy_profile: "basic"
 #   - Standard profile handling common PHI (Name, ID, etc).
 #   - Set to "none" for manual control.
@@ -615,8 +621,9 @@ class DicomSession:
 # remove_private_tags:
 #   - If true, removes all odd-group tags except Gantry Metadata.
 #
+#
 """
-            final_content = header + "\n".join(new_lines) + "\n"
+            final_content = header + "\n" + "\n".join(new_lines) + "\n"
 
             with open(output_path, 'w') as f:
                 f.write(final_content)
@@ -639,7 +646,8 @@ class DicomSession:
         """
         from .privacy import PhiReport
         
-        tags_to_use = self.active_phi_tags
+        # Default to current config
+        tags_to_use = self.configuration.phi_tags
         
         if config_path:
              try:
@@ -649,7 +657,8 @@ class DicomSession:
                  # Fallback to simple tags load
                  tags_to_use = ConfigLoader.load_phi_config(config_path)
 
-        inspector = PhiInspector(config_tags=tags_to_use, remove_private_tags=self.active_remove_private_tags)
+        # Uses GantryConfiguration derived tags
+        inspector = PhiInspector(config_tags=tags_to_use, remove_private_tags=self.configuration.remove_private_tags)
         if not inspector.phi_tags:
             get_logger().warning("PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
         
@@ -662,7 +671,7 @@ class DicomSession:
         for p in self.store.patients:
             # Strip pixels to reduce size
             light_p = self._make_lightweight_copy(p)
-            worker_args.append((light_p, tags_to_use, self.active_remove_private_tags))
+            worker_args.append((light_p, tags_to_use, self.configuration.remove_private_tags))
         
         results = run_parallel(scan_worker, worker_args, desc="Scanning PHI")
         
@@ -1049,7 +1058,7 @@ class DicomSession:
         """
         User Action: 'Apply the currently loaded rules to the pixel data.'
         """
-        if not self.active_rules:
+        if not self.configuration.rules:
             get_logger().warning("No configuration loaded. Use .load_config() first.")
             print("No configuration loaded. Use .load_config() first.")
             return
@@ -1065,12 +1074,15 @@ class DicomSession:
             # Shared memory allows in-place modification of instances.
             # OPTIMIZATION: Limited to 0.5x CPU or Max 8 to prevent OOM with large datasets
             cpu_count = os.cpu_count() or 1
-            max_workers = max(1, min(int(cpu_count * 0.5), 8))
+            if os.environ.get("GANTRY_MAX_WORKERS"):
+                max_workers = int(os.environ["GANTRY_MAX_WORKERS"])
+            else:
+                max_workers = max(1, min(int(cpu_count * 0.5), 8))
             
             # Generate granular tasks for better load balancing
             all_tasks = []
             get_logger().info("Analyzing workload...")
-            for rule in self.active_rules:
+            for rule in self.configuration.rules:
                 tasks = service.prepare_redaction_tasks(rule)
                 all_tasks.extend(tasks)
 
@@ -1079,19 +1091,49 @@ class DicomSession:
                 print("No matching images found for any loaded rules.")
                 return
 
-            print(f"Queued {len(all_tasks)} redaction tasks across {len(self.active_rules)} rules.")
-            print(f"Executing using {max_workers} threads...")
+            print(f"Queued {len(all_tasks)} redaction tasks across {len(self.configuration.rules)} rules.")
+            print(f"Executing using {max_workers} workers (Process Isolation)...")
             # 2. Parallel Redaction (Granular)
             get_logger().info(f"Starting granular redaction ({len(all_tasks)} tasks, workers={max_workers})...")
         
-            # Enable GC Optimization
-            import gc
-            gc.disable()
+            # Map for quick Result application (SOP -> Instance)
+            instance_map = {t['instance'].sop_instance_uid: t['instance'] for t in all_tasks}
+
             try:
-                run_parallel(service.execute_redaction_task, all_tasks, desc="Redacting Pixels", max_workers=max_workers, force_threads=True, progress=show_progress)
+                # Use Process Isolation (Standard Pool) - Workers clean up via GC/Exit
+                # We consume generator to apply updates incrementally
+                results_gen = run_parallel(service.execute_redaction_task, all_tasks, desc="Redacting Pixels", 
+                                         max_workers=max_workers, 
+                                         return_generator=True, chunksize=1, progress=show_progress)
+                
+                for mutation in results_gen:
+                     if mutation:
+                          sop = mutation['sop_uid']
+                          if sop in instance_map:
+                               inst = instance_map[sop]
+                               
+                               # 1. Apply Attributes & Sequences
+                               if mutation.get('attributes'):
+                                   inst.attributes.update(mutation['attributes'])
+                               if mutation.get('sequences'):
+                                   inst.sequences.update(mutation['sequences'])
+                               
+                               # 2. Apply Pixel Loader (Critical)
+                               # The loader acts as our handle to the sidecar data
+                               loader = mutation.get('pixel_loader')
+                               if loader:
+                                   # Fix Reference: Loader points to Worker's Instance copy.
+                                   # Re-point it to the Main Process Instance.
+                                   loader.instance = inst
+                                   inst._pixel_loader = loader
+                                   
+                               if mutation.get('pixel_hash'):
+                                   inst._pixel_hash = mutation['pixel_hash']
+                                   
+                               inst._dirty = True
+                               
             finally:
-                gc.enable()
-                gc.collect()
+                pass
 
             # Run Safety Checks
             service.scan_burned_in_annotations()
@@ -1108,8 +1150,15 @@ class DicomSession:
         Helper to run redaction for a single machine interactively.
         roi: [y1, y2, x1, x2]
         """
-        self.active_rules = [{"serial_number": serial_number, "redaction_zones": [roi]}]
-        self.redact()
+        # This Helper is tricky. It modifies the ACTIVE configuration temporarily?
+        # Or just runs temporary logic?
+        # Original logic modified active_rules. Let's keep that behavior on our config object.
+        original = list(self.configuration.rules) # Shallow copy
+        try:
+             self.configuration.rules = [{"serial_number": serial_number, "redaction_zones": [roi]}]
+             self.redact()
+        finally:
+             self.configuration.rules = original
 
     def anonymize(self, findings: List[PhiFinding] = None):
         """
@@ -1122,7 +1171,7 @@ class DicomSession:
         # Use persistence_manager.store_backend (SqliteStore) for audit logging
         remediator = RemediationService(
             store_backend=self.persistence_manager.store_backend, 
-            date_jitter_config=self.active_date_jitter
+            date_jitter_config=self.configuration.date_jitter
         )
 
         count = 0
@@ -1135,7 +1184,8 @@ class DicomSession:
             # Actually, standard flow assumes findings.
             tqdm_desc = "Blind Anonymize"
             # Logic for blind anonymization: scan then remediate
-            current_findings = self.scan_for_phi()
+            # Use audit() which uses self.configuration internally now
+            current_findings = self.audit() 
             count = remediator.apply_remediation(current_findings)
             
         get_logger().info(f"Anonymized {count} entities.")

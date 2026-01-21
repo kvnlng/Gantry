@@ -108,6 +108,9 @@ class Instance(DicomItem):
     # Transient: Lazy Loader (Callable that returns np.ndarray)
     # Used for Sidecar or deferred logic
     _pixel_loader: Optional[Callable[[], np.ndarray]] = field(default=None, repr=False)
+    
+    # Transient: Hash for Integrity Check
+    _pixel_hash: Optional[str] = field(default=None, repr=False)
 
     # Transient: Track if dates have been shifted in memory
     date_shifted: bool = field(default=False, init=False)
@@ -164,9 +167,11 @@ class Instance(DicomItem):
             
         if self.file_path or self._pixel_loader:
             self.pixel_array = None
+            # print(f"DEBUG: Unloaded pixels for {self.sop_instance_uid}")
             return True
         else:
             # Data is in memory only (e.g. modified but not saved)
+            print(f"DEBUG: FAILED TO UNLOAD {self.sop_instance_uid} - No file path or loader!")
             return False
 
     def get_pixel_data(self) -> Optional[np.ndarray]:
@@ -260,7 +265,42 @@ class Instance(DicomItem):
         samples = 1
         frames = 1
 
-        if ndim == 2:
+        if ndim == 1:
+             # Flattened array (e.g. from Sidecar loader)
+             # Attempt to reshape using existing metadata if available
+             try:
+                 r = int(self.attributes.get("0028,0010", 0))
+                 c = int(self.attributes.get("0028,0011", 0))
+                 s = int(self.attributes.get("0028,0002", 1))
+                 f = int(self.attributes.get("0028,0008", 1))
+                 
+                 expected_size = r * c * s * f
+                 if expected_size > 0 and array.size >= expected_size:
+                      # Truncate padding if present (DICOM alignment)
+                      if array.size > expected_size:
+                          array = array[:expected_size]
+                      
+                      # Reshape logic
+                      if f > 1:
+                          array = array.reshape((f, r, c, s)) if s > 1 else array.reshape((f, r, c))
+                      elif s > 1:
+                          array = array.reshape((r, c, s))
+                      else:
+                          array = array.reshape((r, c))
+                      self.pixel_array = array
+                      return # Done, attributes already match
+                 elif expected_size == 0:
+                      # Metadata missing, treat as linear?
+                      pass
+                      
+             except:
+                 pass
+                 
+             # Only raise if we couldn't resolve it
+             if len(array.shape) == 1: # Still 1D
+                  rows, cols = 1, shape[0]
+                  
+        elif ndim == 2:
             rows, cols = shape
         elif ndim == 3:
             if shape[-1] in [3, 4]:

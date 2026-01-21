@@ -87,6 +87,12 @@ date_jitter:
 remove_private_tags: true
 machines:
 {machines_yaml}
+
+phi_tags:
+  "0008,0020": {{ "action": "EMPTY" }}
+  "0008,0030": {{ "action": "EMPTY" }}
+  "0008,0021": {{ "action": "EMPTY" }}
+  "0008,0031": {{ "action": "EMPTY" }}
 """)
     sess.load_config(config_path)
     
@@ -127,7 +133,7 @@ machines:
     t0 = time.time()
     # Default to j2k if compress requested, else None
     comp_method = 'j2k' if compress_export else None
-    sess.export(output_dir, safe=True, compression=comp_method, show_progress=False)
+    sess.export(output_dir, safe=False, compression=comp_method, show_progress=False)
     duration_export = time.time() - t0
     print(f"Export Duration: {duration_export:.2f}s")
     report_resource_usage("Post-Export")

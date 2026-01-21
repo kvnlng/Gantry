@@ -14,6 +14,9 @@ data/
 gantry.key
 stress_config.yaml
 benchmark_results.csv
+test_export_config.yaml
+test_import_config.yaml
+export_metadata.csv
 
 # C extensions
 *.so

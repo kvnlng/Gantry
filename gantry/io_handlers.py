@@ -58,16 +58,21 @@ class DicomStore:
 
 from .parallel import run_parallel
 
+from pydicom.uid import UncompressedTransferSyntaxes
+import hashlib
+
 def populate_attrs(ds, item, text_index: list = None):
     """Standalone function to populate attributes for pickle-compatibility in workers."""
     
     # Text-like VRs that might contain PHI
-    TEXT_VRS = {'PN', 'LO', 'SH', 'ST', 'LT', 'UT', 'DA', 'DT', 'TM', 'CS', 'AE', 'UI'} # UI included for linking checks? Maybe not UI usually.
-    # Updated VR list based on standard Anonymization profiles
     TEXT_VRS = {'PN', 'LO', 'SH', 'ST', 'LT', 'UT', 'DA', 'DT', 'TM'}
+    # Binary VRs to explicitly skip (Metadata Refactor)
+    BINARY_VRS = {'OB', 'OW', 'OF', 'OD', 'OL'} # UN left out for safety, usually small private tags
     
     for elem in ds:
         if elem.tag.group == 0x7fe0: continue  # Skip pixels
+        if elem.VR in BINARY_VRS: continue # Skip binary blobs
+        
         tag = f"{elem.tag.group:04x},{elem.tag.element:04x}"
         
         if elem.VR == 'SQ':
@@ -94,11 +99,11 @@ def process_sequence(tag, elem, parent_item, text_index: list = None):
 def ingest_worker(fp):
     """
     Worker function to read DICOM and construct Instance object.
-    Returns: (metadata_dict, instance_object, error_string)
-    metadata_dict contains keys for linking: 'pid', 'pname', 'sid', 'ser_id', etc.
+    Returns: (metadata_dict, instance_object, pixel_bytes, pixel_hash, pixel_alg, error_string)
     """
     try:
-        ds = pydicom.dcmread(fp, stop_before_pixels=True, force=True)
+        # Eager load (read pixels)
+        ds = pydicom.dcmread(fp, stop_before_pixels=False, force=True)
         
         # Determine SOP Class UID with fallback to File Meta
         sop_class = str(ds.get("SOPClassUID", ""))
@@ -108,29 +113,50 @@ def ingest_worker(fp):
         # Extract Linking Metadata
         meta = {
             'pid': ds.get("PatientID", "UnknownPatient"),
-            'pname': str(ds.get("PatientName", "Unknown")), # Kept original pname
+            'pname': str(ds.get("PatientName", "Unknown")),
             'sid': ds.get("StudyInstanceUID", "UnknownStudy"),
-            'sdate': str(ds.get("StudyDate", "19000101")), # Kept original sdate
+            'sdate': str(ds.get("StudyDate", "19000101")),
             'ser_id': ds.get("SeriesInstanceUID", "UnknownSeries"),
             'modality': ds.get("Modality", "OT"),
             'sop': ds.get("SOPInstanceUID", None),
-            'sop_class': sop_class, # Kept original sop_class with fallback
+            'sop_class': sop_class, 
             'man': ds.get("Manufacturer", ""),
             'model': ds.get("ManufacturerModelName", ""),
             'dev_sn': ds.get("DeviceSerialNumber", ""),
-            'series_num': ds.get("SeriesNumber", 0) # Added SeriesNumber
+            'series_num': ds.get("SeriesNumber", 0)
         }
         
         if not meta['sop']:
              raise ValueError("Missing SOPInstanceUID. Likely not a valid DICOM file.")
 
-        # Construct Instance
+        # Construct Instance (Metadata Only)
         inst = Instance(meta['sop'], meta['sop_class'], 0, file_path=fp)
         populate_attrs(ds, inst, inst.text_index)
         
-        return (meta, inst, None)
+        # Extract & Process Pixel Data
+        p_bytes = None
+        p_hash = None
+        p_alg = None
+        
+        if "PixelData" in ds:
+            try:
+                # Always decompress to raw bytes to ensure sidecar has consistent format (SidecarPixelLoader expects raw)
+                # This handles RLE/JPEG/J2K by decoding them now.
+                arr = ds.pixel_array
+                p_bytes = arr.tobytes()
+                p_alg = 'zlib' # Always compress the raw bytes
+            except Exception as e:
+                # If decompression fails (missing codec), we cannot ingest safely for sidecar usage.
+                # Could log warning, but for now raise or return error.
+                return (None, None, None, None, None, f"Decompression Failed: {e}")
+            
+            if p_bytes:
+                # Hash the RAW bytes (stable hash)
+                p_hash = hashlib.sha256(p_bytes).hexdigest()
+        
+        return (meta, inst, p_bytes, p_hash, p_alg, None)
     except Exception as e:
-        return (None, None, str(e))
+        return (None, None, None, None, None, str(e))
 
 class DicomImporter:
     """
@@ -138,7 +164,7 @@ class DicomImporter:
     optimized for parallel processing.
     """
     @staticmethod
-    def import_files(file_paths: List[str], store: DicomStore, executor=None):
+    def import_files(file_paths: List[str], store: DicomStore, executor=None, sidecar_manager=None):
         """
         Parses a list of files or directories. Recurses into directories to find all files.
         """
@@ -164,7 +190,7 @@ class DicomImporter:
         if not new_files:
             return
 
-        logger.info(f"Importing {len(new_files)} files (Parallel Ingest)...")
+        logger.info(f"Importing {len(new_files)} files (Parallel Eager Ingest)...")
         
         # 1. Build Fast Lookup Maps (O(1))
         patient_map = {p.patient_id: p for p in store.patients}
@@ -177,18 +203,30 @@ class DicomImporter:
                 study_map[st.study_instance_uid] = st
                 for se in st.series:
                     series_map[se.series_instance_uid] = se
-
-        # 2. Parallel Execution
-        results = run_parallel(ingest_worker, new_files, desc="Ingesting", chunksize=10, executor=executor)
         
-        # 3. Aggregation (Main Thread)
+        # 2. Parallel Execution
+        # OPTIMIZATION: Use return_generator=True to stream results.
+        # This prevents accumulating result tuples (with huge p_bytes) in a list (O(N) memory).
+        # We process each result immediately and discard it (O(1) memory).
+        # OPTIMIZATION: chunksize=1 to prevent buffering multiple large files in IPC queue
+        results = run_parallel(ingest_worker, new_files, desc="Ingesting", chunksize=1, executor=executor, return_generator=True)
+        
+        # 3. Aggregation (Streaming)
         count = 0
-        for meta, inst, err in results:
+        for meta, inst, p_bytes, p_hash, p_alg, err in results:
+            # Clear result components from scope as soon as possible after use to help GC
+            # But the loop variable holds them. Next iteration clears them.
             if err:
                  logger.error(f"Import Failed: {err}")
                  continue
             if inst:
                 try:
+                    # Persist Pixels to Sidecar (Main Thread Sequential Write)
+                    if p_bytes and sidecar_manager:
+                        off, leng = sidecar_manager.write_frame(p_bytes, p_alg)
+                        inst._pixel_loader = SidecarPixelLoader(sidecar_manager.filepath, off, leng, p_alg, inst)
+                        inst._pixel_hash = p_hash
+                    
                     # Linkage Logic
                     pid = meta['pid']
                     sid = meta['sid']
@@ -478,6 +516,7 @@ class SidecarPixelLoader:
         self.offset = offset
         self.length = length
         self.alg = alg
+        # Strong reference (Picklable). Python GC handles cycle.
         self.instance = instance
 
     def __call__(self):
@@ -488,33 +527,64 @@ class SidecarPixelLoader:
         from .sidecar import SidecarManager
         mgr = SidecarManager(self.sidecar_path)
         
+        instance = self.instance
+        if instance is None:
+             raise RuntimeError("Instance is None. Cannot load pixels.")
 
-        raw = mgr.read_frame(self.offset, self.length, self.alg)
+        try:
+             raw = mgr.read_frame(self.offset, self.length, self.alg)
+        except Exception as e:
+             raise RuntimeError(f"Integrity Error: Failed to read/decompress frame for {instance.sop_instance_uid}: {e}")
+        
+        # Integrity Check
+        expected_hash = getattr(instance, '_pixel_hash', None)
+        if expected_hash:
+            curr_hash = hashlib.sha256(raw).hexdigest()
+            if curr_hash != expected_hash:
+                raise RuntimeError(f"Integrity Error: Pixel data hash mismatch for {instance.sop_instance_uid}. Expected {expected_hash}, got {curr_hash}")
         
         # Reconstruct based on attributes
         import numpy as np
-        bits = self.instance.attributes.get("0028,0100", 8)
+        bits = instance.attributes.get("0028,0100", 8)
         dt = np.uint16 if bits > 8 else np.uint8
         
         arr = np.frombuffer(raw, dtype=dt)
         
-        rows = self.instance.attributes.get("0028,0010", 0)
-        cols = self.instance.attributes.get("0028,0011", 0)
-        samples = self.instance.attributes.get("0028,0002", 1)
-        frames = int(self.instance.attributes.get("0028,0008", 0) or 0)
+        rows = instance.attributes.get("0028,0010", 0)
+        cols = instance.attributes.get("0028,0011", 0)
+        samples = instance.attributes.get("0028,0002", 1)
+        frames = int(instance.attributes.get("0028,0008", 0) or 0)
+        
+        planar_conf = instance.attributes.get("0028,0006", 0)
         
         if frames > 1:
             target_shape = (frames, rows, cols, samples)
             if samples == 1: target_shape = (frames, rows, cols)
         elif samples > 1:
-            target_shape = (rows, cols, samples)
+            if planar_conf == 0:
+                 target_shape = (rows, cols, samples)
+            else:
+                 # Planar Configuration 1: (Samples, Rows, Cols)
+                 target_shape = (samples, rows, cols)
         else:
             target_shape = (rows, cols)
         
         try:
-            return arr.reshape(target_shape)
-        except:
-            return arr
+            arr_reshaped = arr.reshape(target_shape)
+        except ValueError:
+            # Handle padding (e.g. DICOM alignment bytes)
+            target_size = 1
+            for d in target_shape: target_size *= d
+            if arr.size >= target_size:
+                arr = arr[:target_size]
+                arr_reshaped = arr.reshape(target_shape)
+            else:
+                return arr
+
+        # If Planar=1, transpose to (Rows, Cols, Samples) for consistency
+        if samples > 1 and frames <= 1 and planar_conf == 1:
+                arr_reshaped = arr_reshaped.transpose(1, 2, 0)
+        return arr_reshaped
 
 class DicomExporter:
     """

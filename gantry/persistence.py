@@ -13,47 +13,9 @@ from .sidecar import SidecarManager
 import numpy as np
 from .logger import get_logger
 from .privacy import PhiFinding, PhiRemediation
+from .io_handlers import SidecarPixelLoader
 
-class SidecarPixelLoader:
-    """
-    Functor for lazy loading of pixel data from sidecar.
-    Must be a top-level class to be picklable.
-    """
-    def __init__(self, sidecar_path, offset, length, alg, instance):
-        self.sidecar_path = sidecar_path
-        self.offset = offset
-        self.length = length
-        self.alg = alg
-        self.instance = instance
 
-    def __call__(self):
-        mgr = SidecarManager(self.sidecar_path)
-        
-        raw = mgr.read_frame(self.offset, self.length, self.alg)
-        
-        # Reconstruct based on attributes
-        bits = self.instance.attributes.get("0028,0100", 8)
-        dt = np.uint16 if bits > 8 else np.uint8
-        
-        arr = np.frombuffer(raw, dtype=dt)
-        
-        rows = self.instance.attributes.get("0028,0010", 0)
-        cols = self.instance.attributes.get("0028,0011", 0)
-        samples = self.instance.attributes.get("0028,0002", 1)
-        frames = int(self.instance.attributes.get("0028,0008", 0) or 0)
-        
-        if frames > 1:
-            target_shape = (frames, rows, cols, samples)
-            if samples == 1: target_shape = (frames, rows, cols)
-        elif samples > 1:
-            target_shape = (rows, cols, samples)
-        else:
-            target_shape = (rows, cols)
-        
-        try:
-            return arr.reshape(target_shape)
-        except:
-            return arr
 
 class SqliteStore:
     """
@@ -101,10 +63,23 @@ class SqliteStore:
         pixel_file_id INTEGER DEFAULT 0,
         pixel_offset INTEGER,
         pixel_length INTEGER,
+        pixel_hash TEXT,
         compress_alg TEXT,
-        attributes_json TEXT, -- Store extra attributes as JSON for now
+        attributes_json TEXT, -- Core attributes (Horizontal)
         FOREIGN KEY(series_id_fk) REFERENCES series(id),
         UNIQUE(sop_instance_uid)
+    );
+
+    CREATE TABLE IF NOT EXISTS instance_attributes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        instance_uid TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        element_id TEXT NOT NULL,
+        atom_index INTEGER DEFAULT 0,
+        value_rep TEXT,
+        value_text TEXT,
+        FOREIGN KEY(instance_uid) REFERENCES instances(sop_instance_uid) ON DELETE CASCADE,
+        UNIQUE(instance_uid, group_id, element_id, atom_index)
     );
 
     CREATE TABLE IF NOT EXISTS audit_log (
@@ -134,6 +109,7 @@ class SqliteStore:
     CREATE INDEX IF NOT EXISTS idx_instances_series_fk ON instances(series_id_fk);
     CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_uid);
     CREATE INDEX IF NOT EXISTS idx_findings_entity ON phi_findings(entity_uid);
+    CREATE INDEX IF NOT EXISTS idx_inst_attr_uid ON instance_attributes(instance_uid);
     """
 
     def __init__(self, db_path: str):
@@ -160,6 +136,31 @@ class SqliteStore:
         self._init_db()
         
         # Async Audit Queue
+        self.audit_queue = queue.Queue()
+        self._stop_event = threading.Event()
+        self._audit_thread = threading.Thread(target=self._audit_worker, daemon=True, name="AuditWorker")
+        self._audit_thread.start()
+
+    def __getstate__(self):
+        """Exclude threading primitives from pickling."""
+        state = self.__dict__.copy()
+        keys_to_remove = ['_memory_lock', '_memory_conn', 'audit_queue', '_stop_event', '_audit_thread']
+        for k in keys_to_remove:
+            state.pop(k, None)
+        return state
+
+    def __setstate__(self, state):
+        """Recreate threading primitives on unpickling."""
+        self.__dict__.update(state)
+        
+        # Restore non-pickleable attributes
+        if self.db_path == ":memory:":
+             self._memory_lock = threading.Lock()
+             self._memory_conn = None # Connection lost on pickle transfer
+        else:
+             self._memory_lock = None
+             self._memory_conn = None
+
         self.audit_queue = queue.Queue()
         self._stop_event = threading.Event()
         self._audit_thread = threading.Thread(target=self._audit_worker, daemon=True, name="AuditWorker")
@@ -576,6 +577,103 @@ class SqliteStore:
                     self._deserialize_into(new_item, item_data)
                     target_item.add_sequence_item(tag, new_item)
 
+    def save_vertical_attributes(self, instance_uid: str, attributes: Dict[Tuple[str, str], Any], conn: sqlite3.Connection = None):
+        """
+        Persists extended attributes to the vertical `instance_attributes` table.
+        attributes key format: (group_hex, element_hex) e.g. ("0010", "0010")
+        Use UPSERT semantics.
+        Optionally accepts an existing connection to share transaction.
+        """
+        if not attributes: return
+
+        data_rows = []
+        for (grp, elem), val in attributes.items():
+            vr = "UN" # Todo: Pass VR from caller
+            # Check for VM > 1
+            if isinstance(val, list):
+                for idx, atom in enumerate(val):
+                    data_rows.append((instance_uid, grp, elem, idx, vr, str(atom)))
+            else:
+                 data_rows.append((instance_uid, grp, elem, 0, vr, str(val)))
+        
+        if not data_rows: return
+
+        try:
+            from contextlib import nullcontext
+            # If conn is passed, use it (and don't close it/commit it here, leave to caller).
+            # If not, create new context (which commits/closes).
+            ctx = self._get_connection() if conn is None else nullcontext(conn)
+            
+            with ctx as db:
+                # 1. OPTIMIZATION: Delete existing for these keys first? 
+                # Or UPSERT. 
+                # "test_vertical_update_serialization" requires correctness.
+                # UPSERT based on unique index (uid, grp, elem, atom) works.
+                # But if list shrinks (VM 3 -> VM 1), UPSERT leaves atoms 2,3.
+                # So we MUST DELETE by (uid, grp, elem) before inserting new set for that tag.
+                
+                # We can do this in transaction.
+                keys_to_clear = list(attributes.keys())
+                # Batch delete?
+                # "DELETE FROM instance_attributes WHERE instance_uid=? AND group_id=? AND element_id=?\"
+                del_params = [(instance_uid, k[0], k[1]) for k in keys_to_clear]
+                db.executemany(
+                    "DELETE FROM instance_attributes WHERE instance_uid=? AND group_id=? AND element_id=?", 
+                    del_params
+                )
+                
+                db.executemany("""
+                    INSERT INTO instance_attributes (instance_uid, group_id, element_id, atom_index, value_rep, value_text)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, data_rows)
+                
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to save vertical attributes for {instance_uid}: {e}")
+            raise e
+
+    def load_vertical_attributes(self, instance_uid: str) -> Dict[Tuple[str, str], Any]:
+        """
+        Loads extended attributes from vertical table.
+        Returns dict: {(grp, elem): value_or_list}
+        """
+        results = {}
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute("""
+                    SELECT group_id, element_id, atom_index, value_text 
+                    FROM instance_attributes 
+                    WHERE instance_uid=? 
+                    ORDER BY group_id, element_id, atom_index
+                """, (instance_uid,)).fetchall()
+                
+                if not rows: return {}
+                
+                # Reassemble
+                curr_key = None
+                collect = []
+                
+                for r in rows:
+                    key = (r['group_id'], r['element_id'])
+                    val = r['value_text'] # Type conversion? Strings for now.
+                    
+                    if key != curr_key:
+                        # Flush previous
+                        if curr_key:
+                            results[curr_key] = collect if len(collect) > 1 else collect[0]
+                        curr_key = key
+                        collect = [val]
+                    else:
+                        collect.append(val)
+                
+                # Flush last
+                if curr_key:
+                    results[curr_key] = collect if len(collect) > 1 else collect[0]
+                    
+            return results
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to load vertical attributes for {instance_uid}: {e}")
+            return {}
+
     def persist_pixel_data(self, instance: Instance):
         """
         Immediately persists pixel data to the sidecar to allow memory offloading.
@@ -587,12 +685,18 @@ class SqliteStore:
 
         try:
             # 1. Write to Sidecar
-            b_data = instance.pixel_array.tobytes()
+            # Pass array directly to avoid .tobytes() Memory spike (Zero-Copy 500MB save)
+            b_data = instance.pixel_array
             # Determine suitable compression? Defaulting to zlib for swap.
             # Ideally we respect original or config, but for swap zlib is safe/fast enough.
             c_alg = 'zlib' 
             
             offset, length = self.sidecar.write_frame(b_data, c_alg)
+            
+            # Hash Update (CRITICAL for Integrity Checks)
+            import hashlib
+            p_hash = hashlib.sha256(b_data).hexdigest()
+            instance._pixel_hash = p_hash
             
             # 2. Update Instance Loader
             # This allows instance.unload_pixel_data() to work safely
@@ -652,12 +756,19 @@ class SqliteStore:
                     
                     for st in p.studies:
                         if getattr(st, '_dirty', True):
+                            # FIX: Convert date objects to string to avoid Python 3.12+ DeprecationWarning for default adapter
+                            s_date = st.study_date
+                            if hasattr(s_date, "isoformat"):
+                                s_date = s_date.isoformat()
+                            elif s_date is not None:
+                                s_date = str(s_date)
+
                             cur.execute("""
                                 INSERT INTO studies (patient_id_fk, study_instance_uid, study_date) VALUES (?, ?, ?)
                                 ON CONFLICT(study_instance_uid) DO UPDATE SET 
                                     study_date=excluded.study_date,
                                     patient_id_fk=excluded.patient_id_fk
-                            """, (p_pk, st.study_instance_uid, st.study_date))
+                            """, (p_pk, st.study_instance_uid, s_date))
                             saved_st += 1
                         
                         st_pk_row = cur.execute("SELECT id FROM studies WHERE study_instance_uid=?", (st.study_instance_uid,)).fetchone()
@@ -715,15 +826,51 @@ class SqliteStore:
                             
                             if dirty_items:
                                 i_batch = []
+                                vert_updates = [] # Defer vertical updates to satisfy foreign key
                                 for inst, ver in dirty_items:
                                     full_data = self._serialize_item(inst)
-                                    attrs_json = json.dumps(full_data, cls=GantryJSONEncoder)
                                     
-                                    p_offset, p_length, p_alg = None, None, None
+                                    # Split Core vs Vertical (Private Tags -> Vertical Table)
+                                    core_data = {}
+                                    vert_data = {}
+
+                                    for key, val in full_data.items():
+                                        if key == "__sequences__":
+                                             core_data[key] = val # Keep sequences in Core JSON for now
+                                             continue
+                                        
+                                        # key is "GGGG,EEEE" hex string
+                                        try:
+                                            group = int(key.split(',')[0], 16)
+                                            # Odd Group = Private Tag (usually)
+                                            # Skip Vertical for BYTES (cant be stored as TEXT easily, keep in JSON)
+                                            is_private = (group % 2 != 0) and not isinstance(val, bytes)
+                                            
+                                            if is_private:
+                                                 # Tuple key for vertical method: (grp, elem)
+                                                 k_tuple = tuple(key.split(','))
+                                                 vert_data[k_tuple] = val
+                                            else:
+                                                 core_data[key] = val
+                                        except:
+                                            core_data[key] = val
+
+                                    # Queue Vertical (Saved after Instance Insert)
+                                    if vert_data:
+                                        vert_updates.append((inst.sop_instance_uid, vert_data))
+                                    
+                                    # Serialize Core
+                                    attrs_json = json.dumps(core_data, cls=GantryJSONEncoder)
+                                    
+                                    p_offset, p_length, p_alg, p_hash = None, None, None, None
                                     
                                     if inst.pixel_array is not None:
                                          b_data = inst.pixel_array.tobytes()
                                          c_alg = 'zlib'
+                                         # Compute Hash
+                                         import hashlib
+                                         p_hash = hashlib.sha256(b_data).hexdigest()
+                                         
                                          off, leng = sidecar_manager.write_frame(b_data, c_alg)
                                          p_offset, p_length, p_alg = off, leng, c_alg
                                          pixel_bytes_written += leng
@@ -731,11 +878,16 @@ class SqliteStore:
                                          
                                          # Update loader so we can unload safely later
                                          inst._pixel_loader = self._create_pixel_loader(off, leng, c_alg, inst)
+                                         inst._pixel_hash = p_hash # Cache on instance
+                                         
                                     elif isinstance(inst._pixel_loader, SidecarPixelLoader):
                                          # Already persisted (swapped), preserve metadata
                                          p_offset = inst._pixel_loader.offset
                                          p_length = inst._pixel_loader.length
                                          p_alg = inst._pixel_loader.alg
+                                         p_hash = getattr(inst, '_pixel_hash', None)
+                                    else:
+                                         pass
                                     
                                     i_batch.append((
                                         se_pk, 
@@ -745,14 +897,15 @@ class SqliteStore:
                                         inst.file_path, 
                                         p_offset, 
                                         p_length, 
+                                        p_hash,
                                         p_alg, 
                                         attrs_json
                                     ))
 
                                 cur.executemany("""
                                     INSERT INTO instances (series_id_fk, sop_instance_uid, sop_class_uid, instance_number, file_path, 
-                                                           pixel_offset, pixel_length, compress_alg, attributes_json)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                           pixel_offset, pixel_length, pixel_hash, compress_alg, attributes_json)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                     ON CONFLICT(sop_instance_uid) DO UPDATE SET
                                         series_id_fk=excluded.series_id_fk,
                                         sop_class_uid=excluded.sop_class_uid,
@@ -761,8 +914,16 @@ class SqliteStore:
                                         attributes_json=excluded.attributes_json,
                                         pixel_offset=COALESCE(excluded.pixel_offset, instances.pixel_offset),
                                         pixel_length=COALESCE(excluded.pixel_length, instances.pixel_length),
+                                        pixel_hash=COALESCE(excluded.pixel_hash, instances.pixel_hash),
                                         compress_alg=COALESCE(excluded.compress_alg, instances.compress_alg)
                                 """, i_batch)
+
+                                # Process Deferred Vertical Updates (Now that Instances exist)
+                                if vert_updates:
+                                    # self.logger.debug(f"Saving vertical attributes for {len(vert_updates)} instances")
+                                    for uid, v_data in vert_updates:
+                                        self.save_vertical_attributes(uid, v_data, conn=conn)
+
                                 saved_i += len(dirty_items)
                                 
                                 # Mark saved with version (deferred until commit success? 

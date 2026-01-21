@@ -10,9 +10,9 @@ import pandas as pd
 # Phases configuration: (Total Instances, Phase Label)
 
 PHASES = [
+    {"target_count": 1, "label": "Phase 0 (1 Multi-Frame Files)"},
     {"target_count": 10, "label": "Phase 1 (10 Multi-Frame Files)"},
     {"target_count": 100, "label": "Phase 2 (100 Multi-Frame Files)"},
-    {"target_count": 1000, "label": "Phase 3 (1000 Multi-Frame Files)"},
 ]
 
 DATA_DIR = "data/benchmark_in"

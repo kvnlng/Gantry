@@ -108,10 +108,10 @@ def test_scaffold_comments(tmp_path):
     # we might just rely on the fact that CTP parser puts comments in `phi_tags`?
     # No, CTP parser logic is for machines.
     
-    # Alternative: Inject a rule into `session.active_rules` MANUALLY with a comment, then scaffold.
+    # Alternative: Inject a rule into `session.configuration.rules` MANUALLY with a comment, then scaffold.
     # scaffold_config includes `self.active_rules` in output.
     
-    session.active_rules.append({
+    session.configuration.rules.append({
         "serial_number": "SN-MANUAL",
         "redaction_zones": [],
         "comment": "This is a manual comment"
@@ -136,7 +136,7 @@ def test_scaffold_multiline_comments(tmp_path):
     # The snippet from user had explicit "\n" and extra spaces
     multiline_text = 'Auto-matched from CTP. Condition: Modality.equals("US") *\n    Manufacturer.containsIgnoreCase("\n    SIEMENS")'
     
-    session.active_rules.append({
+    session.configuration.rules.append({
         "serial_number": "SN-MULTI",
         "redaction_zones": [],
         "comment": multiline_text
@@ -212,7 +212,7 @@ def test_scaffold_flow_style(tmp_path):
     
     # Add a machine with redaction zones
     zones = [[10, 20, 30, 40], [50, 60, 70, 80]]
-    session.active_rules.append({
+    session.configuration.rules.append({
         "serial_number": "SN-FLOW",
         "redaction_zones": zones
     })

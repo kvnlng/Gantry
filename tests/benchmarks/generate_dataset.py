@@ -43,6 +43,7 @@ def create_template_ds(pixel_size=512, frames=1):
     ds.InstanceNumber = 1
     
     ds.StudyDate = "20230101"
+    ds.StudyTime = "120000"
     ds.SeriesDate = "20230101"
     ds.ContentDate = "20230101"
     

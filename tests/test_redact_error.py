@@ -54,7 +54,7 @@ def test_execute_config_session_level_interruption(capsys):
     Verifies that DicomSession.execute_config catches the error and reports it.
     """
     session = DicomSession(persistence_file=":memory:")
-    session.active_rules = [["bad", "rule"]]
+    session.configuration.rules = [["bad", "rule"]]
     
     session.redact()
     
@@ -94,7 +94,7 @@ def test_burned_in_safety_check(capsys):
     
     # Run Execute Config (with no rules) -> Should trigger scan
     # execute_config calls scan at end.
-    session.active_rules = [] # No rules
+    session.configuration.rules = [] # No rules
     
     # Capture output/logs
     # Usage of print in services.py should be captured by capsys

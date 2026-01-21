@@ -99,7 +99,7 @@ machines:
         # 2. Load and Apply
         self.sess.load_config("test_wildcard.yaml")
         self.sess.redact()
-        self.sess.save()
+        self.sess.save(sync=True)
         
         # 3. Verify ALL instances were modified
         # We can inspect the store directly

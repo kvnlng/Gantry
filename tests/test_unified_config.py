@@ -48,8 +48,8 @@ def test_unified_workflow(session_db, tmp_path, dummy_patient):
         
     # 4. Load Config
     session.load_config(str(config_path))
-    assert len(session.active_rules) >= 1
-    assert "0018,1030" in session.active_phi_tags
+    assert len(session.configuration.rules) >= 1
+    assert "0018,1030" in session.configuration.phi_tags
     
     # SETUP: Inject a value for the custom tag
     # The dummy patient provided by fixture might need this set specifically on the Instance

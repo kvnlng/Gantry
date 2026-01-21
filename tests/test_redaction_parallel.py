@@ -66,7 +66,7 @@ class TestRedactionParallel(unittest.TestCase):
                 "redaction_zones": [[0, 10, 0, 10]] # Top-Left 10x10 zeroed
             })
         
-        self.session.active_rules = rules
+        self.session.configuration.rules = rules
         
         # Execute
         # This will use ThreadPoolExecutor inside
@@ -119,7 +119,7 @@ class TestRedactionParallel(unittest.TestCase):
         self.session.store.patients.append(p)
 
         # 1 Rule
-        self.session.active_rules = [{
+        self.session.configuration.rules = [{
             "serial_number": serial,
             "redaction_zones": [[0, 10, 0, 10]]
         }]

@@ -43,8 +43,8 @@ def test_scaffold_config_creates_new_entries(tmp_path):
     session.load_config(str(config_file))
     
     # 3. Validation: SN-NEW is not in active rules
-    assert len(session.active_rules) == 1
-    assert session.active_rules[0]["serial_number"] == "SN-OLD"
+    assert len(session.configuration.rules) == 1
+    assert session.configuration.rules[0]["serial_number"] == "SN-OLD"
     
     # 4. Run Scaffold
     out_file = tmp_path / "todo.yaml"

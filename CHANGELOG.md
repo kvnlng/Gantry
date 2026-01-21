@@ -5,6 +5,32 @@ All notable changes to the "Gantry" project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-01-20
+
+### Added
+
+- **Hybrid Storage Model**: Major refactor of the persistence layer to split metadata into **Core Attributes** (JSON) and **Vertical Attributes** (EAV Table). This allows Gantry to handle sparse private tags elegantly without bloating the main index, enabling unlimited private tag support.
+- **Sidecar Binary Offloading**: Pixel data is now eagerly extracted to a parallel sidecar file (`_pixels.bin`) during ingestion. This drastically reduces the size of the SQLite index and ensures fast start-up times even for massive datasets.
+- **Configuration API 2.0**:
+  - Introduced `gantry.configure()` / `session.create_config()` workflow.
+  - New `GantryConfiguration` class providing programmatic access to Rules, Redaction Zones, and PHI Tags.
+  - Automatic `version: 2.0` schema migration.
+- **Bytes Persistence**: Full support for persisting raw `bytes` in metadata via the JSON Core layer, ensuring complex VRs (like `OB`/`OW`) survive round-trips correctly.
+- **Planar Configuration Support**: Added native handling for `PlanarConfiguration=1` (RRRGGGBBB layout) in `SidecarPixelLoader`, fixing RGB corruption in some Ultrasound/Secondary Capture images.
+- **Deprecation Fix**: Updated persistence to avoid deprecated SQLite date adapters for Python 3.12+.
+
+### Changed
+
+- **Database Schema**: `gantry.db` now contains `instances` (horizontal) and `instance_attributes` (vertical) tables.
+- **API**: `DicomSession.active_rules` is deprecated; use `DicomSession.configuration.rules` instead.
+- **API**: `DicomSession.active_phi_tags` is deprecated; use `DicomSession.configuration.phi_tags` instead.
+
+### Fixed
+
+- **Integrity Checks**: Resolved a critical hash mismatch issue where updating pixels via `persist_pixel_data` failed to update the integrity hash.
+- **Config Scaffolding**: Fixed a bug where the generated YAML config had commented-out keys due to header formatting issues.
+- **Shape Errors**: Fixed `Unknown shape: (2,)` errors when loading minimal/flattened 1D pixel arrays; `set_pixel_data` now intelligently reshapes based on image metadata.
+
 ## [0.5.4] - 2026-01-14
 
 ### Added

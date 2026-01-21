@@ -138,3 +138,68 @@ machines:
 * **`redaction_zones`**: List of regions to zero out.
   * Format: `[y1, y2, x1, x2]` (Row Start, Row End, Col Start, Col End).
   * Coordinates are 0-indexed.
+
+---
+
+## 6. Programmatic Configuration (API 2.0)
+
+In addition to YAML files, you can manage the configuration dynamically using Python code via the `session.configuration` property.
+
+### Accessing Configuration
+
+```python
+import gantry
+
+session = gantry.Session(data_directory="./dicom_data")
+
+# improved: Access the GantryConfiguration object directly
+config = session.configuration
+
+print(config.rules)    # List active redaction rules
+print(config.phi_tags) # List active PHI tag overrides
+```
+
+### Methods
+
+#### `add_rule(serial_number, manufacturer="Unknown", model="Unknown", zones=None)`
+
+Add a new machine redaction rule dynamically.
+
+```python
+# Add a rule for a specific ultrasound machine
+session.configuration.add_rule(
+    serial_number="US-5555",
+    manufacturer="GE",
+    model="Voluson",
+    zones=[[0, 50, 0, 800]] # [y1, y2, x1, x2]
+)
+```
+
+#### `delete_rule(serial_number)`
+
+Remove a rule by serial number.
+
+```python
+session.configuration.delete_rule("US-5555")
+```
+
+#### `set_phi_tag(tag, action, replacement=None)`
+
+Update the policy for a specific DICOM tag.
+
+```python
+# Force removal of PatientWeight
+session.configuration.set_phi_tag("0010,1030", "REMOVE")
+
+# Replace StudyDescription with a constant
+session.configuration.set_phi_tag("0008,1030", "REPLACE", replacement="RESEARCH STUDY")
+```
+
+### Generating Configuration Templates
+
+You can generate a starter `gantry_config.yaml` based on your current session inventory. This is useful for bootstrapping a new configuration file that includes all detected machines.
+
+```python
+# Inspects data, finds all unique machine serials, and writes a config file
+session.create_config("my_new_policy.yaml")
+```

@@ -34,6 +34,14 @@ def create_simple_dicom(path, patient_name="Test^Patient"):
     # Minimal pixel data to pass validation if any
     ds.is_little_endian = True
     ds.is_implicit_VR = True
+    ds.Rows = 1
+    ds.Columns = 1
+    ds.BitsAllocated = 8
+    ds.BitsStored = 8
+    ds.HighBit = 7
+    ds.PixelRepresentation = 0
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
     ds.PixelData = b'\0'
     
     ds.save_as(str(path), write_like_original=False)
