@@ -6,7 +6,7 @@ import json
 import queue
 import threading
 import time
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 from .entities import Patient, Study, Series, Instance, Equipment
 from .sidecar import SidecarManager
