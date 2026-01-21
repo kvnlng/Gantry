@@ -65,7 +65,6 @@ def test_redaction_memory_swap(clean_env):
     # - Persist to sidecar
     # - Unload pixels (Set to None)
     
-    # DicomSession does not expose redaction_service persistently, so we instantiate it.
     from gantry.services import RedactionService
     svc = RedactionService(sess.store, sess.store_backend)
     svc.redact_machine_instances("SERIAL_123", rois, verbose=True)
