@@ -196,7 +196,7 @@ class RedactionService:
                 
                 # CRITICAL: Persist modified pixel data to sidecar (generate new Loader)
                 if self.store_backend and hasattr(self.store_backend, 'persist_pixel_data'):
-                     self.store_backend.persist_pixel_data(inst, self.store_backend)
+                     self.store_backend.persist_pixel_data(inst)
                 else:
                      # Fallback or Warning? If we don't persist, pixel data is memory-only and won't export correctly?
                      # Actually, export might handle in-memory data if it's dirty?
