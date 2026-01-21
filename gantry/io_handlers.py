@@ -472,9 +472,10 @@ def _compress_j2k(ds, pixel_array=None):
                     
                     if target_shape:
                         arr = arr.reshape(target_shape)
-                except Exception:
-                    # If reshape fails, proceed with original (legacy/fallback behavior, possibly crash later)
-                    pass
+                except Exception as e:
+                    # If reshape fails, we MUST fail export. Continuing with 1D array is dangerous.
+                    # This explains the "tuple index out of range" crash when iterating 1D array as frames.
+                    raise RuntimeError(f"Array shape mismatch. Expected {target_shape} for {arr.size} elements. Error: {e}")
 
             frames = getattr(ds, "NumberOfFrames", 1)
             samples = getattr(ds, "SamplesPerPixel", 1)
