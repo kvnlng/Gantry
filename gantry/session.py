@@ -213,7 +213,50 @@ class DicomSession:
         """
         if hasattr(self, 'store_backend'):
             print("Beginning Sidecar Compaction (this may take a while)...")
-            self.store_backend.compact_sidecar()
+            
+            # 1. Sync DB so compaction knows true state
+            self.save(sync=True)
+            
+            # 2. Compact and get updates
+            # Returns Dict[sop_instance_uid, (new_offset, new_length)]
+            updates = self.store_backend.compact_sidecar()
+            
+            if not updates:
+                print("Compaction finished (no changes or empty).")
+                return
+
+            # 3. Patch In-Memory Instances (Preserve References)
+            print(f"Updating {len(updates)} in-memory instances...")
+            count = 0
+            
+            # Optimization: Pre-check if we have SidecarPixelLoader imported
+            from .io_handlers import SidecarPixelLoader
+            
+            # We must traverse the whole graph. 
+            # DicomStore doesn't index by UID (yet).
+            for p in self.store.patients:
+                for st in p.studies:
+                    for se in st.series:
+                        for inst in se.instances:
+                            if inst.sop_instance_uid in updates:
+                                new_off, new_len = updates[inst.sop_instance_uid]
+                                
+                                # Update Loader
+                                if inst._pixel_loader and isinstance(inst._pixel_loader, SidecarPixelLoader):
+                                    inst._pixel_loader.offset = new_off
+                                    inst._pixel_loader.length = new_len
+                                    count += 1
+                                    
+                                # Note: If inst._pixel_loader is None (e.g. loaded from original DICOM file), 
+                                # it doesn't use sidecar, so no update needed.
+                                # If it has pixel_array loaded (RAM), it's fine. 
+                                # If we unload() later, we need correct loader. 
+                                # BUT if it has pixel_array, does it have a loader?
+                                # persist_pixel_data ensures loader is created.
+                                # So if it was persisted, it has a loader. 
+                                
+            print(f"Patched {count} active objects.")
+            
         else:
             print("Persistence backend does not support compaction.")
 

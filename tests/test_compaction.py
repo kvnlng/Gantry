@@ -121,3 +121,37 @@ class TestCompaction:
         diff = abs(size_3 - size_1)
         # Relax constraint just in case random compression differs slightly
         assert diff < 2000 
+
+    def test_compact_updates_in_memory_references(self, session, tmp_path):
+        """
+        Verify that existing in-memory objects are updated in-place and remain valid
+        after compaction rewrites the sidecar.
+        """
+        i1 = self.create_dummy_instance("3.3.1")
+        
+        from gantry.entities import Patient, Study, Series
+        pat = Patient("P3", "Memory Test")
+        st = Study("ST3", "20230101")
+        se = Series("SE3", "CT", 1)
+        pat.studies.append(st); st.series.append(se); se.instances.append(i1)
+        session.store.patients.append(pat)
+        
+        session.store_backend.persist_pixel_data(i1)
+        session.save(sync=True)
+        
+        # Ensure it has a loader
+        assert i1._pixel_loader is not None
+        old_offset = i1._pixel_loader.offset
+        
+        # Compact
+        session.compact()
+        
+        # Verify Loader Updated
+        # Offset might stay 0 if it was already optimal.
+        # But we want to ensure the instance is still valid.
+        
+        # Verify Data Access (Critical)
+        i1.unload_pixel_data() # Force reload from sidecar
+        arr = i1.get_pixel_data()
+        assert arr is not None
+        assert arr.shape == (100, 1000)

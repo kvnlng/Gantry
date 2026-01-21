@@ -1184,7 +1184,7 @@ class SqliteStore:
             with self._get_connection() as conn:
                 cur = conn.cursor()
                 rows = cur.execute("""
-                    SELECT id, pixel_offset, pixel_length 
+                    SELECT id, sop_instance_uid, pixel_offset, pixel_length 
                     FROM instances 
                     WHERE pixel_offset IS NOT NULL 
                     ORDER BY pixel_offset ASC
@@ -1195,11 +1195,12 @@ class SqliteStore:
             
         if not rows:
             self.logger.info("No live pixels found in sidecar. Compaction skipped.")
-            return
+            return {}
 
         import shutil
         temp_path = self.sidecar_path + ".compact.tmp"
         updates = []
+        uid_map = {} # sop_instance_uid -> (offset, length)
         original_size = os.path.getsize(self.sidecar_path)
         written_bytes = 0
         
@@ -1217,16 +1218,17 @@ class SqliteStore:
                     
                     if len(data) != r['pixel_length']:
                          self.logger.warning(f"Compaction Warning: Unexpected EOF for instance ID {r['id']}")
-                         # Continue? Or fail? Best to preserve what we can.
                     
                     # Write
                     f_out.write(data)
+                    length = len(data)
                     
                     # Record change
                     # (new_offset, instance_id)
                     updates.append((current_out_pos, r['id']))
+                    uid_map[r['sop_instance_uid']] = (current_out_pos, length)
                     
-                    current_out_pos += len(data)
+                    current_out_pos += length
                 
                 written_bytes = current_out_pos
 
@@ -1235,17 +1237,17 @@ class SqliteStore:
                 conn.executemany("UPDATE instances SET pixel_offset=? WHERE id=?", updates)
             
             # 4. Swap Files
-            # Windows: cannot rename if open (we closed in context mgr above)
             shutil.move(temp_path, self.sidecar_path)
             
             # 5. Reset Manager
-            # We must refresh the handle inside the manager
             self.sidecar = SidecarManager(self.sidecar_path)
             
             duration = time.time() - start_time
             saved_space = original_size - written_bytes
             self.logger.info(f"Compaction Complete in {duration:.2f}s. Size: {original_size} -> {written_bytes} bytes. Reclaimed: {saved_space} bytes.")
             print(f"Compaction Complete. Size: {original_size/1024/1024:.2f}MB -> {written_bytes/1024/1024:.2f}MB. Reclaimed: {saved_space/1024/1024:.2f}MB.")
+            
+            return uid_map
             
         except Exception as e:
             self.logger.error(f"Compaction Failed: {e}")
