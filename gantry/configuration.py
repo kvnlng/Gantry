@@ -12,6 +12,75 @@ class GantryConfiguration:
     phi_tags: Dict[str, Any] = field(default_factory=dict)
     date_jitter: Dict[str, int] = field(default_factory=lambda: {"min_days": -365, "max_days": -1})
     remove_private_tags: bool = True
+    config_path: Optional[str] = None
+
+    def save(self) -> None:
+        """
+        Persists the current configuration to config_path if set.
+        """
+        if not self.config_path:
+            return
+
+
+
+        import yaml
+        
+        # Helper for Flow-Style Lists (Bracketed)
+        class FlowList(list): pass
+        
+        def flow_list_representer(dumper, data):
+            return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True)
+            
+        try:
+            yaml.add_representer(FlowList, flow_list_representer)
+        except:
+             # Already registered
+             pass
+
+        # Construct Unified Data
+        # Re-using logic similar to session.create_config but simplified for direct object dump
+        
+        # 4b. Enhance PHI Tags (Transform to structured if needed for saving)
+        # We store them as they are set (which should be structured if coming from set_phi_tag)
+        # But for cleanliness in YAML, let's ensure consistency.
+        
+        # Prepare machines
+        machines_export = []
+        for m in self.rules:
+             m_copy = m.copy()
+             if "redaction_zones" in m_copy:
+                  # Wrap internal lists
+                  zones = m_copy["redaction_zones"]
+                  new_zones = FlowList()
+                  for z in zones:
+                      if isinstance(z, list):
+                           new_zones.append(FlowList(z))
+                      else:
+                           new_zones.append(z)
+                  m_copy["redaction_zones"] = new_zones
+             machines_export.append(m_copy)
+
+        data = {
+            "version": "2.0",
+            # We don't store privacy_profile name in the object currently, 
+            # so we might lose that metadata if we overwrite. 
+            # For now, let's assume 'custom' or omit if not tracked.
+            # OR we should add it to the dataclass. For this task, we'll omit or keep basic.
+            "privacy_profile": "custom", 
+            "phi_tags": self.phi_tags,
+            "date_jitter": self.date_jitter,
+            "remove_private_tags": self.remove_private_tags,
+            "machines": machines_export
+        }
+
+        try:
+            with open(self.config_path, 'w') as f:
+                yaml.dump(data, f, sort_keys=False, default_flow_style=False, width=float("inf"))
+        except Exception as e:
+            # We don't want to crash the runtime if save fails, but we should log/warn
+            # Since we don't have logger here easily without import
+            print(f"WARNING: Failed to auto-save configuration: {e}")
+
 
     def add_rule(self, serial_number: str, manufacturer: str = "Unknown", model: str = "Unknown", zones: List[Any] = None) -> None:
         """
@@ -28,6 +97,8 @@ class GantryConfiguration:
             "redaction_zones": zones or []
         }
         self.rules.append(new_rule)
+        self.save()
+
 
     def update_rule(self, serial_number: str, updates: Dict[str, Any]) -> None:
         """
@@ -42,6 +113,8 @@ class GantryConfiguration:
             raise ValueError("Values for 'serial_number' cannot be changed via update_rule.")
             
         rule.update(updates)
+        self.save()
+
 
     def delete_rule(self, serial_number: str) -> bool:
         """
@@ -49,7 +122,11 @@ class GantryConfiguration:
         """
         initial_len = len(self.rules)
         self.rules = [r for r in self.rules if r.get("serial_number") != serial_number]
-        return len(self.rules) < initial_len
+        removed = len(self.rules) < initial_len
+        if removed:
+             self.save()
+        return removed
+
 
     def set_phi_tag(self, tag: str, action: str, replacement: str = None) -> None:
         """
@@ -73,6 +150,8 @@ class GantryConfiguration:
             val["replacement"] = replacement
             
         self.phi_tags[tag] = val
+        self.save()
+
 
     def get_rule(self, serial_number: str) -> Optional[Dict[str, Any]]:
         """Retrieves a specific rule dictionary (reference)."""

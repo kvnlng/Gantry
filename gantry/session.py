@@ -83,7 +83,7 @@ class DicomSession:
     """
 
     # =========================================================================
-    # 1. LIFECYCLE
+    # LIFECYCLE
     # =========================================================================
 
     def __init__(self, persistence_file="gantry.db"):
@@ -240,7 +240,7 @@ class DicomSession:
                 print(f" - {man} - {mod} (Count: {count})")
 
     # =========================================================================
-    # 2. INGESTION
+    # INGESTION
     # =========================================================================
 
     def ingest(self, directory: str):
@@ -268,7 +268,7 @@ class DicomSession:
         print(f"  - {n_i} Instances")
 
     # =========================================================================
-    # 3. CONFIGURATION
+    # CONFIGURATION
     # =========================================================================
 
     def load_config(self, config_file: str):
@@ -288,6 +288,8 @@ class DicomSession:
             self.configuration.rules = rules
             self.configuration.date_jitter = jitter
             self.configuration.remove_private_tags = remove_private
+            self.configuration.config_path = config_file
+
             
             get_logger().info(f"Loaded {len(self.configuration.rules)} machine rules and {len(self.configuration.phi_tags)} PHI tags.")
             print(f"Configuration Loaded:\n - {len(self.configuration.rules)} Machine Redaction Rules\n - {len(self.configuration.phi_tags)} PHI Tags")
@@ -634,7 +636,7 @@ class DicomSession:
             get_logger().error(f"Failed to write scaffold: {e}")
 
     # =========================================================================
-    # 4. AUDIT & ANALYSIS
+    # AUDIT & ANALYSIS
     # =========================================================================
 
     def audit(self, config_path: str = None) -> "PhiReport":
@@ -826,7 +828,7 @@ class DicomSession:
         self.store_backend.save_findings(findings)
 
     # =========================================================================
-    # 5. PRIVACY & SECURITY
+    # PRIVACY & SECURITY
     # =========================================================================
 
     def lock_identities(self, patient_id: str, persist: bool = False, _patient_obj: "Patient" = None, verbose: bool = True, **kwargs) -> Union[List["Instance"], LockingResult]:
@@ -1051,7 +1053,7 @@ class DicomSession:
         get_logger().info(f"Reversible anonymization enabled. Key: {key_path}")
 
     # =========================================================================
-    # 6. REDACTION & REMEDIATION
+    # REDACTION & REMEDIATION
     # =========================================================================
 
     def redact(self, show_progress=True):
@@ -1192,7 +1194,7 @@ class DicomSession:
         print(f"Anonymized/Remediated {count} tags according to policy.")
 
     # =========================================================================
-    # 7. EXPORT
+    # EXPORT
     # =========================================================================
 
     def export(self, folder: str, version=None, use_compression=True, 
@@ -1556,7 +1558,7 @@ class DicomSession:
             raise
 
     # =========================================================================
-    # 8. INTERNAL HELPERS
+    # INTERNAL HELPERS
     # =========================================================================
 
     def _rehydrate_findings(self, findings):
@@ -1640,7 +1642,7 @@ class DicomSession:
         return p_new
 
     # =========================================================================
-    # 9. DEPRECATED
+    # DEPRECATED
     # =========================================================================
 
     def scan_for_phi(self, config_path: str = None) -> "PhiReport":
