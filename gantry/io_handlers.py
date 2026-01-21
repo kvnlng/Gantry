@@ -455,8 +455,34 @@ def _compress_j2k(ds, pixel_array=None):
                 else:
                     arr = arr.reshape((rows, cols))
         else:
-            # Pre-calc frames if not in DS (though export worker sets them)
+            # Array passed explicitly.
+            # Fix: If array is 1D (flattened), reshape it using dataset metadata.
+            if len(arr.shape) == 1:
+                frames = getattr(ds, "NumberOfFrames", 1)
+                rows = ds.Rows
+                cols = ds.Columns
+                samples = ds.SamplesPerPixel
+                
+                try:
+                    if frames > 1:
+                        if samples > 1:
+                             arr = arr.reshape((frames, rows, cols, samples))
+                        else:
+                             arr = arr.reshape((frames, rows, cols))
+                    else:
+                        if samples > 1:
+                             arr = arr.reshape((rows, cols, samples))
+                        else:
+                             arr = arr.reshape((rows, cols))
+                except Exception:
+                    pass
+
             frames = getattr(ds, "NumberOfFrames", 1)
+            
+            # Additional safety: if frames=1 but shape is (1, H, W), flatten to (H,W) for encoding logic below if needed?
+            # The logic below handles arr directly if frames=1.
+            # if frames == 1: ... arr[i] vs arr 
+             
             if frames == 1 and len(arr.shape) == 3 and ds.SamplesPerPixel == 1:
                  # Standardize shape for encoding loop
                  # If (Frames, H, W) where Frames=1
