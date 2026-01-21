@@ -684,26 +684,26 @@ class SqliteStore:
             return
 
         try:
-        # 1. Write to Sidecar
-        # Pass array directly to avoid .tobytes() Memory spike (Zero-Copy 500MB save)
-        b_data = instance.pixel_array
-        
-        # Hash Update (CRITICAL for Integrity Checks)
-        # Calculate Hash BEFORE writing/compression to ensure we capture the state exactly as it goes into the pipe.
-        import hashlib
-        # Ensure we are hashing the contiguous bytes
-        if hasattr(b_data, 'tobytes'):
-            p_hash = hashlib.sha256(b_data.tobytes()).hexdigest()
-        else:
-             p_hash = hashlib.sha256(b_data).hexdigest()
-             
-        instance._pixel_hash = p_hash
-
-        # Determine suitable compression? Defaulting to zlib for swap.
-        # Ideally we respect original or config, but for swap zlib is safe/fast enough.
-        c_alg = 'zlib' 
-        
-        offset, length = self.sidecar.write_frame(b_data, c_alg)
+            # 1. Write to Sidecar
+            # Pass array directly to avoid .tobytes() Memory spike (Zero-Copy 500MB save)
+            b_data = instance.pixel_array
+            
+            # Hash Update (CRITICAL for Integrity Checks)
+            # Calculate Hash BEFORE writing/compression to ensure we capture the state exactly as it goes into the pipe.
+            import hashlib
+            # Ensure we are hashing the contiguous bytes
+            if hasattr(b_data, 'tobytes'):
+                p_hash = hashlib.sha256(b_data.tobytes()).hexdigest()
+            else:
+                 p_hash = hashlib.sha256(b_data).hexdigest()
+                 
+            instance._pixel_hash = p_hash
+    
+            # Determine suitable compression? Defaulting to zlib for swap.
+            # Ideally we respect original or config, but for swap zlib is safe/fast enough.
+            c_alg = 'zlib' 
+            
+            offset, length = self.sidecar.write_frame(b_data, c_alg)
             
             # 2. Update Instance Loader
             # This allows instance.unload_pixel_data() to work safely
