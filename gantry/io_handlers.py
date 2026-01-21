@@ -405,7 +405,11 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
         ds.save_as(ctx.output_path, write_like_original=False)
         return True
     except Exception as e:
-        raise RuntimeError(f"Export failed for {ctx.output_path}: {e}")
+        # Do not raise, as it aborts the entire parallel batch.
+        # Log error and return None (Failure)
+        import sys
+        print(f"ERROR: Export failed for {ctx.output_path}: {e}", file=sys.stderr)
+        return None
 
 def _compress_j2k(ds, pixel_array=None):
     """
