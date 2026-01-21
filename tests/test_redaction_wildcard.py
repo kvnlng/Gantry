@@ -9,6 +9,8 @@ from pydicom.uid import generate_uid, ImplicitVRLittleEndian
 
 from gantry.session import DicomSession
 from gantry.io_handlers import DicomExporter
+import gantry
+print(f"DEBUG: gantry loaded from: {gantry.__file__}")
 
 class TestWildcardRedaction(unittest.TestCase):
     def setUp(self):

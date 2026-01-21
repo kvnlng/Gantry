@@ -1183,11 +1183,15 @@ class DicomSession:
                                    # Re-point it to the Main Process Instance.
                                    loader.instance = inst
                                    inst._pixel_loader = loader
+                                   print(f"DEBUG: Updated loader for {sop} -> {loader.offset}")
                                    
                                if mutation.get('pixel_hash'):
                                    inst._pixel_hash = mutation['pixel_hash']
                                    
                                inst._dirty = True
+                               print(f"DEBUG: Instance {sop} updated in memory.")
+                          else:
+                               print(f"DEBUG: MISS! {sop} not in instance_map {list(instance_map.keys())[:3]}...")
                                
             finally:
                 pass

@@ -193,6 +193,9 @@ class RedactionService:
                 # Mark as redacted with this hash
                 inst.attributes["_GANTRY_REDACTION_HASH"] = config_hash
                 inst._dirty = True 
+                
+                # CRITICAL: Persist modified pixel data to sidecar (generate new Loader)
+                self.store.persist_pixel_data(inst, self.store) 
             
             # Prepare Mutated State to return (for Process Isolation)
             mutation = {
@@ -210,6 +213,9 @@ class RedactionService:
                     k: v for k, v in inst.sequences.items() if k == "0008,9215"
                 }
             }
+            # DEBUG
+            import sys
+            print(f"DEBUG: Worker returning mutation for {inst.sop_instance_uid}", file=sys.stderr)
             return mutation
 
         except Exception as e:
@@ -366,7 +372,8 @@ class RedactionService:
         Returns True if successful/applied.
         """
         try:
-            r1, r2, c1, c2 = roi
+            # FIX: Ensure coordinates are integers (slicing does not accept floats in modern Python/NumPy)
+            r1, r2, c1, c2 = [int(v) for v in roi]
             
             # Identify Dimensions & Indices
             ndim = len(arr.shape)
