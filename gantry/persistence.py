@@ -709,6 +709,11 @@ class SqliteStore:
             # So updating the object state in memory (step 2) is sufficient for unload_pixel_data() to return True.
             # The final session.save() will record the new offset/length into the DB instances table.
             
+            # CRITICAL: Mark instance as dirty so save_all() knows to update the DB with the new loader/hash!
+            # If we don't do this, save_all might skip this instance if it was otherwise clean,
+            # leaving the DB pointing to old/original data while memory points to new sidecar data.
+            instance._mod_count += 1
+            
         except Exception as e:
             self.logger.error(f"Failed to persist pixel swap for {instance.sop_instance_uid}: {e}")
             raise e
