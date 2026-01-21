@@ -567,7 +567,8 @@ class SidecarPixelLoader:
         if expected_hash:
             curr_hash = hashlib.sha256(raw).hexdigest()
             if curr_hash != expected_hash:
-                raise RuntimeError(f"Integrity Error: Pixel data hash mismatch for {instance.sop_instance_uid}. Expected {expected_hash}, got {curr_hash}")
+                raise RuntimeError(f"Integrity Error: Pixel data hash mismatch for {instance.sop_instance_uid}. Expected {expected_hash}, got {curr_hash}. "
+                                   f"Loader(offset={self.offset}, length={self.length}, alg={self.alg})")
         
         # Reconstruct based on attributes
         import numpy as np

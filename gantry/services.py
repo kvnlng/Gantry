@@ -323,6 +323,11 @@ class RedactionService:
                     if verbose: self.logger.warning(f"  Skipping {inst.sop_instance_uid}: No pixel data found (or file missing).")
                     continue
 
+                # Safety: Invalidates current hash since we are about to modify.
+                # If persist/save fails later, we don't want to match the Old Hash.
+                inst._pixel_hash = None
+
+
                 modified = False
                 for roi in rois:
                     if self._apply_roi_to_instance(inst, arr, roi):
