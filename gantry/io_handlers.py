@@ -456,40 +456,43 @@ def _compress_j2k(ds, pixel_array=None):
                     arr = arr.reshape((rows, cols))
         else:
             # Array passed explicitly.
-            # Fix: If array is 1D (flattened), reshape it using dataset metadata.
+            # Handle Flattened (1D)
             if len(arr.shape) == 1:
                 frames = getattr(ds, "NumberOfFrames", 1)
-                rows = ds.Rows
-                cols = ds.Columns
-                samples = ds.SamplesPerPixel
+                rows = getattr(ds, "Rows", 0)
+                cols = getattr(ds, "Columns", 0)
+                samples = getattr(ds, "SamplesPerPixel", 1)
                 
                 try:
+                    target_shape = None
                     if frames > 1:
-                        if samples > 1:
-                             arr = arr.reshape((frames, rows, cols, samples))
-                        else:
-                             arr = arr.reshape((frames, rows, cols))
+                        target_shape = (frames, rows, cols, samples) if samples > 1 else (frames, rows, cols)
                     else:
-                        if samples > 1:
-                             arr = arr.reshape((rows, cols, samples))
-                        else:
-                             arr = arr.reshape((rows, cols))
+                        target_shape = (rows, cols, samples) if samples > 1 else (rows, cols)
+                    
+                    if target_shape:
+                        arr = arr.reshape(target_shape)
                 except Exception:
+                    # If reshape fails, proceed with original (legacy/fallback behavior, possibly crash later)
                     pass
 
             frames = getattr(ds, "NumberOfFrames", 1)
+            samples = getattr(ds, "SamplesPerPixel", 1)
             
-            # Additional safety: if frames=1 but shape is (1, H, W), flatten to (H,W) for encoding logic below if needed?
-            # The logic below handles arr directly if frames=1.
-            # if frames == 1: ... arr[i] vs arr 
-             
-            if frames == 1 and len(arr.shape) == 3 and ds.SamplesPerPixel == 1:
-                 # Standardize shape for encoding loop
-                 # If (Frames, H, W) where Frames=1
-                 pass
-            elif frames > 1 and len(arr.shape) == 3:
-                 # (Frames, H, W)
-                 pass
+            # Robust Squeeze Logic for Single Sample/Single Frame Edge Cases
+            # Pillow prefers (H, W) over (H, W, 1) or (1, H, W) for grayscale.
+            if samples == 1:
+                if frames == 1:
+                     # Expect (H, W) or (1, H, W) or (H, W, 1)
+                     if len(arr.shape) == 3:
+                         if arr.shape[0] == 1:
+                             arr = arr.squeeze(0)  # (1, H, W) -> (H, W)
+                         elif arr.shape[-1] == 1:
+                             arr = arr.squeeze(-1) # (H, W, 1) -> (H, W)
+                elif frames > 1:
+                     # Expect (Frames, H, W) or (Frames, H, W, 1)
+                     if len(arr.shape) == 4 and arr.shape[-1] == 1:
+                         arr = arr.squeeze(-1) # (F, H, W, 1) -> (F, H, W)
 
         # 3. Compress
         frames_data = []
@@ -517,8 +520,6 @@ def _compress_j2k(ds, pixel_array=None):
         
     except ImportError:
         # Fallback or Log? 
-        # If requested but dependencies missing, we should probably fail hard or warn.
-        # But this is inside a worker. simpler to raise.
         raise RuntimeError("Pillow or pydicom not installed/configured for JPEG 2000.")
     except Exception as e:
         raise RuntimeError(f"Compression failed: {e}")
