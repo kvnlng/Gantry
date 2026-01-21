@@ -868,16 +868,24 @@ class SqliteStore:
                                          b_data = inst.pixel_array.tobytes()
                                          c_alg = 'zlib'
                                          # Compute Hash
+                                         # Compute Hash
                                          import hashlib
                                          p_hash = hashlib.sha256(b_data).hexdigest()
                                          
-                                         off, leng = sidecar_manager.write_frame(b_data, c_alg)
-                                         p_offset, p_length, p_alg = off, leng, c_alg
-                                         pixel_bytes_written += leng
-                                         pixel_frames_written += 1
+                                         # Deduplication: If already persisted with same hash, skip write
+                                         if getattr(inst, '_pixel_hash', None) == p_hash and isinstance(inst._pixel_loader, SidecarPixelLoader):
+                                             p_offset = inst._pixel_loader.offset
+                                             p_length = inst._pixel_loader.length
+                                             p_alg = inst._pixel_loader.alg
+                                         else:
+                                             off, leng = sidecar_manager.write_frame(b_data, c_alg)
+                                             p_offset, p_length, p_alg = off, leng, c_alg
+                                             pixel_bytes_written += leng
+                                             pixel_frames_written += 1
+                                             
+                                             # Update loader so we can unload safely later
+                                             inst._pixel_loader = self._create_pixel_loader(off, leng, c_alg, inst)
                                          
-                                         # Update loader so we can unload safely later
-                                         inst._pixel_loader = self._create_pixel_loader(off, leng, c_alg, inst)
                                          inst._pixel_hash = p_hash # Cache on instance
                                          
                                     elif isinstance(inst._pixel_loader, SidecarPixelLoader):
@@ -1161,6 +1169,90 @@ class SqliteStore:
             self.logger.error(f"Failed to load findings: {e}")
             
         return findings
+
+    def compact_sidecar(self):
+        """
+        Reclaims disk space by rewriting the sidecar file to remove unreferenced (orphaned) pixel data.
+        Updates the database pointers efficiently.
+        """
+        self.logger.info("Starting Sidecar Compaction...")
+        start_time = time.time()
+        
+        # 1. Get Live Index (Sorted)
+        # We only care about instances that actully point to the sidecar (pixel_offset IS NOT NULL)
+        try:
+            with self._get_connection() as conn:
+                cur = conn.cursor()
+                rows = cur.execute("""
+                    SELECT id, pixel_offset, pixel_length 
+                    FROM instances 
+                    WHERE pixel_offset IS NOT NULL 
+                    ORDER BY pixel_offset ASC
+                """).fetchall()
+        except sqlite3.Error as e:
+            self.logger.error(f"Compaction Failed (Query): {e}")
+            raise e
+            
+        if not rows:
+            self.logger.info("No live pixels found in sidecar. Compaction skipped.")
+            return
+
+        import shutil
+        temp_path = self.sidecar_path + ".compact.tmp"
+        updates = []
+        original_size = os.path.getsize(self.sidecar_path)
+        written_bytes = 0
+        
+        try:
+            # 2. Rewrite
+            with open(self.sidecar_path, "rb") as f_in, open(temp_path, "wb") as f_out:
+                current_out_pos = 0
+                
+                for r in rows:
+                    if r['pixel_length'] <= 0: continue
+                    
+                    # Read
+                    f_in.seek(r['pixel_offset'])
+                    data = f_in.read(r['pixel_length'])
+                    
+                    if len(data) != r['pixel_length']:
+                         self.logger.warning(f"Compaction Warning: Unexpected EOF for instance ID {r['id']}")
+                         # Continue? Or fail? Best to preserve what we can.
+                    
+                    # Write
+                    f_out.write(data)
+                    
+                    # Record change
+                    # (new_offset, instance_id)
+                    updates.append((current_out_pos, r['id']))
+                    
+                    current_out_pos += len(data)
+                
+                written_bytes = current_out_pos
+
+            # 3. Update DB (Transaction)
+            with self._get_connection() as conn:
+                conn.executemany("UPDATE instances SET pixel_offset=? WHERE id=?", updates)
+            
+            # 4. Swap Files
+            # Windows: cannot rename if open (we closed in context mgr above)
+            shutil.move(temp_path, self.sidecar_path)
+            
+            # 5. Reset Manager
+            # We must refresh the handle inside the manager
+            self.sidecar = SidecarManager(self.sidecar_path)
+            
+            duration = time.time() - start_time
+            saved_space = original_size - written_bytes
+            self.logger.info(f"Compaction Complete in {duration:.2f}s. Size: {original_size} -> {written_bytes} bytes. Reclaimed: {saved_space} bytes.")
+            print(f"Compaction Complete. Size: {original_size/1024/1024:.2f}MB -> {written_bytes/1024/1024:.2f}MB. Reclaimed: {saved_space/1024/1024:.2f}MB.")
+            
+        except Exception as e:
+            self.logger.error(f"Compaction Failed: {e}")
+            if os.path.exists(temp_path):
+                try: os.remove(temp_path)
+                except: pass
+            raise e
 
 class GantryJSONEncoder(json.JSONEncoder):
     def default(self, obj):

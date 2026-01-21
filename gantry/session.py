@@ -205,6 +205,18 @@ class DicomSession:
         if freed > 0:
             print(f"Memory Cleanup: Released {freed} images from RAM.")
 
+    def compact(self):
+        """
+        Manually triggers Sidecar Compaction to reclaim disk space.
+        Rewrites the _pixels.bin file, removing orphaned data from deleted or redacted instances.
+        WARNING: This is an expensive I/O operation.
+        """
+        if hasattr(self, 'store_backend'):
+            print("Beginning Sidecar Compaction (this may take a while)...")
+            self.store_backend.compact_sidecar()
+        else:
+            print("Persistence backend does not support compaction.")
+
     def examine(self):
         """Prints a summary of the session contents and equipment."""
         get_logger().info("Generating inventory report.")

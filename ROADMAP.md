@@ -26,7 +26,7 @@ Focus: Integrating Gantry into clinical workflows and deepening analysis capabil
 - [ ] **Research Export Formats**: Native support for exporting to NIfTI and BIDS standards.
 - [ ] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.
 - [ ] **Audit Reporting**: Export comprehensive CSV reports of the session inventory, including details on what was redacted or modified.
-- [ ] **Sidecar Compaction**: Utility to vacuum/compact the `_pixels.bin` file to reclaim space from deleted or redacted images.
+- [x] **Sidecar Compaction**: Tool to rewrite sidecar file and reclaim space from redacted/deleted instances.
 
 ### v0.8.0 - Cloud Scale
 
