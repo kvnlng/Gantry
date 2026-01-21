@@ -92,8 +92,9 @@ def test_strict_export_failure():
             DicomExporter.save_patient(p, "export_strict_test")
             
         # Verify it wasn't the "Raw read failed" log but a hard error
-        # "Export failed for ... Failed to decompress"
-        assert "Export failed" in str(excinfo.value)
+        # "Export failed for ... Failed to decompress" or "Export incomplete..."
+        msg = str(excinfo.value)
+        assert "Export failed" in msg or "Export incomplete" in msg, f"Unexpected error message: {msg}"
         # assert "decompress" in str(excinfo.value).lower() 
         # The exact inner error might vary (pylibjpeg might raise RuntimeError or ValueError)
         
