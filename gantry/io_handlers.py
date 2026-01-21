@@ -874,6 +874,9 @@ class DicomExporter:
         # results contains paths or Nones
         success_count = sum(1 for r in results if r is not None)
         logger.info(f"Export Complete. Success: {success_count}/{len(export_tasks)}")
+        
+        if success_count < len(export_tasks):
+            raise RuntimeError(f"Export incomplete. Failed to export {len(export_tasks) - success_count} instances.")
 
     @staticmethod
     def export_batch(export_tasks: Iterable[ExportContext], show_progress: bool = True, total: int = None, executor=None, maxtasksperchild: int = None, disable_gc: bool = False):
