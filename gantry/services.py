@@ -160,6 +160,7 @@ class RedactionService:
         Designed to be run in a worker thread.
         """
         inst = task["instance"]
+        original_uid = inst.sop_instance_uid # Capture before mutation
         rois = task["rois"]
         config_hash = task["config_hash"]
         
@@ -195,7 +196,8 @@ class RedactionService:
             
             # Prepare Mutated State to return (for Process Isolation)
             mutation = {
-                "sop_uid": inst.sop_instance_uid,
+                "original_sop_uid": original_uid, # KEY FIX: Mapped to Main Process
+                "sop_uid": inst.sop_instance_uid, # New UID
                 "pixel_loader": inst._pixel_loader,
                 "pixel_hash": getattr(inst, "_pixel_hash", None),
                 "attributes": {

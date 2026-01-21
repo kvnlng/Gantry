@@ -1165,7 +1165,7 @@ class DicomSession:
                 
                 for mutation in results_gen:
                      if mutation:
-                          sop = mutation['sop_uid']
+                          sop = mutation.get('original_sop_uid') or mutation.get('sop_uid')
                           if sop in instance_map:
                                inst = instance_map[sop]
                                
