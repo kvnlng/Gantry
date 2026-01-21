@@ -1,6 +1,7 @@
 import os
 import pickle
 import sys
+import numpy as np
 import pydicom
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ImplicitVRLittleEndian
@@ -133,6 +134,11 @@ def ingest_worker(fp):
         inst = Instance(meta['sop'], meta['sop_class'], 0, file_path=fp)
         populate_attrs(ds, inst, inst.text_index)
         
+        # Gantry internally manages pixels as standard contiguous arrays (Interleaved)
+        # So we MUST ensure PlanarConfiguration=0 in metadata to match our converted data
+        if inst.attributes.get("0028,0006") == 1:
+            inst.set_attr("0028,0006", 0)
+        
         # Extract & Process Pixel Data
         p_bytes = None
         p_hash = None
@@ -142,7 +148,7 @@ def ingest_worker(fp):
             try:
                 # Always decompress to raw bytes to ensure sidecar has consistent format (SidecarPixelLoader expects raw)
                 # This handles RLE/JPEG/J2K by decoding them now.
-                arr = ds.pixel_array
+                arr = np.ascontiguousarray(ds.pixel_array)
                 p_bytes = arr.tobytes()
                 p_alg = 'zlib' # Always compress the raw bytes
             except Exception as e:
@@ -348,6 +354,7 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
             # If compression is requested, DO NOT convert to bytes here.
             # Pass the numpy array to _finalize_dataset -> _compress_j2k directly.
             # Only set PixelData if NOT compressing.
+            
             if not ctx.compression:
                 ds.PixelData = arr.tobytes()
             
@@ -374,13 +381,6 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
 
             ds.SamplesPerPixel = inst.attributes.get("0028,0002", 1)
             ds.PhotometricInterpretation = inst.attributes.get("0028,0004", "MONOCHROME2")
-            
-            # Fix for Planar Configuration Mismatch:
-            # numpy.tobytes() produces C-contiguous interleaved data (PlanarConfig=0).
-            # If the original metadata had PlanarConfig=1, we must override it to 0
-            # to match the data we are writing.
-            if ds.SamplesPerPixel > 1:
-                ds.PlanarConfiguration = 0
             
             if arr.itemsize == 1:
                 default_bits = 8

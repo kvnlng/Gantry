@@ -71,7 +71,33 @@ def test_pixel_bits_allocated():
     inst.set_pixel_data(arr_uint16)
     assert inst.attributes["0028,0100"] == 16
     
-    # Test int32 (32 bits) - rare for pixel data but good for robustness check
     arr_int32 = np.zeros((10, 10), dtype=np.int32)
     inst.set_pixel_data(arr_int32)
     assert inst.attributes["0028,0100"] == 32
+
+def test_photometric_defaults():
+    """
+    Verify set_pixel_data handles PhotometricInterpretation correctly:
+    1. Preserves existing MONOCHROME1
+    2. Defaults to MONOCHROME2 if missing
+    3. Forces RGB for 3-channel data
+    """
+    # Case 1: Defaulting to MONOCHROME2
+    inst = Instance()
+    inst.set_pixel_data(np.zeros((10, 10)))
+    assert inst.attributes["0028,0004"] == "MONOCHROME2"
+    
+    # Case 2: Preserving MONOCHROME1
+    inst2 = Instance()
+    inst2.attributes["0028,0004"] = "MONOCHROME1"
+    inst2.set_pixel_data(np.zeros((10, 10)))
+    assert inst2.attributes["0028,0004"] == "MONOCHROME1"
+    
+    # Case 3: Forcing RGB
+    inst3 = Instance()
+    # Even if it said MONOCHROME2, if we pass RGB data it must switch
+    inst3.attributes["0028,0004"] = "MONOCHROME2"
+    inst3.set_pixel_data(np.zeros((10, 10, 3)))
+    assert inst3.attributes["0028,0004"] == "RGB"
+    # Also verify PlanarConfiguration is forced to 0 for RGB
+    assert inst3.attributes["0028,0006"] == 0

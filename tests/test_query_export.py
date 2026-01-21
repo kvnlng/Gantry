@@ -47,6 +47,7 @@ def session_for_query(tmp_path, monkeypatch):
         ds.BitsStored = 8
         ds.HighBit = 7
         ds.PixelRepresentation = 0
+        ds.PhotometricInterpretation = "MONOCHROME2"
         ds.PixelData = np.zeros((10, 10), dtype=np.uint8).tobytes()
         ds.save_as(path)
         return uid

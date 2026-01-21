@@ -37,6 +37,7 @@ def create_dcm(path, patient_id, study_uid, series_uid, sop_uid, seri_num=0, ins
     ds.BitsStored = 8
     ds.HighBit = 7
     ds.PixelRepresentation = 0
+    ds.PhotometricInterpretation = "MONOCHROME2"
     ds.PixelData = (b'\0' * 100)
     
     ds.save_as(str(path))

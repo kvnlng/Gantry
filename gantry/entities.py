@@ -316,7 +316,14 @@ class Instance(DicomItem):
         self.set_attr("0028,0011", cols)
         self.set_attr("0028,0002", samples)
         if frames > 1: self.set_attr("0028,0008", str(frames))
-        if samples >= 3: self.set_attr("0028,0004", "RGB")
+        if samples >= 3: 
+            self.set_attr("0028,0004", "RGB")
+            self.set_attr("0028,0006", 0) # Force Interleaved (standard numpy)
+        else:
+            # Preserve existing PhotometricInterpretation (e.g. MONOCHROME1)
+            # Only set default if missing
+            if not self.attributes.get("0028,0004"):
+                self.set_attr("0028,0004", "MONOCHROME2")
         
         # Ensure BitsAllocated matches array data type
         # SidecarPixelLoader relies on this to determine uint8 vs uint16
