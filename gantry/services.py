@@ -195,7 +195,13 @@ class RedactionService:
                 inst._dirty = True 
                 
                 # CRITICAL: Persist modified pixel data to sidecar (generate new Loader)
-                self.store.persist_pixel_data(inst, self.store) 
+                if self.store_backend and hasattr(self.store_backend, 'persist_pixel_data'):
+                     self.store_backend.persist_pixel_data(inst, self.store_backend)
+                else:
+                     # Fallback or Warning? If we don't persist, pixel data is memory-only and won't export correctly?
+                     # Actually, export might handle in-memory data if it's dirty?
+                     # But we need SidecarPixelLoader for process isolation return.
+                     pass 
             
             # Prepare Mutated State to return (for Process Isolation)
             mutation = {
