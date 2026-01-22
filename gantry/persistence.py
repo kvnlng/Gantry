@@ -464,9 +464,7 @@ class SqliteStore:
             return patients
 
         except sqlite3.Error as e:
-        except sqlite3.Error as e:
             # print(f"DEBUG: Failed to load from DB: {e}")
-            self.logger.error(f"Failed to load PDF from DB: {e}")
             self.logger.error(f"Failed to load PDF from DB: {e}")
             import traceback
             traceback.print_exc()
