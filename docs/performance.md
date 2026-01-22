@@ -51,6 +51,21 @@ Recent stress tests (January 2026) verified robust sub-linear scaling capabiliti
 
 **Key Finding:** Increasing the dataset size by **10x** (10 to 100 files) only resulted in a **3x** increase in peak memory usage. This demonstrates that Gantry effectively decouples memory consumption from dataset size.
 
+Timing results:
+
+| Phase                           | Total Instances | Ingest Duration | Examine Duration | Audit Duration | Backup Duration | Anonymize Duration | Redact Duration | Export Duration | Total Time |
+|:--------------------------------|:---------------:|----------------:|-----------------:|---------------:|----------------:|-------------------:|----------------:|----------------:|-----------:|
+| Phase 0 (1 Multi-Frame Files)   | 1               | 2.20            | 0.0001           | 0.0014         | 0.0061          | 0.0066             | 1.85            | 2.97            | 7.04       |
+| Phase 1 (10 Multi-Frame Files)  | 10              | 22.45           | 0.0001           | 0.0024         | 0.0060          | 0.0064             | 9.33            | 9.94            | 41.74      |
+| Phase 2 (100 Multi-Frame Files) | 100             | 177.36          | 0.0002           | 0.0042         | 0.0124          | 0.0244             | 74.21           | 58.13           | 309.74     |
+
+Test machine:
+* machine-type: n2-highmem-16
+* image-family: ubuntu-2204-lts
+* image-project: ubuntu-os-cloud
+* boot-disk-size: 1TB
+* boot-disk-type: pd-ssd
+
 ## Micro-Benchmarks (Metadata Operations)
 
 | Operation | Scale | Time (Mac M3 Max) | Throughput |

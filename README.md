@@ -21,25 +21,20 @@ Gantry provides a high-performance, object-oriented interface for managing, anal
 
 ## Performance
 
-Gantry is designed for massive scale. Recent stress tests verify robust linear scaling on datasets up to 100GB.
+Benchmark performed by producing instances with frames ranging from 100 to 1000 in three phases. Each phase increases in single magnitude. Then a standard workflow is performed, measuring each step. The final results follow.
 
-![Benchmark Scaling](docs_site/images/benchmark_scaling.png)
+| Phase                           | Total Instances | Ingest Duration | Examine Duration | Audit Duration | Backup Duration | Anonymize Duration | Redact Duration | Export Duration | Total Time |
+|:--------------------------------|:---------------:|----------------:|-----------------:|---------------:|----------------:|-------------------:|----------------:|----------------:|-----------:|
+| Phase 0 (1 Multi-Frame Files)   | 1               | 2.20            | 0.0001           | 0.0014         | 0.0061          | 0.0066             | 1.85            | 2.97            | 7.04       |
+| Phase 1 (10 Multi-Frame Files)  | 10              | 22.45           | 0.0001           | 0.0024         | 0.0060          | 0.0064             | 9.33            | 9.94            | 41.74      |
+| Phase 2 (100 Multi-Frame Files) | 100             | 177.36          | 0.0002           | 0.0042         | 0.0124          | 0.0244             | 74.21           | 58.13           | 309.74     |
 
-### 100GB Scalability Test
-
-- **Input**: 101,000 files (50GB Single-Frame + 50GB Multi-Frame).
-- **Import Speed**: ~14 seconds (Index-only ingestion).
-- **Export Speed**: ~79 seconds (Streaming Write).
-- **Memory**: Peaks at 5.4GB, stable regardless of dataset size.
-
-The architecture uses O(1) memory streaming, ensuring it never runs out of RAM even when processing terabytes of data.
-
-#### Micro-Benchmarks (Metadata Operations)
-
-| Operation            | Scale             | Time (Mac M3 Max) | Throughput     |
-|----------------------|-------------------|-------------------|----------------|
-| **Identity Locking** | 100,000 Instances | ~0.13 s           | **769k / sec** |
-| **Persist Findings** | 100,000 Issues    | ~0.13 s           | **770k / sec** |
+Test machine:
+* machine-type: n2-highmem-16
+* image-family: ubuntu-2204-lts
+* image-project: ubuntu-os-cloud
+* boot-disk-size: 1TB
+* boot-disk-type: pd-ssd
 
 ## Architecture
 

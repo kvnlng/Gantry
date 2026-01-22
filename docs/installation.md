@@ -3,12 +3,7 @@
 Gantry requires **Python 3.9+**.
 
 ```bash
-# Clone the repository
-git clone https://github.com/kvnlng/Gantry.git
-cd Gantry
-
-# Install with dependencies (including codecs)
-pip install -e .
+pip install "git+https://github.com/kvnlng/Gantry.git"
 ```
 
 !!! note
