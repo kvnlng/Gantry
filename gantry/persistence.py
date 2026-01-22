@@ -183,7 +183,10 @@ class SqliteStore:
                     self._memory_conn.commit()
                     # print("DEBUG: Commit successful")
                 except Exception as e:
-                    print(f"DEBUG: Rollback due to {e}")
+                except sqlite3.Error as e:
+                    # print(f"DEBUG: Rollback due to {e}")
+                    conn.rollback()
+                    raise e
                     self._memory_conn.rollback()
                     raise
         else:
@@ -208,7 +211,8 @@ class SqliteStore:
 
     def _create_pixel_loader(self, offset, length, alg, instance):
         """Helper to create a lazy pixel loader for the sidecar."""
-        return SidecarPixelLoader(self.sidecar_path, offset, length, alg, instance)
+        # Use instance to populate primitives
+        return SidecarPixelLoader(self.sidecar_path, offset, length, alg, instance=instance)
         
     def _audit_worker(self):
         """Background thread to batch write audit logs."""
@@ -427,12 +431,21 @@ class SqliteStore:
                         file_path=r['file_path']
                     )
                     
+                    # Restore extra attributes
+                    if r['attributes_json']:
+                        try:
+                            attrs = json.loads(r['attributes_json'], object_hook=gantry_json_object_hook)
+                            self._deserialize_into(inst, attrs)
+                        except: 
+                            pass # JSON error
+
                     # Wire up Sidecar Loader if present
                     if r['pixel_offset'] is not None and r['pixel_length'] is not None:
                          # Capture closure vars
                          offset = r['pixel_offset']
                          length = r['pixel_length']
                          alg = r['compress_alg']
+                         
                          
                          # We need to reshape after loading. The dimensions are in attributes.
                          # We can do this inside the lambda wrapper or a helper method.
@@ -441,14 +454,6 @@ class SqliteStore:
                          # So the lambda calls self.instance methods? No, lambda binds early.
                          
                          inst._pixel_loader = self._create_pixel_loader(r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
-
-                    # Restore extra attributes
-                    if r['attributes_json']:
-                        try:
-                            attrs = json.loads(r['attributes_json'], object_hook=gantry_json_object_hook)
-                            self._deserialize_into(inst, attrs)
-                        except: 
-                            pass # JSON error
                     
                     if r['series_id_fk'] in se_map:
                         se_map[r['series_id_fk']].instances.append(inst)
@@ -460,7 +465,9 @@ class SqliteStore:
             return patients
 
         except sqlite3.Error as e:
-            print(f"DEBUG: Failed to load from DB: {e}")
+        except sqlite3.Error as e:
+            # print(f"DEBUG: Failed to load from DB: {e}")
+            self.logger.error(f"Failed to load PDF from DB: {e}")
             self.logger.error(f"Failed to load PDF from DB: {e}")
             import traceback
             traceback.print_exc()
@@ -507,16 +514,16 @@ class SqliteStore:
                                 file_path=r['file_path']
                             )
                             # Wire up Sidecar (Copy-Paste logic from load_all, keep generic?)
-                            # ideally refactor _hydrate_instance but inline is fine for now
-                            if r['pixel_offset'] is not None and r['pixel_length'] is not None:
-                                offset, length, alg = r['pixel_offset'], r['pixel_length'], r['compress_alg']
-                                inst._pixel_loader = self._create_pixel_loader(r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
-
                             if r['attributes_json']:
                                 try:
                                     attrs = json.loads(r['attributes_json'], object_hook=gantry_json_object_hook)
                                     self._deserialize_into(inst, attrs)
                                 except: pass
+
+                            # Wire up Sidecar (Copy-Paste logic from load_all, keep generic?)
+                            if r['pixel_offset'] is not None and r['pixel_length'] is not None:
+                                offset, length, alg = r['pixel_offset'], r['pixel_length'], r['compress_alg']
+                                inst._pixel_loader = self._create_pixel_loader(r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
                                 
                             se.instances.append(inst)
                         
@@ -707,6 +714,7 @@ class SqliteStore:
             
             # 2. Update Instance Loader
             # This allows instance.unload_pixel_data() to work safely
+            # Note: instance attributes ARE populated here (it's a live object), so passing instance=instance works.
             instance._pixel_loader = self._create_pixel_loader(offset, length, c_alg, instance)
             
             # 3. Optional: Persist the linkage to DB immediately?

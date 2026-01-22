@@ -230,7 +230,7 @@ class DicomImporter:
                     # Persist Pixels to Sidecar (Main Thread Sequential Write)
                     if p_bytes and sidecar_manager:
                         off, leng = sidecar_manager.write_frame(p_bytes, p_alg)
-                        inst._pixel_loader = SidecarPixelLoader(sidecar_manager.filepath, off, leng, p_alg, inst)
+                        inst._pixel_loader = SidecarPixelLoader(sidecar_manager.filepath, off, leng, p_alg, instance=inst)
                         inst._pixel_hash = p_hash
                     
                     # Linkage Logic
@@ -325,7 +325,7 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
         if arr is None and ctx.sidecar_path and ctx.pixel_offset is not None:
              try:
                  # Reconstruct standard SidecarPixelLoader
-                 loader = SidecarPixelLoader(ctx.sidecar_path, ctx.pixel_offset, ctx.pixel_length, ctx.pixel_alg, inst)
+                 loader = SidecarPixelLoader(ctx.sidecar_path, ctx.pixel_offset, ctx.pixel_length, ctx.pixel_alg, instance=inst)
                  arr = loader()
                  # Ensure attributes are synced (loader usually returns raw array, shaping handled by loader but we double check)
              except Exception as e:
@@ -542,54 +542,76 @@ class SidecarPixelLoader:
     """
     Functor for lazy loading of pixel data from sidecar.
     Must be a top-level class to be picklable.
+    Breaks reference cycles by storing primitive metadata (snapshot) instead of the Instance object.
     """
-    def __init__(self, sidecar_path, offset, length, alg, instance):
+    def __init__(self, sidecar_path, offset, length, alg, instance=None, metadata=None):
         self.sidecar_path = sidecar_path
         self.offset = offset
         self.length = length
         self.alg = alg
-        # Strong reference (Picklable). Python GC handles cycle.
-        self.instance = instance
+        
+        # We need metadata to reshape safely.
+        # Prefer direct metadata check, fallback to instance extraction.
+        if metadata:
+            self.sop_instance_uid = metadata.get("sop_instance_uid", "Unknown")
+            self.rows = metadata.get("rows", 0) or 0
+            self.cols = metadata.get("cols", 0) or 0
+            self.samples = metadata.get("samples", 1) or 1
+            self.frames = metadata.get("frames", 0) or 0
+            self.bits = metadata.get("bits", 8) or 8
+            self.pixel_representation = metadata.get("pixel_representation", 0) or 0
+            self.planar_conf = metadata.get("planar_configuration", 0) or 0
+            self.pixel_hash = metadata.get("pixel_hash", None)
+        elif instance:
+            self.sop_instance_uid = instance.sop_instance_uid
+            # Extract attributes safely
+            self.rows = int(instance.attributes.get("0028,0010", 0) or 0)
+            self.cols = int(instance.attributes.get("0028,0011", 0) or 0)
+            self.samples = int(instance.attributes.get("0028,0002", 1) or 1)
+            self.frames = int(instance.attributes.get("0028,0008", 0) or 0)
+            self.bits = int(instance.attributes.get("0028,0100", 8) or 8)
+            self.pixel_representation = int(instance.attributes.get("0028,0103", 0) or 0)
+            self.planar_conf = int(instance.attributes.get("0028,0006", 0) or 0)
+            self.pixel_hash = getattr(instance, "_pixel_hash", None)
+        else:
+            raise ValueError("SidecarPixelLoader requires either 'instance' or 'metadata'")
 
     def __call__(self):
-        # We need SidecarManager. Importing here to avoid circular dep at top level logic?
-        # Actually persistence.py imports it.
-        # But SidecarManager might be in a module unrelated to this.
-        # Let's hope we can import it.
         from .sidecar import SidecarManager
         mgr = SidecarManager(self.sidecar_path)
         
-        instance = self.instance
-        if instance is None:
-             raise RuntimeError("Instance is None. Cannot load pixels.")
-
         try:
              raw = mgr.read_frame(self.offset, self.length, self.alg)
         except Exception as e:
-             raise RuntimeError(f"Integrity Error: Failed to read/decompress frame for {instance.sop_instance_uid}: {e}")
+             raise RuntimeError(f"Integrity Error: Failed to read/decompress frame for {self.sop_instance_uid}: {e}")
         
         # Integrity Check
-        expected_hash = getattr(instance, '_pixel_hash', None)
-        if expected_hash:
+        if self.pixel_hash:
+            import hashlib
             curr_hash = hashlib.sha256(raw).hexdigest()
-            if curr_hash != expected_hash:
-                raise RuntimeError(f"Integrity Error: Pixel data hash mismatch for {instance.sop_instance_uid}. Expected {expected_hash}, got {curr_hash}. "
-                                   f"Loader(offset={self.offset}, length={self.length}, alg={self.alg})")
+            if curr_hash != self.pixel_hash:
+                raise RuntimeError(
+                    f"Integrity Error: Pixel data hash mismatch for {self.sop_instance_uid}. "
+                    f"Expected {self.pixel_hash}, got {curr_hash}. "
+                    f"Loader(offset={self.offset}, length={self.length}, alg={self.alg})"
+                )
         
         # Reconstruct based on attributes
         import numpy as np
-        bits = instance.attributes.get("0028,0100", 8)
-        dt = np.uint16 if bits > 8 else np.uint8
+        dt = np.uint16 if self.bits > 8 else np.uint8
+        # Handle signed? 
+        if self.pixel_representation == 1:
+             dt = np.int16 if self.bits > 8 else np.int8
         
         arr = np.frombuffer(raw, dtype=dt)
         
-        rows = instance.attributes.get("0028,0010", 0)
-        cols = instance.attributes.get("0028,0011", 0)
-        samples = instance.attributes.get("0028,0002", 1)
-        frames = int(instance.attributes.get("0028,0008", 0) or 0)
+        rows = self.rows
+        cols = self.cols
+        samples = self.samples
+        frames = self.frames
+        planar_conf = self.planar_conf
         
-        planar_conf = instance.attributes.get("0028,0006", 0)
-        
+        target_shape = None
         if frames > 1:
             target_shape = (frames, rows, cols, samples)
             if samples == 1: target_shape = (frames, rows, cols)
@@ -605,14 +627,14 @@ class SidecarPixelLoader:
         try:
             arr_reshaped = arr.reshape(target_shape)
         except ValueError:
-            # Handle padding (e.g. DICOM alignment bytes)
+            # Handle padding
             target_size = 1
             for d in target_shape: target_size *= d
             if arr.size >= target_size:
                 arr = arr[:target_size]
                 arr_reshaped = arr.reshape(target_shape)
             else:
-                return arr
+                return arr # Fallback to 1D
 
         # If Planar=1, transpose to (Rows, Cols, Samples) for consistency
         if samples > 1 and frames <= 1 and planar_conf == 1:

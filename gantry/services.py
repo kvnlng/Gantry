@@ -164,11 +164,6 @@ class RedactionService:
         rois = task["rois"]
         config_hash = task["config_hash"]
         
-        # DEBUG
-        import sys
-        import os
-        print(f"DEBUG: Processing {inst.sop_instance_uid} in pid {os.getpid()}", file=sys.stderr)
-        
         try:
             # Optimized: Skip if already redacted with same config
             current_hash = inst.attributes.get("_GANTRY_REDACTION_HASH")
