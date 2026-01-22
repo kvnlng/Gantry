@@ -14,8 +14,18 @@ def get_logger():
 def load_unified_config(path: str) -> Dict[str, Any]:
     """
     Loads the unified configuration file (YAML).
+    
     Supports legacy list-based config (machine rules only) and new dict-based config.
-    Merges 'privacy_profile' if specified.
+    Merges 'privacy_profile' if specified (Built-in or External).
+
+    Args:
+        path (str): Path to the YAML configuration file.
+
+    Returns:
+        Dict[str, Any]: The loaded configuration dictionary.
+
+    Raises:
+        ValueError: If file is not YAML.
     """
     if not (path.endswith('.yaml') or path.endswith('.yml')):
         raise ValueError("Configuration file must be a YAML file (.yaml or .yml)")
@@ -64,7 +74,15 @@ class ConfigLoader:
     def load_unified_config(filepath: str) -> tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, Any], bool]:
         """
         Parses the unified YAML config (v2.0).
-        Returns: (phi_tags, machine_rules, date_jitter_config, remove_private_tags)
+
+        Extracts the core configuration components: PHI tags, machine rules, 
+        date jitter settings, and global flags.
+
+        Args:
+            filepath (str): Path to the config file.
+
+        Returns:
+            tuple: (phi_tags, machine_rules, date_jitter_config, remove_private_tags)
         """
         # Call the top-level loader which handles YAML, Legacy List, and Privacy Profiles
         data = load_unified_config(filepath)
@@ -92,8 +110,16 @@ class ConfigLoader:
     @staticmethod
     def load_redaction_rules(filepath: str) -> List[Dict[str, Any]]:
         """
-        Legacy/Convenience support. 
-        If v2 file, extracts 'machines'. If v1 file (list or dict), tries to parse.
+        Legacy/Convenience support for loading only Machine Rules.
+
+        Use this if you only need the 'machines' list from a unified config, 
+        or an old-style legacy config file.
+
+        Args:
+            filepath (str): Path to the config file.
+        
+        Returns:
+            List[Dict[str, Any]]: List of validated machine rule dictionaries.
         """
         data = ConfigLoader._load_yaml(filepath)
         
@@ -112,7 +138,13 @@ class ConfigLoader:
     @staticmethod
     def load_phi_config(filepath: str = None) -> Dict[str, str]:
         """
-        Legacy/Convenience support.
+        Legacy/Convenience support for loading only PHI Tags.
+
+        Arg:
+            filepath (str, optional): Path to config file. If None, loads internal defaults.
+
+        Returns:
+            Dict: Mapping of tags to configuration (action/name).
         """
         if filepath:
             data = ConfigLoader._load_yaml(filepath)
@@ -139,6 +171,12 @@ class ConfigLoader:
 
     @staticmethod
     def clean_filename(filename: str) -> str:
+        """
+        Sanitizes a string to be safe for use as a filename.
+        
+        Replaces spaces with underscores and removes non-alphanumeric characters 
+        (except key delimiters like dash/dot).
+        """
         import re
         s = str(filename).strip().replace(" ", "_")
         return re.sub(r'(?u)[^-\w.]', '', s)

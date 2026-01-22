@@ -8,7 +8,9 @@ from .logger import get_logger
 class ReversibilityService:
     """
     Handles the embedding and recovery of encrypted original data in DICOM files.
-    Compliant with DICOM Part 15, E.1.2 "Re-identifier" logic (Encrypted Attributes Sequence).
+    
+    Compliant with DICOM Part 15, E.1.2 "Re-identifier" logic via the 
+    Encrypted Attributes Sequence (0400,0500). Uses `CryptoEngine` for encryption.
     """
 
     # DICOM Standard Tags for Encrypted Attributes
@@ -29,6 +31,12 @@ class ReversibilityService:
     def generate_identity_token(self, original_attributes: Dict[str, Any]) -> bytes:
         """
         Serializes and encrypts the attributes into a reusable token.
+
+        Args:
+            original_attributes (Dict[str, Any]): Dictionary of tag-value pairs to preserve.
+
+        Returns:
+            bytes: The encrypted JSON payload.
         """
         if not original_attributes:
             return b""
@@ -40,6 +48,13 @@ class ReversibilityService:
     def embed_identity_token(self, instance: Instance, token: bytes):
         """
         Embeds a pre-calculated encrypted token into the instance.
+
+        Wraps the token in an Encrypted Attributes Sequence item with the 
+        appropriate Transfer Syntax UID.
+
+        Args:
+            instance (Instance): The target instance.
+            token (bytes): The encrypted payload.
         """
         if not token:
             return
@@ -67,8 +82,13 @@ class ReversibilityService:
 
     def embed_original_data(self, instance: Instance, original_attributes: Dict[str, Any]):
         """
-        Serializes, encrypts, and embeds the provided attributes into the instance
-        using the Encrypted Attributes Sequence (0400,0500).
+        Serializes, encrypts, and embeds the provided attributes into the instance.
+        
+        This is a higher-level wrapper for `generate_identity_token` + `embed_identity_token`.
+
+        Args:
+            instance (Instance): The instance to modify.
+            original_attributes (Dict[str, Any]): attributes to encrypt and store.
         """
         if not original_attributes:
             return
@@ -85,6 +105,15 @@ class ReversibilityService:
     def recover_original_data(self, instance: Instance) -> Optional[Dict[str, Any]]:
         """
         Extracts and decrypts the original attributes from the instance.
+        
+        Locates the Encrypted Attributes Sequence, decrypts the first item's 
+        Encrypted Content, and deserializes the JSON.
+
+        Args:
+            instance (Instance): The anonymized instance.
+
+        Returns:
+            Optional[Dict[str, Any]]: The recovered dictionary of original attributes, or None if failed/missing.
         """
         try:
             # 1. Check for Sequence

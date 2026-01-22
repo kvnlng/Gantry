@@ -9,6 +9,12 @@ except ImportError as e:
 from pydicom.uid import UID
 
 def is_available():
+    """
+    Checks if `imagecodecs` library is installed and importable.
+    
+    Returns:
+        bool: True if available, False otherwise.
+    """
     if imagecodecs is None:
         # Log to stderr so it appears in logs even if pydicom swallows the handler check
         print(f"[gantry_imagecodecs_handler] NOT AVAILABLE. Import Error: {IMPORT_ERROR}", file=sys.stderr)
@@ -46,17 +52,46 @@ SUPPORTED_TRANSFER_SYNTAXES = [
 
 
 def supports_transfer_syntax(transfer_syntax):
+    """
+    Checks if the transfer syntax is supported by this handler.
+
+    Args:
+        transfer_syntax (UID): The Transfer Syntax UID.
+
+    Returns:
+        bool: True if supported.
+    """
     return transfer_syntax in SUPPORTED_TRANSFER_SYNTAXES
 
 def needs_to_convert_to_RGB(ds):
+    """
+    Determines if the dataset needs RGB conversion. 
+    Currently returns False as we preserve original photometric interpretation where possible.
+    """
     return False
 
 def should_change_PhotometricInterpretation_to_RGB(ds):
+    """
+    Checks if Photometric Interpretation should be changed to RGB.
+    Currently returns False.
+    """
     return False
 
 def get_pixel_data(ds):
     """
-    Returns numpy array of pixel data.
+    Decodes pixel data from an encapsulated dataset using `imagecodecs`.
+
+    Handles multiple transfer syntaxes (JPEG, JPEG2000, JPEG-LS, RLE) and 
+    encapsulated bitstreams (fragments).
+
+    Args:
+        ds (pydicom.Dataset): The dataset containing PixelData.
+
+    Returns:
+        np.ndarray: The decoded pixel array.
+
+    Raises:
+        RuntimeError: If imagecodecs is missing or decoding fails.
     """
     if not is_available():
         raise RuntimeError("imagecodecs is not available")

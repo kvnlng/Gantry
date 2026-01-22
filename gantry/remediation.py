@@ -8,15 +8,17 @@ from .logger import get_logger
 class RemediationService:
     """
     Applies remediation proposals found by the PhiInspector.
-    Handles data anonymization and date shifting.
+    
+    Handles data anonymization (Replacement/Removal) and semantic modifications like 
+    date shifting, ensuring data consistency and audit logging.
     """
     def __init__(self, store_backend=None, date_jitter_config: Optional[dict] = None):
         """
         Initialize the remediation service.
         
         Args:
-            store_backend: Persistence layer for logging audit trails.
-            date_jitter_config: Configuration for date shifting (min_days, max_days).
+            store_backend (optional): Persistence layer for logging audit trails.
+            date_jitter_config (dict, optional): Configuration for date shifting ({min_days, max_days}).
         """
         self.logger = get_logger()
         self.store_backend = store_backend
@@ -25,6 +27,12 @@ class RemediationService:
     def apply_remediation(self, findings: List[PhiFinding]):
         """
         Iterates through the findings and applies valid remediation proposals.
+
+        Dedupes findings (multiple findings might target the same attribute) before applying.
+        Flushes audit logs in batch at the end.
+
+        Args:
+            findings (List[PhiFinding]): The list of findings with proposals to execute.
         """
         processed_entities = set() # To avoid double-processing if multiple findings point to same entity/attr
         audit_buffer = []
@@ -52,7 +60,15 @@ class RemediationService:
     def _apply_single_remediation(self, finding: PhiFinding, audit_buffer: list = None):
         """
         Executes a single remediation proposal on the target entity.
-        Handles REPLACE_TAG, SHIFT_DATE, REMOVE_TAG actions.
+        
+        Handles actions:
+        - REPLACE_TAG: Updates attribute values.
+        - SHIFT_DATE: Applies deterministic date shifting logic.
+        - REMOVE_TAG: Deletes attributes.
+
+        Args:
+            finding (PhiFinding): The finding containing the proposal.
+            audit_buffer (list, optional): Buffer to append audit log entries (optimization).
         """
         proposal = finding.remediation_proposal
         entity = finding.entity
@@ -143,7 +159,15 @@ class RemediationService:
     def _resolve_patient_id(self, entity, proposal: PhiRemediation = None) -> Optional[str]:
         """
         Resolves the PatientID for a given entity or proposal.
-        Essential for deterministic date shifting.
+        
+        Essential for deterministic date shifting which relies on a stable PatientID seed.
+        
+        Args:
+            entity: The entity being modified.
+            proposal (PhiRemediation): The proposal containing metadata.
+
+        Returns:
+            Optional[str]: The PatientID string if resolvable.
         """
         # 1. Check metadata in proposal (Best for Date Shifting logic)
         if proposal and proposal.metadata and "patient_id" in proposal.metadata:
@@ -161,6 +185,15 @@ class RemediationService:
     def _get_date_shift(self, patient_id: str) -> int:
         """
         Generates a deterministic shift between min_days and max_days based on PatientID.
+        
+        Uses SHA-256 hash of PatientID to seed the offset calculation, ensuring 
+        consistent shifting for the same patient across sessions.
+
+        Args:
+            patient_id (str): The seed (PatientID).
+
+        Returns:
+            int: The number of days to shift (positive or negative).
         """
         # Create a hash of the PatientID
         hash_obj = hashlib.sha256(patient_id.encode())
@@ -184,9 +217,17 @@ class RemediationService:
 
     def _shift_date_string(self, date_val, days: int) -> Optional[str]:
         """
-        Shifts a date by 'days'. 
-        Handles 'YYYYMMDD' strings or datetime.date objects.
-        Returns same type as input (str -> str, date -> date).
+        Shifts a date by `days`. 
+        
+        Handles messy/varying input formats (DA, DT, ISO).
+        Preserves original format where possible.
+
+        Args:
+            date_val (Union[str, date, datetime]): The original date value.
+            days (int): Delta in days.
+
+        Returns:
+            Optional[str]: The shifted date string (or object), same type as input.
         """
         # Handles date and datetime objects
         if hasattr(date_val, 'strftime'): 
@@ -262,8 +303,13 @@ class RemediationService:
     def add_global_deid_tags(self, entity):
         """
         Stamps the entity with standard De-Identification Method tags.
-        (0012,0063) De-identification Method
-        (0012,0064) De-identification Method Code Sequence
+
+        Adds:
+        - (0012,0063) De-identification Method (Gantry Signature)
+        - (0012,0064) De-identification Method Code Sequence (Basic Profile)
+
+        Args:
+            entity: The instance/series to stamp.
         """
         if not hasattr(entity, "set_attr"):
             return

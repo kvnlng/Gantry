@@ -5,9 +5,17 @@ import os
 
 def configure_logger(log_file=None):
     """
-    Configures the root logger:
-    - File Handler: DEBUG level (All details go here)
-    - Console Handler: WARNING level (Only errors/warnings go to screen, to keep tqdm clean)
+    Configures the root logger for the application.
+    
+    Sets up two handlers:
+    1. File Handler: Captures all DEBUG+ logs.
+    2. Console Handler: Captures WARNING+ logs only (to keep CLI output/tqdm clean).
+
+    Args:
+        log_file (str, optional): Path to the log file. Defaults to env `GANTRY_LOG_FILE` or `gantry.log`.
+
+    Returns:
+        logging.Logger: The configured logger instance.
     """
     if log_file is None:
         log_file = os.getenv("GANTRY_LOG_FILE", "gantry.log")

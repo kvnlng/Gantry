@@ -10,17 +10,18 @@ from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 from .entities import Patient, Study, Series, Instance, Equipment
 from .sidecar import SidecarManager
-import numpy as np
 from .logger import get_logger
 from .privacy import PhiFinding, PhiRemediation
 from .io_handlers import SidecarPixelLoader
 
-
-
 class SqliteStore:
     """
     Handles persistence of the Object Graph to a SQLite database.
-    Also manages the Audit Log.
+    
+    This class manages:
+    - CRUD operations for the Patient->Study->Series->Instance hierarchy.
+    - Sidecar retrieval and compaction logic.
+    - An asynchronous Audit Log for tracking modifications and errors.
     """
 
     SCHEMA = """
@@ -113,6 +114,12 @@ class SqliteStore:
     """
 
     def __init__(self, db_path: str):
+        """
+        Initialize the SQLite store.
+
+        Args:
+            db_path (str): Path to the SQLite DB file. Use ":memory:" for transient storage.
+        """
         self.db_path = db_path
         self.logger = get_logger()
         if db_path == ":memory:":
@@ -277,12 +284,6 @@ class SqliteStore:
     def get_audit_summary(self) -> Dict[str, int]:
         """
         Returns an aggregated summary of actions from the audit log.
-        Returns:
-            Dict[str, int]: e.g., {'ANONYMIZE': 500, 'EXPORT': 500}
-        """
-    def get_audit_summary(self) -> Dict[str, int]:
-        """
-        Returns an aggregated summary of actions from the audit log.
         Stops and restarts the background audit worker to ensure consistency.
         Returns:
             Dict[str, int]: e.g., {'ANONYMIZE': 500, 'EXPORT': 500}
@@ -377,7 +378,12 @@ class SqliteStore:
     def load_all(self) -> List[Patient]:
         """
         Reconstructs the entire object graph from the database.
-        Returns a list of Patient objects.
+
+        Fetches all patients, studies, series, and instances, and reassembles them
+        into the proper object hierarchy.
+
+        Returns:
+            List[Patient]: A list of all root Patient objects.
         """
         patients = []
         if self.db_path != ":memory:" and not os.path.exists(self.db_path):
@@ -396,8 +402,6 @@ class SqliteStore:
                 st_rows = cur.execute("SELECT * FROM studies").fetchall()
                 se_rows = cur.execute("SELECT * FROM series").fetchall()
                 i_rows = cur.execute("SELECT * FROM instances").fetchall()
-
-
 
                 # 2. Build Maps
                 p_map = {}
@@ -471,7 +475,15 @@ class SqliteStore:
             return []
 
     def load_patient(self, patient_uid: str) -> Optional[Patient]:
-        """Loads a single patient and their graph from the DB by PatientID."""
+        """
+        Loads a single patient and their graph from the DB by PatientID.
+
+        Args:
+            patient_uid (str): The PatientID to search for.
+
+        Returns:
+            Optional[Patient]: The Patient object if found, else None.
+        """
         if self.db_path != ":memory:" and not os.path.exists(self.db_path):
             return None
             
@@ -584,9 +596,14 @@ class SqliteStore:
     def save_vertical_attributes(self, instance_uid: str, attributes: Dict[Tuple[str, str], Any], conn: sqlite3.Connection = None):
         """
         Persists extended attributes to the vertical `instance_attributes` table.
-        attributes key format: (group_hex, element_hex) e.g. ("0010", "0010")
-        Use UPSERT semantics.
-        Optionally accepts an existing connection to share transaction.
+        
+        This handles private tags and attributes that don't fit in the core JSON.
+        Uses UPSERT semantics (Delete-Insert logic currently).
+
+        Args:
+            instance_uid (str): The SOP Instance UID.
+            attributes (Dict[Tuple[str, str], Any]): Mapping of (Group, Element) hex strings to values.
+            conn (sqlite3.Connection, optional): An existing database connection to use for the transaction.
         """
         if not attributes: return
 
@@ -638,7 +655,12 @@ class SqliteStore:
     def load_vertical_attributes(self, instance_uid: str) -> Dict[Tuple[str, str], Any]:
         """
         Loads extended attributes from vertical table.
-        Returns dict: {(grp, elem): value_or_list}
+
+        Args:
+            instance_uid (str): The SOP Instance UID.
+
+        Returns:
+            Dict[Tuple[str, str], Any]: Dictionary mapping (group, element) tuples to values.
         """
         results = {}
         try:
@@ -681,8 +703,13 @@ class SqliteStore:
     def persist_pixel_data(self, instance: Instance):
         """
         Immediately persists pixel data to the sidecar to allow memory offloading.
-        Does NOT update the full instance record in the main DB (attributes/json), 
-        only the pixel linkage. 
+
+        This writes the `pixel_array` to the sidecar file and updates the instance's
+        `_pixel_loader` and `_pixel_hash`. It does NOT update the full instance record
+        in the main DB, only the pixel linkage in memory (marked dirty).
+
+        Args:
+            instance (Instance): The instance containing the pixel data to persist.
         """
         if instance.pixel_array is None:
             return
@@ -732,8 +759,13 @@ class SqliteStore:
 
     def save_all(self, patients: List[Patient]):
         """
-        Persists the current state incrementally.
-        Strategy: UPSERT dirty items.
+        Incrementally persists the provided patients and their graph to the database.
+
+        Uses UPSERT logic to update existing records and Insert new ones.
+        Only processes entities marked as `_dirty`.
+
+        Args:
+            patients (List[Patient]): The list of patient objects to save.
         """
         self.logger.info(f"Saving {len(patients)} patients to {self.db_path} (Incremental)...")
         
@@ -1012,7 +1044,12 @@ class SqliteStore:
             raise
 
     def get_total_instances(self) -> int:
-        """Returns the total number of instances currently persisted."""
+        """
+        Returns the total number of instances currently persisted.
+        
+        Returns:
+            int: The count of rows in the instances table.
+        """
         try:
              with self._get_connection() as conn:
                 cur = conn.cursor()
@@ -1024,8 +1061,16 @@ class SqliteStore:
 
     def get_flattened_instances(self, patient_ids: List[str] = None, instance_uids: List[str] = None):
         """
-        Yields a flat dictionary for every instance in the DB (or filtered by patient_ids/instance_uids).
-        Ideal for streaming exports or analysis without loading the entire graph into RAM.
+        Yields a flat dictionary for every instance in the DB.
+
+        Useful for streaming exports or analysis without loading the entire graph into RAM.
+
+        Args:
+            patient_ids (List[str], optional): Filter by list of Patient IDs.
+            instance_uids (List[str], optional): Filter by list of SOP Instance UIDs.
+
+        Yields:
+            dict: Flattend dictionary representing row data (patient, study, series, instance paths).
         """
         # We use a managed connection that stays open during iteration
         with self._get_connection() as conn:
@@ -1074,6 +1119,12 @@ class SqliteStore:
     def update_attributes(self, instances: List[Patient]):
         """
         Efficiently updates the attributes_json for a list of instances.
+
+        Used when only attributes have changed (e.g., after locking identities)
+        to avoid full graph traversal.
+
+        Args:
+            instances (List[Instance]): The list of instances to update.
         """
         if not instances:
             return
@@ -1104,7 +1155,12 @@ class SqliteStore:
             self.logger.error(f"Failed to update attributes: {e}")
 
     def save_findings(self, findings: List[PhiFinding]):
-        """Persists PHI findings to the database."""
+        """
+        Persists PHI findings to the database.
+
+        Args:
+            findings (List[PhiFinding]): List of finding objects to insert.
+        """
         timestamp = datetime.now().isoformat()
         
         if not findings:
@@ -1151,7 +1207,12 @@ class SqliteStore:
             self.logger.error(f"Failed to save findings: {e}")
 
     def load_findings(self) -> List[PhiFinding]:
-        """Loads all findings from the database."""
+        """
+        Loads all findings from the database.
+
+        Returns:
+            List[PhiFinding]: All persisted PHI findings.
+        """
         findings = []
         if self.db_path != ":memory:" and not os.path.exists(self.db_path):
             return findings
@@ -1187,10 +1248,15 @@ class SqliteStore:
             
         return findings
 
-    def compact_sidecar(self):
+    def compact_sidecar(self) -> Dict[str, Tuple[int, int]]:
         """
-        Reclaims disk space by rewriting the sidecar file to remove unreferenced (orphaned) pixel data.
-        Updates the database pointers efficiently.
+        Reclaims disk space by rewriting the sidecar file.
+        
+        Removes unreferenced (orphaned) pixel data that might exist due to deletions
+        or updates. Updates the database pointers efficiently.
+
+        Returns:
+            Dict[str, Tuple[int, int]]: A map of SOP Instance UIDs to their new (offset, length).
         """
         self.logger.info("Starting Sidecar Compaction...")
         start_time = time.time()

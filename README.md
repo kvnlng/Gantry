@@ -292,7 +292,6 @@ To maintain a secure link back to the original identity:
 session.enable_reversible_anonymization()
 
 # Lock identities BEFORE anonymization to store encrypted original data
-# Lock identities BEFORE anonymization to store encrypted original data
 # You can specify exactly which tags to preserve
 session.lock_identities("PATIENT_123", tags_to_lock=["0010,0010", "0010,0030"])
 ```

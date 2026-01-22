@@ -79,7 +79,14 @@ class LockingResult(list):
 class DicomSession:
     """
     The Main Facade for the Gantry library.
-    Manages the lifecycle of the DicomStore (Load/Import/Redact/Export/Save).
+
+    Manages the lifecycle of the DicomStore including:
+    - Loading/Saving session state from SQLite.
+    - Ingesting DICOM files.
+    - Managing Configuration and Rules.
+    - Auditing for PHI.
+    - Redaction and Anonymization.
+    - Exporting cleaned data.
     """
 
     # =========================================================================
@@ -89,9 +96,10 @@ class DicomSession:
     def __init__(self, persistence_file="gantry.db"):
         """
         Initialize the DicomSession.
-        
+
         Args:
-            persistence_file: Path to the SQLite database for session persistence.
+            persistence_file (str): Path to the SQLite database file for session persistence.
+                                    Defaults to "gantry.db".
         """
         configure_logger()
         self.persistence_file = persistence_file
@@ -301,6 +309,13 @@ class DicomSession:
     def ingest(self, directory: str):
         """
         Ingests DICOM files from a directory into the session store.
+
+        Recursively scans the provided directory for valid DICOM files.
+        Files are parsed and organized into the Patient -> Study -> Series -> Instance hierarchy.
+        This operation automatically saves the session state upon completion.
+
+        Args:
+            directory (str): The path to the directory containing DICOM files.
         """
         print(f"Ingesting from '{directory}'...")
         from .io_handlers import DicomImporter
@@ -328,8 +343,13 @@ class DicomSession:
 
     def load_config(self, config_file: str):
         """
-        User Action: 'Load these rules into memory, but DO NOT run them yet.'
-        Useful for validation or previewing what will happen.
+        Loads a configuration file into memory without applying it.
+
+        This allows the user to validate the configuration or run a preview using
+        `preview_config()` before performing any destructive actions.
+
+        Args:
+            config_file (str): Path to the YAML or JSON configuration file.
         """
         try:
             get_logger().info(f"Loading configuration from {config_file}...")
@@ -363,8 +383,11 @@ class DicomSession:
 
     def preview_config(self):
         """
-        User Action: 'Tell me what WOULD happen if I ran these rules.'
-        checks the loaded rules against the current Store inventory.
+        Performs a dry-run of the currently loaded configuration.
+
+        Checks the active redaction rules against the current session inventory and
+        prints a summary of which instances would be affected (matched) by the rules.
+        Does not modify any data.
         """
         if not self.configuration.rules:
             get_logger().warning("No configuration loaded. Use .load_config() first.")
@@ -401,8 +424,14 @@ class DicomSession:
 
     def create_config(self, output_path: str):
         """
-        Generates a unified configuration file in YAML format.
-        Includes default PHI tags + Auto-detected machine inventory.
+        Generates a unified configuration file (scaffold) in YAML format.
+
+        This method analyzes the current session inventory (Equipment, Manufacturers)
+        and attempts to auto-generate redaction rules based on internal knowledge bases
+        (e.g., CTP rules). It also includes a default set of PHI tags.
+
+        Args:
+            output_path (str): The file path where the generated YAML configuration should be saved.
         """
         import yaml
         import os
@@ -697,9 +726,17 @@ class DicomSession:
     def audit(self, config_path: str = None) -> "PhiReport":
         """
         Scans all patients in the session for potential PHI.
-        Uses cached `active_phi_tags` if config_path matches or is None, otherwise loads fresh.
-        Returns a PhiReport object (iterable, and convertible to DataFrame).
-        Checkpoint 4: Target.
+
+        If `config_path` is provided, it serves as the source of PHI definition tags.
+        Otherwise, the currently loaded configuration (`self.configuration.phi_tags`) is used.
+        
+        The scan runs in parallel processes for performance.
+        
+        Args:
+            config_path (str, optional): Path to a configuration file defining PHI tags.
+
+        Returns:
+            PhiReport: An object containing valid PHI findings, iterable and exportable.
         """
         from .privacy import PhiReport
         
@@ -782,10 +819,16 @@ class DicomSession:
     def generate_report(self, output_path: str, format: str = "markdown") -> None:
         """
         Generates a formal Compliance Report for the current session.
-        
+
+        The report includes:
+        - Session statistics (counts).
+        - Audit logs and exceptions.
+        - Check for unsafe attributes (e.g., Burned In Annotations).
+        - Privacy Profile information.
+
         Args:
-            output_path (str): Path to write the report file.
-            format (str): Output format ('markdown' or 'md'). Default is 'markdown'.
+            output_path (str): The file path where the report should be saved.
+            format (str): The output format ('markdown' or 'md'). Defaults to "markdown".
         """
         get_logger().info(f"Generating Compliance Report ({format}) to {output_path}...")
         
@@ -832,11 +875,14 @@ class DicomSession:
 
     def generate_manifest(self, output_path: str, format: str = "html") -> None:
         """
-        Generates a visual (HTML) or machine-readable (JSON) manifest of all instances in the session.
-        
+        Generates a visual (HTML) or machine-readable (JSON) manifest of all instances.
+
+        This manifest lists every SOP Instance currently tracked in the session,
+        along with its file path and key metadata (Modality, Manufacturer, etc.).
+
         Args:
-            output_path (str): File path to write the manifest.
-            format (str): 'html' or 'json'.
+            output_path (str): The file path where the manifest should be saved.
+            format (str): The output format ('html' or 'json'). Defaults to "html".
         """
         get_logger().info(f"Generating Manifest ({format}) to {output_path}...")
         
@@ -874,7 +920,9 @@ class DicomSession:
     def save_analysis(self, report):
         """
         Persists the results of a PHI analysis to the database.
-        report: PhiReport or List[PhiFinding]
+
+        Args:
+            report (Union[PhiReport, List[PhiFinding]]): The PHI report object or list of findings to save.
         """
         findings = report
         if hasattr(report, 'findings'):
@@ -888,16 +936,24 @@ class DicomSession:
 
     def lock_identities(self, patient_id: str, persist: bool = False, _patient_obj: "Patient" = None, verbose: bool = True, **kwargs) -> Union[List["Instance"], LockingResult]:
         """
-        Securely embeds the original patient name/ID into a private DICOM tag
-        for all instances belonging to the specified patient.
-        Must be called BEFORE anonymization.
-        
+        Securely embeds the original patient name/ID into a private DICOM tag.
+
+        This mechanism allows for "Reversible Anonymization". The original identity 
+        is encrypted using a symmetric key and stored in a private attribute 
+        before the visible public attributes are anonymized.
+
+        Must be called BEFORE anonymization/redaction if recovery is required.
+
         Args:
-            patient_id: The ID of the patient to preserve, OR a list/report for batch processing.
-            persist: If True, writes changes to DB immediately. If False, returns instances for batch persistence.
-            _patient_obj: Optimization argument to avoid O(N) lookup if patient is already known.
-            verbose: If True, logs debug information. Set to False for batch operations.
-            **kwargs: Additional arguments passed to lock_identities_batch (e.g. auto_persist_chunk_size).
+            patient_id (str): The ID of the patient to preserve (or a list/report for batch processing).
+            persist (bool): If True, writes changes to the database immediately. 
+                            If False, returns modified instances (useful for batch buffering).
+            _patient_obj (Patient, optional): Optimization argument to avoid O(N) lookup.
+            verbose (bool): If True, logs debug information.
+            **kwargs: Additional arguments passed to `lock_identities_batch`.
+
+        Returns:
+            Union[List[Instance], LockingResult]: A list of modified instances.
         """
         if not self.reversibility_service:
             raise RuntimeError("Reversible anonymization not enabled. Call enable_reversible_anonymization() first.")
@@ -975,12 +1031,14 @@ class DicomSession:
     def lock_identities_batch(self, patient_ids: Union[List[str], "PhiReport", List["PhiFinding"]], auto_persist_chunk_size: int = 0) -> Union[List["Instance"], LockingResult]:
         """
         Batch process multiple patients to lock identities.
-        Returns a list of all modified instances (unless auto_persist_chunk_size is used).
-        
+
         Args:
-            patient_ids: List of PatientIDs, OR a PhiReport/list of objects with patient_id.
-            auto_persist_chunk_size: If > 0, persists changes and releases memory every N instances.
-                                     IMPORTANT: Returns an empty list if enabled to prevent OOM.
+            patient_ids (Union[List[str], PhiReport]): List of PatientIDs to process.
+            auto_persist_chunk_size (int): If > 0, persists changes and releases memory every N instances.
+                                           IMPORTANT: Returns an empty list if enabled to prevent OOM.
+
+        Returns:
+            Union[List[Instance], LockingResult]: List of all modified instances (if chunking is disabled).
         """
         if not self.reversibility_service:
             raise RuntimeError("Reversible anonymization not enabled.")
@@ -1050,11 +1108,15 @@ class DicomSession:
 
     def recover_patient_identity(self, patient_id: str, restore: bool = True):
         """
-        Attempts to recover original identity from the encrypted token.
-        
+        Attempts to recover original identity from the encrypted private token.
+
+        Decrypts the private tag stored by `lock_identities` and optionally
+        restores the original PatientName and PatientID public attributes.
+
         Args:
-            patient_id: The PatientID to recover.
-            restore: If True, applies the recovered attributes back to ALL instances in memory.
+            patient_id (str): The PatientID to search for and recover.
+            restore (bool): If True, applies the recovered attributes back to ALL 
+                            in-memory instances for this patient.
         """
         if not self.reversibility_service:
             raise RuntimeError("Reversibility not enabled.")
@@ -1100,7 +1162,12 @@ class DicomSession:
 
     def enable_reversible_anonymization(self, key_path: str = "gantry.key"):
         """
-        Initializes the encryption subsystem.
+        Initializes the encryption subsystem for Reversible Anonymization.
+
+        Loads or generates a symmetric key which is used to encrypt original identities.
+
+        Args:
+            key_path (str): Path to the key file.
         """
         self.key_manager = KeyManager(key_path)
         self.key_manager.load_or_generate_key()
@@ -1113,7 +1180,14 @@ class DicomSession:
 
     def redact(self, show_progress=True):
         """
-        User Action: 'Apply the currently loaded rules to the pixel data.'
+        Applies pixel redaction rules to the current session.
+
+        Uses the currently loaded configuration (`self.configuration.rules`) to find and
+        redact sensitive regions in the pixel data. This operation modifies the 
+        pixel data in-memory (and via Sidecar for persistence).
+
+        Args:
+            show_progress (bool): If True, displays a progress bar.
         """
         if not self.configuration.rules:
             get_logger().warning("No configuration loaded. Use .load_config() first.")
@@ -1206,10 +1280,15 @@ class DicomSession:
             get_logger().error(f"Execution interrupted: {e}")
             print(f"Execution interrupted: {e}")
 
-    def redact_by_machine(self, serial_number, roi):
+    def redact_by_machine(self, serial_number: str, roi: List[int]):
         """
         Helper to run redaction for a single machine interactively.
-        roi: [y1, y2, x1, x2]
+
+        Temporarily overrides the configuration to apply a single ROI to a specific device.
+
+        Args:
+            serial_number (str): The device serial number to target.
+            roi (List[int]): The Region of Interest as [y1, y2, x1, x2].
         """
         # This Helper is tricky. It modifies the ACTIVE configuration temporarily?
         # Or just runs temporary logic?
@@ -1223,9 +1302,14 @@ class DicomSession:
 
     def anonymize(self, findings: List[PhiFinding] = None):
         """
-        Apply remediation Actions to the PHI Findings.
-        If findings is None, it uses the active PHI tags config to blind/remove all (Blind Execute).
-        This modifies the metadata in memory/DB.
+        Apply remediation Actions to PHI Findings (Tag Anonymization).
+
+        If `findings` is provided, only those specific findings are remediated.
+        If `findings` is None, a full audit is performed using the current configuration,
+        and all resulting findings are remediated ("Blind Execute").
+
+        Args:
+            findings (List[PhiFinding], optional): Specific findings to clean.
         """
         from .remediation import RemediationService
         # Pass date jitter config to constructor
@@ -1262,6 +1346,20 @@ class DicomSession:
                compression=None, safe=False, subset=None):
         """
         Exports the current session to a directory, structured by Patient/Study/Series.
+
+        Args:
+            folder (str): The output directory path.
+            version (str, optional): Deprecated/Unused.
+            use_compression (bool): If True, compresses output images using JPEG2000 (Lossless).
+            check_burned_in (bool): If True, performs a safety scan for 'Burned In Annotation' flags before export.
+            check_reversibility (bool): If True, checks if reversibility is enabled (informational).
+            patient_ids (List[str], optional): Limit export to specific Patient IDs.
+            show_progress (bool): If True, shows progress bar.
+            
+            # Legacy Arguments
+            compression (bool): Alias for `use_compression`.
+            safe (bool): Alias for `check_burned_in`.
+            subset (Union[str, list, pd.DataFrame]): Filter export using a query string, list of UIDs, or DataFrame.
         """
         import os
         from .io_handlers import DicomExporter
@@ -1547,6 +1645,10 @@ class DicomSession:
     def export_dataframe(self, output_path: str = "export_metadata.csv", expand_metadata: bool = False):
         """
         Exports flat validation metadata to CSV or Parquet.
+
+        Args:
+            output_path (str): The output file path (ends with .csv or .parquet).
+            expand_metadata (bool): If True, includes all DICOM attributes as columns.
         """
         import pandas as pd
         df = self.get_cohort_report(expand_metadata=expand_metadata)

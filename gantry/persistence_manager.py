@@ -10,8 +10,11 @@ from .logger import get_logger
 class PersistenceManager:
     """
     Offloads persistence operations to a background thread to unblock the main thread.
-    Ensures data consistency by queuing snapshots (shallow copies should suffice if objects aren't mutually mutated).
-    Registers an atexit handler to ensure pending saves are written before exit.
+    
+    This manager:
+    - Maintains a queue of patient snapshots to save.
+    - Runs a background worker thread (`_worker`) to process the queue.
+    - Registers an `atexit` handler to ensure pending data is flushed before process termination.
     """
     def __init__(self, store_backend: SqliteStore):
         self.store_backend = store_backend
@@ -32,7 +35,12 @@ class PersistenceManager:
             get_logger().info("PersistenceManager worker thread started.")
 
     def flush(self):
-        """Blocks until all tasks in the queue have been processed."""
+        """
+        Blocks until all tasks in the queue have been processed.
+        
+        This method ensures that any currently queued save operations are completed before returning.
+        If the worker thread has unexpectedly died, it restarts it to drain the queue.
+        """
         # Check for silent crash: Worker is dead, but queue has items.
         if (not self.thread or not self.thread.is_alive()) and not self.queue.empty():
             get_logger().warning("PersistenceManager worker was found dead/stopped with pending items during flush. Restarting to process backlog.")
@@ -48,11 +56,13 @@ class PersistenceManager:
 
     def save_async(self, patients: List[Patient]):
         """
-        Queues a save operation.
-        Note: We pass the list reference. If the list is mutated immediately after, 
-        there might be a race condition. 
-        For robustness, we could shallow copy the list of patients: list(patients).
-        Deep copying the entire graph is too expensive.
+        Queues an asynchronous save operation for a list of patients.
+
+        Creates a shallow copy (snapshot) of the list to mitigate race conditions 
+        where the UI/Session might add/remove patients during the save process.
+
+        Args:
+            patients (List[Patient]): The list of patients to persist.
         """
         # Auto-restart if we were shut down
         if not self.running or not self.thread or not self.thread.is_alive():
@@ -102,7 +112,10 @@ class PersistenceManager:
 
     def shutdown(self):
         """
-        Stops the worker and waits for potential pending saves.
+        Stops the worker thread gracefully.
+        
+        Waits for any pending operations to complete (with a timeout) before 
+        killing the thread (via sentinel and join).
         """
         # Avoid double shutdown or shutdown if never started
         if not self.thread.is_alive():

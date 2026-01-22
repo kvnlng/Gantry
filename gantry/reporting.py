@@ -6,6 +6,22 @@ from typing import Dict, Protocol
 class ComplianceReport:
     """
     Data Transfer Object holding all information required for a compliance report.
+
+    Attributes:
+        generated_at (datetime.datetime): Timestamp of generation.
+        gantry_version (str): Version of the system.
+        project_name (str): Name of the session/project.
+        privacy_profile (str): The active privacy profile used.
+        deid_method (str): Description of the de-identification method.
+        total_patients (int): Total patients processed.
+        total_studies (int): Total studies processed.
+        total_series (int): Total series processed.
+        total_instances (int): Total instances processed.
+        audit_summary (Dict[str, int]): Aggregated counts of audit actions.
+        exceptions (list): List of error tuples (timestamp, action, details).
+        validation_status (str): Overall status (PASS/FAIL/PENDING).
+        validation_issues (int): Count of validation issues found.
+        verification_details (str): Additional context on verification.
     """
     generated_at: datetime.datetime = field(default_factory=datetime.datetime.now)
     gantry_version: str = "Unknown"
@@ -39,6 +55,13 @@ class ComplianceReport:
 class ReportRenderer(Protocol):
     """Protocol for a report renderer."""
     def render(self, report: ComplianceReport, output_path: str) -> None:
+        """
+        Renders the report to the specified output path.
+
+        Args:
+            report (ComplianceReport): The report object to render.
+            output_path (str): The file path to write to.
+        """
         ...
 
 
@@ -46,6 +69,16 @@ class MarkdownRenderer:
     """Renders the ComplianceReport as a formatted Markdown document."""
 
     def render(self, report: ComplianceReport, output_path: str) -> None:
+        """
+        Renders the report as a Markdown file.
+
+        Includes an Executive Summary, Processing Audit table, Exceptions log, 
+        and Verification details.
+
+        Args:
+            report (ComplianceReport): The data to render.
+            output_path (str): Path to write the .md file.
+        """
         md_content = f"""# Compliance Report
 
 **Generated At:** {report.generated_at.strftime('%Y-%m-%d %H:%M:%S')}

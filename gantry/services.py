@@ -15,12 +15,22 @@ CODE_CLEAN_PIXEL =   {"0008,0100": "113101", "0008,0102": "DCM", "0008,0104": "C
 class MachinePixelIndex:
     """
     Inverted index allowing O(1) retrieval of Instances by Device Serial Number.
+    
+    This optimization struct maps serial numbers to lists of Instance objects,
+    preventing full-store scans for every redaction rule.
     """
     def __init__(self):
         self._index: Dict[str, List[Instance]] = {}
 
     def index_store(self, store: DicomStore):
-        """Indexes all instances in the given store."""
+        """
+        Indexes all instances in the given store.
+        
+        Iterates through the entire hierarchy and populates the internal map.
+        
+        Args:
+            store (DicomStore): The store to index.
+        """
         self._index.clear()
         for p in store.patients:
             for st in p.studies:
@@ -36,7 +46,10 @@ class MachinePixelIndex:
 
 class RedactionService:
     """
-    Applies pixel data redaction based on rules.
+    Applies pixel redaction to DICOM instances based on configuration rules.
+
+    Handles ROI application, parallel execution (via task preparation), and
+    audit logging/flagging of modified instances.
     """
     def __init__(self, store: DicomStore, store_backend=None):
         self.store = store
@@ -48,8 +61,9 @@ class RedactionService:
     def scan_burned_in_annotations(self):
         """
         Scans all instances for 'Burned In Annotation' (0028,0301) == 'YES'.
-        Logs warnings for any found that have NOT been remediated (Image Type not DERIVED).
-        User requested we 'Must treat them somehow'.
+
+        Logs warnings for any found that have NOT been remediated (i.e. Image Type
+        does not contain 'DERIVED'). This is a post-process safety check.
         """
         self.logger.info("Scanning for untreated Burned In Annotations...")
         count = 0
@@ -93,7 +107,16 @@ class RedactionService:
     def prepare_redaction_tasks(self, machine_rules: dict, verbose: bool = False) -> List[dict]:
         """
         Generates a list of fine-grained tasks (dicts) from a single machine rule.
-        Each task represents one instance to be redacted.
+
+        Each task represents one instance to be redacted. Used for distributing
+        work across parallel workers.
+
+        Args:
+            machine_rules (dict): Configuration rule containing "serial_number" and "redaction_zones".
+            verbose (bool): If True, logs skips and warnings.
+
+        Returns:
+            List[dict]: A list of task dictionaries ready for `execute_redaction_task`.
         """
         serial = machine_rules.get("serial_number")
         zones = machine_rules.get("redaction_zones", [])
@@ -157,7 +180,15 @@ class RedactionService:
     def execute_redaction_task(self, task: dict):
         """
         Executes a single redaction task (one instance).
-        Designed to be run in a worker thread.
+
+        Designed to be run in a worker thread/process. Loads pixels, applies ROIs,
+        updates metadata flags, and returns a mutation structure for the main process.
+
+        Args:
+            task (dict): The task structure created by `prepare_redaction_tasks`.
+
+        Returns:
+            dict: A mutation dictionary containing changes to apply in the main process, or None.
         """
         inst = task["instance"]
         original_uid = inst.sop_instance_uid # Capture before mutation
@@ -240,7 +271,14 @@ class RedactionService:
 
     def process_machine_rules(self, machine_rules: dict, show_progress: bool = True, verbose: bool = False):
         """
-        Applies all zones defined in a single machine config object.
+        Applies all zones defined in a single machine config object sequentially.
+
+        Legacy/Single-threaded entry point (mostly replaced by parallel approach).
+
+        Args:
+            machine_rules (dict): The rule configuration.
+            show_progress (bool): If True, shows progress bar.
+            verbose (bool): If True, logs details.
         """
         serial = machine_rules.get("serial_number")
         zones = machine_rules.get("redaction_zones", [])
@@ -289,8 +327,15 @@ class RedactionService:
 
     def redact_machine_instances(self, machine_sn: str, rois: List[tuple], targets: List[Instance] = None, show_progress: bool = True, verbose: bool = False):
         """
-        Applies a LIST of ROIs to all images from the specified machine (or provided list of targets).
-        Optimized to iterate images ONCE.
+        Applies a LIST of ROIs to all images from the specified machine.
+
+        Optimized to iterate images ONCE per machine rule, applying all ROIs in a single pass.
+
+        Args:
+            machine_sn (str): The serial number (for logging/auditing).
+            rois (List[tuple]): List of (y1, y2, x1, x2) ROIs.
+            targets (List[Instance], optional): Pre-filtered list of instances.
+            show_progress (bool): If True, shows progress bar.
         """
         if targets is None:
              targets = self.index.get_by_machine(machine_sn)
@@ -370,7 +415,16 @@ class RedactionService:
     def _apply_roi_to_instance(self, inst: Instance, arr, roi: tuple) -> bool:
         """
         Applies a single ROI to the pixel array in place.
-        Returns True if successful/applied.
+
+        Handles dimension checking, clamping, and array mutability.
+
+        Args:
+            inst (Instance): The instance (used for logging context only).
+            arr (np.ndarray): The pixel array to modify.
+            roi (tuple): The (y1, y2, x1, x2) region.
+
+        Returns:
+            bool: True if modification was applied, False if ROI was invalid/skipped.
         """
         try:
             # FIX: Ensure coordinates are integers (slicing does not accept floats in modern Python/NumPy)
@@ -420,8 +474,13 @@ class RedactionService:
 
     def _apply_redaction_flags(self, inst: Instance):
         """
-        Sets DICOM tags indicating Pixel Data modification (Derivation)
-        WITHOUT claiming full patient de-identification.
+        Sets DICOM tags indicating Pixel Data modification.
+
+        Marks ImageType as DERIVED, clears BurnedInAnnotation, and adds
+        DerivationCodeSequence.
+
+        Args:
+            inst (Instance): The instance to flag.
         """
         
         # 1. Image Type (0008,0008)

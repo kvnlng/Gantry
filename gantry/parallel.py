@@ -28,11 +28,28 @@ def run_parallel(
     return_generator: bool = False # Implement streaming
 ) -> Any: # Union[List[R], Iterator[R]]
     """
-    Executes func(item) in parallel.
-    Uses ProcessPoolExecutor by default, or multiprocessing.Pool if maxtasksperchild is set.
-    Displays a tqdm progress bar unless show_progress=False.
-    Supports generators (pass total=N for progress bar).
-    If 'executor' is passed, it uses that instance.
+    Executes `func(item)` in parallel using multiple processes or threads.
+
+    Adapts strategy based on environment variables (`GANTRY_MAX_WORKERS`, 
+    `GANTRY_FORCE_THREADS`) and presence of GIL. Defaults to `ProcessPoolExecutor`.
+
+    Args:
+        func (Callable[[T], R]): The worker function.
+        items (Iterable[T]): The collection of items to process.
+        desc (str): Description for the progress bar.
+        max_workers (int, optional): Override the number of workers.
+        chunksize (int): Batch size for IPC.
+        show_progress (bool): If True, displays a tqdm progress bar.
+        force_threads (bool): If True, forces ThreadPoolExecutor.
+        total (int, optional): Total item count (required for generators to show progress bar).
+        executor (optional): Shared executor instance.
+        maxtasksperchild (int, optional): Process recycling count (multiprocessing only).
+        progress (bool, optional): Alias for show_progress.
+        disable_gc (bool, optional): If True, disables GC in worker processes for speed.
+        return_generator (bool): If True, returns a generator (streaming) instead of a list.
+
+    Returns:
+        Union[List[R], Iterator[R]]: The results of the parallel execution.
     """
     
     # Alias handling

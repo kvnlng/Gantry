@@ -6,9 +6,22 @@ import datetime
 from .logger import get_logger
 
 @dataclass
+@dataclass
 class ManifestItem:
     """
     Represents a single exported file or instance in the manifest.
+
+    Attributes:
+        patient_id (str): The Patient ID.
+        study_instance_uid (str): The Study Instance UID.
+        series_instance_uid (str): The Series Instance UID.
+        sop_instance_uid (str): The SOP Instance UID.
+        file_path (str): Relative or absolute path to the exported file.
+        file_size_bytes (int): Size of the file in bytes.
+        modality (str): Modality code (e.g. CT, MR).
+        manufacturer (str): Manufacturer name.
+        model_name (str): Model name.
+        anonymized (bool): Status flag indicating if anonymization was applied.
     """
     patient_id: str
     study_instance_uid: str
@@ -29,9 +42,17 @@ class ManifestItem:
 
 
 @dataclass
+@dataclass
 class Manifest:
     """
-    Collection of manifest items.
+    Collection of manifest items representing the entire export session.
+
+    Attributes:
+        generated_at (str): ISO timestamp of generation.
+        items (List[ManifestItem]): The list of file entries.
+        project_name (str): Name of the project/session.
+        total_files (int): Total count of files.
+        total_size_bytes (int): Total size in bytes.
     """
     generated_at: str
     items: List[ManifestItem]
@@ -40,6 +61,9 @@ class Manifest:
     total_size_bytes: int = 0
     
     def to_dict(self):
+        """
+        Converts the manifest to a dictionary for JSON serialization.
+        """
         return {
             "generated_at": self.generated_at,
             "project_name": self.project_name,
@@ -49,15 +73,25 @@ class Manifest:
         }
 
 class ManifestRenderer(Protocol):
+    """Protocol for a manifest renderer."""
     def render(self, manifest: Manifest, output_path: str) -> None:
+        """
+        Renders the manifest to the specified file.
+
+        Args:
+            manifest (Manifest): The manifest data.
+            output_path (str): The destination file path.
+        """
         ...
 
 class JSONManifestRenderer:
+    """Renders the manifest as a JSON file."""
     def render(self, manifest: Manifest, output_path: str) -> None:
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(manifest.to_dict(), f, indent=2)
 
 class HTMLManifestRenderer:
+    """Renders the manifest as a standalone HTML file."""
     def render(self, manifest: Manifest, output_path: str) -> None:
         # Basic accessible HTML table
         html = f"""<!DOCTYPE html>
@@ -124,6 +158,17 @@ class HTMLManifestRenderer:
             f.write(html)
 
 def generate_manifest_file(manifest: Manifest, output_path: str, format: str = "html"):
+    """
+    Generates a manifest file in the requested format.
+
+    Args:
+        manifest (Manifest): The manifest object to export.
+        output_path (str): The destination file path.
+        format (str): 'json' or 'html'.
+
+    Raises:
+        ValueError: If format is unsupported.
+    """
     if format.lower() == "json":
         renderer = JSONManifestRenderer()
     elif format.lower() == "html":

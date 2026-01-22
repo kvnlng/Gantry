@@ -7,8 +7,10 @@ from threading import Lock
 class SidecarManager:
     """
     Manages appending and reading from a binary sidecar file.
-    Thread-safe for writes (append-only).
-    Format: Just raw (compressed) bytes concatenated. Offsets stored in DB.
+    
+    Thread-safe for writes (append-only) using file locking (`fcntl`).
+    Format: Raw concatenated blobs (optionally compressed). Offsets/lengths are 
+    managed by the caller (Instance object).
     """
     def __init__(self, filepath: str):
         self.filepath = filepath
@@ -23,8 +25,14 @@ class SidecarManager:
 
     def write_frame(self, data: bytes, compression: str = 'zlib') -> Tuple[int, int]:
         """
-        Appends data to the sidecar.
-        Returns: (offset, length)
+        Appends data to the sidecar file.
+
+        Args:
+            data (bytes): The binary data to store.
+            compression (str): 'zlib' or 'raw'.
+
+        Returns:
+            Tuple[int, int]: (offset, length) of the written blob.
         """
         if compression == 'zlib':
             blob = zlib.compress(data)
@@ -53,7 +61,19 @@ class SidecarManager:
 
     def read_frame(self, offset: int, length: int, compression: str = 'zlib') -> bytes:
         """
-        Reads a frame from the sidecar.
+        Reads a frame from the sidecar at the specified offset.
+
+        Args:
+            offset (int): File offset in bytes.
+            length (int): Length of the blob to read.
+            compression (str): Compression method used ('zlib' or 'raw').
+
+        Returns:
+            bytes: The decompressed/raw data.
+
+        Raises:
+            IOError: If read is incomplete.
+            ValueError: If compression is unsupported.
         """
 
         with open(self.filepath, 'rb') as f:

@@ -3,6 +3,13 @@ from typing import List
 
 
 class IODValidator:
+    """
+    Minimal IOD (Information Object Definition) Validator for DICOM compliance.
+    
+    Checks for the presence of Type 1 and Type 2 attributes based on SOP Class rules.
+    Currently implements a subset of "Common" and "CTImage" modules.
+    """
+
     _MODULE_DEFINITIONS = {
         'Common': {
             '0008,0016': '1', '0008,0018': '1', '0008,0020': '1',
@@ -21,6 +28,15 @@ class IODValidator:
 
     @staticmethod
     def validate(ds: Dataset) -> List[str]:
+        """
+        Validates the dataset against internal IOD rules based on SOP Class.
+
+        Args:
+            ds (pydicom.Dataset): The dataset to validate.
+
+        Returns:
+            List[str]: A list of error messages describing missing Type 1/2 attributes.
+        """
         errors = []
         sop = ds.file_meta.MediaStorageSOPClassUID if hasattr(ds, 'file_meta') else ds.get("SOPClassUID")
 

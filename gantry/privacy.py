@@ -5,7 +5,16 @@ from .entities import Patient, Study, Series, Instance
 
 @dataclass(slots=True)
 class PhiRemediation:
-    """Proposed action to fix a PHI finding."""
+    """
+    Proposed action to fix a PHI finding.
+
+    Attributes:
+        action_type (str): The remediation logic code (e.g., "REPLACE_TAG", "SHIFT_DATE").
+        target_attr (str): The attribute or tag to modify.
+        new_value (Any): The proposed new value (if known).
+        original_value (Any): The original value for audit/reversion.
+        metadata (Dict[str, Any]): Context metadata (e.g. patient linkage for date shifting).
+    """
     action_type: str  # e.g., "REPLACE_TAG", "REDACT_REGION"
     target_attr: str  # e.g., "patient_name", "study_date"
     new_value: Any = None
@@ -14,7 +23,20 @@ class PhiRemediation:
 
 @dataclass(slots=True)
 class PhiFinding:
-    """Represents a potential PHI breach discovered during a scan."""
+    """
+    Represents a potential PHI breach discovered during a scan.
+    
+    Attributes:
+        entity_uid (str): Unique identifier of the entity (PatientID, SOPInstanceUID).
+        entity_type (str): Type of entity ("Patient", "Instance", etc).
+        field_name (str): The specific field or tag description.
+        value (Any): The PHI value found.
+        reason (str): Why this was flagged (e.g. "Safe Harbor Rules").
+        tag (Optional[str]): The DICOM tag (e.g., "0010,0010").
+        patient_id (Optional[str]): Linkage for context.
+        entity (Any): Reference to the Python object for direct remediation.
+        remediation_proposal (Optional[PhiRemediation]): The suggested fix.
+    """
     entity_uid: str
     entity_type: str
     field_name: str
@@ -28,7 +50,9 @@ class PhiFinding:
 class PhiReport:
     """
     A container for PHI findings that supports analysis and export.
-    Acts as a list for backward compatibility.
+    
+    Acts as a list wrapper for backward compatibility but enables
+    DataFrame export features.
     """
     def __init__(self, findings: List[PhiFinding]):
         self.findings = findings
@@ -36,6 +60,12 @@ class PhiReport:
     def to_dataframe(self):
         """
         Converts findings to a Pandas DataFrame for analysis.
+
+        Returns:
+            pd.DataFrame: A dataframe containing flattened finding details.
+
+        Raises:
+            ImportError: If pandas is not installed.
         """
         try:
             import pandas as pd
@@ -72,19 +102,18 @@ class PhiReport:
 class PhiInspector:
     """
     Scans the Object Graph for attributes that are known to contain Protected Health Information (PHI).
-    Based on HIPAA Safe Harbor identifier rules.
+    
+    Implements rules based on HIPAA Safe Harbor identifiers and Configurable PHI Tags.
+    Also handles Private Tag scanning/flagging.
     """
     def __init__(self, config_path: str = None, config_tags: Dict[str, str] = None, remove_private_tags: bool = False):
         """
         Initializes the inspector.
+
         Args:
-            config_path: Path to a JSON config file (Legacy or Unified).
-            config_tags: Direct dictionary of PHI tags (Preferred for Unified flow).
-            remove_private_tags: If True, scans all attributes for non-whitelisted private tags.
-        
-        If config_tags is provided, it takes precedence.
-        If config_path is provided, it loads from file.
-        If neither, loads defaults.
+            config_path (str, optional): Path to a JSON/YAML config file.
+            config_tags (Dict, optional): Direct config dictionary (takes precedence).
+            remove_private_tags (bool): If True, scans all attributes for non-whitelisted private tags.
         """
         from .config_manager import ConfigLoader
         
@@ -100,6 +129,12 @@ class PhiInspector:
     def scan_patient(self, patient: Patient) -> List[PhiFinding]:
         """
         Recursively scans a Patient and their child studies for PHI.
+
+        Args:
+            patient (Patient): The patient object to scan.
+
+        Returns:
+            List[PhiFinding]: A list of all identified PHI findings.
         """
         findings = []
         
@@ -158,7 +193,9 @@ class PhiInspector:
     def _scan_instance(self, instance: Instance, patient_id: str, study: Study = None) -> List[PhiFinding]:
         """
         Scans a single instance for PHI based on configured tags and private tag rules.
-        Uses cached `text_index` for O(1) access to all text nodes including nested sequences.
+        
+        Uses cached `text_index` (if available) for O(1) access to all text nodes, 
+        including nested sequence items.
         """
         findings = []
         

@@ -12,6 +12,10 @@ from typing import List, Dict, Any, Optional, Callable, Tuple
 class DicomSequence:
     """
     Represents a DICOM Sequence (SQ) containing multiple DicomItems.
+
+    Attributes:
+        tag (str): The DICOM tag for this sequence (e.g., "0008,1111").
+        items (List[DicomItem]): A list of DicomItem objects contained in this sequence.
     """
     tag: str
     items: List['DicomItem'] = field(default_factory=list)
@@ -21,6 +25,13 @@ class DicomSequence:
 class DicomItem:
     """
     Base class for any entity that holds DICOM attributes and sequences.
+
+    This class provides a dictionary-like interface for managing DICOM attributes
+    and handles hierarchical dirty tracking for persistence.
+
+    Attributes:
+        attributes (Dict[str, Any]): A dictionary mapping generic DICOM tags to values.
+        sequences (Dict[str, DicomSequence]): A dictionary mapping tags to nested DicomSequences.
     """
     # init=False to avoid constructor conflicts during inheritance
     # init=False to avoid constructor conflicts during inheritance
@@ -52,17 +63,34 @@ class DicomItem:
             self._saved_mod_count = self._mod_count
 
     def mark_saved(self, version_saved: int):
-        """Marks specific version as saved. Robust against concurrent edits."""
+        """
+        Marks specific version as saved. Robust against concurrent edits.
+
+        Args:
+            version_saved (int): The modification count that was successfully persisted.
+        """
         if version_saved > self._saved_mod_count:
             self._saved_mod_count = version_saved
 
     def set_attr(self, tag: str, value: Any):
-        """Sets a generic attribute by its hex tag (e.g., '0010,0010')."""
+        """
+        Sets a generic attribute by its hex tag (e.g., '0010,0010').
+
+        Args:
+            tag (str): The DICOM tag string.
+            value (Any): The value to set.
+        """
         self.attributes[tag] = value
         self._mod_count += 1
 
     def add_sequence_item(self, tag: str, item: 'DicomItem'):
-        """Appends a new item to a sequence, creating the sequence if needed."""
+        """
+        Appends a new item to a sequence, creating the sequence if needed.
+
+        Args:
+            tag (str): The DICOM tag for the sequence.
+            item (DicomItem): The item to append.
+        """
         if tag not in self.sequences:
             self.sequences[tag] = DicomSequence(tag=tag)
         self.sequences[tag].items.append(item)
@@ -81,6 +109,11 @@ class Equipment:
     """
     Immutable Equipment definition.
     Frozen=True allows hashing, enabling unique set generation.
+
+    Attributes:
+        manufacturer (str): The manufacturer of the equipment.
+        model_name (str): The model name of the equipment.
+        device_serial_number (str): The serial number (optional).
     """
     manufacturer: str
     model_name: str
@@ -137,7 +170,15 @@ class Instance(DicomItem):
     def regenerate_uid(self):
         """
         Generates a new, globally unique SOP Instance UID.
-        Call this whenever pixel data is modified.
+
+        Call this whenever pixel data is modified to ensure the instance is treated
+        as a new distinct entity, preventing collisions with the original data.
+
+        This method:
+            1. Generates a new SOP Instance UID.
+            2. Updates the internal object property.
+            3. Updates the '0008,0018' DICOM attribute.
+            4. Detaches the instance from its physical file path (since consistent hash changed).
         """
         # 1. Generate new UID using pydicom's generator (or your org root)
         new_uid = generate_uid()
@@ -156,11 +197,15 @@ class Instance(DicomItem):
         from .logger import get_logger
         get_logger().debug(f"  -> Identity regenerated: {new_uid}")
 
-    def unload_pixel_data(self):
+    def unload_pixel_data(self) -> bool:
         """
         Clears the cached pixel_array from memory to free resources.
-        Only performs the clear if the data can be re-loaded (file_path or _pixel_loader exists).
-        Returns True if unloaded, False if unsafe to unload.
+
+        Only performs the clear if the data can be re-loaded (i.e., `file_path`
+        or `_pixel_loader` is present).
+
+        Returns:
+            bool: True if unloaded successfully, False if it was unsafe to unload (data would be lost).
         """
         if self.pixel_array is None:
             return True
@@ -177,7 +222,19 @@ class Instance(DicomItem):
     def get_pixel_data(self) -> Optional[np.ndarray]:
         """
         Returns pixel_array. Loads from disk if not in memory.
-        Returns None if no pixel data is present.
+
+        This method attempts to:
+            1. Return already cached `pixel_array`.
+            2. Use `_pixel_loader` (Sidecar) if available.
+            3. Read from `file_path` using `pydicom`.
+            4. Fallback to `gantry.imagecodecs_handler` if pydicom fails.
+
+        Returns:
+            Optional[np.ndarray]: The pixel data as a numpy array, or None if missing/load failed.
+
+        Raises:
+            RuntimeError: If loading fails due to transfer syntax issues or missing codecs.
+            FileNotFoundError: If the file path does not exist.
         """
         if self.pixel_array is not None:
             return self.pixel_array
@@ -253,9 +310,18 @@ class Instance(DicomItem):
 
     def set_pixel_data(self, array: np.ndarray):
         """
-        Sets the pixel array and automatically updates metadata tags
-        (rows, cols, samples, frames, etc.) based on array shape.
-        Handles unpacking of 2D/3D/4D arrays.
+        Sets the pixel array and automatically updates metadata tags.
+
+        Updates tags:
+            - Rows (0028,0010)
+            - Columns (0028,0011)
+            - SamplesPerPixel (0028,0002)
+            - NumberOfFrames (0028,0008) (if > 1)
+            - PhotometricInterpretation (0028,0004) (RGB if samples >= 3)
+            - PlanarConfiguration (0028,0006) (0 if RGB)
+
+        Args:
+            array (np.ndarray): The pixel data to set. Can be 1D, 2D, 3D, or 4D.
         """
         self.pixel_array = array
         shape = array.shape
@@ -338,6 +404,13 @@ class Series:
     """
     Groups Instances by Series Instance UID.
     Typically represents a single scan or reconstruction.
+
+    Attributes:
+        series_instance_uid (str): The unique identifier for the series.
+        modality (str): The modality type (e.g., 'CT', 'MR').
+        series_number (int): The series number.
+        equipment (Optional[Equipment]): The equipment used for this series.
+        instances (List[Instance]): List of instances belonging to this series.
     """
     series_instance_uid: str
     modality: str
@@ -360,6 +433,13 @@ class Study:
     """
     Groups Series by Study Instance UID.
     Represents a single patient visit or examination.
+
+    Attributes:
+        study_instance_uid (str): The unique identifier for the study.
+        study_date (Any): The date of the study.
+        series (List[Series]): List of series belonging to this study.
+        date_shifted (bool): Whether dates in this study have been shifted.
+        study_time (Optional[str]): The time of the study.
     """
     study_instance_uid: str
     study_date: Any
@@ -381,6 +461,11 @@ class Study:
 class Patient:
     """
     Root of the object hierarchy. Groups Studies by Patient ID.
+
+    Attributes:
+        patient_id (str): The primary patient identifier.
+        patient_name (str): The patient's name.
+        studies (List[Study]): List of studies belonging to this patient.
     """
     patient_id: str
     patient_name: str

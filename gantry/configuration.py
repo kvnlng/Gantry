@@ -3,10 +3,17 @@ from typing import List, Dict, Any, Optional
 import copy
 
 @dataclass
+@dataclass
 class GantryConfiguration:
     """
     Encapsulates the runtime configuration for a DicomSession.
-    Includes machine redaction rules, PHI tags, and global settings.
+
+    Attributes:
+        rules (List[Dict[str, Any]]): List of machine redaction rules.
+        phi_tags (Dict[str, Any]): PHI tag policies (e.g. {tag: action}).
+        date_jitter (Dict[str, int]): Date shifting parameters.
+        remove_private_tags (bool): Global flag to strip private tags.
+        config_path (Optional[str]): Path to the backing YAML file for auto-save.
     """
     rules: List[Dict[str, Any]] = field(default_factory=list)
     phi_tags: Dict[str, Any] = field(default_factory=dict)
@@ -16,12 +23,12 @@ class GantryConfiguration:
 
     def save(self) -> None:
         """
-        Persists the current configuration to config_path if set.
+        Persists the current configuration state to `config_path` (YAML).
+        
+        Attempts to format lists as flow-style (bracketed) for better readability.
         """
         if not self.config_path:
             return
-
-
 
         import yaml
         
@@ -85,7 +92,15 @@ class GantryConfiguration:
     def add_rule(self, serial_number: str, manufacturer: str = "Unknown", model: str = "Unknown", zones: List[Any] = None) -> None:
         """
         Adds a new machine redaction rule.
-        Overrides any existing rule for the same serial number.
+        
+        Overrides any existing rule for the same serial number. Auto-saves if
+        config_path is set.
+
+        Args:
+            serial_number (str): The device serial number.
+            manufacturer (str, optional): Metadata for reference.
+            model (str, optional): Metadata for reference.
+            zones (List[Any], optional): List of redaction zones (ROIs).
         """
         # Remove existing if any
         self.delete_rule(serial_number)
@@ -102,7 +117,14 @@ class GantryConfiguration:
 
     def update_rule(self, serial_number: str, updates: Dict[str, Any]) -> None:
         """
-        Updates an existing rule identified by serial_number.
+        Updates an existing rule identified by `serial_number`.
+
+        Args:
+            serial_number (str): The target rule's serial number.
+            updates (Dict[str, Any]): Dictionary of fields to update.
+
+        Raises:
+            ValueError: If rule is not found or if attempting to change the serial number.
         """
         rule = self.get_rule(serial_number)
         if not rule:
@@ -118,7 +140,13 @@ class GantryConfiguration:
 
     def delete_rule(self, serial_number: str) -> bool:
         """
-        Removes a rule by serial number. Returns True if found and removed.
+        Removes a rule by serial number.
+
+        Args:
+            serial_number (str): The serial number to remove.
+
+        Returns:
+            bool: True if a rule was found and removed, False otherwise.
         """
         initial_len = len(self.rules)
         self.rules = [r for r in self.rules if r.get("serial_number") != serial_number]
@@ -131,7 +159,11 @@ class GantryConfiguration:
     def set_phi_tag(self, tag: str, action: str, replacement: str = None) -> None:
         """
         Sets or updates a PHI tag policy.
-        Action examples: 'KEEP', 'REMOVE', 'REPLACE', 'JITTER', 'EMPTY'
+
+        Args:
+            tag (str): The DICOM tag to target (e.g. "0010,0010").
+            action (str): The remediation action ('KEEP', 'REMOVE', 'REPLACE', 'JITTER', 'EMPTY').
+            replacement (str, optional): The replacement value if action is 'REPLACE'.
         """
         tag = tag.upper()
         # Simple string format storage check? 
@@ -154,7 +186,15 @@ class GantryConfiguration:
 
 
     def get_rule(self, serial_number: str) -> Optional[Dict[str, Any]]:
-        """Retrieves a specific rule dictionary (reference)."""
+        """
+        Retrieves a specific rule dictionary (reference).
+
+        Args:
+            serial_number (str): The serial number to find.
+
+        Returns:
+            Optional[Dict[str, Any]]: The rule dictionary if found, else None.
+        """
         for r in self.rules:
             if r.get("serial_number") == serial_number:
                 return r

@@ -18,13 +18,23 @@ from tqdm import tqdm
 
 
 class DicomStore:
-    """Root of the Object Graph + Persistence Logic"""
+    """
+    Root of the Object Graph + Persistence Logic.
+    
+    This class holds the in-memory representation of the DICOM hierarchy 
+    (List of Patients) and utilities for querying the graph state.
+    """
 
     def __init__(self):
         self.patients: List[Patient] = []
 
     def get_unique_equipment(self) -> List[Equipment]:
-        """Returns a list of all unique Equipment (Manufacturer/Model/Serial) found in the store."""
+        """
+        Returns a list of all unique Equipment (Manufacturer/Model/Serial) found in the store.
+
+        Returns:
+            List[Equipment]: A list of unique Equipment objects.
+        """
         unique = set()
         for p in self.patients:
             for st in p.studies:
@@ -33,7 +43,12 @@ class DicomStore:
         return list(unique)
 
     def get_known_files(self) -> Set[str]:
-        """Returns a set of absolute file paths for all instances currently indexed."""
+        """
+        Returns a set of absolute file paths for all instances currently indexed.
+
+        Returns:
+            Set[str]: A set of file path strings.
+        """
         files = set()
         for p in self.patients:
             for st in p.studies:
@@ -62,8 +77,19 @@ from .parallel import run_parallel
 from pydicom.uid import UncompressedTransferSyntaxes
 import hashlib
 
-def populate_attrs(ds, item, text_index: list = None):
-    """Standalone function to populate attributes for pickle-compatibility in workers."""
+def populate_attrs(ds: Any, item: "DicomItem", text_index: list = None):
+    """
+    Standalone function to populate attributes for pickle-compatibility in workers.
+    
+    Extracts standard DICOM elements from a pydicom Dataset and populates the 
+    Gantry DicomItem. Handles Sequences recursively. Skips large binary blobs 
+    (PixelData, Overlays) to keep the object graph lightweight.
+
+    Args:
+        ds: The pydicom Dataset or Sequence Item.
+        item (DicomItem): The Gantry item to populate.
+        text_index (list, optional): A list to append (item, tag) tuples for text indexing.
+    """
     
     # Text-like VRs that might contain PHI
     TEXT_VRS = {'PN', 'LO', 'SH', 'ST', 'LT', 'UT', 'DA', 'DT', 'TM'}
@@ -97,10 +123,18 @@ def process_sequence(tag, elem, parent_item, text_index: list = None):
         populate_attrs(ds_item, seq_item, text_index)
         parent_item.add_sequence_item(tag, seq_item)
 
-def ingest_worker(fp):
+def ingest_worker(fp: str) -> Tuple[Optional[Dict], Optional[Instance], Optional[bytes], Optional[str], Optional[str], Optional[str]]:
     """
     Worker function to read DICOM and construct Instance object.
-    Returns: (metadata_dict, instance_object, pixel_bytes, pixel_hash, pixel_alg, error_string)
+
+    Designed for parallel execution. Reads a file, extracts metadata, constructs 
+    an Instance object, and optionally extracts raw pixel data for eager sidecar loading.
+
+    Args:
+        fp (str): File path to read.
+
+    Returns:
+        tuple: (metadata_dict, instance_object, pixel_bytes, pixel_hash, pixel_alg, error_string)
     """
     try:
         # Eager load (read pixels)
@@ -167,12 +201,22 @@ def ingest_worker(fp):
 class DicomImporter:
     """
     Handles scanning of folders/files and ingesting them into the Object Graph.
-    optimized for parallel processing.
+    
+    Optimized for parallel processing using `run_parallel` and Eager Ingestion methods.
     """
     @staticmethod
     def import_files(file_paths: List[str], store: DicomStore, executor=None, sidecar_manager=None):
         """
         Parses a list of files or directories. Recurses into directories to find all files.
+
+        Identifies new files (not already in the store), reads them in parallel, 
+        and links them into the provided DicomStore's hierarchy (Patient/Study/Series).
+
+        Args:
+            file_paths (List[str]): List of file or directory paths to scan.
+            store (DicomStore): The active store to populate.
+            executor (optional): Shared ProcessPoolExecutor.
+            sidecar_manager (optional): Manager for persisting pixel data immediately.
         """
         all_files = []
         for path in file_paths:
@@ -295,7 +339,15 @@ class ExportContext(NamedTuple):
 def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
     """
     Worker function to export a single instance.
-    Returns the output path on success, raises Exception on failure.
+
+    Reconstructs a pydicom Dataset from the ExportContext (Instance + Attributes)
+    and saves it to disk. Handles optional compression (JPEG2000).
+
+    Args:
+        ctx (ExportContext): The context/request for export.
+
+    Returns:
+        Optional[bool]: True on success, None (and prints error) on failure.
     """
 
     try:
@@ -541,8 +593,10 @@ def gantry_json_object_hook(d):
 class SidecarPixelLoader:
     """
     Functor for lazy loading of pixel data from sidecar.
+    
     Must be a top-level class to be picklable.
     Breaks reference cycles by storing primitive metadata (snapshot) instead of the Instance object.
+    Designed to be lightweight and serializable for IPC.
     """
     def __init__(self, sidecar_path, offset, length, alg, instance=None, metadata=None):
         self.sidecar_path = sidecar_path
@@ -644,11 +698,17 @@ class SidecarPixelLoader:
 class DicomExporter:
     """
     Handles writing the Object Graph back to standard DICOM files.
+    
+    Provides static methods for saving Patients, Studies, or creating export batches from Validated/Curated data.
     """
     @staticmethod
     def save_patient(patient: Patient, out_dir: str):
         """
-        Iterates over a Patient's hierarchy and saves valid .dcm files to out_dir.
+        Iterates over a Patient's hierarchy and saves valid .dcm files to `out_dir`.
+        
+        Args:
+            patient (Patient): The patient root object.
+            out_dir (str): The destination directory.
         """
         DicomExporter.save_studies(patient, patient.studies, out_dir)
 
@@ -656,7 +716,19 @@ class DicomExporter:
     def generate_export_from_db(store_backend, out_dir: str, patient_ids: List[str] = None, compression: str = None, instance_uids: List[str] = None):
         """
         Generator that yields ExportContext objects directly from the DB.
-        O(1) Memory usage.
+
+        Designed for O(1) Memory usage during massive exports. Streamingly reconstructs
+        lightweight Instance objects from the database rows without loading the full Graph.
+
+        Args:
+            store_backend: The persistence backend (SqliteStore).
+            out_dir (str): Destination directory.
+            patient_ids (List[str], optional): Filter by Patient IDs.
+            compression (str, optional): Compression format (e.g., 'j2k').
+            instance_uids (List[str], optional): Filter by SOP Instance UIDs.
+
+        Yields:
+            ExportContext: A prepared context for exporting a single file.
         """
         for row in store_backend.get_flattened_instances(patient_ids, instance_uids):
             # 1. Rehydrate Attributes
@@ -767,6 +839,18 @@ class DicomExporter:
     def _generate_export_contexts(patient: Patient, studies: List[Study], out_dir: str, compression: str = None) -> List[ExportContext]:
         """
         Generates ExportContext objects for the given studies.
+
+        Calculates output paths and metadata overrides for each instance in the 
+        provided studies.
+
+        Args:
+            patient (Patient): The patient object.
+            studies (List[Study]): List of studies to export.
+            out_dir (str): Output directory.
+            compression (str, optional): Compression format (e.g. 'j2k').
+
+        Returns:
+            List[ExportContext]: List of prepared export contexts.
         """
         contexts = []
         for st in studies:
@@ -873,7 +957,14 @@ class DicomExporter:
     def save_studies(patient: Patient, studies: List[Study], out_dir: str, compression: str = None, show_progress: bool = True, executor=None):
         """
         Exports a specific list of studies for a patient using parallel workers.
-        compression: 'j2k' or None
+
+        Args:
+            patient (Patient): The patient root object.
+            studies (List[Study]): The list of studies to export.
+            out_dir (str): Destination directory.
+            compression (str, optional): Compression format ('j2k' or None).
+            show_progress (bool): If True, shows a progress bar.
+            executor (ProcessPoolExecutor, optional): Shared executor for parallelism.
         """
         if not os.path.exists(out_dir): os.makedirs(out_dir)
         logger = get_logger()
@@ -907,6 +998,17 @@ class DicomExporter:
     def export_batch(export_tasks: Iterable[ExportContext], show_progress: bool = True, total: int = None, executor=None, maxtasksperchild: int = None, disable_gc: bool = False):
         """
         Exports a flat list of ExportContexts using parallel workers.
+
+        Args:
+            export_tasks (Iterable[ExportContext]): Iterator/List of tasks.
+            show_progress (bool): If True, shows progress bar.
+            total (int, optional): Total count for progress bar.
+            executor (optional): Shared executor.
+            maxtasksperchild (int, optional): Worker recycle rate (for memory management).
+            disable_gc (bool): If True, disables GC in workers for throughput.
+
+        Returns:
+            int: Number of successfully exported instances.
         """
         logger = get_logger()
         # if not export_tasks: return # Cannot easily check empty iterator without consuming
@@ -928,10 +1030,20 @@ class DicomExporter:
     @staticmethod
     def _finalize_dataset(ds, compression=None, pixel_array=None):
         """
-        Finalizes the dataset before saving:
-        1. Applies compression if requested.
-        2. Validates IOD.
-        Returns the dataset (modified) or raises RuntimeError if invalid.
+        Finalizes the dataset before saving.
+
+        Applies compression if requested and validates the IOD against DICOM standards.
+        
+        Args:
+            ds (pydicom.Dataset): The dataset to process.
+            compression (str, optional): 'j2k' or None.
+            pixel_array (np.ndarray, optional): Pixel data to compress.
+
+        Returns:
+            pydicom.Dataset: The finalized dataset.
+
+        Raises:
+            ValueError: If validation fails.
         """
         if compression == 'j2k':
             _compress_j2k(ds, pixel_array)
@@ -949,6 +1061,7 @@ class DicomExporter:
 
     @staticmethod
     def _create_ds(inst):
+        """Helper to create a fresh FileDataset from an Instance."""
         meta = FileMetaDataset()
         # Fallback to attributes if sop_class_uid property is missing/empty
         sop_class = inst.sop_class_uid
@@ -965,6 +1078,7 @@ class DicomExporter:
 
     @staticmethod
     def _merge(ds, attrs):
+        """Merges a dictionary of attributes into a pydicom Dataset."""
         for t, v in attrs.items():
             # Explicit handling for Gantry Private Tags to ensure correct VR
             if t == "0099,0010":
@@ -1001,6 +1115,12 @@ class DicomExporter:
     def _sanitize(filename: str) -> str:
         """
         Removes illegal characters from filenames.
+        
+        Args:
+            filename (str): Input filename.
+            
+        Returns:
+            str: Sanitized filename string.
         """
         if not filename:
             return "Unknown"
@@ -1013,7 +1133,10 @@ class DicomExporter:
     def _merge_sequences(ds, sequences: Dict[str, Any]):
         """
         Recursively populates sequences into the dataset.
-        sequences: Dict[str, DicomSequence]
+
+        Args:
+            ds (pydicom.Dataset): The dataset to modify.
+            sequences (Dict[str, DicomSequence]): Dictionary mapping tags to Sequence objects.
         """
         from pydicom.sequence import Sequence
         from pydicom.dataset import Dataset
