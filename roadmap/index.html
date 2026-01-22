@@ -1005,10 +1005,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#current-status-v053-maintenance-release" class="md-nav__link">
+  <a href="#current-status-v060-architecture-analytics" class="md-nav__link">
     <span class="md-ellipsis">
       
-        📍 Current Status: v0.5.3 (Maintenance Release)
+        📍 Current Status: v0.6.0 (Architecture &amp; Analytics)
       
     </span>
   </a>
@@ -1028,21 +1028,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#v060-analytics-reporting" class="md-nav__link">
+  <a href="#v070-the-connector-networking-refinement" class="md-nav__link">
     <span class="md-ellipsis">
       
-        v0.6.0 - Analytics &amp; Reporting
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#v070-the-connector-networking" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        v0.7.0 - The Connector (Networking)
+        v0.7.0 - The Connector (Networking &amp; Refinement)
       
     </span>
   </a>
@@ -1141,10 +1130,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#current-status-v053-maintenance-release" class="md-nav__link">
+  <a href="#current-status-v060-architecture-analytics" class="md-nav__link">
     <span class="md-ellipsis">
       
-        📍 Current Status: v0.5.3 (Maintenance Release)
+        📍 Current Status: v0.6.0 (Architecture &amp; Analytics)
       
     </span>
   </a>
@@ -1164,21 +1153,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#v060-analytics-reporting" class="md-nav__link">
+  <a href="#v070-the-connector-networking-refinement" class="md-nav__link">
     <span class="md-ellipsis">
       
-        v0.6.0 - Analytics &amp; Reporting
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#v070-the-connector-networking" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        v0.7.0 - The Connector (Networking)
+        v0.7.0 - The Connector (Networking &amp; Refinement)
       
     </span>
   </a>
@@ -1256,39 +1234,28 @@
 
 <h1 id="project-roadmap">Project Roadmap</h1>
 <p>This document outlines the development plan for <strong>Gantry</strong>. We welcome contributions from the community to help us achieve these milestones!</p>
-<h2 id="current-status-v053-maintenance-release">📍 Current Status: v0.5.3 (Maintenance Release)</h2>
+<h2 id="current-status-v060-architecture-analytics">📍 Current Status: v0.6.0 (Architecture &amp; Analytics)</h2>
 <ul>
-<li>[x] <strong>Core Object Model</strong>: <code>Patient</code> -&gt; <code>Study</code> -&gt; <code>Series</code> -&gt; <code>Instance</code></li>
-<li>[x] <strong>Split-Persistence Architecture</strong>: Binary sidecar (<code>_pixels.bin</code>) for high-speed pixel storage.</li>
-<li>[x] <strong>Database Indexing</strong>: O(1) lookups and scalable Joins via SQLite indexes.</li>
-<li>[x] <strong>Multithreaded Redaction</strong>: Parallelized pixel redaction using <code>ThreadPoolExecutor</code>.</li>
-<li>[x] <strong>Free-Threaded Stability</strong>: Full support for Python 3.14t (no-GIL) via versioned dirty tracking.</li>
-<li>[x] <strong>Deep Memory Management</strong>: Automatic pixel offloading (<code>Instance.unload_pixel_data()</code>) to handle datasets exceeding RAM.</li>
-<li>[x] <strong>Async Audit Queue</strong>: Non-blocking SQLite persistence for high-throughput auditing.</li>
-<li>[x] <strong>Custom Privacy Profiles</strong>: Support for external YAML profiles.</li>
-<li>[x] <strong>Standard Privacy Profiles</strong>: Built-in support for DICOM PS3.15 Annex E.</li>
+<li>[x] <strong>Hybrid Persistence</strong>: Split-storage (JSON + Table) for unlimited private tags.</li>
+<li>[x] <strong>Unified Configuration</strong>: API-driven config management (<code>GantryConfiguration</code>).</li>
+<li>[x] <strong>Sidecar Offloading</strong>: Eager binary extraction for fast session loading.</li>
+<li>[x] <strong>Compliance Reporting</strong>: Generate reports verifying dataset compliance against a selected privacy profile.</li>
+<li>[x] <strong>Dataframe Export</strong>: Expose a method to flatten <code>Patient -&gt; Study -&gt; Series -&gt; Instance</code> hierarchy into a comprehensive parquet file.</li>
+<li>[x] <strong>Query-based Export</strong>: Export subsets of data based on metadata queries (e.g., "Modality == 'CT'").</li>
+<li>[x] <strong>Export Manifest</strong>: Automatic generation of visual (HTML) and machine-readable (CSV/JSON) manifests listing all exported files and their key metadata.</li>
+<li>[x] <strong>Structured Reporting (SR) Support</strong>: Support for deep parsing and anonymization of DICOM Structured Reports.</li>
 <li>[x] <strong>Legacy Config Removal</strong>: Streamlined codebase by removing list-based config support.</li>
 </ul>
 <hr />
 <h2 id="upcoming-milestones">🚀 Upcoming Milestones</h2>
-<h3 id="v060-analytics-reporting">v0.6.0 - Analytics &amp; Reporting</h3>
-<p>Focus: Empowering users to understand their data through deep inspection on the object graph.</p>
-<ul>
-<li>[ ] <strong>Dataframe Export</strong>: Expose a method to flatten <code>Patient -&gt; Study -&gt; Series -&gt; Instance</code> hierarchy into a comprehensive parquet file.</li>
-<li>[ ] <strong>Sidecar Compaction</strong>: Utility to vacuum/compact the <code>_pixels.bin</code> file to reclaim space from deleted or redacted images.</li>
-<li>[ ] <strong>Pixel Content Analysis (OCR)</strong>: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.</li>
-<li>[ ] <strong>Metadata Querying</strong>: Enable SQL-like querying on the dataframe (e.g., "Find all scans with <code>SliceThickness &lt; 1.0</code> acquired by 'GE' scanners").</li>
-<li>[ ] <strong>Query-based Export</strong>: Allow users to filter exports using criteria (e.g., <code>session.export(query="Modality=='CT' and SliceThickness &gt; 5.0")</code>).</li>
-<li>[ ] <strong>Compliance Reporting</strong>: Generate reports verifying dataset compliance against a selected privacy profile.</li>
-<li>[ ] <strong>Export Manifest</strong>: Automatic generation of visual (HTML) and machine-readable (CSV/JSON) manifests listing all exported files and their key metadata.</li>
-<li>[ ] <strong>Audit Reporting</strong>: Export comprehensive CSV reports of the session inventory, including details on what was redacted or modified.</li>
-<li>[ ] <strong>Structured Reporting (SR) Support</strong>: Support for deep parsing and anonymization of DICOM Structured Reports.</li>
-</ul>
-<h3 id="v070-the-connector-networking">v0.7.0 - The Connector (Networking)</h3>
-<p>Focus: Integrating Gantry into clinical workflows via DIMSE services.</p>
+<h3 id="v070-the-connector-networking-refinement">v0.7.0 - The Connector (Networking &amp; Refinement)</h3>
+<p>Focus: Integrating Gantry into clinical workflows and deepening analysis capabilities.</p>
 <ul>
 <li>[ ] <strong>PACS Integration</strong>: Implement C-STORE, C-FIND, C-MOVE using <code>pynetdicom</code> to query and pull studies directly.</li>
 <li>[ ] <strong>Research Export Formats</strong>: Native support for exporting to NIfTI and BIDS standards.</li>
+<li>[ ] <strong>Pixel Content Analysis (OCR)</strong>: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.</li>
+<li>[ ] <strong>Audit Reporting</strong>: Export comprehensive CSV reports of the session inventory, including details on what was redacted or modified.</li>
+<li>[x] <strong>Sidecar Compaction</strong>: Tool to rewrite sidecar file and reclaim space from redacted/deleted instances.</li>
 </ul>
 <h3 id="v080-cloud-scale">v0.8.0 - Cloud Scale</h3>
 <p>Focus: Native support for cloud storage to handle massive datasets.</p>
