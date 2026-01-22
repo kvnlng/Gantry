@@ -1,15 +1,18 @@
 import os
 import pickle
 import sys
-import numpy as np
+import shutil
+import hashlib
+from typing import List, Set, Dict, Any, Optional, Tuple, NamedTuple, Iterable
+from datetime import datetime, date
+
+import json
 import pydicom
+import numpy as np
 from pydicom.dataset import FileDataset, FileMetaDataset
-from pydicom.uid import ImplicitVRLittleEndian
+from pydicom.uid import ImplicitVRLittleEndian, UncompressedTransferSyntaxes
 from pydicom.tag import Tag
 from pydicom.datadict import dictionary_VR
-from datetime import datetime, date
-from typing import List, Set, Dict, Any, Optional, Tuple, NamedTuple, Iterable
-import shutil
 from .entities import Patient, Study, Series, Instance, Equipment, DicomItem
 from .logger import get_logger
 from .parallel import run_parallel
@@ -71,11 +74,6 @@ class DicomStore:
             return DicomStore()
         with open(filepath, 'rb') as f:
             return pickle.load(f)
-
-from .parallel import run_parallel
-
-from pydicom.uid import UncompressedTransferSyntaxes
-import hashlib
 
 def populate_attrs(ds: Any, item: "DicomItem", text_index: list = None):
     """
@@ -318,8 +316,6 @@ class DicomImporter:
                     logger.error(f"Linkage Failed: {e}")
 
         logger.info(f"Successfully ingested {count} instances.")
-
-
 
 
 class ExportContext(NamedTuple):
@@ -582,7 +578,6 @@ def _compress_j2k(ds, pixel_array=None):
         raise RuntimeError(f"Compression failed: {e}")
 
 
-import json
 
 def gantry_json_object_hook(d):
     if "__type__" in d and d["__type__"] == "bytes":

@@ -6,7 +6,6 @@ import datetime
 from .logger import get_logger
 
 @dataclass
-@dataclass
 class ManifestItem:
     """
     Represents a single exported file or instance in the manifest.
@@ -41,7 +40,6 @@ class ManifestItem:
     anonymized: bool = True
 
 
-@dataclass
 @dataclass
 class Manifest:
     """

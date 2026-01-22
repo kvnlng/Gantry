@@ -2,8 +2,8 @@ import concurrent.futures
 import os
 import sys
 import multiprocessing
-from tqdm import tqdm
 from typing import Callable, Iterable, List, Any, TypeVar
+from tqdm import tqdm
 
 T = TypeVar('T')
 R = TypeVar('R')

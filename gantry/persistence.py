@@ -253,7 +253,8 @@ class SqliteStore:
         while not self.audit_queue.empty():
             try:
                 batch.append(self.audit_queue.get_nowait())
-            except: break
+            except:
+                break
         if batch:
             self.log_audit_batch(batch)
 

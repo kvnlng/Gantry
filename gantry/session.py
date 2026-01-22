@@ -160,7 +160,6 @@ class DicomSession:
         :param sync: If True, blocks until save is complete.
         """
         if sync and hasattr(self, 'store_backend'):
-             from .logger import get_logger
              get_logger().info("Saving session (Synchronous)...")
              self.store_backend.save_all(self.store.patients)
         elif hasattr(self, 'persistence_manager'):
@@ -318,7 +317,6 @@ class DicomSession:
             directory (str): The path to the directory containing DICOM files.
         """
         print(f"Ingesting from '{directory}'...")
-        from .io_handlers import DicomImporter
         # Pass Sidecar Manager for eager pixel writing
         DicomImporter.import_files([directory], self.store, executor=self._executor, sidecar_manager=self.store_backend.sidecar)
         
@@ -434,7 +432,6 @@ class DicomSession:
             output_path (str): The file path where the generated YAML configuration should be saved.
         """
         import yaml
-        import os
         
         # Helper for Flow-Style Lists (Bracketed)
         class FlowList(list): pass
@@ -452,7 +449,6 @@ class DicomSession:
         all_equipment = self.store.get_unique_equipment()
         
         # Instantiate service to query pixel/tag data efficiently
-        from .services import RedactionService
         service = RedactionService(self.store)
         
         # 2. Identify what is already configured (Pixel Rules)
@@ -467,7 +463,8 @@ class DicomSession:
                  with open(kb_path, 'r') as f:
                      kb_data = json.load(f)
                      kb_machines = kb_data.get("machines", [])
-             except: pass
+             except:
+                pass
 
         # 3. Find missing machines and try to pre-fill
         missing_configs = []
@@ -576,7 +573,6 @@ class DicomSession:
         if not phi_tags:
              # Load default config for scaffold
              try:
-                 from .config_manager import ConfigLoader
                  phi_tags = ConfigLoader.load_phi_config() 
              except Exception as e:
                  get_logger().warning(f"Failed to load research tags: {e}")

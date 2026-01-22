@@ -34,7 +34,6 @@ class DicomItem:
         sequences (Dict[str, DicomSequence]): A dictionary mapping tags to nested DicomSequences.
     """
     # init=False to avoid constructor conflicts during inheritance
-    # init=False to avoid constructor conflicts during inheritance
     attributes: Dict[str, Any] = field(init=False)
     sequences: Dict[str, DicomSequence] = field(init=False)
     

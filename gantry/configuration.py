@@ -3,7 +3,6 @@ from typing import List, Dict, Any, Optional
 import copy
 
 @dataclass
-@dataclass
 class GantryConfiguration:
     """
     Encapsulates the runtime configuration for a DicomSession.
