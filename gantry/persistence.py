@@ -183,7 +183,6 @@ class SqliteStore:
                     self._memory_conn.commit()
                     # print("DEBUG: Commit successful")
                 except Exception as e:
-                except sqlite3.Error as e:
                     # print(f"DEBUG: Rollback due to {e}")
                     conn.rollback()
                     raise e
