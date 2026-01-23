@@ -49,13 +49,17 @@ class SidecarManager:
         import fcntl
 
         # We assume strict append mode
-        with open(self.filepath, 'ab') as f:
+        # We assume strict append mode
+        # Use r+b and explicit seek to ensure tell() is accurate and writes are
+        # contiguous, avoiding 'ab' mode ambiguity in some environments.
+        with open(self.filepath, 'r+b') as f:
             fcntl.flock(f, fcntl.LOCK_EX)
             try:
+                f.seek(0, 2)  # Force Seek to End
                 offset = f.tell()
                 f.write(blob)
                 f.flush()
-                # os.fsync(f.fileno())
+                os.fsync(f.fileno())
             finally:
                 fcntl.flock(f, fcntl.LOCK_UN)
 
