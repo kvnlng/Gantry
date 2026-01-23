@@ -1,12 +1,12 @@
 import os
+from typing import List, Dict, Any, Optional, Callable, Tuple
+from dataclasses import dataclass, field
 import numpy as np
 import pydicom
 from pydicom.uid import generate_uid
-from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Callable, Tuple
+import gantry.imagecodecs_handler as h
+from .logger import get_logger
 
-
-# --- Base Classes ---
 
 @dataclass(slots=True)
 class DicomSequence:
@@ -36,7 +36,7 @@ class DicomItem:
     # init=False to avoid constructor conflicts during inheritance
     attributes: Dict[str, Any] = field(init=False)
     sequences: Dict[str, DicomSequence] = field(init=False)
-    
+
     # Versioning for robust persistence
     _mod_count: int = field(init=False, default=0)
     _saved_mod_count: int = field(init=False, default=-1)
@@ -51,7 +51,7 @@ class DicomItem:
     @property
     def _dirty(self) -> bool:
         return self._mod_count > self._saved_mod_count
-        
+
     @_dirty.setter
     def _dirty(self, value: bool):
         # Legacy support: setting True increments version
@@ -96,6 +96,12 @@ class DicomItem:
         self._mod_count += 1
 
     def mark_clean(self):
+        """Mark the entity and all its items as clean by syncing modification counts.
+
+        This is a legacy method that forces the entity to be marked as clean by
+        updating the saved modification count to match the current modification count.
+        Also recursively marks all items in all sequences as clean.
+        """
         # Legacy: force clean
         self._saved_mod_count = self._mod_count
         for seq in self.sequences.values():
@@ -136,11 +142,11 @@ class Instance(DicomItem):
 
     # Transient: Actual pixel data (NOT persisted to pickle)
     pixel_array: Optional[np.ndarray] = field(default=None, repr=False)
-    
+
     # Transient: Lazy Loader (Callable that returns np.ndarray)
     # Used for Sidecar or deferred logic
     _pixel_loader: Optional[Callable[[], np.ndarray]] = field(default=None, repr=False)
-    
+
     # Transient: Hash for Integrity Check
     _pixel_hash: Optional[str] = field(default=None, repr=False)
 
@@ -155,16 +161,14 @@ class Instance(DicomItem):
         # Inlined from DicomItem to avoid super() mismatch issues with slots/reloads
         self.attributes = {}
         self.sequences = {}
-        
+
         # Versioning
         self._mod_count = 1
         self._saved_mod_count = 0
-        
+
         self.set_attr("0008,0018", self.sop_instance_uid)
         self.set_attr("0008,0016", self.sop_class_uid)
         self.set_attr("0020,0013", self.instance_number)
-
-
 
     def regenerate_uid(self):
         """
@@ -181,19 +185,18 @@ class Instance(DicomItem):
         """
         # 1. Generate new UID using pydicom's generator (or your org root)
         new_uid = generate_uid()
-        
+
         # 2. Update the Object Property
         self.sop_instance_uid = new_uid
-        
+
         # 3. Update the DICOM Attribute Dictionary
         self.set_attr("0008,0018", new_uid)
-        
+
         # 4. Detach from physical file
-        # Since this object is now a "new" instance in memory, 
+        # Since this object is now a "new" instance in memory,
         # it no longer matches the file on disk.
-        self.file_path = None 
-        
-        from .logger import get_logger
+        self.file_path = None
+
         get_logger().debug(f"  -> Identity regenerated: {new_uid}")
 
     def unload_pixel_data(self) -> bool:
@@ -204,11 +207,12 @@ class Instance(DicomItem):
         or `_pixel_loader` is present).
 
         Returns:
-            bool: True if unloaded successfully, False if it was unsafe to unload (data would be lost).
+            bool: True if unloaded successfully,
+                 False if it was unsafe to unload (data would be lost).
         """
         if self.pixel_array is None:
             return True
-            
+
         if self.file_path or self._pixel_loader:
             self.pixel_array = None
             # print(f"DEBUG: Unloaded pixels for {self.sop_instance_uid}")
@@ -239,15 +243,16 @@ class Instance(DicomItem):
             return self.pixel_array
 
         if self._pixel_loader:
-             try:
-                 # Invoke callback (e.g. sidecar read)
-                 arr = self._pixel_loader()
-                 # Use set_pixel_data to ensure attributes (rows, cols) are synced 
-                 # This is critical if the loader returns a raw array but attributes were not yet set/restored
-                 self.set_pixel_data(arr)
-                 return self.pixel_array
-             except Exception as e:
-                 raise RuntimeError(f"Pixel Loader failed for {self.sop_instance_uid}: {e}")
+            try:
+                # Invoke callback (e.g. sidecar read)
+                arr = self._pixel_loader()
+                # Use set_pixel_data to ensure attributes (rows, cols) are synced
+                # This is critical if the loader returns a raw array but
+                # attributes were not yet set/restored
+                self.set_pixel_data(arr)
+                return self.pixel_array
+            except Exception as e:
+                raise RuntimeError(f"Pixel Loader failed for {self.sop_instance_uid}: {e}") from e
 
         if self.file_path and os.path.exists(self.file_path):
             try:
@@ -255,7 +260,7 @@ class Instance(DicomItem):
                 ds = None
                 try:
                     ds = pydicom.dcmread(self.file_path)
-                    
+
                     self.set_pixel_data(ds.pixel_array)  # Cache it in memory
                     return self.pixel_array
                 except (AttributeError, TypeError):
@@ -266,32 +271,32 @@ class Instance(DicomItem):
                         return None
                     # Re-raise to be handled by outer except
                     raise e
-                    
+
             except Exception as e:
                 # Try explicit fallback to gantry.imagecodecs_handler
                 # Pydicom sometimes fails to iterate handlers correctly or swallows errors.
                 try:
-                    import gantry.imagecodecs_handler as h
                     if ds is not None and h.is_available() and h.supports_transfer_syntax(ds.file_meta.TransferSyntaxUID):
                         arr = h.get_pixel_data(ds)
                         self.set_pixel_data(arr)
                         return self.pixel_array
-                except Exception as fallback_e:
+                except (ImportError, AttributeError, RuntimeError):
                     # Fallback failed, proceed to raise original error
                     pass
 
                 # Try to get Transfer Syntax UID for better debugging
                 ts_uid = "Unknown"
                 if ds is not None and hasattr(ds, "file_meta"):
-                     ts_uid = getattr(ds.file_meta, "TransferSyntaxUID", "Unknown")
-                
+                    ts_uid = getattr(ds.file_meta, "TransferSyntaxUID", "Unknown")
+
                 if "missing dependencies" in str(e) or "decompress" in str(e):
                     # Enhanced debug output
                     handlers = []
                     try:
                         # pydicom is already imported globally
                         handlers = [str(h) for h in pydicom.config.pixel_data_handlers]
-                    except: pass
+                    except Exception:
+                        pass
 
                     raise RuntimeError(
                         f"Failed to decompress pixel data for {os.path.basename(self.file_path)} "
@@ -300,10 +305,10 @@ class Instance(DicomItem):
                         f"Active pydicom handlers: {handlers}\n"
                         "Missing image codecs. Please ensure 'pillow', 'pylibjpeg', or 'gdcm' are installed."
                     ) from e
-                
-                # If we just caught the re-raised "no pixel data" exception, it would be handled above, 
+
+                # If we just caught the re-raised "no pixel data" exception, it would be handled above,
                 # but if dcmread fails completely or something else happens:
-                raise RuntimeError(f"Lazy load failed for {self.file_path}: {e}")
+                raise RuntimeError(f"Lazy load failed for {self.file_path}: {e}") from e
 
         raise FileNotFoundError(f"Pixels missing and file not found: {self.file_path}")
 
@@ -331,40 +336,40 @@ class Instance(DicomItem):
         frames = 1
 
         if ndim == 1:
-             # Flattened array (e.g. from Sidecar loader)
-             # Attempt to reshape using existing metadata if available
-             try:
-                 r = int(self.attributes.get("0028,0010", 0))
-                 c = int(self.attributes.get("0028,0011", 0))
-                 s = int(self.attributes.get("0028,0002", 1))
-                 f = int(self.attributes.get("0028,0008", 1))
-                 
-                 expected_size = r * c * s * f
-                 if expected_size > 0 and array.size >= expected_size:
-                      # Truncate padding if present (DICOM alignment)
-                      if array.size > expected_size:
-                          array = array[:expected_size]
-                      
-                      # Reshape logic
-                      if f > 1:
-                          array = array.reshape((f, r, c, s)) if s > 1 else array.reshape((f, r, c))
-                      elif s > 1:
-                          array = array.reshape((r, c, s))
-                      else:
-                          array = array.reshape((r, c))
-                      self.pixel_array = array
-                      return # Done, attributes already match
-                 elif expected_size == 0:
-                      # Metadata missing, treat as linear?
-                      pass
-                      
-             except:
-                 pass
-                 
-             # Only raise if we couldn't resolve it
-             if len(array.shape) == 1: # Still 1D
-                  rows, cols = 1, shape[0]
-                  
+            # Flattened array (e.g. from Sidecar loader)
+            # Attempt to reshape using existing metadata if available
+            try:
+                r = int(self.attributes.get("0028,0010", 0))
+                c = int(self.attributes.get("0028,0011", 0))
+                s = int(self.attributes.get("0028,0002", 1))
+                f = int(self.attributes.get("0028,0008", 1))
+
+                expected_size = r * c * s * f
+                if expected_size > 0 and array.size >= expected_size:
+                    # Truncate padding if present (DICOM alignment)
+                    if array.size > expected_size:
+                        array = array[:expected_size]
+
+                    # Reshape logic
+                    if f > 1:
+                        array = array.reshape((f, r, c, s)) if s > 1 else array.reshape((f, r, c))
+                    elif s > 1:
+                        array = array.reshape((r, c, s))
+                    else:
+                        array = array.reshape((r, c))
+                    self.pixel_array = array
+                    return  # Done, attributes already match
+                elif expected_size == 0:
+                    # Metadata missing, treat as linear?
+                    pass
+
+            except ValueError:
+                pass
+
+            # Only raise if we couldn't resolve it
+            if len(array.shape) == 1:  # Still 1D
+                rows, cols = 1, shape[0]
+
         elif ndim == 2:
             rows, cols = shape
         elif ndim == 3:
@@ -380,21 +385,22 @@ class Instance(DicomItem):
         self.set_attr("0028,0010", rows)
         self.set_attr("0028,0011", cols)
         self.set_attr("0028,0002", samples)
-        if frames > 1: self.set_attr("0028,0008", str(frames))
-        if samples >= 3: 
+        if frames > 1:
+            self.set_attr("0028,0008", str(frames))
+        if samples >= 3:
             self.set_attr("0028,0004", "RGB")
-            self.set_attr("0028,0006", 0) # Force Interleaved (standard numpy)
+            self.set_attr("0028,0006", 0)  # Force Interleaved (standard numpy)
         else:
             # Preserve existing PhotometricInterpretation (e.g. MONOCHROME1)
             # Only set default if missing
             if not self.attributes.get("0028,0004"):
                 self.set_attr("0028,0004", "MONOCHROME2")
-        
+
         # Ensure BitsAllocated matches array data type
         # SidecarPixelLoader relies on this to determine uint8 vs uint16
         bits = array.itemsize * 8
         self.set_attr("0028,0100", bits)
-        
+
         self._mod_count += 1
 
 
@@ -422,6 +428,9 @@ class Series:
         self._dirty = True
 
     def mark_clean(self):
+        """
+        Marks the current object and all its instances as clean by setting their '_dirty' attribute to False.
+        """
         self._dirty = False
         for i in self.instances:
             i.mark_clean()
@@ -451,6 +460,9 @@ class Study:
         self._dirty = True
 
     def mark_clean(self):
+        """
+        Marks the current object and all associated series as clean by setting their '_dirty' attribute to False.
+        """
         self._dirty = False
         for s in self.series:
             s.mark_clean()
@@ -475,6 +487,12 @@ class Patient:
         self._dirty = True
 
     def mark_clean(self):
+        """
+        Marks the current entity and all associated studies as clean.
+
+        Resets the '_dirty' flag to False for this entity and recursively calls
+        'mark_clean' on all studies to ensure their '_dirty' flags are also reset.
+        """
         self._dirty = False
         for s in self.studies:
             s.mark_clean()

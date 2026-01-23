@@ -1,13 +1,15 @@
 import os
-from cryptography.fernet import Fernet
 from typing import Optional
+from cryptography.fernet import Fernet
+
 
 class KeyManager:
     """
     Manages the lifecycle of a symmetric encryption key (Fernet).
-    
+
     Persists the key to a file for consistent encryption/decryption across sessions.
     """
+
     def __init__(self, key_path: str = "gantry.key"):
         """
         Args:
@@ -51,6 +53,7 @@ class CryptoEngine:
     """
     Handles encryption and decryption of bytes using Fernet (AES-128-CBC w/ HMAC-SHA256).
     """
+
     def __init__(self, key: bytes):
         """
         Args:

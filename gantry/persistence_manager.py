@@ -7,23 +7,25 @@ from .entities import Patient
 from .persistence import SqliteStore
 from .logger import get_logger
 
+
 class PersistenceManager:
     """
     Offloads persistence operations to a background thread to unblock the main thread.
-    
+
     This manager:
     - Maintains a queue of patient snapshots to save.
     - Runs a background worker thread (`_worker`) to process the queue.
     - Registers an `atexit` handler to ensure pending data is flushed before process termination.
     """
+
     def __init__(self, store_backend: SqliteStore):
         self.store_backend = store_backend
         self.queue = queue.Queue()
         self.running = False
         self.thread = None
-        
+
         self._start_worker()
-        
+
         atexit.register(self.shutdown)
         get_logger().info("PersistenceManager initialized.")
 
@@ -37,7 +39,7 @@ class PersistenceManager:
     def flush(self):
         """
         Blocks until all tasks in the queue have been processed.
-        
+
         This method ensures that any currently queued save operations are completed before returning.
         If the worker thread has unexpectedly died, it restarts it to drain the queue.
         """
@@ -51,14 +53,14 @@ class PersistenceManager:
         # (If thread dies during join, we might hang? No, task_done() is called in finally block)
         # But if thread dies BEFORE get(), item remains.
         # Our modified start_worker handles restart.
-        
+
         self.queue.join()
 
     def save_async(self, patients: List[Patient]):
         """
         Queues an asynchronous save operation for a list of patients.
 
-        Creates a shallow copy (snapshot) of the list to mitigate race conditions 
+        Creates a shallow copy (snapshot) of the list to mitigate race conditions
         where the UI/Session might add/remove patients during the save process.
 
         Args:
@@ -70,7 +72,8 @@ class PersistenceManager:
             self._start_worker()
 
         # Shallow copy the list itself so if the session adds/removes patients, we have the old list.
-        # But if attributes of patients change, we see the change. This is usually acceptable "eventual consistency" for this UX.
+        # But if attributes of patients change, we see the change. This is usually
+        # acceptable "eventual consistency" for this UX.
         snapshot = list(patients)
         self.queue.put(snapshot)
 
@@ -78,17 +81,17 @@ class PersistenceManager:
         while True:
             try:
                 # Wait for work
-                patients = self.queue.get(timeout=1.0) 
-                
+                patients = self.queue.get(timeout=1.0)
+
                 # If we get a sentinel (None), we exit
                 if patients is None:
                     if self.running:
-                         # Stale sentinel from previous shutdown - ignore it
-                         self.queue.task_done()
-                         continue
+                        # Stale sentinel from previous shutdown - ignore it
+                        self.queue.task_done()
+                        continue
                     self.queue.task_done()
                     break
-                
+
                 # Perform the save
                 # We catch exceptions to prevent thread death
                 try:
@@ -97,15 +100,15 @@ class PersistenceManager:
                     get_logger().error(f"Background save failed: {e}")
                 finally:
                     self.queue.task_done()
-                    
+
             except queue.Empty:
-                # Check exit condition periodically if using timeout, 
+                # Check exit condition periodically if using timeout,
                 # but we rely on sentinel for clean shutdown.
                 # However, if running becomes False (force kill?) and no sentinel?
                 # shutdown() sends sentinel.
                 if not self.running and self.queue.empty():
-                     # Fallback exit? No, stick to sentinel.
-                     pass
+                    # Fallback exit? No, stick to sentinel.
+                    pass
                 continue
             except Exception as e:
                 get_logger().error(f"Worker crashed: {e}")
@@ -113,8 +116,8 @@ class PersistenceManager:
     def shutdown(self):
         """
         Stops the worker thread gracefully.
-        
-        Waits for any pending operations to complete (with a timeout) before 
+
+        Waits for any pending operations to complete (with a timeout) before
         killing the thread (via sentinel and join).
         """
         # Avoid double shutdown or shutdown if never started
@@ -123,7 +126,7 @@ class PersistenceManager:
 
         get_logger().info("Shutting down PersistenceManager...")
         print("\nShutting down Gantry Persistence Manager...")
-        
+
         # Determine if we have pending work
         pending = self.queue.qsize()
         if pending > 0:
@@ -134,7 +137,7 @@ class PersistenceManager:
         self.running = False
         # Wake up if sleeping on queue
         self.queue.put(None)
-        
+
         self.thread.join(timeout=30)
         get_logger().info("PersistenceManager stopped.")
         print("Persistence Manager Stopped.")

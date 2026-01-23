@@ -1,20 +1,38 @@
-import yaml
+"""
+Configuration manager for handling Gantry system settings.
+
+This module provides functionality to load, validate, and manage configuration
+files for the Gantry application. It supports unified YAML configurations,
+legacy formats, and privacy profile management.
+"""
+
 import os
 import logging
 import copy
-from typing import Dict, Any, Union, List
+from typing import Dict, Any, List
+import json
+import re
+import yaml
 
 from .profiles import PRIVACY_PROFILES
 
 CONFIG_VERSION = "2.0"
 
-def get_logger():
+
+def get_logger() -> logging.Logger:
+    """
+    Retrieves the configured logger for the Gantry application.
+
+    Returns:
+        logging.Logger: The 'gantry' logger instance.
+    """
     return logging.getLogger("gantry")
+
 
 def load_unified_config(path: str) -> Dict[str, Any]:
     """
     Loads the unified configuration file (YAML).
-    
+
     Supports legacy list-based config (machine rules only) and new dict-based config.
     Merges 'privacy_profile' if specified (Built-in or External).
 
@@ -30,52 +48,67 @@ def load_unified_config(path: str) -> Dict[str, Any]:
     if not (path.endswith('.yaml') or path.endswith('.yml')):
         raise ValueError("Configuration file must be a YAML file (.yaml or .yml)")
 
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-        
+
     # Handle Standard Config
     config = data
-    
+
     # Merge Privacy Profile
     if "privacy_profile" in config:
         profile_name = config["privacy_profile"]
-        
+
         profile_rules = {}
-        
+
         # 1. Check Built-in Profiles
         if profile_name in PRIVACY_PROFILES:
             profile_rules = copy.deepcopy(PRIVACY_PROFILES[profile_name])
-            get_logger().info(f"Loaded built-in privacy profile '{profile_name}' with {len(profile_rules)} rules.")
-            
+            get_logger().info("Loaded built-in privacy profile '%s' with %d rules.", profile_name, len(profile_rules))
+
         # 2. Check External File (Custom Profile)
         elif os.path.exists(profile_name):
             try:
                 # We reuse load_phi_config logic to parse just the tags
                 profile_rules = ConfigLoader.load_phi_config(profile_name)
-                get_logger().info(f"Loaded custom privacy profile from '{profile_name}' with {len(profile_rules)} rules.")
-            except Exception as e:
-                get_logger().error(f"Failed to load custom profile '{profile_name}': {e}")
-                
+                get_logger().info("Loaded custom privacy profile from '%s' with %d rules.", profile_name, len(profile_rules))
+            except (ValueError, OSError) as e:
+                get_logger().error("Failed to load custom profile '%s': %s", profile_name, e)
+
         else:
-            get_logger().warning(f"Unknown privacy profile reference '{profile_name}' (not a built-in or file). Ignoring.")
+            get_logger().warning("Unknown privacy profile reference '%s' (not a built-in or file). Ignoring.", profile_name)
 
         if profile_rules:
             # User rules override profile rules
             user_rules = config.get("phi_tags", {})
             profile_rules.update(user_rules)
             config["phi_tags"] = profile_rules
-            
+
     return config
 
 
-
 class ConfigLoader:
+    """
+    Loads and validates configuration files for the Gantry system.
+
+    This class provides static methods to parse unified YAML configuration files (v2.0),
+    legacy configuration formats, and PHI tag definitions. It handles configuration
+    validation, normalization, and file I/O operations.
+
+    Supports multiple configuration formats:
+    - Unified v2.0 YAML configs with PHI tags, machine rules, and date jitter settings
+    - Legacy machine rule configurations
+    - PHI tag definitions (from files or internal defaults)
+
+    The class also provides utility methods for filename sanitization and YAML parsing.
+    """
+
     @staticmethod
-    def load_unified_config(filepath: str) -> tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, Any], bool]:
+    def load_unified_config(
+            filepath: str) -> tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, Any], bool]:
         """
         Parses the unified YAML config (v2.0).
 
-        Extracts the core configuration components: PHI tags, machine rules, 
+        Extracts the core configuration components: PHI tags, machine rules,
         date jitter settings, and global flags.
 
         Args:
@@ -86,25 +119,25 @@ class ConfigLoader:
         """
         # Call the top-level loader which handles YAML, Legacy List, and Privacy Profiles
         data = load_unified_config(filepath)
-        
+
         phi_tags = data.get("phi_tags", {})
         # Support 'machines' (v2) or 'machine_rules' (legacy internal)
         machine_rules = data.get("machines", data.get("machine_rules", []))
-        
+
         # Date Jitter Normalization
         dj = data.get("date_jitter", {"min_days": -365, "max_days": -1})
         if isinstance(dj, int):
-             # Legacy support or user provided int. Convert to fixed shift.
-             date_jitter_config = {"min_days": dj, "max_days": dj}
+            # Legacy support or user provided int. Convert to fixed shift.
+            date_jitter_config = {"min_days": dj, "max_days": dj}
         else:
-             date_jitter_config = dj
-        
+            date_jitter_config = dj
+
         remove_private_tags = data.get("remove_private_tags", True)
-        
+
         # Validate machines
         for i, rule in enumerate(machine_rules):
             ConfigLoader._validate_rule(rule, i)
-            
+
         return phi_tags, machine_rules, date_jitter_config, remove_private_tags
 
     @staticmethod
@@ -112,27 +145,27 @@ class ConfigLoader:
         """
         Legacy/Convenience support for loading only Machine Rules.
 
-        Use this if you only need the 'machines' list from a unified config, 
+        Use this if you only need the 'machines' list from a unified config,
         or an old-style legacy config file.
 
         Args:
             filepath (str): Path to the config file.
-        
+
         Returns:
             List[Dict[str, Any]]: List of validated machine rule dictionaries.
         """
         data = ConfigLoader._load_yaml(filepath)
-        
+
         rules = []
-        rules = []
+
         if "machines" in data:
-            rules = data["machines"] # v1 or v2
+            rules = data["machines"]  # v1 or v2
         else:
-             get_logger().warning("Config Warning: Could not find 'machines' list.")
+            get_logger().warning("Config Warning: Could not find 'machines' list.")
 
         for i, rule in enumerate(rules):
             ConfigLoader._validate_rule(rule, i)
-            
+
         return rules
 
     @staticmethod
@@ -148,36 +181,38 @@ class ConfigLoader:
         """
         if filepath:
             data = ConfigLoader._load_yaml(filepath)
-            
+
             # Support v2 unified file used as simple PHI config
             if "phi_tags" in data:
                 return data["phi_tags"]
-            return data.get("phi_tags", data) # Fallback to assumes root dict is tags if no key
+            return data.get("phi_tags", data)  # Fallback to assumes root dict is tags if no key
         else:
             # Load default from package resources
             base = os.path.dirname(os.path.abspath(__file__))
             filepath = os.path.join(base, "resources", "phi_tags.json")
             if os.path.exists(filepath):
-                 # Resource is likely still JSON for internal defaults unless we change it too. 
-                 # But sticking to JSON for internal resources is fine, OR we change helper to handle both?
-                 # User asked to drop JSON support for *config files*. 
-                 # Let's support JSON just for internal resources via simple json load if yaml fails or extension check?
-                 # Actually, clearer to migrate the resource to YAML too?
-                 # Or just use json.load here explicitly since it's internal.
-                 import json
-                 with open(filepath, 'r') as f:
-                     return json.load(f).get("phi_tags", {})
+                # Resource is likely still JSON for internal defaults unless we change it too.
+                # But sticking to JSON for internal resources is fine, OR we change helper to handle both?
+                # User asked to drop JSON support for *config files*.
+                # Let's support JSON just for internal resources via simple json load if yaml fails or extension check?
+                # Actually, clearer to migrate the resource to YAML too?
+                # Or just use json.load here explicitly since it's internal.
+                # import json  <-- Removed
+
+                with open(filepath, 'r', encoding="utf-8") as f:
+                    return json.load(f).get("phi_tags", {})
             return {}
 
     @staticmethod
     def clean_filename(filename: str) -> str:
         """
         Sanitizes a string to be safe for use as a filename.
-        
-        Replaces spaces with underscores and removes non-alphanumeric characters 
+
+        Replaces spaces with underscores and removes non-alphanumeric characters
         (except key delimiters like dash/dot).
         """
-        import re
+        # import re  <-- Removed
+
         s = str(filename).strip().replace(" ", "_")
         return re.sub(r'(?u)[^-\w.]', '', s)
 
@@ -187,10 +222,10 @@ class ConfigLoader:
             raise FileNotFoundError(f"Configuration file not found: {filepath}")
 
         try:
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding="utf-8") as f:
                 return yaml.safe_load(f)
         except yaml.YAMLError as e:
-            raise ValueError(f"Invalid YAML format in {filepath}: {e}")
+            raise ValueError(f"Invalid YAML format in {filepath}: {e}") from e
 
     @staticmethod
     def _validate_rule(rule: Dict[str, Any], index: int):
@@ -208,14 +243,18 @@ class ConfigLoader:
             elif isinstance(zone, dict):
                 roi = zone.get("roi")
             else:
-                raise ValueError(f"Rule #{index} ({sn}), Zone #{z_idx}: Invalid zone format (must be list or dict).")
-            
+                raise ValueError(
+                    f"Rule #{index} ({sn}), Zone #{z_idx}: Invalid zone format (must be list or dict).")
+
             if not roi or not isinstance(roi, list) or len(roi) != 4:
-                raise ValueError(f"Rule #{index} ({sn}), Zone #{z_idx}: ROI must be a list of 4 integers.")
-            
+                raise ValueError(
+                    f"Rule #{index} ({sn}), Zone #{z_idx}: ROI must be a list of 4 integers.")
+
             r1, r2, c1, c2 = roi
             if any(x < 0 for x in roi):
-                 raise ValueError(f"Rule #{index} ({sn}), Zone #{z_idx}: ROI values must be non-negative.")
-            
+                raise ValueError(
+                    f"Rule #{index} ({sn}), Zone #{z_idx}: ROI values must be non-negative.")
+
             if r1 > r2 or c1 > c2:
-                 raise ValueError(f"Rule #{index} ({sn}), Zone #{z_idx}: Invalid ROI logic (Start > End).")
+                raise ValueError(
+                    f"Rule #{index} ({sn}), Zone #{z_idx}: Invalid ROI logic (Start > End).")

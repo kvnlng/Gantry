@@ -21,7 +21,7 @@ BASIC_PROFILE = {
     "0010,1040": {"action": "REMOVE", "name": "Patient's Address"},
     "0010,2160": {"action": "REMOVE", "name": "Ethnic Group"},
     "0010,4000": {"action": "REMOVE", "name": "Patient Comments"},
-    
+
     # Study / Series Information
     "0008,0020": {"action": "REMOVE", "name": "Study Date"},
     "0008,0021": {"action": "REMOVE", "name": "Series Date"},
@@ -33,7 +33,8 @@ BASIC_PROFILE = {
     "0008,0033": {"action": "REMOVE", "name": "Content Time"},
     "0008,0050": {"action": "REMOVE", "name": "Accession Number"},
     "0008,0090": {"action": "REMOVE", "name": "Referring Physician's Name"},
-    "0008,1030": {"action": "EMPTY", "name": "Study Description"}, # Often contains PHI, but structural
+    # Often contains PHI, but structural
+    "0008,1030": {"action": "EMPTY", "name": "Study Description"},
     "0008,103E": {"action": "EMPTY", "name": "Series Description"},
     "0020,0010": {"action": "REMOVE", "name": "Study ID"},
     "0008,0080": {"action": "REMOVE", "name": "Institution Name"},

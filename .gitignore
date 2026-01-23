@@ -10,6 +10,7 @@ __pycache__/
 .agent/
 test_data/
 debug_config.yaml
+pylint_report*.txt
 
 data/
 gantry.key

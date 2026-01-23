@@ -5,6 +5,7 @@ import os
 import datetime
 from .logger import get_logger
 
+
 @dataclass
 class ManifestItem:
     """
@@ -26,16 +27,16 @@ class ManifestItem:
     study_instance_uid: str
     series_instance_uid: str
     sop_instance_uid: str
-    
+
     # File details
     file_path: str = ""
     file_size_bytes: int = 0
-    
+
     # Optional metadata
     modality: str = ""
     manufacturer: str = ""
     model_name: str = ""
-    
+
     # Processing details
     anonymized: bool = True
 
@@ -57,7 +58,7 @@ class Manifest:
     project_name: str = "Gantry Session"
     total_files: int = 0
     total_size_bytes: int = 0
-    
+
     def to_dict(self):
         """
         Converts the manifest to a dictionary for JSON serialization.
@@ -70,8 +71,10 @@ class Manifest:
             "items": [asdict(i) for i in self.items]
         }
 
+
 class ManifestRenderer(Protocol):
     """Protocol for a manifest renderer."""
+
     def render(self, manifest: Manifest, output_path: str) -> None:
         """
         Renders the manifest to the specified file.
@@ -82,14 +85,18 @@ class ManifestRenderer(Protocol):
         """
         ...
 
+
 class JSONManifestRenderer:
     """Renders the manifest as a JSON file."""
+
     def render(self, manifest: Manifest, output_path: str) -> None:
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(manifest.to_dict(), f, indent=2)
 
+
 class HTMLManifestRenderer:
     """Renders the manifest as a standalone HTML file."""
+
     def render(self, manifest: Manifest, output_path: str) -> None:
         # Basic accessible HTML table
         html = f"""<!DOCTYPE html>
@@ -155,6 +162,7 @@ class HTMLManifestRenderer:
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(html)
 
+
 def generate_manifest_file(manifest: Manifest, output_path: str, format: str = "html"):
     """
     Generates a manifest file in the requested format.
@@ -173,5 +181,5 @@ def generate_manifest_file(manifest: Manifest, output_path: str, format: str = "
         renderer = HTMLManifestRenderer()
     else:
         raise ValueError(f"Unsupported manifest format: {format}")
-        
+
     renderer.render(manifest, output_path)

@@ -5,11 +5,12 @@ from .entities import Instance
 from .crypto import CryptoEngine, KeyManager
 from .logger import get_logger
 
+
 class ReversibilityService:
     """
     Handles the embedding and recovery of encrypted original data in DICOM files.
-    
-    Compliant with DICOM Part 15, E.1.2 "Re-identifier" logic via the 
+
+    Compliant with DICOM Part 15, E.1.2 "Re-identifier" logic via the
     Encrypted Attributes Sequence (0400,0500). Uses `CryptoEngine` for encryption.
     """
 
@@ -40,7 +41,7 @@ class ReversibilityService:
         """
         if not original_attributes:
             return b""
-            
+
         json_str = json.dumps(original_attributes)
         data_bytes = json_str.encode('utf-8')
         return self.engine.encrypt(data_bytes)
@@ -49,7 +50,7 @@ class ReversibilityService:
         """
         Embeds a pre-calculated encrypted token into the instance.
 
-        Wraps the token in an Encrypted Attributes Sequence item with the 
+        Wraps the token in an Encrypted Attributes Sequence item with the
         appropriate Transfer Syntax UID.
 
         Args:
@@ -68,13 +69,13 @@ class ReversibilityService:
             item.set_attr(self.TAG_TRANSFER_SYNTAX_UID, self.PAYLOAD_TRANSFER_SYNTAX)
 
             # Embed into attributes dict via Sequence helper
-            # TODO: Check if sequence already exists and has items. 
+            # TODO: Check if sequence already exists and has items.
             # Currently, this appends a new item. If called twice (e.g. on already anonymized data),
             # it will append a second (likely incorrect) token. Recovery uses the first item, so it's safe,
             # but we should probably clear existing items or warn.
             instance.add_sequence_item(self.TAG_ENCRYPTED_ATTRS_SEQ, item)
-            
-            # self.logger.debug(f"Embedded token into {instance.sop_instance_uid}.") 
+
+            # self.logger.debug(f"Embedded token into {instance.sop_instance_uid}.")
 
         except Exception as e:
             self.logger.error(f"Failed to embed token: {e}")
@@ -83,7 +84,7 @@ class ReversibilityService:
     def embed_original_data(self, instance: Instance, original_attributes: Dict[str, Any]):
         """
         Serializes, encrypts, and embeds the provided attributes into the instance.
-        
+
         This is a higher-level wrapper for `generate_identity_token` + `embed_identity_token`.
 
         Args:
@@ -96,7 +97,10 @@ class ReversibilityService:
         try:
             token = self.generate_identity_token(original_attributes)
             self.embed_identity_token(instance, token)
-            self.logger.debug(f"Embedded {len(token)} bytes of encrypted data into {instance.sop_instance_uid}.")
+            self.logger.debug(
+                f"Embedded {
+                    len(token)} bytes of encrypted data into {
+                    instance.sop_instance_uid}.")
 
         except Exception as e:
             self.logger.error(f"Failed to embed original data: {e}")
@@ -105,8 +109,8 @@ class ReversibilityService:
     def recover_original_data(self, instance: Instance) -> Optional[Dict[str, Any]]:
         """
         Extracts and decrypts the original attributes from the instance.
-        
-        Locates the Encrypted Attributes Sequence, decrypts the first item's 
+
+        Locates the Encrypted Attributes Sequence, decrypts the first item's
         Encrypted Content, and deserializes the JSON.
 
         Args:

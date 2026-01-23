@@ -1,3 +1,11 @@
+"""
+Persistence layer for Gantry.
+
+This module provides the SqliteStore class which manages the storage and retrieval
+of DICOM entities (Patients, Studies, Series, Instances) using a SQLite database.
+It also handles sidecar storage for pixel data to keep the database lightweight.
+"""
+
 import sqlite3
 import contextlib
 import os
@@ -6,18 +14,28 @@ import json
 import queue
 import threading
 import time
+import hashlib
+import shutil
+import base64
+import traceback
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
-from .entities import Patient, Study, Series, Instance, Equipment
+from contextlib import nullcontext
+
+from pydicom.multival import MultiValue
+
+from .entities import Patient, Study, Series, Instance, Equipment, DicomItem
 from .sidecar import SidecarManager
 from .logger import get_logger
 from .privacy import PhiFinding, PhiRemediation
 from .io_handlers import SidecarPixelLoader
 
+
+
 class SqliteStore:
     """
     Handles persistence of the Object Graph to a SQLite database.
-    
+
     This class manages:
     - CRUD operations for the Patient->Study->Series->Instance hierarchy.
     - Sidecar retrieval and compaction logic.
@@ -138,20 +156,26 @@ class SqliteStore:
             self.sidecar_path = os.path.splitext(db_path)[0] + "_pixels.bin"
             self._memory_conn = None
             self._memory_lock = None
-            
+
         self.sidecar = SidecarManager(self.sidecar_path)
         self._init_db()
-        
+
         # Async Audit Queue
         self.audit_queue = queue.Queue()
         self._stop_event = threading.Event()
-        self._audit_thread = threading.Thread(target=self._audit_worker, daemon=True, name="AuditWorker")
+        self._audit_thread = threading.Thread(
+            target=self._audit_worker, daemon=True, name="AuditWorker")
         self._audit_thread.start()
 
     def __getstate__(self):
         """Exclude threading primitives from pickling."""
         state = self.__dict__.copy()
-        keys_to_remove = ['_memory_lock', '_memory_conn', 'audit_queue', '_stop_event', '_audit_thread']
+        keys_to_remove = [
+            '_memory_lock',
+            '_memory_conn',
+            'audit_queue',
+            '_stop_event',
+            '_audit_thread']
         for k in keys_to_remove:
             state.pop(k, None)
         return state
@@ -159,18 +183,19 @@ class SqliteStore:
     def __setstate__(self, state):
         """Recreate threading primitives on unpickling."""
         self.__dict__.update(state)
-        
+
         # Restore non-pickleable attributes
         if self.db_path == ":memory:":
-             self._memory_lock = threading.Lock()
-             self._memory_conn = None # Connection lost on pickle transfer
+            self._memory_lock = threading.Lock()
+            self._memory_conn = None  # Connection lost on pickle transfer
         else:
-             self._memory_lock = None
-             self._memory_conn = None
+            self._memory_lock = None
+            self._memory_conn = None
 
         self.audit_queue = queue.Queue()
         self._stop_event = threading.Event()
-        self._audit_thread = threading.Thread(target=self._audit_worker, daemon=True, name="AuditWorker")
+        self._audit_thread = threading.Thread(
+            target=self._audit_worker, daemon=True, name="AuditWorker")
         self._audit_thread.start()
 
     @contextlib.contextmanager
@@ -181,11 +206,12 @@ class SqliteStore:
         """
         if self._memory_conn:
             # For in-memory DB, reuse the single connection.
-            # We must serialize access because sqlite3 connections are not thread-safe 
+            # We must serialize access because sqlite3 connections are not thread-safe
             # for concurrent writes even with check_same_thread=False.
             with self._memory_lock:
                 try:
-                    # print(f"DEBUG: Acquired lock. Yielding conn {id(self._memory_conn)}") # Reduced spam
+                    # print(f"DEBUG: Acquired lock. Yielding conn {id(self._memory_conn)}") #
+                    # Reduced spam
                     yield self._memory_conn
                     self._memory_conn.commit()
                     # print("DEBUG: Commit successful")
@@ -219,7 +245,7 @@ class SqliteStore:
         """Helper to create a lazy pixel loader for the sidecar."""
         # Use instance to populate primitives
         return SidecarPixelLoader(self.sidecar_path, offset, length, alg, instance=instance)
-        
+
     def _audit_worker(self):
         """Background thread to batch write audit logs."""
         batch = []
@@ -229,7 +255,7 @@ class SqliteStore:
                 try:
                     item = self.audit_queue.get(timeout=1.0)
                     batch.append(item)
-                    
+
                     # Drain queue up to limit
                     while len(batch) < 100:
                         try:
@@ -237,23 +263,23 @@ class SqliteStore:
                             batch.append(item)
                         except queue.Empty:
                             break
-                            
+
                 except queue.Empty:
                     pass
-                
+
                 if batch:
                     self.log_audit_batch(batch)
                     batch = []
-                    
+
             except Exception as e:
                 # Don't crash thread
                 self.logger.error(f"Audit Worker Error: {e}")
-                
+
         # Flush remaining
         while not self.audit_queue.empty():
             try:
                 batch.append(self.audit_queue.get_nowait())
-            except:
+            except BaseException:
                 break
         if batch:
             self.log_audit_batch(batch)
@@ -273,7 +299,7 @@ class SqliteStore:
                 batch.append(self.audit_queue.get_nowait())
             except queue.Empty:
                 break
-        
+
         if batch:
             self.log_audit_batch(batch)
 
@@ -292,12 +318,13 @@ class SqliteStore:
         # Stop worker to ensure all in-flight batches are written
         # This joins the thread and flushes the queue.
         self.stop()
-        
+
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 try:
-                    cursor.execute("SELECT action_type, COUNT(*) FROM audit_log GROUP BY action_type")
+                    cursor.execute(
+                        "SELECT action_type, COUNT(*) FROM audit_log GROUP BY action_type")
                     rows = cursor.fetchall()
                     return {row[0]: row[1] for row in rows}
                 except sqlite3.OperationalError:
@@ -305,9 +332,9 @@ class SqliteStore:
         finally:
             # Restart the worker
             self._stop_event.clear()
-            self._audit_thread = threading.Thread(target=self._audit_worker, daemon=True, name="AuditWorker")
+            self._audit_thread = threading.Thread(
+                target=self._audit_worker, daemon=True, name="AuditWorker")
             self._audit_thread.start()
-
 
     def get_audit_errors(self) -> List[tuple]:
         """
@@ -320,8 +347,8 @@ class SqliteStore:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT timestamp, action_type, details 
-                    FROM audit_log 
+                    SELECT timestamp, action_type, details
+                    FROM audit_log
                     WHERE action_type IN ('ERROR', 'WARNING')
                     ORDER BY timestamp ASC
                 """)
@@ -339,13 +366,13 @@ class SqliteStore:
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                # Naive text search in JSON. 
+                # Naive text search in JSON.
                 # matches "0028,0301": "YES"
                 # We need to be careful about spacing in JSON serialization, but standard json.dumps usually does ": "
                 # A safer broad check is %0028,0301%YES%
                 cursor.execute("""
-                    SELECT sop_instance_uid, file_path 
-                    FROM instances 
+                    SELECT sop_instance_uid, file_path
+                    FROM instances
                     WHERE attributes_json LIKE '%"0028,0301": "YES"%'
                 """)
                 rows = cursor.fetchall()
@@ -357,21 +384,20 @@ class SqliteStore:
 
     def log_audit_batch(self, entries: List[tuple]):
         """
-        Batch inserts audit logs. 
+        Batch inserts audit logs.
         entries: List of (action_type, entity_uid, details)
         """
-        if not entries: return
-        
+        if not entries:
+            return
+
         timestamp = datetime.now().isoformat()
         # Prepare data with timestamp: (timestamp, action, uid, details)
         data = [(timestamp, e[0], e[1], e[2]) for e in entries]
-        
+
         try:
             with self._get_connection() as conn:
                 conn.executemany(
-                    "INSERT INTO audit_log (timestamp, action_type, entity_uid, details) VALUES (?, ?, ?, ?)",
-                    data
-                )
+                    "INSERT INTO audit_log (timestamp, action_type, entity_uid, details) VALUES (?, ?, ?, ?)", data)
                 conn.commit()
         except sqlite3.Error as e:
             self.logger.error(f"Failed to batch log audit: {e}")
@@ -396,8 +422,9 @@ class SqliteStore:
                 cur = conn.cursor()
 
                 # Optimized: We could do joins, but for clarity/mapping let's do hierarchical fetch.
-                # Or fetch all and Stitch. Stitching in memory is faster for SQLite than N+1 queries.
-                
+                # Or fetch all and Stitch. Stitching in memory is faster for SQLite than
+                # N+1 queries.
+
                 # 1. Fetch AlL
                 p_rows = cur.execute("SELECT * FROM patients").fetchall()
                 st_rows = cur.execute("SELECT * FROM studies").fetchall()
@@ -422,43 +449,45 @@ class SqliteStore:
                 for r in se_rows:
                     se = Series(r['series_instance_uid'], r['modality'], r['series_number'])
                     if r['manufacturer'] or r['model_name']:
-                        se.equipment = Equipment(r['manufacturer'], r['model_name'], r['device_serial_number'])
+                        se.equipment = Equipment(
+                            r['manufacturer'], r['model_name'], r['device_serial_number'])
                     se_map[r['id']] = se
                     if r['study_id_fk'] in st_map:
                         st_map[r['study_id_fk']].series.append(se)
 
                 for r in i_rows:
                     inst = Instance(
-                        r['sop_instance_uid'], 
-                        r['sop_class_uid'], 
-                        r['instance_number'], 
+                        r['sop_instance_uid'],
+                        r['sop_class_uid'],
+                        r['instance_number'],
                         file_path=r['file_path']
                     )
-                    
+
                     # Restore extra attributes
                     if r['attributes_json']:
                         try:
-                            attrs = json.loads(r['attributes_json'], object_hook=gantry_json_object_hook)
+                            attrs = json.loads(
+                                r['attributes_json'], object_hook=gantry_json_object_hook)
                             self._deserialize_into(inst, attrs)
-                        except: 
-                            pass # JSON error
+                        except BaseException:
+                            pass  # JSON error
 
                     # Wire up Sidecar Loader if present
                     if r['pixel_offset'] is not None and r['pixel_length'] is not None:
-                         # Capture closure vars
-                         offset = r['pixel_offset']
-                         length = r['pixel_length']
-                         alg = r['compress_alg']
-                         
-                         
-                         # We need to reshape after loading. The dimensions are in attributes.
-                         # We can do this inside the lambda wrapper or a helper method.
-                         # But Instance.attributes aren't populated yet! 
-                         # Wait, we populate attributes right after this.
-                         # So the lambda calls self.instance methods? No, lambda binds early.
-                         
-                         inst._pixel_loader = self._create_pixel_loader(r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
-                    
+                        # Capture closure vars
+                        offset = r['pixel_offset']
+                        length = r['pixel_length']
+                        alg = r['compress_alg']
+
+                        # We need to reshape after loading. The dimensions are in attributes.
+                        # We can do this inside the lambda wrapper or a helper method.
+                        # But Instance.attributes aren't populated yet!
+                        # Wait, we populate attributes right after this.
+                        # So the lambda calls self.instance methods? No, lambda binds early.
+
+                        inst._pixel_loader = self._create_pixel_loader(
+                            r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
+
                     if r['series_id_fk'] in se_map:
                         se_map[r['series_id_fk']].instances.append(inst)
 
@@ -471,7 +500,6 @@ class SqliteStore:
         except sqlite3.Error as e:
             # print(f"DEBUG: Failed to load from DB: {e}")
             self.logger.error(f"Failed to load PDF from DB: {e}")
-            import traceback
             traceback.print_exc()
             return []
 
@@ -487,59 +515,71 @@ class SqliteStore:
         """
         if self.db_path != ":memory:" and not os.path.exists(self.db_path):
             return None
-            
+
         try:
-             with self._get_connection() as conn:
+            with self._get_connection() as conn:
                 # conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
-                
+
                 # Fetch Patient
-                p_row = cur.execute("SELECT * FROM patients WHERE patient_id = ?", (patient_uid,)).fetchone()
-                if not p_row: return None
-                
+                p_row = cur.execute(
+                    "SELECT * FROM patients WHERE patient_id = ?", (patient_uid,)).fetchone()
+                if not p_row:
+                    return None
+
                 p = Patient(p_row['patient_id'], p_row['patient_name'])
                 p_pk = p_row['id']
-                
+
                 # Fetch Studies
-                st_rows = cur.execute("SELECT * FROM studies WHERE patient_id_fk = ?", (p_pk,)).fetchall()
+                st_rows = cur.execute(
+                    "SELECT * FROM studies WHERE patient_id_fk = ?", (p_pk,)).fetchall()
                 for st_r in st_rows:
                     st = Study(st_r['study_instance_uid'], st_r['study_date'])
                     st_pk = st_r['id']
-                    
+
                     # Fetch Series
-                    se_rows = cur.execute("SELECT * FROM series WHERE study_id_fk = ?", (st_pk,)).fetchall()
+                    se_rows = cur.execute(
+                        "SELECT * FROM series WHERE study_id_fk = ?", (st_pk,)).fetchall()
                     for se_r in se_rows:
-                        se = Series(se_r['series_instance_uid'], se_r['modality'], se_r['series_number'])
+                        se = Series(
+                            se_r['series_instance_uid'],
+                            se_r['modality'],
+                            se_r['series_number'])
                         if se_r['manufacturer'] or se_r['model_name']:
-                            se.equipment = Equipment(se_r['manufacturer'], se_r['model_name'], se_r['device_serial_number'])
+                            se.equipment = Equipment(
+                                se_r['manufacturer'], se_r['model_name'], se_r['device_serial_number'])
                         se_pk = se_r['id']
-                        
+
                         # Fetch Instances
-                        i_rows = cur.execute("SELECT * FROM instances WHERE series_id_fk = ?", (se_pk,)).fetchall()
+                        i_rows = cur.execute(
+                            "SELECT * FROM instances WHERE series_id_fk = ?", (se_pk,)).fetchall()
                         for r in i_rows:
                             inst = Instance(
-                                r['sop_instance_uid'], 
-                                r['sop_class_uid'], 
-                                r['instance_number'], 
+                                r['sop_instance_uid'],
+                                r['sop_class_uid'],
+                                r['instance_number'],
                                 file_path=r['file_path']
                             )
                             # Wire up Sidecar (Copy-Paste logic from load_all, keep generic?)
                             if r['attributes_json']:
                                 try:
-                                    attrs = json.loads(r['attributes_json'], object_hook=gantry_json_object_hook)
+                                    attrs = json.loads(
+                                        r['attributes_json'], object_hook=gantry_json_object_hook)
                                     self._deserialize_into(inst, attrs)
-                                except: pass
+                                except BaseException:
+                                    pass
 
                             # Wire up Sidecar (Copy-Paste logic from load_all, keep generic?)
                             if r['pixel_offset'] is not None and r['pixel_length'] is not None:
                                 offset, length, alg = r['pixel_offset'], r['pixel_length'], r['compress_alg']
-                                inst._pixel_loader = self._create_pixel_loader(r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
-                                
+                                inst._pixel_loader = self._create_pixel_loader(
+                                    r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
+
                             se.instances.append(inst)
-                        
+
                         st.series.append(se)
                     p.studies.append(st)
-                    
+
                 p.mark_clean()
                 return p
         except sqlite3.Error as e:
@@ -558,7 +598,7 @@ class SqliteStore:
                 for seq_item in seq.items:
                     # Recursive call for sequence items (which are DicomItems)
                     # We can reuse logic but need to handle DicomItem vs Instance
-                    # Instance specific fields are handled by caller for the root, 
+                    # Instance specific fields are handled by caller for the root,
                     # but for seq items they are just DicomItems.
                     items_list.append(self._serialize_dicom_item(seq_item))
                 seq_data[tag] = items_list
@@ -581,10 +621,10 @@ class SqliteStore:
         Populates target_item with attributes and sequences from data dict.
         """
         sequences_data = data.pop('__sequences__', None)
-        
+
         # 1. Attributes
         target_item.attributes.update(data)
-        
+
         # 2. Sequences
         if sequences_data:
             from .entities import DicomItem
@@ -594,10 +634,11 @@ class SqliteStore:
                     self._deserialize_into(new_item, item_data)
                     target_item.add_sequence_item(tag, new_item)
 
-    def save_vertical_attributes(self, instance_uid: str, attributes: Dict[Tuple[str, str], Any], conn: sqlite3.Connection = None):
+    def save_vertical_attributes(
+            self, instance_uid: str, attributes: Dict[Tuple[str, str], Any], conn: sqlite3.Connection = None):
         """
         Persists extended attributes to the vertical `instance_attributes` table.
-        
+
         This handles private tags and attributes that don't fit in the core JSON.
         Uses UPSERT semantics (Delete-Insert logic currently).
 
@@ -606,49 +647,50 @@ class SqliteStore:
             attributes (Dict[Tuple[str, str], Any]): Mapping of (Group, Element) hex strings to values.
             conn (sqlite3.Connection, optional): An existing database connection to use for the transaction.
         """
-        if not attributes: return
+        if not attributes:
+            return
 
         data_rows = []
         for (grp, elem), val in attributes.items():
-            vr = "UN" # Todo: Pass VR from caller
+            vr = "UN"  # Todo: Pass VR from caller
             # Check for VM > 1
             if isinstance(val, list):
                 for idx, atom in enumerate(val):
                     data_rows.append((instance_uid, grp, elem, idx, vr, str(atom)))
             else:
-                 data_rows.append((instance_uid, grp, elem, 0, vr, str(val)))
-        
-        if not data_rows: return
+                data_rows.append((instance_uid, grp, elem, 0, vr, str(val)))
+
+        if not data_rows:
+            return
 
         try:
-            from contextlib import nullcontext
+
             # If conn is passed, use it (and don't close it/commit it here, leave to caller).
             # If not, create new context (which commits/closes).
             ctx = self._get_connection() if conn is None else nullcontext(conn)
-            
+
             with ctx as db:
-                # 1. OPTIMIZATION: Delete existing for these keys first? 
-                # Or UPSERT. 
+                # 1. OPTIMIZATION: Delete existing for these keys first?
+                # Or UPSERT.
                 # "test_vertical_update_serialization" requires correctness.
                 # UPSERT based on unique index (uid, grp, elem, atom) works.
                 # But if list shrinks (VM 3 -> VM 1), UPSERT leaves atoms 2,3.
                 # So we MUST DELETE by (uid, grp, elem) before inserting new set for that tag.
-                
+
                 # We can do this in transaction.
                 keys_to_clear = list(attributes.keys())
                 # Batch delete?
                 # "DELETE FROM instance_attributes WHERE instance_uid=? AND group_id=? AND element_id=?\"
                 del_params = [(instance_uid, k[0], k[1]) for k in keys_to_clear]
                 db.executemany(
-                    "DELETE FROM instance_attributes WHERE instance_uid=? AND group_id=? AND element_id=?", 
-                    del_params
-                )
-                
+                    "DELETE FROM instance_attributes WHERE instance_uid=? AND group_id=? AND element_id=?",
+                    del_params)
+
                 db.executemany("""
                     INSERT INTO instance_attributes (instance_uid, group_id, element_id, atom_index, value_rep, value_text)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, data_rows)
-                
+
         except sqlite3.Error as e:
             self.logger.error(f"Failed to save vertical attributes for {instance_uid}: {e}")
             raise e
@@ -667,22 +709,23 @@ class SqliteStore:
         try:
             with self._get_connection() as conn:
                 rows = conn.execute("""
-                    SELECT group_id, element_id, atom_index, value_text 
-                    FROM instance_attributes 
-                    WHERE instance_uid=? 
+                    SELECT group_id, element_id, atom_index, value_text
+                    FROM instance_attributes
+                    WHERE instance_uid=?
                     ORDER BY group_id, element_id, atom_index
                 """, (instance_uid,)).fetchall()
-                
-                if not rows: return {}
-                
+
+                if not rows:
+                    return {}
+
                 # Reassemble
                 curr_key = None
                 collect = []
-                
+
                 for r in rows:
                     key = (r['group_id'], r['element_id'])
-                    val = r['value_text'] # Type conversion? Strings for now.
-                    
+                    val = r['value_text']  # Type conversion? Strings for now.
+
                     if key != curr_key:
                         # Flush previous
                         if curr_key:
@@ -691,11 +734,11 @@ class SqliteStore:
                         collect = [val]
                     else:
                         collect.append(val)
-                
+
                 # Flush last
                 if curr_key:
                     results[curr_key] = collect if len(collect) > 1 else collect[0]
-                    
+
             return results
         except sqlite3.Error as e:
             self.logger.error(f"Failed to load vertical attributes for {instance_uid}: {e}")
@@ -719,41 +762,44 @@ class SqliteStore:
             # 1. Write to Sidecar
             # Pass array directly to avoid .tobytes() Memory spike (Zero-Copy 500MB save)
             b_data = instance.pixel_array
-            
+
             # Hash Update (CRITICAL for Integrity Checks)
-            # Calculate Hash BEFORE writing/compression to ensure we capture the state exactly as it goes into the pipe.
+            # Calculate Hash BEFORE writing/compression to ensure we capture the state
+            # exactly as it goes into the pipe.
             import hashlib
             # Ensure we are hashing the contiguous bytes
             if hasattr(b_data, 'tobytes'):
                 p_hash = hashlib.sha256(b_data.tobytes()).hexdigest()
             else:
-                 p_hash = hashlib.sha256(b_data).hexdigest()
-                 
+                p_hash = hashlib.sha256(b_data).hexdigest()
+
             instance._pixel_hash = p_hash
-    
+
             # Determine suitable compression? Defaulting to zlib for swap.
             # Ideally we respect original or config, but for swap zlib is safe/fast enough.
-            c_alg = 'zlib' 
-            
+            c_alg = 'zlib'
+
             offset, length = self.sidecar.write_frame(b_data, c_alg)
-            
+
             # 2. Update Instance Loader
             # This allows instance.unload_pixel_data() to work safely
-            # Note: instance attributes ARE populated here (it's a live object), so passing instance=instance works.
+            # Note: instance attributes ARE populated here (it's a live object), so
+            # passing instance=instance works.
             instance._pixel_loader = self._create_pixel_loader(offset, length, c_alg, instance)
-            
+
             # 3. Optional: Persist the linkage to DB immediately?
             # It's safer if we do, so if we crash, we know where the pixels are.
             # However, if we don't save the attributes/UID changes, the DB is out of sync anyway.
             # But the primary goal here is MEMORY MANAGEMENT.
             # So updating the object state in memory (step 2) is sufficient for unload_pixel_data() to return True.
-            # The final session.save() will record the new offset/length into the DB instances table.
-            
+            # The final session.save() will record the new offset/length into the DB
+            # instances table.
+
             # CRITICAL: Mark instance as dirty so save_all() knows to update the DB with the new loader/hash!
             # If we don't do this, save_all might skip this instance if it was otherwise clean,
             # leaving the DB pointing to old/original data while memory points to new sidecar data.
             instance._mod_count += 1
-            
+
         except Exception as e:
             self.logger.error(f"Failed to persist pixel swap for {instance.sop_instance_uid}: {e}")
             raise e
@@ -769,21 +815,22 @@ class SqliteStore:
             patients (List[Patient]): The list of patient objects to save.
         """
         self.logger.info(f"Saving {len(patients)} patients to {self.db_path} (Incremental)...")
-        
+
         pixel_bytes_written = 0
         pixel_frames_written = 0
         sidecar_manager = self.sidecar
-        
+
         try:
             with self._get_connection() as conn:
                 cur = conn.cursor()
-                
+
                 # Check for schema compatibility (simple check)
                 try:
-                    # We rely on UNIQUE constraints for UPSERT. 
+                    # We rely on UNIQUE constraints for UPSERT.
                     # If older DB without constraints, we might fail or duplicate.
-                    pass 
-                except: pass
+                    pass
+                except BaseException:
+                    pass
 
                 # Counts for reporting
                 saved_p, saved_st, saved_se, saved_i = 0, 0, 0, 0
@@ -800,13 +847,16 @@ class SqliteStore:
                     # We need the PK for children
                     # Since we might have just updated or it might exist, we select it.
                     # Optimization: Cache PKs? For now, fetch is safe.
-                    p_pk_row = cur.execute("SELECT id FROM patients WHERE patient_id=?", (p.patient_id,)).fetchone()
-                    if not p_pk_row: continue # Should not happen after Insert
+                    p_pk_row = cur.execute(
+                        "SELECT id FROM patients WHERE patient_id=?", (p.patient_id,)).fetchone()
+                    if not p_pk_row:
+                        continue  # Should not happen after Insert
                     p_pk = p_pk_row[0]
-                    
+
                     for st in p.studies:
                         if getattr(st, '_dirty', True):
-                            # FIX: Convert date objects to string to avoid Python 3.12+ DeprecationWarning for default adapter
+                            # FIX: Convert date objects to string to avoid Python 3.12+
+                            # DeprecationWarning for default adapter
                             s_date = st.study_date
                             if hasattr(s_date, "isoformat"):
                                 s_date = s_date.isoformat()
@@ -815,26 +865,28 @@ class SqliteStore:
 
                             cur.execute("""
                                 INSERT INTO studies (patient_id_fk, study_instance_uid, study_date) VALUES (?, ?, ?)
-                                ON CONFLICT(study_instance_uid) DO UPDATE SET 
+                                ON CONFLICT(study_instance_uid) DO UPDATE SET
                                     study_date=excluded.study_date,
                                     patient_id_fk=excluded.patient_id_fk
                             """, (p_pk, st.study_instance_uid, s_date))
                             saved_st += 1
-                        
-                        st_pk_row = cur.execute("SELECT id FROM studies WHERE study_instance_uid=?", (st.study_instance_uid,)).fetchone()
-                        if not st_pk_row: continue
+
+                        st_pk_row = cur.execute(
+                            "SELECT id FROM studies WHERE study_instance_uid=?", (st.study_instance_uid,)).fetchone()
+                        if not st_pk_row:
+                            continue
                         st_pk = st_pk_row[0]
-                        
+
                         for se in st.series:
                             if getattr(se, '_dirty', True):
                                 man = se.equipment.manufacturer if se.equipment else ""
                                 mod = se.equipment.model_name if se.equipment else ""
                                 sn = se.equipment.device_serial_number if se.equipment else ""
-                                
+
                                 cur.execute("""
                                     INSERT INTO series (study_id_fk, series_instance_uid, modality, series_number, manufacturer, model_name, device_serial_number)
                                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                                    ON CONFLICT(series_instance_uid) DO UPDATE SET 
+                                    ON CONFLICT(series_instance_uid) DO UPDATE SET
                                         modality=excluded.modality,
                                         series_number=excluded.series_number,
                                         manufacturer=excluded.manufacturer,
@@ -844,26 +896,31 @@ class SqliteStore:
                                 """, (st_pk, se.series_instance_uid, se.modality, se.series_number, man, mod, sn))
                                 saved_se += 1
 
-                            se_pk_row = cur.execute("SELECT id FROM series WHERE series_instance_uid=?", (se.series_instance_uid,)).fetchone()
-                            if not se_pk_row: continue
+                            se_pk_row = cur.execute(
+                                "SELECT id FROM series WHERE series_instance_uid=?", (se.series_instance_uid,)).fetchone()
+                            if not se_pk_row:
+                                continue
                             se_pk = se_pk_row[0]
-                            
+
                             # --- Deletion Handling (Diff DB vs Memory) ---
-                            # Only perform if we suspect deletions or periodically? 
+                            # Only perform if we suspect deletions or periodically?
                             # Plan says: Implement Diff Logic.
                             # Optimization: If series is NOT dirty, can we assume no deletions?
                             # Not necessarily. Removing an item doesn't always mark Series dirty unless we hook "remove".
                             # But DicomItem doesn't track removals from list automatically.
                             # So we must check.
-                            
-                            db_uids_rows = cur.execute("SELECT sop_instance_uid FROM instances WHERE series_id_fk=?", (se_pk,)).fetchall()
+
+                            db_uids_rows = cur.execute(
+                                "SELECT sop_instance_uid FROM instances WHERE series_id_fk=?", (se_pk,)).fetchall()
                             db_uids = {r[0] for r in db_uids_rows}
                             mem_uids = {i.sop_instance_uid for i in se.instances}
-                            
+
                             to_delete = db_uids - mem_uids
                             if to_delete:
-                                cur.executemany("DELETE FROM instances WHERE sop_instance_uid=?", [(u,) for u in to_delete])
-                                saved_i += 0 # Or count negative?
+                                cur.executemany(
+                                    "DELETE FROM instances WHERE sop_instance_uid=?", [
+                                        (u,) for u in to_delete])
+                                saved_i += 0  # Or count negative?
                                 # self.logger.debug(f"Deleted {len(to_delete)} instances from Series {se.series_instance_uid}")
 
                             # --- Upsert Dirty ---
@@ -873,95 +930,104 @@ class SqliteStore:
                                     # Capture version if available (robustness against race)
                                     ver = getattr(i, '_mod_count', 0)
                                     dirty_items.append((i, ver))
-                            
+
                             if dirty_items:
                                 i_batch = []
-                                vert_updates = [] # Defer vertical updates to satisfy foreign key
+                                vert_updates = []  # Defer vertical updates to satisfy foreign key
                                 for inst, ver in dirty_items:
                                     full_data = self._serialize_item(inst)
-                                    
+
                                     # Split Core vs Vertical (Private Tags -> Vertical Table)
                                     core_data = {}
                                     vert_data = {}
 
                                     for key, val in full_data.items():
                                         if key == "__sequences__":
-                                             core_data[key] = val # Keep sequences in Core JSON for now
-                                             continue
-                                        
+                                            # Keep sequences in Core JSON for now
+                                            core_data[key] = val
+                                            continue
+
                                         # key is "GGGG,EEEE" hex string
                                         try:
                                             group = int(key.split(',')[0], 16)
                                             # Odd Group = Private Tag (usually)
-                                            # Skip Vertical for BYTES (cant be stored as TEXT easily, keep in JSON)
-                                            is_private = (group % 2 != 0) and not isinstance(val, bytes)
-                                            
+                                            # Skip Vertical for BYTES (cant be stored as TEXT
+                                            # easily, keep in JSON)
+                                            is_private = (
+                                                group %
+                                                2 != 0) and not isinstance(
+                                                val, bytes)
+
                                             if is_private:
-                                                 # Tuple key for vertical method: (grp, elem)
-                                                 k_tuple = tuple(key.split(','))
-                                                 vert_data[k_tuple] = val
+                                                # Tuple key for vertical method: (grp, elem)
+                                                k_tuple = tuple(key.split(','))
+                                                vert_data[k_tuple] = val
                                             else:
-                                                 core_data[key] = val
-                                        except:
+                                                core_data[key] = val
+                                        except BaseException:
                                             core_data[key] = val
 
                                     # Queue Vertical (Saved after Instance Insert)
                                     if vert_data:
                                         vert_updates.append((inst.sop_instance_uid, vert_data))
-                                    
+
                                     # Serialize Core
                                     attrs_json = json.dumps(core_data, cls=GantryJSONEncoder)
-                                    
+
                                     p_offset, p_length, p_alg, p_hash = None, None, None, None
-                                    
+
                                     if inst.pixel_array is not None:
-                                         b_data = inst.pixel_array.tobytes()
-                                         c_alg = 'zlib'
-                                         # Compute Hash
-                                         # Compute Hash
-                                         import hashlib
-                                         p_hash = hashlib.sha256(b_data).hexdigest()
-                                         
-                                         # Deduplication: If already persisted with same hash, skip write
-                                         if getattr(inst, '_pixel_hash', None) == p_hash and isinstance(inst._pixel_loader, SidecarPixelLoader):
-                                             p_offset = inst._pixel_loader.offset
-                                             p_length = inst._pixel_loader.length
-                                             p_alg = inst._pixel_loader.alg
-                                         else:
-                                             off, leng = sidecar_manager.write_frame(b_data, c_alg)
-                                             p_offset, p_length, p_alg = off, leng, c_alg
-                                             pixel_bytes_written += leng
-                                             pixel_frames_written += 1
-                                             
-                                             # Update loader so we can unload safely later
-                                             inst._pixel_loader = self._create_pixel_loader(off, leng, c_alg, inst)
-                                         
-                                         inst._pixel_hash = p_hash # Cache on instance
-                                         
+                                        b_data = inst.pixel_array.tobytes()
+                                        c_alg = 'zlib'
+                                        # Compute Hash
+                                        # Compute Hash
+                                        # Compute Hash
+                                        p_hash = hashlib.sha256(b_data).hexdigest()
+
+                                        # Deduplication: If already persisted with same hash, skip
+                                        # write
+                                        if getattr(
+                                                inst, '_pixel_hash', None) == p_hash and isinstance(
+                                                inst._pixel_loader, SidecarPixelLoader):
+                                            p_offset = inst._pixel_loader.offset
+                                            p_length = inst._pixel_loader.length
+                                            p_alg = inst._pixel_loader.alg
+                                        else:
+                                            off, leng = sidecar_manager.write_frame(b_data, c_alg)
+                                            p_offset, p_length, p_alg = off, leng, c_alg
+                                            pixel_bytes_written += leng
+                                            pixel_frames_written += 1
+
+                                            # Update loader so we can unload safely later
+                                            inst._pixel_loader = self._create_pixel_loader(
+                                                off, leng, c_alg, inst)
+
+                                        inst._pixel_hash = p_hash  # Cache on instance
+
                                     elif isinstance(inst._pixel_loader, SidecarPixelLoader):
-                                         # Already persisted (swapped), preserve metadata
-                                         p_offset = inst._pixel_loader.offset
-                                         p_length = inst._pixel_loader.length
-                                         p_alg = inst._pixel_loader.alg
-                                         p_hash = getattr(inst, '_pixel_hash', None)
+                                        # Already persisted (swapped), preserve metadata
+                                        p_offset = inst._pixel_loader.offset
+                                        p_length = inst._pixel_loader.length
+                                        p_alg = inst._pixel_loader.alg
+                                        p_hash = getattr(inst, '_pixel_hash', None)
                                     else:
-                                         pass
-                                    
+                                        pass
+
                                     i_batch.append((
-                                        se_pk, 
-                                        inst.sop_instance_uid, 
-                                        inst.sop_class_uid, 
-                                        inst.instance_number, 
-                                        inst.file_path, 
-                                        p_offset, 
-                                        p_length, 
+                                        se_pk,
+                                        inst.sop_instance_uid,
+                                        inst.sop_class_uid,
+                                        inst.instance_number,
+                                        inst.file_path,
+                                        p_offset,
+                                        p_length,
                                         p_hash,
-                                        p_alg, 
+                                        p_alg,
                                         attrs_json
                                     ))
 
                                 cur.executemany("""
-                                    INSERT INTO instances (series_id_fk, sop_instance_uid, sop_class_uid, instance_number, file_path, 
+                                    INSERT INTO instances (series_id_fk, sop_instance_uid, sop_class_uid, instance_number, file_path,
                                                            pixel_offset, pixel_length, pixel_hash, compress_alg, attributes_json)
                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                     ON CONFLICT(sop_instance_uid) DO UPDATE SET
@@ -983,29 +1049,29 @@ class SqliteStore:
                                         self.save_vertical_attributes(uid, v_data, conn=conn)
 
                                 saved_i += len(dirty_items)
-                                
-                                # Mark saved with version (deferred until commit success? 
+
+                                # Mark saved with version (deferred until commit success?
                                 # No, we can attach to list and do it post-commit)
-                                # But we're inside loops. 
+                                # But we're inside loops.
                                 # Creating a cleanup list:
                                 # (We can store dirty_items in a larger list to clean up post-commit)
                                 # For now, let's mark clean *assuming* commit will succeed.
                                 # If commit fails, we rollback, but objects remain "clean" in memory?
                                 # That is a risk. We should do it post-commit.
-                                # But scope is tricky. 
-                                # Let's mark clean here but using version. 
+                                # But scope is tricky.
+                                # Let's mark clean here but using version.
                                 # If transaction rolls back, DB is old, but memory has _saved_mod_count advanced?
                                 # That means next save won't save it. BAD.
                                 # We must hold off.
-                                
+
                                 # Since we commit once at the end:
                                 # We need to collect ALL dirty items and their versions.
                                 # That is expensive memory-wise for massive sets.
                                 # But necessary for correctness.
-                                # Compromise: we iterate again. 
+                                # Compromise: we iterate again.
                                 # Wait, "Iterate again" in 'mark clean' loop below.
                                 # We can't know "ver" then.
-                                
+
                                 # Let's just update them here. If commit fails, the Exception propagates.
                                 # Use a try/except block around the whole `save_all`? Yes.
                                 # But `_saved_mod_count` is in memory.
@@ -1013,46 +1079,47 @@ class SqliteStore:
                                 # BUT `save_all` crashing usually kills the process or stops persistence.
                                 # So `eventual consistency` implies retrying.
                                 # If we marked it saved but it didn't save, we have data loss.
-                                
+
                                 # Correct way: List of callbacks?
                                 # Or just:
                                 for inst, ver in dirty_items:
-                                     if hasattr(inst, 'mark_saved'):
-                                          inst.mark_saved(ver)
-                                     else:
-                                          inst._dirty = False
+                                    if hasattr(inst, 'mark_saved'):
+                                        inst.mark_saved(ver)
+                                    else:
+                                        inst._dirty = False
 
                 conn.commit()
-                
-                # Post-Commit: 
+
+                # Post-Commit:
                 # We already marked items as saved/clean incrementally using naive-commit assumption.
                 # If transaction failed, those items are marked clean in memory but not in DB -> Inconsistency.
                 # However, re-implementing rollback for memory objects is out of scope.
                 # The versioning fixes the "Overwrite valid change" race, which is the user's issue.
                 pass
-                
+
                 # Restore Logging Logic
                 if saved_p + saved_i > 0:
-                     msg = f"Save (Inc) complete. P:{saved_p} St:{saved_st} Se:{saved_se} I:{saved_i}."
-                     if pixel_frames_written > 0:
-                         mb = pixel_bytes_written / (1024*1024)
-                         msg += f" Sidecar: {pixel_frames_written} frames ({mb:.2f} MB)."
-                     self.logger.info(msg)
+                    msg = f"Save (Inc) complete. P:{saved_p} St:{saved_st} Se:{saved_se} I:{saved_i}."
+                    if pixel_frames_written > 0:
+                        mb = pixel_bytes_written / (1024 * 1024)
+                        msg += f" Sidecar: {pixel_frames_written} frames ({mb:.2f} MB)."
+                    self.logger.info(msg)
 
         except Exception as e:
             self.logger.error(f"Save failed: {e}")
-            if hasattr(conn, "rollback"): conn.rollback()
+            if hasattr(conn, "rollback"):
+                conn.rollback()
             raise
 
     def get_total_instances(self) -> int:
         """
         Returns the total number of instances currently persisted.
-        
+
         Returns:
             int: The count of rows in the instances table.
         """
         try:
-             with self._get_connection() as conn:
+            with self._get_connection() as conn:
                 cur = conn.cursor()
                 row = cur.execute("SELECT COUNT(*) FROM instances").fetchone()
                 return row[0] if row else 0
@@ -1060,7 +1127,9 @@ class SqliteStore:
             self.logger.error(f"Failed to count instances: {e}")
             return 0
 
-    def get_flattened_instances(self, patient_ids: List[str] = None, instance_uids: List[str] = None):
+    def get_flattened_instances(self,
+                                patient_ids: List[str] = None,
+                                instance_uids: List[str] = None):
         """
         Yields a flat dictionary for every instance in the DB.
 
@@ -1077,45 +1146,44 @@ class SqliteStore:
         with self._get_connection() as conn:
             # conn.row_factory = sqlite3.Row
             cur = conn.cursor()
-            
+
             query = """
-                SELECT 
+                SELECT
                     p.patient_id, p.patient_name,
                     st.study_instance_uid, st.study_date,
                     s.series_instance_uid, s.modality, s.series_number, s.manufacturer, s.model_name, s.device_serial_number,
-                    i.sop_instance_uid, i.sop_class_uid, i.instance_number, i.file_path, 
+                    i.sop_instance_uid, i.sop_class_uid, i.instance_number, i.file_path,
                     i.pixel_offset, i.pixel_length, i.compress_alg, i.attributes_json
                 FROM instances i
                 JOIN series s ON i.series_id_fk = s.id
                 JOIN studies st ON s.study_id_fk = st.id
                 JOIN patients p ON st.patient_id_fk = p.id
             """
-            
+
             conditions = []
             params = []
-            
+
             if patient_ids:
                 placeholders = ",".join("?" for _ in patient_ids)
                 conditions.append(f"p.patient_id IN ({placeholders})")
                 params.extend(patient_ids)
-                
+
             if instance_uids:
                 placeholders = ",".join("?" for _ in instance_uids)
                 conditions.append(f"i.sop_instance_uid IN ({placeholders})")
                 params.extend(instance_uids)
-            
+
             if conditions:
                 query += " WHERE " + " AND ".join(conditions)
-                
+
             # Execute generator
             cursor = cur.execute(query, params)
-            
+
             # We can map columns to names
             cols = [desc[0] for desc in cursor.description]
-            
+
             for row in cursor:
                 yield dict(zip(cols, row))
-
 
     def update_attributes(self, instances: List[Patient]):
         """
@@ -1134,7 +1202,7 @@ class SqliteStore:
         try:
             with self._get_connection() as conn:
                 cur = conn.cursor()
-                
+
                 # Pre-calculate data for executemany
                 data = []
                 for inst in instances:
@@ -1142,16 +1210,16 @@ class SqliteStore:
                     full_data = self._serialize_item(inst)
                     attrs_json = json.dumps(full_data, cls=GantryJSONEncoder)
                     data.append((attrs_json, inst.sop_instance_uid))
-                
+
                 cur.executemany("""
-                    UPDATE instances 
-                    SET attributes_json = ? 
+                    UPDATE instances
+                    SET attributes_json = ?
                     WHERE sop_instance_uid = ?
                 """, data)
-                
+
                 conn.commit()
                 self.logger.info("Update complete.")
-                
+
         except sqlite3.Error as e:
             self.logger.error(f"Failed to update attributes: {e}")
 
@@ -1163,16 +1231,16 @@ class SqliteStore:
             findings (List[PhiFinding]): List of finding objects to insert.
         """
         timestamp = datetime.now().isoformat()
-        
+
         if not findings:
             return
 
         self.logger.info(f"Saving {len(findings)} PHI findings...")
-        
+
         try:
             with self._get_connection() as conn:
                 cur = conn.cursor()
-                
+
                 # Prepare Data Generator for Batch Insert (Memory Efficient)
                 def findings_generator():
                     for f in findings:
@@ -1181,29 +1249,29 @@ class SqliteStore:
                         if f.remediation_proposal:
                             rem_action = f.remediation_proposal.action_type
                             rem_value = str(f.remediation_proposal.new_value)
-                        
+
                         yield (
-                            timestamp, 
-                            f.entity_uid, 
-                            f.entity_type, 
-                            f.field_name, 
-                            str(f.value), 
-                            f.reason, 
-                            f.patient_id, 
-                            rem_action, 
-                            rem_value, 
+                            timestamp,
+                            f.entity_uid,
+                            f.entity_type,
+                            f.field_name,
+                            str(f.value),
+                            f.reason,
+                            f.patient_id,
+                            rem_action,
+                            rem_value,
                             "{}"
                         )
 
                 cur.executemany("""
-                    INSERT INTO phi_findings 
-                    (timestamp, entity_uid, entity_type, field_name, value, reason, patient_id, remediation_action, remediation_value, details_json) 
+                    INSERT INTO phi_findings
+                    (timestamp, entity_uid, entity_type, field_name, value, reason, patient_id, remediation_action, remediation_value, details_json)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, findings_generator())
-                
+
                 conn.commit()
                 self.logger.info("Findings saved.")
-                
+
         except sqlite3.Error as e:
             self.logger.error(f"Failed to save findings: {e}")
 
@@ -1219,20 +1287,24 @@ class SqliteStore:
             return findings
 
         try:
-             with self._get_connection() as conn:
+            with self._get_connection() as conn:
                 # conn.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 # Check if table exists (backward compatibility for old DBs if init didnt run on them)
                 # But _init_db runs on __init__, so schema should be there.
-                
+
                 rows = cur.execute("SELECT * FROM phi_findings ORDER BY id").fetchall()
-                
+
                 for r in rows:
                     if r['remediation_action']:
-                        prop = PhiRemediation(r['remediation_action'], r['field_name'], r['remediation_value'], None) 
-                    else: 
+                        prop = PhiRemediation(
+                            r['remediation_action'],
+                            r['field_name'],
+                            r['remediation_value'],
+                            None)
+                    else:
                         prop = None
-                        
+
                     f = PhiFinding(
                         entity_uid=r['entity_uid'],
                         entity_type=r['entity_type'],
@@ -1243,16 +1315,16 @@ class SqliteStore:
                         remediation_proposal=prop
                     )
                     findings.append(f)
-                    
+
         except sqlite3.Error as e:
             self.logger.error(f"Failed to load findings: {e}")
-            
+
         return findings
 
     def compact_sidecar(self) -> Dict[str, Tuple[int, int]]:
         """
         Reclaims disk space by rewriting the sidecar file.
-        
+
         Removes unreferenced (orphaned) pixel data that might exist due to deletions
         or updates. Updates the database pointers efficiently.
 
@@ -1261,101 +1333,115 @@ class SqliteStore:
         """
         self.logger.info("Starting Sidecar Compaction...")
         start_time = time.time()
-        
+
         # 1. Get Live Index (Sorted)
         # We only care about instances that actully point to the sidecar (pixel_offset IS NOT NULL)
         try:
             with self._get_connection() as conn:
                 cur = conn.cursor()
                 rows = cur.execute("""
-                    SELECT id, sop_instance_uid, pixel_offset, pixel_length 
-                    FROM instances 
-                    WHERE pixel_offset IS NOT NULL 
+                    SELECT id, sop_instance_uid, pixel_offset, pixel_length
+                    FROM instances
+                    WHERE pixel_offset IS NOT NULL
                     ORDER BY pixel_offset ASC
                 """).fetchall()
         except sqlite3.Error as e:
             self.logger.error(f"Compaction Failed (Query): {e}")
             raise e
-            
+
         if not rows:
             self.logger.info("No live pixels found in sidecar. Compaction skipped.")
             return {}
 
-        import shutil
+
         temp_path = self.sidecar_path + ".compact.tmp"
         updates = []
-        uid_map = {} # sop_instance_uid -> (offset, length)
+        uid_map = {}  # sop_instance_uid -> (offset, length)
         original_size = os.path.getsize(self.sidecar_path)
         written_bytes = 0
-        
+
         try:
             # 2. Rewrite
             with open(self.sidecar_path, "rb") as f_in, open(temp_path, "wb") as f_out:
                 current_out_pos = 0
-                
+
                 for r in rows:
-                    if r['pixel_length'] <= 0: continue
-                    
+                    if r['pixel_length'] <= 0:
+                        continue
+
                     # Read
                     f_in.seek(r['pixel_offset'])
                     data = f_in.read(r['pixel_length'])
-                    
+
                     if len(data) != r['pixel_length']:
-                         self.logger.warning(f"Compaction Warning: Unexpected EOF for instance ID {r['id']}")
-                    
+                        self.logger.warning(
+                            f"Compaction Warning: Unexpected EOF for instance ID {
+                                r['id']}")
+
                     # Write
                     f_out.write(data)
                     length = len(data)
-                    
+
                     # Record change
                     # (new_offset, instance_id)
                     updates.append((current_out_pos, r['id']))
                     uid_map[r['sop_instance_uid']] = (current_out_pos, length)
-                    
+
                     current_out_pos += length
-                
+
                 written_bytes = current_out_pos
 
             # 3. Update DB (Transaction)
             with self._get_connection() as conn:
                 conn.executemany("UPDATE instances SET pixel_offset=? WHERE id=?", updates)
-            
+
             # 4. Swap Files
             shutil.move(temp_path, self.sidecar_path)
-            
+
             # 5. Reset Manager
             self.sidecar = SidecarManager(self.sidecar_path)
-            
+
             duration = time.time() - start_time
             saved_space = original_size - written_bytes
-            self.logger.info(f"Compaction Complete in {duration:.2f}s. Size: {original_size} -> {written_bytes} bytes. Reclaimed: {saved_space} bytes.")
-            print(f"Compaction Complete. Size: {original_size/1024/1024:.2f}MB -> {written_bytes/1024/1024:.2f}MB. Reclaimed: {saved_space/1024/1024:.2f}MB.")
-            
+            self.logger.info(
+                f"Compaction Complete in {
+                    duration:.2f}s. Size: {original_size} -> {written_bytes} bytes. Reclaimed: {saved_space} bytes.")
+            print(
+                f"Compaction Complete. Size: {
+                    original_size /
+                    1024 /
+                    1024:.2f}MB -> {
+                    written_bytes /
+                    1024 /
+                    1024:.2f}MB. Reclaimed: {
+                    saved_space /
+                    1024 /
+                    1024:.2f}MB.")
+
             return uid_map
-            
+
         except Exception as e:
             self.logger.error(f"Compaction Failed: {e}")
             if os.path.exists(temp_path):
-                try: os.remove(temp_path)
-                except: pass
+                try:
+                    os.remove(temp_path)
+                except BaseException:
+                    pass
             raise e
+
 
 class GantryJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, bytes):
-            import base64
-            # Keep consistent with current implementation or standard?
-            # Existing was: return {"__type__": "bytes", "data": base64.b64encode(obj).decode('ascii')}
             return {"__type__": "bytes", "data": base64.b64encode(obj).decode('ascii')}
-        
-        from pydicom.multival import MultiValue
+
         if isinstance(obj, MultiValue):
             return list(obj)
-            
+
         return super().default(obj)
+
 
 def gantry_json_object_hook(d):
     if "__type__" in d and d["__type__"] == "bytes":
-        import base64
         return base64.b64decode(d["data"])
     return d

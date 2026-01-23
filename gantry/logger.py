@@ -3,10 +3,11 @@ import sys
 
 import os
 
+
 def configure_logger(log_file=None):
     """
     Configures the root logger for the application.
-    
+
     Sets up two handlers:
     1. File Handler: Captures all DEBUG+ logs.
     2. Console Handler: Captures WARNING+ logs only (to keep CLI output/tqdm clean).
@@ -19,16 +20,16 @@ def configure_logger(log_file=None):
     """
     if log_file is None:
         log_file = os.getenv("GANTRY_LOG_FILE", "gantry.log")
-        
+
     logger = logging.getLogger("gantry")
     logger.setLevel(logging.DEBUG)
-    
+
     # Reset handlers to prevent duplicates on reload
     if logger.handlers:
         logger.handlers = []
 
     # 1. File Handler
-    fh = logging.FileHandler(log_file, mode='w') # Overwrite mode for now per session
+    fh = logging.FileHandler(log_file, mode='w')  # Overwrite mode for now per session
     fh.setLevel(logging.DEBUG)
     file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     fh.setFormatter(file_formatter)
@@ -36,12 +37,13 @@ def configure_logger(log_file=None):
 
     # 2. Console Handler
     ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(logging.WARNING) # Keep console clean for tqdm
+    ch.setLevel(logging.WARNING)  # Keep console clean for tqdm
     console_formatter = logging.Formatter('%(levelname)s: %(message)s')
     ch.setFormatter(console_formatter)
     logger.addHandler(ch)
 
     return logger
+
 
 def get_logger():
     return logging.getLogger("gantry")

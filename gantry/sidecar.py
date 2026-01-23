@@ -4,14 +4,16 @@ import numpy as np
 from typing import Tuple, Optional
 from threading import Lock
 
+
 class SidecarManager:
     """
     Manages appending and reading from a binary sidecar file.
-    
+
     Thread-safe for writes (append-only) using file locking (`fcntl`).
-    Format: Raw concatenated blobs (optionally compressed). Offsets/lengths are 
+    Format: Raw concatenated blobs (optionally compressed). Offsets/lengths are
     managed by the caller (Instance object).
     """
+
     def __init__(self, filepath: str):
         self.filepath = filepath
         self._lock = Lock()
@@ -40,12 +42,12 @@ class SidecarManager:
             blob = data
         else:
             raise ValueError(f"Unsupported compression: {compression}")
-        
+
         length = len(blob)
-        
+
         # Process-Safe Locking using fcntl (POSIX)
         import fcntl
-        
+
         # We assume strict append mode
         with open(self.filepath, 'ab') as f:
             fcntl.flock(f, fcntl.LOCK_EX)
@@ -56,7 +58,7 @@ class SidecarManager:
                 # os.fsync(f.fileno())
             finally:
                 fcntl.flock(f, fcntl.LOCK_UN)
-                
+
         return offset, length
 
     def read_frame(self, offset: int, length: int, compression: str = 'zlib') -> bytes:
@@ -81,26 +83,26 @@ class SidecarManager:
             f.seek(offset)
             # print(f"  -> Sidecar: Read {length}", flush=True)
             blob = f.read(length)
-            
+
         if len(blob) != length:
             raise IOError(f"Incomplete read from sidecar. Expected {length}, got {len(blob)}.")
-            
+
         if compression == 'zlib':
 
             try:
                 dobj = zlib.decompressobj()
                 chunks = []
-                chunk_size = 1024 * 1024 # 1MB chunks
+                chunk_size = 1024 * 1024  # 1MB chunks
                 total_in = len(blob)
-                
+
                 for i in range(0, total_in, chunk_size):
                     # print(f"    dchunk {i}/{total_in}", flush=True)
-                    chunk_data = blob[i:i+chunk_size]
+                    chunk_data = blob[i:i + chunk_size]
                     chunks.append(dobj.decompress(chunk_data))
-                
+
                 chunks.append(dobj.flush())
                 res = b"".join(chunks)
-                
+
                 return res
             except Exception as e:
                 # print(f"[Worker {os.getpid()}] Sidecar: DECOMPRESS ERROR: {e}", flush=True)

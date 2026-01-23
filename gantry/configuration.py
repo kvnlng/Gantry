@@ -1,6 +1,15 @@
+"""
+Defines the runtime configuration structures for the Gantry application.
+
+This module contains the `GantryConfiguration` dataclass which encapsulates everything
+needed to drive a session's behavior, including redaction rules, PHI profiling,
+and date shifting parameters. It also handles the persistent state of these
+settings by syncing with a backing YAML file.
+"""
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
-import copy
+import yaml
+
 
 @dataclass
 class GantryConfiguration:
@@ -23,56 +32,55 @@ class GantryConfiguration:
     def save(self) -> None:
         """
         Persists the current configuration state to `config_path` (YAML).
-        
+
         Attempts to format lists as flow-style (bracketed) for better readability.
         """
         if not self.config_path:
             return
 
-        import yaml
-        
-        # Helper for Flow-Style Lists (Bracketed)
-        class FlowList(list): pass
-        
+        class FlowList(list):
+            """Helper class to mark lists for flow-style (bracketed) YAML formatting."""
+            pass
+
         def flow_list_representer(dumper, data):
             return dumper.represent_sequence('tag:yaml.org,2002:seq', data, flow_style=True)
-            
+
         try:
             yaml.add_representer(FlowList, flow_list_representer)
-        except:
-             # Already registered
-             pass
+        except ValueError:
+            # Already registered
+            pass
 
         # Construct Unified Data
         # Re-using logic similar to session.create_config but simplified for direct object dump
-        
+
         # 4b. Enhance PHI Tags (Transform to structured if needed for saving)
         # We store them as they are set (which should be structured if coming from set_phi_tag)
         # But for cleanliness in YAML, let's ensure consistency.
-        
+
         # Prepare machines
         machines_export = []
         for m in self.rules:
-             m_copy = m.copy()
-             if "redaction_zones" in m_copy:
-                  # Wrap internal lists
-                  zones = m_copy["redaction_zones"]
-                  new_zones = FlowList()
-                  for z in zones:
-                      if isinstance(z, list):
-                           new_zones.append(FlowList(z))
-                      else:
-                           new_zones.append(z)
-                  m_copy["redaction_zones"] = new_zones
-             machines_export.append(m_copy)
+            m_copy = m.copy()
+            if "redaction_zones" in m_copy:
+                # Wrap internal lists
+                zones = m_copy["redaction_zones"]
+                new_zones = FlowList()
+                for z in zones:
+                    if isinstance(z, list):
+                        new_zones.append(FlowList(z))
+                    else:
+                        new_zones.append(z)
+                m_copy["redaction_zones"] = new_zones
+            machines_export.append(m_copy)
 
         data = {
             "version": "2.0",
-            # We don't store privacy_profile name in the object currently, 
-            # so we might lose that metadata if we overwrite. 
+            # We don't store privacy_profile name in the object currently,
+            # so we might lose that metadata if we overwrite.
             # For now, let's assume 'custom' or omit if not tracked.
             # OR we should add it to the dataclass. For this task, we'll omit or keep basic.
-            "privacy_profile": "custom", 
+            "privacy_profile": "custom",
             "phi_tags": self.phi_tags,
             "date_jitter": self.date_jitter,
             "remove_private_tags": self.remove_private_tags,
@@ -80,18 +88,18 @@ class GantryConfiguration:
         }
 
         try:
-            with open(self.config_path, 'w') as f:
+            with open(self.config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(data, f, sort_keys=False, default_flow_style=False, width=float("inf"))
-        except Exception as e:
+        except (IOError, OSError, yaml.YAMLError) as e:
             # We don't want to crash the runtime if save fails, but we should log/warn
             # Since we don't have logger here easily without import
             print(f"WARNING: Failed to auto-save configuration: {e}")
 
-
-    def add_rule(self, serial_number: str, manufacturer: str = "Unknown", model: str = "Unknown", zones: List[Any] = None) -> None:
+    def add_rule(self, serial_number: str, manufacturer: str = "Unknown",
+                 model: str = "Unknown", zones: List[Any] = None) -> None:
         """
         Adds a new machine redaction rule.
-        
+
         Overrides any existing rule for the same serial number. Auto-saves if
         config_path is set.
 
@@ -103,7 +111,7 @@ class GantryConfiguration:
         """
         # Remove existing if any
         self.delete_rule(serial_number)
-        
+
         new_rule = {
             "serial_number": serial_number,
             "manufacturer": manufacturer,
@@ -112,7 +120,6 @@ class GantryConfiguration:
         }
         self.rules.append(new_rule)
         self.save()
-
 
     def update_rule(self, serial_number: str, updates: Dict[str, Any]) -> None:
         """
@@ -128,14 +135,13 @@ class GantryConfiguration:
         rule = self.get_rule(serial_number)
         if not rule:
             raise ValueError(f"No rule found for serial number '{serial_number}'")
-        
+
         # Prevent changing the serial number via update to avoid identity mismatch logic
         if "serial_number" in updates and updates["serial_number"] != serial_number:
             raise ValueError("Values for 'serial_number' cannot be changed via update_rule.")
-            
+
         rule.update(updates)
         self.save()
-
 
     def delete_rule(self, serial_number: str) -> bool:
         """
@@ -151,9 +157,8 @@ class GantryConfiguration:
         self.rules = [r for r in self.rules if r.get("serial_number") != serial_number]
         removed = len(self.rules) < initial_len
         if removed:
-             self.save()
+            self.save()
         return removed
-
 
     def set_phi_tag(self, tag: str, action: str, replacement: str = None) -> None:
         """
@@ -165,24 +170,23 @@ class GantryConfiguration:
             replacement (str, optional): The replacement value if action is 'REPLACE'.
         """
         tag = tag.upper()
-        # Simple string format storage check? 
+        # Simple string format storage check?
         # config_manager uses dicts or strings. We standardize on dict for API set?
         # Or store as the system expects. System expects:
         # { "0010,0010": "Patient Name" } OR { "0010,0010": {"name": "...", "action": "..."} }
-        
+
         # If the backend supports structured tags, use that.
         # Based on config_manager.py line 523, it supports structured.
-        
+
         val = {
-            "name": "Custom Tag", # We might not know the name easily without lookup
+            "name": "Custom Tag",  # We might not know the name easily without lookup
             "action": action
         }
         if replacement:
             val["replacement"] = replacement
-            
+
         self.phi_tags[tag] = val
         self.save()
-
 
     def get_rule(self, serial_number: str) -> Optional[Dict[str, Any]]:
         """

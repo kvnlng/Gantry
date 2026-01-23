@@ -42,8 +42,8 @@ def test_decode_error_handling(mock_dataset):
     mock_uid.__eq__.side_effect = lambda x: x == JPEGLossless # Allow comparison
     mock_dataset.file_meta.TransferSyntaxUID = JPEGLossless
     
-    # Mock decode_data_sequence to return a list of bytes
-    with patch('pydicom.encaps.decode_data_sequence', return_value=[b"chunk"]):
+    # Mock generate_fragments (used by single frame path)
+    with patch('gantry.imagecodecs_handler.generate_fragments', return_value=[b"chunk"]):
         # Unconditionally patch the local reference to imagecodecs in the handler
         with patch('gantry.imagecodecs_handler.imagecodecs') as mock_ic:
             mock_ic.ljpeg_decode.side_effect = ValueError("Bad data")
@@ -61,7 +61,7 @@ def test_rle_lossless_handling(mock_dataset):
     mock_dataset.file_meta.TransferSyntaxUID = mock_uid
     expected_output = np.zeros((10, 10), dtype=np.uint8)
 
-    with patch('pydicom.encaps.decode_data_sequence', return_value=[b"rle_chunk"]):
+    with patch('gantry.imagecodecs_handler.generate_fragments', return_value=[b"rle_chunk"]):
         with patch('gantry.imagecodecs_handler.imagecodecs') as mock_ic:
             mock_ic.rle_decode.return_value = expected_output
             result = imagecodecs_handler.get_pixel_data(mock_dataset)
@@ -80,8 +80,8 @@ def test_multi_frame_handling(mock_dataset):
     frame1 = np.zeros((10, 10), dtype=np.uint8)
     frame2 = np.ones((10, 10), dtype=np.uint8)
     
-    # Mock generate_pixel_data_frame to return two frames
-    with patch('pydicom.encaps.generate_pixel_data_frame', return_value=[b"f1", b"f2"]):
+    # Mock generate_frames to return two frames
+    with patch('gantry.imagecodecs_handler.generate_frames', return_value=[b"f1", b"f2"]):
          with patch('gantry.imagecodecs_handler.imagecodecs') as mock_ic:
             mock_ic.ljpeg_decode.side_effect = [frame1, frame2]
             result = imagecodecs_handler.get_pixel_data(mock_dataset)

@@ -25,9 +25,9 @@ def test_compress_j2k_with_array(mock_dataset_compress):
     arr = np.zeros((10, 10), dtype=np.uint8)
     
     # Patch the global modules that _compress_j2k imports
-    with patch('PIL.Image') as mock_img_cls: # Mock PIL.Image class
-        # Mock encapsulate in pydicom.encaps (assuming that's where it pulls from)
-        with patch('pydicom.encaps.encapsulate', return_value=b"compressed_data") as mock_enc:
+    with patch('gantry.io_handlers.Image') as mock_img_cls: # Mock PIL.Image class
+        # Patch encapsulation in gantry.io_handlers directly
+        with patch('gantry.io_handlers.encapsulate', return_value=b"compressed_data") as mock_enc:
             
             mock_img_cls.fromarray.return_value.save.side_effect = lambda fp, **kwargs: fp.write(b"compressed_data")
             
@@ -38,8 +38,8 @@ def test_compress_j2k_with_array(mock_dataset_compress):
 def test_compress_j2k_success(mock_dataset_compress):
     arr = np.zeros((10, 10), dtype=np.uint8)
     
-    with patch('pydicom.encaps.encapsulate', return_value=b"encapsulated_frames"):
-        with patch('PIL.Image.fromarray') as mock_fromarray:
+    with patch('gantry.io_handlers.encapsulate', return_value=b"encapsulated_frames"):
+        with patch('gantry.io_handlers.Image.fromarray') as mock_fromarray:
              mock_fromarray.return_value.save.side_effect = lambda fp, **kwargs: fp.write(b"j2k_bytes")
              
              _compress_j2k(mock_dataset_compress, pixel_array=arr)
@@ -49,8 +49,8 @@ def test_compress_j2k_success(mock_dataset_compress):
 
 def test_compress_j2k_fallback_reconstruct(mock_dataset_compress):
     # No array provided, should reconstruct from ds.PixelData
-    with patch('pydicom.encaps.encapsulate', return_value=b"encapsulated"):
-        with patch('PIL.Image.fromarray') as mock_fromarray:
+    with patch('gantry.io_handlers.encapsulate', return_value=b"encapsulated"):
+        with patch('gantry.io_handlers.Image.fromarray') as mock_fromarray:
             _compress_j2k(mock_dataset_compress, pixel_array=None)
             
             mock_fromarray.assert_called_once()
@@ -61,18 +61,18 @@ def test_compress_j2k_frames(mock_dataset_compress):
     mock_dataset_compress.NumberOfFrames = 2
     mock_dataset_compress.PixelData = b'\x00' * 200 # 2 frames
     
-    with patch('pydicom.encaps.encapsulate', return_value=b"encapsulated"):
-         with patch('PIL.Image.fromarray') as mock_fromarray:
+    with patch('gantry.io_handlers.encapsulate', return_value=b"encapsulated"):
+         with patch('gantry.io_handlers.Image.fromarray') as mock_fromarray:
              _compress_j2k(mock_dataset_compress, pixel_array=None)
              assert mock_fromarray.call_count == 2 # Called for each frame
 
 def test_compress_j2k_import_error(mock_dataset_compress):
     # Simulate ImportError
-    with patch('PIL.Image.fromarray', side_effect=ImportError("No Pillow")):
+    with patch('gantry.io_handlers.Image.fromarray', side_effect=ImportError("No Pillow")):
         with pytest.raises(RuntimeError, match="Pillow or pydicom not installed"):
              _compress_j2k(mock_dataset_compress, pixel_array=np.zeros((10,10)))
 
 def test_compress_j2k_generic_exception(mock_dataset_compress):
-     with patch('PIL.Image.fromarray', side_effect=ValueError("Bad Data")):
+     with patch('gantry.io_handlers.Image.fromarray', side_effect=ValueError("Bad Data")):
         with pytest.raises(RuntimeError, match="Compression failed"):
              _compress_j2k(mock_dataset_compress, pixel_array=np.zeros((10,10)))

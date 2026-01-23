@@ -10,7 +10,7 @@ try:
 
     # Expose Equipment for type hinting
     from .entities import Equipment
-    
+
     # Expose handler for direct import check
     from . import imagecodecs_handler
 
@@ -38,7 +38,7 @@ try:
     import pydicom.pixel_data_handlers.pillow_handler as pillow_handler
     import pydicom.pixel_data_handlers.numpy_handler as numpy_handler
     from . import imagecodecs_handler
-    
+
     # We explicitly define the priority list using module objects
     pydicom_config.pixel_data_handlers = [
         gdcm_handler,

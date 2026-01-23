@@ -2,6 +2,7 @@ import datetime
 from dataclasses import dataclass, field
 from typing import Dict, Protocol
 
+
 @dataclass
 class ComplianceReport:
     """
@@ -26,34 +27,34 @@ class ComplianceReport:
     generated_at: datetime.datetime = field(default_factory=datetime.datetime.now)
     gantry_version: str = "Unknown"
     project_name: str = "Gantry Session"
-    
+
     # Configuration / Context
     privacy_profile: str = "Unknown"
-    deid_method: str = "Safe Harbor (Basic Profile)" # Default, can be overridden
-    
+    deid_method: str = "Safe Harbor (Basic Profile)"  # Default, can be overridden
+
     # Cohort Statistics
     total_patients: int = 0
     total_studies: int = 0
     total_series: int = 0
     total_instances: int = 0
-    
+
     # Audit / Processing Statistics
     # e.g., {'ANONYMIZE_METADATA': 1200, 'REDACT_PIXELS': 50, 'EXPORT': 1200}
     audit_summary: Dict[str, int] = field(default_factory=dict)
-    
+
     # Exceptions & Errors
     # List of "ERROR" or "WARNING" logs: (timestamp, action, details)
     exceptions: list = field(default_factory=list)
 
-
     # Validation
-    validation_status: str = "PENDING" # PASS, FAIL, PENDING
+    validation_status: str = "PENDING"  # PASS, FAIL, PENDING
     validation_issues: int = 0
     verification_details: str = ""
 
 
 class ReportRenderer(Protocol):
     """Protocol for a report renderer."""
+
     def render(self, report: ComplianceReport, output_path: str) -> None:
         """
         Renders the report to the specified output path.
@@ -72,7 +73,7 @@ class MarkdownRenderer:
         """
         Renders the report as a Markdown file.
 
-        Includes an Executive Summary, Processing Audit table, Exceptions log, 
+        Includes an Executive Summary, Processing Audit table, Exceptions log,
         and Verification details.
 
         Args:
@@ -120,7 +121,6 @@ The following actions were recorded in the secure audit trail:
         else:
             md_content += f"\n## 3. Exceptions & Errors\n\n*No exceptions or errors were recorded.*\n"
 
-
         md_content += f"""
 ## 4. Validation & Verification
 
@@ -134,9 +134,10 @@ The following actions were recorded in the secure audit trail:
 __________________________________________________
 *(Date)*
 """
-        
+
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(md_content)
+
 
 def get_renderer(format_type: str) -> ReportRenderer:
     if format_type.lower() in ["md", "markdown"]:
