@@ -241,10 +241,10 @@ class SqliteStore:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.executescript(self.SCHEMA)
 
-    def _create_pixel_loader(self, offset, length, alg, instance):
+    def _create_pixel_loader(self, offset, length, alg, instance, pixel_hash=None):
         """Helper to create a lazy pixel loader for the sidecar."""
         # Use instance to populate primitives
-        return SidecarPixelLoader(self.sidecar_path, offset, length, alg, instance=instance)
+        return SidecarPixelLoader(self.sidecar_path, offset, length, alg, instance=instance, pixel_hash=pixel_hash)
 
     def _audit_worker(self):
         """Background thread to batch write audit logs."""
@@ -785,7 +785,8 @@ class SqliteStore:
             # This allows instance.unload_pixel_data() to work safely
             # Note: instance attributes ARE populated here (it's a live object), so
             # passing instance=instance works.
-            instance._pixel_loader = self._create_pixel_loader(offset, length, c_alg, instance)
+            instance._pixel_loader = self._create_pixel_loader(
+                offset, length, c_alg, instance, pixel_hash=p_hash)
 
             # 3. Optional: Persist the linkage to DB immediately?
             # It's safer if we do, so if we crash, we know where the pixels are.

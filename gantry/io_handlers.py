@@ -642,7 +642,7 @@ class SidecarPixelLoader:
     Designed to be lightweight and serializable for IPC.
     """
 
-    def __init__(self, sidecar_path, offset, length, alg, instance=None, metadata=None):
+    def __init__(self, sidecar_path, offset, length, alg, instance=None, metadata=None, pixel_hash=None):
         self.sidecar_path = sidecar_path
         self.offset = offset
         self.length = length
@@ -670,7 +670,7 @@ class SidecarPixelLoader:
             self.bits = int(instance.attributes.get("0028,0100", 8) or 8)
             self.pixel_representation = int(instance.attributes.get("0028,0103", 0) or 0)
             self.planar_conf = int(instance.attributes.get("0028,0006", 0) or 0)
-            self.pixel_hash = getattr(instance, "_pixel_hash", None)
+            self.pixel_hash = pixel_hash or getattr(instance, "_pixel_hash", None)
         else:
             raise ValueError("SidecarPixelLoader requires either 'instance' or 'metadata'")
 
