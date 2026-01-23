@@ -5,6 +5,19 @@ All notable changes to the "Gantry" project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-01-23
+
+### Fixed
+
+- **Integrity Check Regression**: Fixed a hash mismatch error in `SidecarPixelLoader` where the loader was initialized with a stale hash before the new pixel data was persisted.
+- **Free-Threaded Stability**: Fixed a critical race condition in `SidecarManager` on Python 3.14t (free-threaded) where `ab` file mode caused `tell()` to report incorrect offsets. Switched to `r+b` with explicit seeking.
+- **Regression**: Fixed `ValueError` in `gantry/session.py` due to incorrect f-string brace escaping.
+- **Regression**: Restored optional `Pillow` support in `gantry/io_handlers.py` to prevent crashes when the library is missing.
+
+### Changed
+
+- **Code Quality**: Major refactor to align with Pylint standards (imports moved to top-level, docstrings added, formatting standardized).
+
 ## [0.6.0] - 2026-01-20
 
 ### Added
