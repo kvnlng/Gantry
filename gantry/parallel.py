@@ -59,6 +59,12 @@ def run_parallel(
     if progress is not None:
         show_progress = progress
 
+    # Global override (Disable only)
+    if show_progress:
+        env_show = os.environ.get("GANTRY_SHOW_PROGRESS", "1").lower()
+        if env_show in ("0", "false", "off", "no"):
+            show_progress = False
+
     # Internal Generator to handle 'yield' vs list construction
     def _execute():
         # Use max_workers = os.cpu_count() * 1.5 by default

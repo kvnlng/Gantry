@@ -219,3 +219,4 @@ You can tune the system performance and behavior using environment variables. Th
 | **`GANTRY_MAX_TASKS_PER_CHILD`** | *Unlimited* | Restart worker processes after N tasks to release memory. Useful if you suspect memory leaks in underlying libraries. |
 | **`GANTRY_DISABLE_GC`** | `0` | Set to `1` to disable Garbage Collection in worker processes. This can speed up processing significantly but increases memory usage. |
 | **`GANTRY_FORCE_THREADS`** | `0` | Set to `1` to force using Threads instead of Processes (bypass multiprocessing). Useful for debugging or when running in environments that don't support `fork`. |
+| **`GANTRY_SHOW_PROGRESS`** | `1` | Set to `0` to globally disable all progress bars (tqdm). Useful for cleaner logs in CI/CD environments. |

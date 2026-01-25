@@ -124,3 +124,20 @@ class TestParallelConfig(unittest.TestCase):
         mock_executor.assert_called()
         call_kwargs = mock_executor.call_args[1]
         self.assertEqual(call_kwargs.get('initializer'), mock_gc_off)
+
+    @patch('gantry.parallel.concurrent.futures.ProcessPoolExecutor')
+    @patch('gantry.parallel.tqdm')
+    def test_run_parallel_show_progress_env(self, mock_tqdm, mock_executor):
+        """Test that GANTRY_SHOW_PROGRESS=0 disables tqdm."""
+        os.environ["GANTRY_SHOW_PROGRESS"] = "0"
+        
+        mock_instance = mock_executor.return_value
+        mock_instance.__enter__.return_value = mock_instance
+        mock_instance.map.return_value = [1]
+        
+        # Pass show_progress=True explicitly
+        parallel.run_parallel(identity, [1], show_progress=True)
+        
+        # tqdm should NOT be called
+        mock_tqdm.assert_not_called()
+
