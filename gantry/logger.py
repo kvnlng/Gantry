@@ -22,7 +22,18 @@ def configure_logger(log_file=None):
         log_file = os.getenv("GANTRY_LOG_FILE", "gantry.log")
 
     logger = logging.getLogger("gantry")
-    logger.setLevel(logging.DEBUG)
+    
+    # helper for default level
+    log_level_map = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL
+    }
+    default_level = log_level_map.get(os.getenv("GANTRY_LOG_LEVEL", "DEBUG").upper(), logging.DEBUG)
+    
+    logger.setLevel(default_level)
 
     # Reset handlers to prevent duplicates on reload
     if logger.handlers:
@@ -30,7 +41,7 @@ def configure_logger(log_file=None):
 
     # 1. File Handler
     fh = logging.FileHandler(log_file, mode='w')  # Overwrite mode for now per session
-    fh.setLevel(logging.DEBUG)
+    fh.setLevel(default_level)
     file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     fh.setFormatter(file_formatter)
     logger.addHandler(fh)

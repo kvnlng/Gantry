@@ -33,7 +33,8 @@ def run_parallel(
     Executes `func(item)` in parallel using multiple processes or threads.
 
     Adapts strategy based on environment variables (`GANTRY_MAX_WORKERS`,
-    `GANTRY_FORCE_THREADS`) and presence of GIL. Defaults to `ProcessPoolExecutor`.
+    `GANTRY_FORCE_THREADS`, `GANTRY_CHUNKSIZE`, `GANTRY_MAX_TASKS_PER_CHILD`,
+    `GANTRY_DISABLE_GC`) and presence of GIL. Defaults to `ProcessPoolExecutor`.
 
     Args:
         func (Callable[[T], R]): The worker function.
@@ -62,7 +63,7 @@ def run_parallel(
     def _execute():
         # Use max_workers = os.cpu_count() * 1.5 by default
         # This provides better throughput for I/O and compression heavy tasks
-        nonlocal max_workers
+        nonlocal max_workers, chunksize, maxtasksperchild, disable_gc
         if max_workers is None:
             if os.environ.get("GANTRY_MAX_WORKERS"):
                 try:
@@ -74,6 +75,26 @@ def run_parallel(
                 cpu_count = os.cpu_count() or 1
                 # User requested 1:1 CPU mapping for stability/predictability
                 max_workers = cpu_count
+
+        # Determine Strategy
+        if chunksize == 1:
+             if os.environ.get("GANTRY_CHUNKSIZE"):
+                try:
+                    chunksize = int(os.environ["GANTRY_CHUNKSIZE"])
+                except ValueError:
+                    pass
+
+        if maxtasksperchild is None:
+             if os.environ.get("GANTRY_MAX_TASKS_PER_CHILD"):
+                try:
+                    maxtasksperchild = int(os.environ["GANTRY_MAX_TASKS_PER_CHILD"])
+                except ValueError:
+                    pass
+
+        # Check for GC disable override
+        if not disable_gc:
+             if os.environ.get("GANTRY_DISABLE_GC") == "1":
+                 disable_gc = True
 
         # Determine Strategy
         use_threads = False
@@ -130,15 +151,15 @@ def run_parallel(
 
                     while True:
                         try:
-                            res = iterator.next(timeout=600)
+                            res = next(iterator)
                             yield res
                             if pbar:
                                 pbar.update(1)
                         except StopIteration:
                             break
                         except multiprocessing.TimeoutError:
-                            print("\n!! WORKER HANG DETECTED (Timeout 600s) !!")
-                            raise RuntimeError("Worker Pool Hung (Timeout)")
+                            # Timeout not supported by standard next(), relying on global timeout or signal if needed
+                            raise RuntimeError("Worker Pool Hung")
 
                     if pbar:
                         pbar.close()

@@ -97,7 +97,7 @@ class DicomSession:
     # LIFECYCLE
     # =========================================================================
 
-    def __init__(self, persistence_file="gantry.db"):
+    def __init__(self, persistence_file=None):
         """
         Initialize the DicomSession.
 
@@ -106,21 +106,21 @@ class DicomSession:
                                     Defaults to "gantry.db".
         """
         configure_logger()
-        self.persistence_file = persistence_file
+        self.persistence_file = persistence_file or os.getenv("GANTRY_DB_PATH", "gantry.db")
 
         # Check existence before SqliteStore potentially creates it
-        db_exists = os.path.exists(persistence_file)
+        db_exists = os.path.exists(self.persistence_file)
 
-        self.store_backend = SqliteStore(persistence_file)
+        self.store_backend = SqliteStore(self.persistence_file)
         self.persistence_manager = PersistenceManager(self.store_backend)
 
         # Hydrate memory from DB
         self.store = DicomStore()
 
         if db_exists:
-            print(f"Loading session from {persistence_file}...")
+            print(f"Loading session from {self.persistence_file}...")
         else:
-            print(f"Initializing new session at {persistence_file}...")
+            print(f"Initializing new session at {self.persistence_file}...")
 
         self.store.patients = self.store_backend.load_all()
 
@@ -139,7 +139,7 @@ class DicomSession:
             max_workers=None)  # Default: CPU * 1.5
 
         if db_exists:
-            print(f"Loaded session from {persistence_file}")
+            print(f"Loaded session from {self.persistence_file}")
 
         get_logger().info(f"Session started. {len(self.store.patients)} patients loaded.")
 

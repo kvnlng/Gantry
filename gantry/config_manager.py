@@ -14,9 +14,14 @@ import json
 import re
 import yaml
 
+from dotenv import load_dotenv
+
 from .profiles import PRIVACY_PROFILES
 
 CONFIG_VERSION = "2.0"
+
+# Load environment variables
+load_dotenv()
 
 
 def get_logger() -> logging.Logger:
