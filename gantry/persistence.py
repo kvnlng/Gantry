@@ -238,7 +238,9 @@ class SqliteStore:
 
     def _init_db(self):
         with self._get_connection() as conn:
-            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA journal_mode = WAL;")
+            conn.execute("PRAGMA auto_vacuum = FULL;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
             conn.executescript(self.SCHEMA)
 
     def _create_pixel_loader(self, offset, length, alg, instance, pixel_hash=None):
