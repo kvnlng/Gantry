@@ -248,7 +248,7 @@ Gantry uses a **Unified YAML Configuration** to control all aspects of de-identi
 
 ### Example `config.yaml`
 
-See the **[Complete Configuration Guide](docs_site/configuration.md)** for a full reference.
+See the **[Complete Configuration Guide](https://kvnlng.github.io/Gantry/configuration/)** for a full reference.
 
 ```yaml
 # 1. Privacy Profile (Optional)
