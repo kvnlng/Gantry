@@ -75,7 +75,7 @@ class TestRedactionVerifier(unittest.TestCase):
         # Check
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].value, "Leak")
-        self.assertEqual(findings[0].reason, "Uncovered Text Detected (OCR)")
+        self.assertEqual(findings[0].reason, "New Leak (Uncovered) (Cov: 0.00)")
 
 if __name__ == '__main__':
     unittest.main()

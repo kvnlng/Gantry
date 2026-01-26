@@ -52,8 +52,9 @@ class TestPixelAnalysis(unittest.TestCase):
         findings = pixel_analysis.analyze_pixels(instance)
         
         self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0].value, "SECRET")
-        self.assertEqual(findings[0].entity_uid, "1.2.3.4")
+        self.assertEqual(findings[0].text, "SECRET")
+        # TextRegion doesn't have entity_uid, that's added later when creating PhiFinding
+        # self.assertEqual(findings[0].entity_uid, "1.2.3.4")
 
     @patch('gantry.pixel_analysis.HAS_OCR', False)
     def test_graceful_degradation(self):
