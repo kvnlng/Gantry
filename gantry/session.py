@@ -2,7 +2,7 @@ import os
 import re
 import yaml
 import concurrent.futures
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from tqdm import tqdm
 
 from .io_handlers import DicomStore, DicomImporter, DicomExporter, SidecarPixelLoader
