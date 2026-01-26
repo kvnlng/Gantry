@@ -130,6 +130,7 @@ def main():
         
     # Final Report
     df = pd.DataFrame(results)
+    df = df.round(2)
     
     print("\n" + "="*60)
     print("SCALABILITY SUITE RESULTS")

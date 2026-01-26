@@ -48,6 +48,7 @@ class PhiFinding:
     patient_id: Optional[str] = None  # Added for linkage
     entity: Any = None  # Reference to the actual object (Patient, Study, etc.)
     remediation_proposal: Optional[PhiRemediation] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class PhiReport:

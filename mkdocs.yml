@@ -65,6 +65,7 @@ nav:
   - Features:
       - 'Performance': performance.md
       - 'Architecture': architecture.md
+      - 'Intelligent OCR': ocr.md
   - Guides:
       - 'Installation': installation.md
       - 'Quick Start': quickstart.md

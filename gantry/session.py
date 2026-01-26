@@ -1,12 +1,8 @@
 import os
-import sys
-import json
-import concurrent.futures
-import datetime
-from typing import List, Optional, Dict, Any, Union
-
-import yaml
 import re
+import yaml
+import concurrent.futures
+from typing import List, Optional, Dict, Any
 from tqdm import tqdm
 
 from .io_handlers import DicomStore, DicomImporter, DicomExporter, SidecarPixelLoader
@@ -22,6 +18,9 @@ from .reversibility import ReversibilityService
 from .persistence_manager import PersistenceManager
 from .parallel import run_parallel
 from .configuration import GantryConfiguration
+from . import pixel_analysis
+from .automation import ConfigAutomator
+from .discovery import ZoneDiscoverer
 
 def scan_worker(args):
     """
@@ -69,6 +68,23 @@ def scan_worker(args):
         f.entity = None
 
     return findings
+
+
+    return findings
+
+def _verify_worker(args):
+    """
+    Worker for pixel verification.
+    Args:
+        args: Tuple(Instance, Equipment, List[Rules])
+    """
+    from .verification import RedactionVerifier
+    instance, equipment, rules = args
+    if not instance:
+        return []
+    
+    verifier = RedactionVerifier(rules)
+    return verifier.verify_instance(instance, equipment)
 
 
 class LockingResult(list):
@@ -814,6 +830,189 @@ class DicomSession:
         get_logger().info(f"PHI Scan Complete. Found {len(all_findings)} issues.")
 
         return PhiReport(all_findings)
+
+    def scan_pixel_content(self, serial_number: str = None) -> "PhiReport":
+        """
+        Scans instances in the session for burned-in text using OCR.
+        
+        Performs "Intelligent Verification":.
+        Only scans instances belonging to machines (Serial Numbers) that are present
+        in the current configuration. Unconfigured machines are skipped.
+        
+        Args:
+            serial_number (str, optional): If provided, restricts the scan to ONLY
+                                           machines with this serial number.
+        
+        Returns:
+            PhiReport: A report containing findings of filtered (uncovered) burned-in text.
+        """
+        get_logger().info("Scanning pixel content for text (OCR)...")
+        print("Scanning pixel content for text (OCR)...")
+        
+        # Gather all instances with their equipment context
+        current_rules = self.configuration.rules
+        
+        # Build set of valid serials from config
+        configured_serials = {r.get("serial_number") for r in current_rules if r.get("serial_number")}
+        
+        worker_items = []
+        skipped_count = 0
+        
+        for p in self.store.patients:
+            for st in p.studies:
+                for se in st.series:
+                    equip = se.equipment
+                    if not equip or not equip.device_serial_number:
+                        skipped_count += len(se.instances)
+                        continue
+                        
+                    sn = equip.device_serial_number
+                    
+                    # Filter 1: Must be in Config
+                    # We check if we have a rule for this serial
+                    matched_rule = None
+                    for r in current_rules:
+                        if r.get("serial_number") == sn:
+                            matched_rule = r
+                            break
+                    
+                    if not matched_rule:
+                        skipped_count += len(se.instances)
+                        continue
+                        
+                    # Rule Refinement: Skip if NO ZONES defined (Scaffolded state)
+                    # Unless user explicitly wants to scan? No, user req says skip.
+                    if not matched_rule.get("redaction_zones"):
+                         # Log once per serial?
+                         # For now just skip
+                         skipped_count += len(se.instances)
+                         continue
+
+                    # Filter 2: Explicit User Filter
+                    if serial_number and sn != serial_number:
+                        continue
+                        
+                    for inst in se.instances:
+                        worker_items.append((inst, equip, current_rules))
+                    
+        if not worker_items:
+            msg = "No matching configured instances found to scan."
+            if skipped_count > 0:
+                msg += f" (Skipped {skipped_count} unconfigured instances)"
+            print(msg)
+            return PhiReport([])
+            
+        results = run_parallel(_verify_worker, worker_items, desc="OCR Verification")
+        
+        all_findings = []
+        for r in results:
+            all_findings.extend(r)
+            
+        print(f"OCR Scan Complete. Found {len(all_findings)} suspicious regions (Uncovered).")
+        return PhiReport(all_findings)
+
+    def auto_remediate_config(self, report: "PhiReport") -> int:
+        """
+        Analyzes the provided OCR report and automatically updates the session's
+        configuration to fix detected leaks (by expanding zones or adding new ones).
+        
+        Args:
+            report (PhiReport): The findings from .scan_pixel_content()
+            
+        Returns:
+            int: The number of rules updated.
+        """
+        get_logger().info("Analyzing report for auto-remediation...")
+        
+        suggestions = ConfigAutomator.suggest_config_updates(report, self.configuration)
+        
+        if not suggestions:
+            print("No configuration updates suggested.")
+            return 0
+            
+        print(f"Generated {len(suggestions)} suggestions for config updates.")
+        
+        count = ConfigAutomator.apply_suggestions(self, suggestions)
+        
+        if count > 0:
+            print(f"Applied {count} updates to in-memory configuration.")
+            print("Tip: Run .scan_pixel_content() again to verify fix, then .configuration.save_config() to persist.")
+        
+        return count
+
+        return count
+
+    def discover_redaction_zones(self, serial_number: str, sample_size: int = 50) -> List[List[int]]:
+        """
+        Analyzes instances of a specific machine to discover potential redaction zones.
+        
+        Args:
+            serial_number (str): The serial number of the machine to target.
+            sample_size (int): Max number of instances to analyze (for speed).
+        
+        Returns:
+            List[List[int]]: A list of suggested zones [x, y, w, h].
+        """
+        get_logger().info(f"Discovering zones for {serial_number}...")
+        
+        # 1. Gather instances
+        target_instances = []
+        for p in self.store.patients:
+            for st in p.studies:
+                for se in st.series:
+                    if se.equipment and se.equipment.device_serial_number == serial_number:
+                        target_instances.extend(se.instances)
+                        
+        if not target_instances:
+            print(f"No instances found for serial {serial_number}")
+            return []
+            
+        print(f"Found {len(target_instances)} instances. Using sample of {min(len(target_instances), sample_size)}.")
+        
+        # 2. Sample
+        import random
+        if len(target_instances) > sample_size:
+            sample = random.sample(target_instances, sample_size)
+        else:
+            sample = target_instances
+            
+        # 3. Analyze (Parallel?)
+        # Discovery logic is currently serial inside discover_zones?
+        # Actually ZoneDiscoverer.discover_zones iterates list and calls analyze_pixels.
+        # We should parallelize this part if heavy.
+        
+        # Let's re-use run_parallel logic? 
+        # But ZoneDiscoverer expects list.
+        # Let's map analyze_pixels then pass results to merger.
+        
+        raw_regions_lists = run_parallel(pixel_analysis.analyze_pixels, sample, desc="Discovery Scan")
+        
+        # Flatten
+        all_regions = []
+        for lst in raw_regions_lists:
+            all_regions.extend(lst)
+            
+        # 4. Merge
+        # We need to construct a dummy instance list? No, we need regions.
+        # ZoneDiscoverer logic was: takes instances -> analyzes -> merges.
+        # We just did analysis.
+        # Let's modify discovery usage or extract merge logic.
+        
+        # Access internal merge method or refactor ZoneDiscoverer to accept regions?
+        # Since I just wrote it, I know I can just call _merge_overlapping_boxes with box lists.
+        # Boxes needed as [x,y,w,h]
+        
+        boxes = [list(r.box) for r in all_regions]
+
+        # We need to access the static method. ideally public.
+        # I'll use the private one for now as it's in same package context effectively.
+        merged = ZoneDiscoverer._merge_overlapping_boxes(boxes)
+        
+        # Filter tiny
+        final_zones = [b for b in merged if b[2] > 5 and b[3] > 5]
+        
+        print(f"Discovery complete. Suggested {len(final_zones)} zones.")
+        return final_zones
 
     def get_cohort_report(self, expand_metadata: bool = False) -> 'pd.DataFrame':
         """

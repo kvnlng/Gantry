@@ -15,7 +15,8 @@ setup(
         "pyarrow>=14.0.0",
         "PyYAML>=6.0",
         "pillow>=10.0.0",
-        "imagecodecs>=2023.0.0"
+        "imagecodecs>=2023.0.0",
+        "pytesseract>=0.3.10"
     ],
     python_requires=">=3.9",
     extras_require={
