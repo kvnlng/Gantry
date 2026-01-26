@@ -9,8 +9,17 @@ class TestPixelAnalysis(unittest.TestCase):
     @patch('gantry.pixel_analysis.HAS_OCR', True)
     @patch('gantry.pixel_analysis.pytesseract')
     def test_detect_text_simple(self, mock_pytesseract):
-        # Setup
-        mock_pytesseract.image_to_string.return_value = "DETECTED TEXT"
+        # Setup: Mock image_to_data returning a DICT
+        # Keys: level, page_num, block_num, par_num, line_num, word_num, left, top, width, height, conf, text
+        mock_data = {
+            'text': ['DETECTED', 'TEXT'],
+            'conf': [90, 90],
+            'left': [0, 50],
+            'top': [0, 0],
+            'width': [40, 40],
+            'height': [10, 10]
+        }
+        mock_pytesseract.image_to_data.return_value = mock_data
         
         # Test 2D Array
         pixel_data = np.zeros((100, 100), dtype=np.uint8)
@@ -18,13 +27,21 @@ class TestPixelAnalysis(unittest.TestCase):
         result = pixel_analysis.detect_text(pixel_data)
         
         self.assertEqual(result, "DETECTED TEXT")
-        mock_pytesseract.image_to_string.assert_called_once()
+        mock_pytesseract.image_to_data.assert_called_once()
     
     @patch('gantry.pixel_analysis.HAS_OCR', True)
     @patch('gantry.pixel_analysis.pytesseract')
     def test_analyze_pixels_integration(self, mock_pytesseract):
         # Setup
-        mock_pytesseract.image_to_string.return_value = "  SECRET  "
+        mock_data = {
+            'text': ['SECRET'],
+            'conf': [95],
+            'left': [10],
+            'top': [10],
+            'width': [50],
+            'height': [20]
+        }
+        mock_pytesseract.image_to_data.return_value = mock_data
         
         instance = MagicMock(spec=Instance)
         instance.sop_instance_uid = "1.2.3.4"

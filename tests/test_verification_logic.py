@@ -16,11 +16,11 @@ class TestRedactionVerifier(unittest.TestCase):
         # Match
         inst = MagicMock(spec=Instance)
         inst.equipment = Equipment(manufacturer="Man", model_name="A", device_serial_number="123")
-        self.assertEqual(verifier.get_matching_rule(inst), rules[0])
+        self.assertEqual(verifier.get_matching_rule(inst.equipment), rules[0])
         
         # No Match
         inst.equipment = Equipment(manufacturer="Man", model_name="C", device_serial_number="789")
-        self.assertIsNone(verifier.get_matching_rule(inst))
+        self.assertIsNone(verifier.get_matching_rule(inst.equipment))
         
     def test_is_covered(self):
         verifier = RedactionVerifier()
@@ -70,7 +70,7 @@ class TestRedactionVerifier(unittest.TestCase):
         mock_analyze.return_value = [r1, r2]
         
         # Execute
-        findings = verifier.verify_instance(inst)
+        findings = verifier.verify_instance(inst, inst.equipment)
         
         # Check
         self.assertEqual(len(findings), 1)
