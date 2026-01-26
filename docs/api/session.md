@@ -10,3 +10,6 @@
         - audit
         - redact
         - load_config
+        - scan_pixel_content
+        - discover_redaction_zones
+        - auto_remediate_config

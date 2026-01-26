@@ -76,6 +76,7 @@ nav:
       - 'Session': api/session.md
       - 'Entities': api/entities.md
       - 'Persistence': api/persistence.md
+      - 'Intelligent OCR': api/ocr.md
   - Project Info:
       - 'Changelog': changelog.md
       - 'Roadmap': roadmap.md
