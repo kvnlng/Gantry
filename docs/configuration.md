@@ -64,7 +64,7 @@ machines:
 
 ## Detailed Options
 
-### 1. Privacy Profile
+### Privacy Profile
 
 Sets the baseline behavior for thousands of DICOM tags.
 
@@ -76,7 +76,7 @@ privacy_profile: "comprehensive"
 * **`comprehensive`**: Aggressive de-identification. Removes almost all non-structural text fields.
 * **External File**: You can provide a path to another YAML file (e.g., `./profiles/my_hospital_standard.yaml`) to inherit its rules.
 
-### 2. Date Jitter
+### Date Jitter
 
 Shifts all date attributes (`DA`, `DT`) by a random number of days.
 
@@ -89,7 +89,7 @@ Shifts all date attributes (`DA`, `DT`) by a random number of days.
       max_days: 10
     ```
 
-### 3. Private Tags
+### Private Tags
 
 DICOM Private Tags (Odd Group Numbers, e.g., `0009,xxxx`) often contain hidden PHI strings dumped by the machine.
 
@@ -100,7 +100,7 @@ remove_private_tags: true
 * `true`: Removes **ALL** private tags. (Recommended for safety).
 * `false`: Retains them (Use only if you are sure they are safe or strictly needed for analysis).
 
-### 4. PHI Tags
+### PHI Tags
 
 Define specific rules for individual DICOM tags. Keys must be uppercase hex strings (e.g. `"0010,0010"`).
 
@@ -122,7 +122,7 @@ phi_tags:
   "0010,0030": { "action": "SHIFT", "name": "PatientBirthDate" }
 ```
 
-### 5. Pixel Redaction (Machines)
+### Pixel Redaction (Machines)
 
 Automatically scrubs burned-in text (pixels) for specific devices. Gantry identifies the machine using the `DeviceSerialNumber` (0018,1000) tag.
 
@@ -139,9 +139,19 @@ machines:
   * Format: `[y1, y2, x1, x2]` (Row Start, Row End, Col Start, Col End).
   * Coordinates are 0-indexed.
 
+
+### Generating Configuration Templates
+
+You can generate a starter `gantry_config.yaml` based on your current session inventory. This is useful for bootstrapping a new configuration file that includes all detected machines.
+
+```python
+# Inspects data, finds all unique machine serials, and writes a config file
+session.create_config("my_new_policy.yaml")
+```
+
 ---
 
-### 6. Programmatic Configuration
+### Programmatic Configuration
 
 In addition to YAML files, you can manage the configuration dynamically using Python code via the `session.configuration` property.
 
@@ -161,7 +171,9 @@ print(config.phi_tags) # List active PHI tag overrides
 
 #### Methods
 
-##### `add_rule(serial_number, manufacturer="Unknown", model="Unknown", zones=None)`
+##### add_rule()
+
+`add_rule(serial_number, manufacturer="Unknown", model="Unknown", zones=None)`
 
 Add a new machine redaction rule dynamically.
 
@@ -175,7 +187,9 @@ session.configuration.add_rule(
 )
 ```
 
-##### `delete_rule(serial_number)`
+##### delete_rule()
+
+`delete_rule(serial_number)`
 
 Remove a rule by serial number.
 
@@ -183,7 +197,9 @@ Remove a rule by serial number.
 session.configuration.delete_rule("US-5555")
 ```
 
-##### `set_phi_tag(tag, action, replacement=None)`
+##### set_phi_tag()
+
+`set_phi_tag(tag, action, replacement=None)`
 
 Update the policy for a specific DICOM tag.
 
@@ -214,13 +230,4 @@ if suggested_zones:
         serial_number="US-12345",
         zones=suggested_zones
     )
-```
-
-### Generating Configuration Templates
-
-You can generate a starter `gantry_config.yaml` based on your current session inventory. This is useful for bootstrapping a new configuration file that includes all detected machines.
-
-```python
-# Inspects data, finds all unique machine serials, and writes a config file
-session.create_config("my_new_policy.yaml")
 ```
