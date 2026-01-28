@@ -25,7 +25,7 @@ class ZoneDiscoverer:
                             for it to be considered a "zone" (Not strictly used in MVP).
         
         Returns:
-            List[List[int]]: List of suggested zones.
+            List[List[int]]: List of suggested zones [y1, y2, x1, x2].
         """
         all_regions = []
         
@@ -44,7 +44,9 @@ class ZoneDiscoverer:
         final_zones = []
         for box in merged_boxes:
             if box[2] > 5 and box[3] > 5: # Min size 5x5
-                final_zones.append(box)
+                # Convert [x, y, w, h] -> [y1, y2, x1, x2]
+                x, y, w, h = box
+                final_zones.append([y, y + h, x, x + w])
                  
         return final_zones
 

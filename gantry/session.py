@@ -1014,10 +1014,14 @@ class DicomSession:
         # We need to access the static method. ideally public.
         # I'll use the private one for now as it's in same package context effectively.
         merged = ZoneDiscoverer._merge_overlapping_boxes(boxes)
-        
-        # Filter tiny
-        final_zones = [b for b in merged if b[2] > 5 and b[3] > 5]
-        
+    
+        # Filter tiny and convert to [y1, y2, x1, x2]
+        final_zones = []
+        for b in merged:
+            if b[2] > 5 and b[3] > 5:
+                x, y, w, h = b
+                final_zones.append([y, y + h, x, x + w])
+    
         print(f"Discovery complete. Suggested {len(final_zones)} zones.")
         return final_zones
 
