@@ -151,11 +151,11 @@ session.create_config("my_new_policy.yaml")
 
 ---
 
-### Programmatic Configuration
+## Programmatic Configuration
 
 In addition to YAML files, you can manage the configuration dynamically using Python code via the `session.configuration` property.
 
-#### Accessing Configuration
+### Accessing Configuration
 
 ```python
 import gantry
@@ -169,9 +169,9 @@ print(config.rules)    # List active redaction rules
 print(config.phi_tags) # List active PHI tag overrides
 ```
 
-#### Methods
+### Methods
 
-##### add_rule()
+#### add_rule()
 
 `add_rule(serial_number, manufacturer="Unknown", model="Unknown", zones=None)`
 
@@ -187,7 +187,7 @@ session.configuration.add_rule(
 )
 ```
 
-##### delete_rule()
+#### delete_rule()
 
 `delete_rule(serial_number)`
 
@@ -197,7 +197,7 @@ Remove a rule by serial number.
 session.configuration.delete_rule("US-5555")
 ```
 
-##### set_phi_tag()
+#### set_phi_tag()
 
 `set_phi_tag(tag, action, replacement=None)`
 
@@ -211,7 +211,7 @@ session.configuration.set_phi_tag("0010,1030", "REMOVE")
 session.configuration.set_phi_tag("0008,1030", "REPLACE", replacement="RESEARCH STUDY")
 ```
 
-### Auto-Discovery of Redaction Zones
+## Auto-Discovery of Redaction Zones
 
 To help identify pixel redaction zones (e.g., for burned-in PHI), Gantry provides a discovery tool that analyzes a sample of images from a specific machine to find common text "hotspots".
 
