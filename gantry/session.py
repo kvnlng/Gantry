@@ -986,7 +986,13 @@ class DicomSession:
         # But ZoneDiscoverer expects list.
         # Let's map analyze_pixels then pass results to merger.
         
-        raw_regions_lists = run_parallel(pixel_analysis.analyze_pixels, sample, desc="Discovery Scan")
+        
+        raw_regions_lists = run_parallel(
+            pixel_analysis.analyze_pixels, 
+            sample, 
+            desc="Discovery Scan",
+            force_threads=True
+        )
         
         # Flatten
         all_regions = []

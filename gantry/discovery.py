@@ -45,7 +45,7 @@ class ZoneDiscoverer:
         for box in merged_boxes:
             if box[2] > 5 and box[3] > 5: # Min size 5x5
                 final_zones.append(box)
-                
+                 
         return final_zones
 
     @staticmethod

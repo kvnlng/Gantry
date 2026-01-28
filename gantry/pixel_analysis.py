@@ -90,7 +90,7 @@ def detect_text_regions(pixel_data: np.ndarray, frame_idx: int = 0) -> List[Text
                     confidence=float(conf),
                     frame_index=frame_idx
                 ))
-                
+                 
     except Exception as e:
         logger.error(f"OCR failed: {e}")
         
