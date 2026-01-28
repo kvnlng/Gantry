@@ -70,6 +70,7 @@ nav:
       - 'Installation': installation.md
       - 'Quick Start': quickstart.md
       - 'Configuration': configuration.md
+      - 'Environment Variables': environment.md
       - 'Migration Tools': migration.md
       - 'Analytics & Reporting': analytics.md
   - API Reference:
