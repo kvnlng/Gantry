@@ -195,6 +195,27 @@ session.configuration.set_phi_tag("0010,1030", "REMOVE")
 session.configuration.set_phi_tag("0008,1030", "REPLACE", replacement="RESEARCH STUDY")
 ```
 
+### Auto-Discovery of Redaction Zones
+
+To help identify pixel redaction zones (e.g., for burned-in PHI), Gantry provides a discovery tool that analyzes a sample of images from a specific machine to find common text "hotspots".
+
+```python
+# Discover potential redaction zones for a machine
+suggested_zones = session.discover_redaction_zones(
+    serial_number="US-12345", 
+    sample_size=50
+)
+
+print(f"Discovered {len(suggested_zones)} zones: {suggested_zones}")
+
+# Apply these zones to your configuration
+if suggested_zones:
+    session.configuration.add_rule(
+        serial_number="US-12345",
+        zones=suggested_zones
+    )
+```
+
 ### Generating Configuration Templates
 
 You can generate a starter `gantry_config.yaml` based on your current session inventory. This is useful for bootstrapping a new configuration file that includes all detected machines.

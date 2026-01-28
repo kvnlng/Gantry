@@ -50,7 +50,6 @@ To enable reversible anonymization, generate a cryptographic key and "lock" the 
 session.enable_reversible_anonymization()
 
 # cryptographically lock identities for all patients found in the audit
-# cryptographically lock identities for all patients found in the audit
 # Optional: Specify custom tags to preserve (defaults to Name, ID, DOB, Sex, Accession)
 session.lock_identities(report, tags_to_lock=["0010,0010", "0010,0020", "0010,0030"])
 session.save()

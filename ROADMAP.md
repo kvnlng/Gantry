@@ -24,7 +24,7 @@ Focus: Integrating Gantry into clinical workflows and deepening analysis capabil
 
 - [ ] **PACS Integration**: Implement C-STORE, C-FIND, C-MOVE using `pynetdicom` to query and pull studies directly.
 - [ ] **Research Export Formats**: Native support for exporting to NIfTI and BIDS standards.
-- [ ] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.
+- [x] **Pixel Content Analysis (OCR)**: Detect burned-in text using OCR (Tesseract) / Cloud Vision to automatically flag sensitive images.
 - [ ] **Audit Reporting**: Export comprehensive CSV reports of the session inventory, including details on what was redacted or modified.
 - [x] **Sidecar Compaction**: Tool to rewrite sidecar file and reclaim space from redacted/deleted instances.
 
