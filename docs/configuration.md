@@ -141,7 +141,7 @@ machines:
 
 ---
 
-## 6. Programmatic Configuration (API 2.0)
+### 6. Programmatic Configuration (API 2.0)
 
 In addition to YAML files, you can manage the configuration dynamically using Python code via the `session.configuration` property.
 
@@ -227,7 +227,7 @@ session.create_config("my_new_policy.yaml")
 
 ---
 
-## 7. Environment Variables
+# Environment Variables
 
 You can tune the system performance and behavior using environment variables. These can be set in your shell or in a `.env` file in the project root.
 
