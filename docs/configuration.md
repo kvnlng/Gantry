@@ -145,7 +145,7 @@ machines:
 
 In addition to YAML files, you can manage the configuration dynamically using Python code via the `session.configuration` property.
 
-### Accessing Configuration
+#### Accessing Configuration
 
 ```python
 import gantry
@@ -159,9 +159,9 @@ print(config.rules)    # List active redaction rules
 print(config.phi_tags) # List active PHI tag overrides
 ```
 
-### Methods
+#### Methods
 
-#### `add_rule(serial_number, manufacturer="Unknown", model="Unknown", zones=None)`
+##### `add_rule(serial_number, manufacturer="Unknown", model="Unknown", zones=None)`
 
 Add a new machine redaction rule dynamically.
 
@@ -175,7 +175,7 @@ session.configuration.add_rule(
 )
 ```
 
-#### `delete_rule(serial_number)`
+##### `delete_rule(serial_number)`
 
 Remove a rule by serial number.
 
@@ -183,7 +183,7 @@ Remove a rule by serial number.
 session.configuration.delete_rule("US-5555")
 ```
 
-#### `set_phi_tag(tag, action, replacement=None)`
+##### `set_phi_tag(tag, action, replacement=None)`
 
 Update the policy for a specific DICOM tag.
 
