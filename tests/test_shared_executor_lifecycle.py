@@ -70,6 +70,8 @@ class TestSharedExecutorLifecycle(unittest.TestCase):
         st = MagicMock()
         se = MagicMock()
         inst = MagicMock()
+        inst.instance_number = 1
+        inst.sop_instance_uid = "1.2.3.4.5"
         
         # Link them
         p.studies = [st]

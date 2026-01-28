@@ -1893,7 +1893,8 @@ class DicomSession:
                                     p.patient_id not in allowed_uids):
                                 continue
                         count_i += 1
-                        inst_clean = f"{inst.instance_number:04d}.dcm"
+                        # Use SOP Instance UID for filename to ensure uniqueness and match tests
+                        inst_clean = f"{inst.sop_instance_uid}.dcm"
                         out_path = os.path.join(se_path, inst_clean)
 
                         # Determine if this instance needs redaction
