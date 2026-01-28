@@ -18,6 +18,7 @@ import base64
 from typing import List, Set, Dict, Any, Optional, Tuple, NamedTuple, Iterable
 from datetime import datetime, date
 import json
+from dataclasses import dataclass, field
 
 import pydicom
 import numpy as np
@@ -362,7 +363,8 @@ class DicomImporter:
         logger.info(f"Successfully ingested {count} instances.")
 
 
-class ExportContext(NamedTuple):
+@dataclass
+class ExportContext:
     instance: Instance
     output_path: str
     patient_attributes: Dict[str, Any]
@@ -375,6 +377,7 @@ class ExportContext(NamedTuple):
     pixel_offset: Optional[int] = None
     pixel_length: Optional[int] = None
     pixel_alg: Optional[str] = None
+    redaction_zones: List[Tuple] = field(default_factory=list)
 
 
 def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
@@ -401,6 +404,12 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
 
         # 1. Patient Level
         DicomExporter._merge(ds, ctx.patient_attributes)
+        # 0. Base Attributes
+        DicomExporter._merge(ds, inst.attributes)
+        DicomExporter._merge_sequences(ds, inst.sequences)
+
+        # 1. Patient Level
+        DicomExporter._merge(ds, ctx.patient_attributes)
 
         # 2. Study Level
         DicomExporter._merge(ds, ctx.study_attributes)
@@ -408,29 +417,14 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
         # 3. Series Level
         DicomExporter._merge(ds, ctx.series_attributes)
 
-        # 4. Pixel Data
-        # Use context-provided pixels (for in-memory objects) or load from file
-        # 4. Pixel Data
-        # Use context-provided pixels (for in-memory objects) or load from file
-        arr = ctx.pixel_array
+        # 4. Instance defaults helper
+        populate_attrs(ds, inst)
 
-        # Zero-Copy Sidecar Loading
-        if arr is None and ctx.sidecar_path and ctx.pixel_offset is not None:
-            try:
-                # Reconstruct standard SidecarPixelLoader
-                loader = SidecarPixelLoader(
-                    ctx.sidecar_path,
-                    ctx.pixel_offset,
-                    ctx.pixel_length,
-                    ctx.pixel_alg,
-                    instance=inst)
-                arr = loader()
-                # Ensure attributes are synced (loader usually returns raw array, shaping
-                # handled by loader but we double check)
-            except Exception as e:
-
-                raise e
-
+        # Handle Pixel Data
+        # If we have modified pixels in memory (redaction), we MUST use them.
+        # If they were unloaded, we load them.
+        arr = inst.pixel_array
+        
         if arr is None:
             try:
                 arr = inst.get_pixel_data()
@@ -439,22 +433,34 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
                 # Image implementations MUST have pixels.
                 # Non-image (SR, PR, KO, DOC) can proceed without.
                 mod = inst.attributes.get("0008,0060", "OT")
-                IMAGE_MODALITIES = {"CT", "MR", "US", "DX", "CR",
+                IMAGE_MODALITIES = {"CT", "MR", "US", "DX", "CR", 
                                     "MG", "NM", "PT", "XA", "RF", "SC", "OT"}
-
+                                    
                 # If it claims to be an image but has no pixels, fail hard (Safety)
                 if mod in IMAGE_MODALITIES:
                     raise RuntimeError(f"Pixels missing for Image Modality {mod}")
-
+                
                 # Otherwise (SR, etc.), proceed
                 arr = None
 
         if arr is not None:
+            # APPLY REDACTION (Fix for Export Compression Bug)
+            if ctx.redaction_zones:
+                # Local import to avoid circular dependency
+                from .services import RedactionService
+                
+                # Check writeability
+                if not arr.flags.writeable:
+                    arr = arr.copy()
+                
+                # Apply zones
+                RedactionService.apply_redaction_to_array(arr, ctx.redaction_zones)
+
             # MEMORY OPTIMIZATION:
             # If compression is requested, DO NOT convert to bytes here.
             # Pass the numpy array to _finalize_dataset -> _compress_j2k directly.
             # Only set PixelData if NOT compressing.
-
+            
             if not ctx.compression:
                 ds.PixelData = arr.tobytes()
 

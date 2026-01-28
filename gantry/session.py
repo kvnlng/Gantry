@@ -1892,21 +1892,29 @@ class DicomSession:
                                 st.study_instance_uid not in allowed_uids and
                                     p.patient_id not in allowed_uids):
                                 continue
-
                         count_i += 1
-                        out_path = os.path.join(
-                            se_path, ConfigLoader.clean_filename(
-                                inst.sop_instance_uid)) + ".dcm"
+                        inst_clean = f"{inst.instance_number:04d}.dcm"
+                        out_path = os.path.join(se_path, inst_clean)
 
+                        # Determine if this instance needs redaction
+                        redaction_zones = []
+                        if se.equipment and se.equipment.device_serial_number:
+                            sn = se.equipment.device_serial_number
+                            rule = self.configuration.get_rule(sn)
+                            if rule:
+                                redaction_zones = rule.get("redaction_zones", [])
+
+                        # Build Context
+                        # Compression handled by worker finalizing dataset
                         ctx = ExportContext(
                             instance=inst,
                             output_path=out_path,
                             patient_attributes=pat_attrs,
                             study_attributes=study_attrs,
                             series_attributes=series_attrs,
-                            compression='j2k' if use_compression else None
+                            compression='j2k' if use_compression else None,
+                            redaction_zones=redaction_zones
                         )
-
                         export_tasks.append(ctx)
                         total_instances += 1
 

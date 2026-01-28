@@ -13,6 +13,7 @@ import traceback
 import gc
 from typing import Dict, List, Tuple
 from tqdm import tqdm
+import numpy as np
 
 from .entities import Instance, Patient, DicomItem, DicomSequence
 from .io_handlers import DicomStore
@@ -467,28 +468,21 @@ class RedactionService:
 
                 inst.unload_pixel_data()
 
-    def _apply_roi_to_instance(self, inst: Instance, arr, roi: tuple) -> bool:
+    @staticmethod
+    def apply_redaction_to_array(arr: np.ndarray, rois: List[tuple]) -> bool:
         """
-        Applies a single ROI to the pixel array in place.
-
-        Handles dimension checking, clamping, and array mutability.
-
+        Applies a list of ROIs to the pixel array in place.
+        
         Args:
-            inst (Instance): The instance (used for logging context only).
             arr (np.ndarray): The pixel array to modify.
-            roi (tuple): The (y1, y2, x1, x2) region.
-
+            rois (List[tuple]): List of (y1, y2, x1, x2) regions.
+            
         Returns:
-            bool: True if modification was applied, False if ROI was invalid/skipped.
+            bool: True if any modification was applied.
         """
+        modified = False
         try:
-            # FIX: Ensure coordinates are integers (slicing does not accept floats in
-            # modern Python/NumPy)
-            r1, r2, c1, c2 = [int(v) for v in roi]
-
-            # Identify Dimensions & Indices
             ndim = len(arr.shape)
-
             # Default to last two dimensions (standard Grayscale/Planar)
             row_dim = ndim - 2
             col_dim = ndim - 1
@@ -500,33 +494,60 @@ class RedactionService:
 
             rows = arr.shape[row_dim]
             cols = arr.shape[col_dim]
-
-            # Safety Checks
-            if r1 >= rows or c1 >= cols:
-                # self.logger.warning(f"ROI {roi} is completely outside image dimensions ({rows}x{cols}). Skipping.")
-                return False
-
-            # Clipping
-            r2_clamped = min(r2, rows)
-            c2_clamped = min(c2, cols)
-
-            # Construct Slices dynamically
-            slices = [slice(None)] * ndim
-            slices[row_dim] = slice(r1, r2_clamped)
-            slices[col_dim] = slice(c1, c2_clamped)
-
+            
             # Ensure Writability
+            # Note: The caller is responsible for ensuring 'arr' can be modified 
+            # or assigning the copy back if they passed a read-only view that needed copying?
+            # Actually, standard numpy semantics: if we modify in place, it works if writeable.
+            # If not writeable, we probably need to copy. But a static method receiving an array 
+            # can't "replace" the array reference in the caller. 
+            # So we assume caller handles copy if needed, or we raise/return?
+            # For this method, let's assume valid writeable array, or try to write.
             if not arr.flags.writeable:
-                # Create a writable copy and update the instance
-                arr = arr.copy()
-                inst.set_pixel_data(arr)
+                 # This method cannot easily "fix" non-writeable in-place without returning the new array
+                 # But our signature returns bool.
+                 # Let's assume the caller must ensure writeability for a "void" style modifier.
+                 # OR, we change signature to return the array?
+                 pass 
 
-            # Apply Redaction
-            arr[tuple(slices)] = 0
-            return True
-        except Exception as e:
-            # get_logger().warning(f"ROI Application Failed: {e}")
+            for roi in rois:
+                try:
+                    r1, r2, c1, c2 = [int(v) for v in roi]
+
+                    # Safety Checks
+                    if r1 >= rows or c1 >= cols:
+                        continue
+
+                    # Clipping
+                    r2_clamped = min(r2, rows)
+                    c2_clamped = min(c2, cols)
+
+                    # Construct Slices dynamically
+                    slices = [slice(None)] * ndim
+                    slices[row_dim] = slice(r1, r2_clamped)
+                    slices[col_dim] = slice(c1, c2_clamped)
+
+                    # Apply Redaction
+                    arr[tuple(slices)] = 0
+                    modified = True
+                except Exception:
+                    pass
+            
+            return modified
+        except Exception:
             return False
+
+    def _apply_roi_to_instance(self, inst: Instance, arr, roi: tuple) -> bool:
+        """
+        Applies a single ROI to the pixel array in place.
+        
+        Wrapper around static apply_redaction_to_array for instance management.
+        """
+        if not arr.flags.writeable:
+            arr = arr.copy()
+            inst.set_pixel_data(arr)
+            
+        return self.apply_redaction_to_array(arr, [roi])
 
     def _apply_redaction_flags(self, inst: Instance):
         """

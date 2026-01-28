@@ -21,6 +21,7 @@ test_import_config.yaml
 export_metadata.csv
 reproduce_issue.py
 debug_ocr_input.png
+reproduce_export_bug.py
 
 # C extensions
 *.so
