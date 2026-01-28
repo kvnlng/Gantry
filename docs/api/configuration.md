@@ -1,0 +1,12 @@
+# Configuration API
+
+::: gantry.configuration.GantryConfiguration
+    handler: python
+    options:
+      members:
+        - save
+        - add_rule
+        - update_rule
+        - delete_rule
+        - set_phi_tag
+        - get_rule

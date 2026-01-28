@@ -197,6 +197,11 @@ Remove a rule by serial number.
 session.configuration.delete_rule("US-5555")
 ```
 
+#### update_rule()
+`update_rule(serial_number, updates)`
+
+Update a rule by serial number.
+
 #### set_phi_tag()
 
 `set_phi_tag(tag, action, replacement=None)`

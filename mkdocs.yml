@@ -75,6 +75,7 @@ nav:
       - 'Analytics & Reporting': analytics.md
   - API Reference:
       - 'Session': api/session.md
+      - 'Configuration': api/configuration.md
       - 'Entities': api/entities.md
       - 'Persistence': api/persistence.md
       - 'Intelligent OCR': api/ocr.md
