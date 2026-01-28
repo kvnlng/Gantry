@@ -16,7 +16,7 @@
         <link rel="prev" href="../quickstart/">
       
       
-        <link rel="next" href="../migration/">
+        <link rel="next" href="../environment/">
       
       
         
@@ -926,6 +926,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../environment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../migration/" class="md-nav__link">
         
   
@@ -1735,60 +1763,6 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Inspects data, finds all unique machine serials, and writes a config file</span>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">session</span><span class="o">.</span><span class="n">create_config</span><span class="p">(</span><span class="s2">&quot;my_new_policy.yaml&quot;</span><span class="p">)</span>
 </code></pre></div>
-<hr />
-<h1 id="environment-variables">Environment Variables</h1>
-<p>You can tune the system performance and behavior using environment variables. These can be set in your shell or in a <code>.env</code> file in the project root.</p>
-<table>
-<thead>
-<tr>
-<th style="text-align: left;">Variable</th>
-<th style="text-align: left;">Default</th>
-<th style="text-align: left;">Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align: left;"><strong><code>GANTRY_LOG_LEVEL</code></strong></td>
-<td style="text-align: left;"><code>DEBUG</code></td>
-<td style="text-align: left;">Logging verbosity (<code>DEBUG</code>, <code>INFO</code>, <code>WARNING</code>, <code>ERROR</code>).</td>
-</tr>
-<tr>
-<td style="text-align: left;"><strong><code>GANTRY_DB_PATH</code></strong></td>
-<td style="text-align: left;"><code>gantry.db</code></td>
-<td style="text-align: left;">Path to the SQLite session database.</td>
-</tr>
-<tr>
-<td style="text-align: left;"><strong><code>GANTRY_MAX_WORKERS</code></strong></td>
-<td style="text-align: left;"><em>Auto</em></td>
-<td style="text-align: left;">Override the number of parallel worker processes. Default is <code>CPU_COUNT * 1.5</code>.</td>
-</tr>
-<tr>
-<td style="text-align: left;"><strong><code>GANTRY_CHUNKSIZE</code></strong></td>
-<td style="text-align: left;"><code>1</code></td>
-<td style="text-align: left;">Batch size for inter-process communication. Increasing this (e.g. to 5 or 10) can improve performance for very small items.</td>
-</tr>
-<tr>
-<td style="text-align: left;"><strong><code>GANTRY_MAX_TASKS_PER_CHILD</code></strong></td>
-<td style="text-align: left;"><em>Unlimited</em></td>
-<td style="text-align: left;">Restart worker processes after N tasks to release memory. Useful if you suspect memory leaks in underlying libraries.</td>
-</tr>
-<tr>
-<td style="text-align: left;"><strong><code>GANTRY_DISABLE_GC</code></strong></td>
-<td style="text-align: left;"><code>0</code></td>
-<td style="text-align: left;">Set to <code>1</code> to disable Garbage Collection in worker processes. This can speed up processing significantly but increases memory usage.</td>
-</tr>
-<tr>
-<td style="text-align: left;"><strong><code>GANTRY_FORCE_THREADS</code></strong></td>
-<td style="text-align: left;"><code>0</code></td>
-<td style="text-align: left;">Set to <code>1</code> to force using Threads instead of Processes (bypass multiprocessing). Useful for debugging or when running in environments that don't support <code>fork</code>.</td>
-</tr>
-<tr>
-<td style="text-align: left;"><strong><code>GANTRY_SHOW_PROGRESS</code></strong></td>
-<td style="text-align: left;"><code>1</code></td>
-<td style="text-align: left;">Set to <code>0</code> to globally disable all progress bars (tqdm). Useful for cleaner logs in CI/CD environments.</td>
-</tr>
-</tbody>
-</table>
 
 
 

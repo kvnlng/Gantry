@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://kevinlong.github.io/Gantry/architecture/">
+        <link rel="canonical" href="https://kevinlong.github.io/Gantry/environment/">
       
       
-        <link rel="prev" href="../performance/">
+        <link rel="prev" href="../configuration/">
       
       
-        <link rel="next" href="../ocr/">
+        <link rel="next" href="../migration/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Architecture - Gantry</title>
+        <title>Environment Variables - Gantry</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#architecture" class="md-skip">
+        <a href="#environment-variables" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Architecture
+              Environment Variables
             
           </span>
         </div>
@@ -242,12 +242,10 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
+      <li class="md-tabs__item">
         <a href="../performance/" class="md-tabs__link">
           
   
@@ -264,10 +262,12 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
+      <li class="md-tabs__item md-tabs__item--active">
         <a href="../installation/" class="md-tabs__link">
           
   
@@ -396,31 +396,28 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
             
   
   
@@ -438,7 +435,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -481,37 +478,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Architecture
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
         
   
   
@@ -527,120 +497,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1-the-session-facade" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. The Session Facade
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-object-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Object Model
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-safety-pipeline-the-8-checkpoints" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Safety Pipeline (The 8 Checkpoints)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-persistence-architecture-hybrid-storage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Persistence Architecture (Hybrid Storage)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. Persistence Architecture (Hybrid Storage)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#the-problem" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The Problem
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#the-solution-core-json-vertical-split" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The Solution: Core JSON + Vertical Split
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#database-schema-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Database Schema Reference
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#schema-visualization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Schema Visualization
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -685,28 +541,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -724,7 +583,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -823,10 +682,19 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../environment/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -842,6 +710,7 @@
   
 
       </a>
+      
     </li>
   
 
@@ -1220,108 +1089,6 @@
     
   
   
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#1-the-session-facade" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. The Session Facade
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#2-object-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. Object Model
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#3-safety-pipeline-the-8-checkpoints" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. Safety Pipeline (The 8 Checkpoints)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#4-persistence-architecture-hybrid-storage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. Persistence Architecture (Hybrid Storage)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="4. Persistence Architecture (Hybrid Storage)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#the-problem" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The Problem
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#the-solution-core-json-vertical-split" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The Solution: Core JSON + Vertical Split
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#database-schema-reference" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Database Schema Reference
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#schema-visualization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Schema Visualization
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
 </nav>
                   </div>
                 </div>
@@ -1340,188 +1107,59 @@
   
 
 
-<h1 id="architecture">Architecture</h1>
-<p>Gantry acts as a smart indexing layer over your raw DICOM files. It does <em>not</em> modify your original data. Instead, it builds a lightweight metadata index (SQLite) and exposes a clean Python Object Model for manipulation.</p>
-<h2 id="1-the-session-facade">1. The Session Facade</h2>
-<p>The <code>Session</code> object is your single entry point. It manages:</p>
-<ul>
-<li><strong>Persistence</strong>: Auto-saving state to <code>gantry.db</code>.</li>
-<li><strong>Inventory</strong>: Tracking Patients, Studies, and Series.</li>
-<li><strong>Transactions</strong>: Atomic persistence of changes.</li>
-</ul>
-<h2 id="2-object-model">2. Object Model</h2>
-<p>Gantry abstracts DICOM into a semantic hierarchy, removing the pain of manual tag iteration.</p>
-<pre class="mermaid"><code>graph LR
-    Patient --&gt; Study
-    Study --&gt; Series
-    Series --&gt; Instance
-    Instance --&gt; Pixels((Pixel Data))</code></pre>
-<ul>
-<li><strong>Patient</strong>: Root entity (Name, ID).</li>
-<li><strong>Study</strong>: A distinct visit/exam.</li>
-<li><strong>Series</strong>: A scan or reconstruction (e.g., "ct_soft_kernel").</li>
-<li><strong>Instance</strong>: A single DICOM slice. <strong>Pixel data is extracted upfront</strong>; the heavyweight pixel array is sequestered in a binary sidecar immediately upon ingestion and loaded into memory only when needed.</li>
-</ul>
-<h2 id="3-safety-pipeline-the-8-checkpoints">3. Safety Pipeline (The 8 Checkpoints)</h2>
-<p>Gantry enforces a strict checkpoint system to ensure data safety:</p>
-<ol>
-<li><strong>Ingest</strong>: Load raw data into the managed session index.</li>
-<li><strong>Examine</strong>: Inventory the cohort and equipment.</li>
-<li><strong>Configure</strong>: Define privacy tags and redaction rules.</li>
-<li><strong>Audit (Target)</strong>: Measure PHI risks against the configuration.</li>
-<li><strong>Backup</strong>: (Optional) Securely lock original identities for reversibility.</li>
-<li><strong>Anonymize</strong>: Apply remediation to metadata (in-memory).</li>
-<li><strong>Redact</strong>: Scrub pixel data for specific machines (in-memory).</li>
-<li><strong>Verify</strong>: Re-audit the session to ensure a clean state.</li>
-<li><strong>Export</strong>: Write clean DICOM files to disk.</li>
-</ol>
-<h2 id="4-persistence-architecture-hybrid-storage">4. Persistence Architecture (Hybrid Storage)</h2>
-<p>Gantry uses <code>sqlite3</code> for metadata management, employing a <strong>Hybrid Storage Model</strong> to balance query performance with schema flexibility.</p>
-<h3 id="the-problem">The Problem</h3>
-<p>DICOM data effectively comes in two shapes:</p>
-<ol>
-<li><strong>Standard Tags</strong>: Always present, well-defined (e.g., <code>Modality</code>, <code>StudyDate</code>).</li>
-<li><strong>Private Tags</strong>: Manufacturer-specific, sparse, and extremely numerous.</li>
-</ol>
-<p>Storing everything in a single table with 3000 columns is impossible. Storing everything in a vertical Entity-Attribute-Value (EAV) table is too slow for bulk loading.</p>
-<h3 id="the-solution-core-json-vertical-split">The Solution: Core JSON + Vertical Split</h3>
-<p>Values are automatically split during persistence based on their Group ID:</p>
+<h1 id="environment-variables">Environment Variables</h1>
+<p>You can tune the system performance and behavior using environment variables. These can be set in your shell or in a <code>.env</code> file in the project root.</p>
 <table>
 <thead>
 <tr>
-<th style="text-align: left;">Storage Location</th>
-<th style="text-align: left;">Table</th>
-<th style="text-align: left;">Column</th>
-<th style="text-align: left;">Content</th>
-<th style="text-align: left;">Rationale</th>
+<th style="text-align: left;">Variable</th>
+<th style="text-align: left;">Default</th>
+<th style="text-align: left;">Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td style="text-align: left;"><strong>Core Attributes</strong></td>
-<td style="text-align: left;"><code>instances</code></td>
-<td style="text-align: left;"><code>attributes_json</code></td>
-<td style="text-align: left;">All Standard Tags (Even Groups) + Binary Placeholders</td>
-<td style="text-align: left;"><strong>Speed</strong>. SQLite's JSONB operators allow us to load 10,000 instances in sub-second time without performing 10,000+ joins.</td>
+<td style="text-align: left;"><strong><code>GANTRY_LOG_LEVEL</code></strong></td>
+<td style="text-align: left;"><code>DEBUG</code></td>
+<td style="text-align: left;">Logging verbosity (<code>DEBUG</code>, <code>INFO</code>, <code>WARNING</code>, <code>ERROR</code>).</td>
 </tr>
 <tr>
-<td style="text-align: left;"><strong>Vertical Attributes</strong></td>
-<td style="text-align: left;"><code>instance_attributes</code></td>
-<td style="text-align: left;"><code>tag_group</code>, <code>tag_elem</code>, <code>value</code></td>
-<td style="text-align: left;">Private Tags (Odd Groups)</td>
-<td style="text-align: left;"><strong>Flexibility</strong>. Private tags are sparse. This EAV storage prevents the Core JSON from becoming bloated with garbage data while keeping private tags queryable.</td>
+<td style="text-align: left;"><strong><code>GANTRY_DB_PATH</code></strong></td>
+<td style="text-align: left;"><code>gantry.db</code></td>
+<td style="text-align: left;">Path to the SQLite session database.</td>
 </tr>
 <tr>
-<td style="text-align: left;"><strong>Pixel Data</strong></td>
-<td style="text-align: left;"><code>[name]_pixels.bin</code></td>
-<td style="text-align: left;">Comparison to DB via Offset/Length</td>
-<td style="text-align: left;">Raw Byte Stream</td>
-<td style="text-align: left;"><strong>Offloading</strong>. Gigabytes of pixel data are kept out of the DB to prevent bloating and ensure the index remains lightweight.</td>
+<td style="text-align: left;"><strong><code>GANTRY_MAX_WORKERS</code></strong></td>
+<td style="text-align: left;"><em>Auto</em></td>
+<td style="text-align: left;">Override the number of parallel worker processes. Default is <code>CPU_COUNT * 1.5</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>GANTRY_CHUNKSIZE</code></strong></td>
+<td style="text-align: left;"><code>1</code></td>
+<td style="text-align: left;">Batch size for inter-process communication. Increasing this (e.g. to 5 or 10) can improve performance for very small items.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>GANTRY_MAX_TASKS_PER_CHILD</code></strong></td>
+<td style="text-align: left;"><em>Unlimited</em></td>
+<td style="text-align: left;">Restart worker processes after N tasks to release memory. Useful if you suspect memory leaks in underlying libraries.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>GANTRY_DISABLE_GC</code></strong></td>
+<td style="text-align: left;"><code>0</code></td>
+<td style="text-align: left;">Set to <code>1</code> to disable Garbage Collection in worker processes. This can speed up processing significantly but increases memory usage.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>GANTRY_FORCE_THREADS</code></strong></td>
+<td style="text-align: left;"><code>0</code></td>
+<td style="text-align: left;">Set to <code>1</code> to force using Threads instead of Processes (bypass multiprocessing). Useful for debugging or when running in environments that don't support <code>fork</code>.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong><code>GANTRY_SHOW_PROGRESS</code></strong></td>
+<td style="text-align: left;"><code>1</code></td>
+<td style="text-align: left;">Set to <code>0</code> to globally disable all progress bars (tqdm). Useful for cleaner logs in CI/CD environments.</td>
 </tr>
 </tbody>
 </table>
-<h3 id="database-schema-reference">Database Schema Reference</h3>
-<table>
-<thead>
-<tr>
-<th style="text-align: left;">Table</th>
-<th style="text-align: left;">Purpose</th>
-<th style="text-align: left;">Key Columns</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align: left;"><code>patients</code></td>
-<td style="text-align: left;">Root entity.</td>
-<td style="text-align: left;"><code>patient_id</code> (PK), <code>patient_name</code></td>
-</tr>
-<tr>
-<td style="text-align: left;"><code>studies</code></td>
-<td style="text-align: left;">Represents a patient visit.</td>
-<td style="text-align: left;"><code>study_instance_uid</code> (PK), <code>study_date</code>, <code>patient_id_fk</code></td>
-</tr>
-<tr>
-<td style="text-align: left;"><code>series</code></td>
-<td style="text-align: left;">Represents a scan/sequence.</td>
-<td style="text-align: left;"><code>series_instance_uid</code> (PK), <code>modality</code>, <code>manufacturer</code>, <code>model_name</code>, <code>device_serial_number</code>, <code>study_id_fk</code></td>
-</tr>
-<tr>
-<td style="text-align: left;"><code>instances</code></td>
-<td style="text-align: left;">Represents a single DICOM file.</td>
-<td style="text-align: left;"><code>sop_instance_uid</code> (PK), <code>attributes_json</code>, <code>pixel_hash</code>, <code>file_path</code>, <code>series_id_fk</code></td>
-</tr>
-<tr>
-<td style="text-align: left;"><code>instance_attributes</code></td>
-<td style="text-align: left;">Storage for Private/Odd Group tags.</td>
-<td style="text-align: left;"><code>instance_uid</code> (FK), <code>group_id</code>, <code>element_id</code>, <code>value</code></td>
-</tr>
-<tr>
-<td style="text-align: left;"><code>audit_log</code></td>
-<td style="text-align: left;">Logs all modification actions.</td>
-<td style="text-align: left;"><code>timestamp</code>, <code>action_type</code>, <code>entity_uid</code>, <code>details</code></td>
-</tr>
-<tr>
-<td style="text-align: left;"><code>phi_findings</code></td>
-<td style="text-align: left;">Stores potential PHI detected during audit.</td>
-<td style="text-align: left;"><code>entity_uid</code>, <code>field_name</code>, <code>value</code>, <code>remediation_action</code></td>
-</tr>
-</tbody>
-</table>
-<h3 id="schema-visualization">Schema Visualization</h3>
-<pre class="mermaid"><code>erDiagram
-    PATIENTS ||--|{ STUDIES : contains
-    STUDIES ||--|{ SERIES : contains
-    SERIES ||--|{ INSTANCES : contains
-
-    PATIENTS {
-        string patient_id PK
-        string patient_name
-    }
-
-    STUDIES {
-        string study_instance_uid PK
-        date study_date
-    }
-
-    SERIES {
-        string series_instance_uid PK
-        string modality
-        string manufacturer
-        string model_name
-    }
-
-    INSTANCES {
-        string sop_instance_uid PK
-        json attributes_json "Core Metadata"
-        string pixel_hash "Integrity Check"
-    }
-
-    INSTANCES ||--o{ INSTANCE_ATTRIBUTES : "owns private tags"
-    INSTANCE_ATTRIBUTES {
-        string instance_uid FK
-        hex group_id
-        hex element_id
-        string value
-    }
-
-    INSTANCES ||--|| SIDECAR_FILE : "references pixels"
-    SIDECAR_FILE {
-        binary pixel_bytes
-    }
-
-    INSTANCES ||--o{ PHI_FINDINGS : "triggers"
-    PHI_FINDINGS {
-        string field_name
-        string value
-        string remediation
-    }
-
-    INSTANCES ||--o{ AUDIT_LOG : "generates"
-    AUDIT_LOG {
-        timestamp time
-        string action
-        string details
-    }</code></pre>
 
 
 
