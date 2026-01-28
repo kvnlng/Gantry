@@ -816,7 +816,12 @@
   
 </li>
         
-          <li class="md-nav__item">
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#programmatic-configuration" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -893,8 +898,8 @@
     </nav>
   
 </li>
-        
-          <li class="md-nav__item">
+      
+        <li class="md-nav__item">
   <a href="#auto-discovery-of-redaction-zones" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -902,11 +907,6 @@
       
     </span>
   </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1426,7 +1426,12 @@
   
 </li>
         
-          <li class="md-nav__item">
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#programmatic-configuration" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1503,8 +1508,8 @@
     </nav>
   
 </li>
-        
-          <li class="md-nav__item">
+      
+        <li class="md-nav__item">
   <a href="#auto-discovery-of-redaction-zones" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1512,11 +1517,6 @@
       
     </span>
   </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1710,9 +1710,9 @@
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">session</span><span class="o">.</span><span class="n">create_config</span><span class="p">(</span><span class="s2">&quot;my_new_policy.yaml&quot;</span><span class="p">)</span>
 </code></pre></div>
 <hr />
-<h3 id="programmatic-configuration">Programmatic Configuration</h3>
+<h2 id="programmatic-configuration">Programmatic Configuration</h2>
 <p>In addition to YAML files, you can manage the configuration dynamically using Python code via the <code>session.configuration</code> property.</p>
-<h4 id="accessing-configuration">Accessing Configuration</h4>
+<h3 id="accessing-configuration">Accessing Configuration</h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">gantry</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
 <a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">session</span> <span class="o">=</span> <span class="n">gantry</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">data_directory</span><span class="o">=</span><span class="s2">&quot;./dicom_data&quot;</span><span class="p">)</span>
@@ -1723,8 +1723,8 @@
 <a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">rules</span><span class="p">)</span>    <span class="c1"># List active redaction rules</span>
 <a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="nb">print</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">phi_tags</span><span class="p">)</span> <span class="c1"># List active PHI tag overrides</span>
 </code></pre></div>
-<h4 id="methods">Methods</h4>
-<h5 id="add_rule">add_rule()</h5>
+<h3 id="methods">Methods</h3>
+<h4 id="add_rule">add_rule()</h4>
 <p><code>add_rule(serial_number, manufacturer="Unknown", model="Unknown", zones=None)</code></p>
 <p>Add a new machine redaction rule dynamically.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Add a rule for a specific ultrasound machine</span>
@@ -1735,12 +1735,12 @@
 <a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">zones</span><span class="o">=</span><span class="p">[[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">800</span><span class="p">]]</span> <span class="c1"># [y1, y2, x1, x2]</span>
 <a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="p">)</span>
 </code></pre></div>
-<h5 id="delete_rule">delete_rule()</h5>
+<h4 id="delete_rule">delete_rule()</h4>
 <p><code>delete_rule(serial_number)</code></p>
 <p>Remove a rule by serial number.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">session</span><span class="o">.</span><span class="n">configuration</span><span class="o">.</span><span class="n">delete_rule</span><span class="p">(</span><span class="s2">&quot;US-5555&quot;</span><span class="p">)</span>
 </code></pre></div>
-<h5 id="set_phi_tag">set_phi_tag()</h5>
+<h4 id="set_phi_tag">set_phi_tag()</h4>
 <p><code>set_phi_tag(tag, action, replacement=None)</code></p>
 <p>Update the policy for a specific DICOM tag.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># Force removal of PatientWeight</span>
@@ -1749,7 +1749,7 @@
 <a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># Replace StudyDescription with a constant</span>
 <a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">session</span><span class="o">.</span><span class="n">configuration</span><span class="o">.</span><span class="n">set_phi_tag</span><span class="p">(</span><span class="s2">&quot;0008,1030&quot;</span><span class="p">,</span> <span class="s2">&quot;REPLACE&quot;</span><span class="p">,</span> <span class="n">replacement</span><span class="o">=</span><span class="s2">&quot;RESEARCH STUDY&quot;</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="auto-discovery-of-redaction-zones">Auto-Discovery of Redaction Zones</h3>
+<h2 id="auto-discovery-of-redaction-zones">Auto-Discovery of Redaction Zones</h2>
 <p>To help identify pixel redaction zones (e.g., for burned-in PHI), Gantry provides a discovery tool that analyzes a sample of images from a specific machine to find common text "hotspots".</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Discover potential redaction zones for a machine</span>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">suggested_zones</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">discover_redaction_zones</span><span class="p">(</span>
