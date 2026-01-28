@@ -21,7 +21,7 @@ Gantry provides a high-performance, object-oriented interface for managing, anal
 
 ## Performance
 
-Benchmark performed by producing instances with frames ranging from 100 to 1000 in three phases. Each phase increases in single magnitude. Then a standard workflow is performed, measuring each step. The final results follow.
+Benchmark performed by producing instances with frames ranging from 1 to 100 in three phases. Each phase increases in single magnitude. Then a standard workflow is performed, measuring each step. The final results follow.
 
 | Phase                           | Total Instances | Ingest Duration | Examine Duration | Audit Duration | Backup Duration | Anonymize Duration | Redact Duration | Export Duration | Total Time |
 |:--------------------------------|:---------------:|----------------:|-----------------:|---------------:|----------------:|-------------------:|----------------:|----------------:|-----------:|
@@ -63,7 +63,7 @@ graph LR
 - **Patient**: Root entity (Name, ID).
 - **Study**: A distinct visit/exam.
 - **Series**: A scan or reconstruction (e.g., "ct_soft_kernel").
-- **Instance**: A single DICOM slice. **Pixel data is lazy-loaded**; the 500MB+ pixel array is only read from disk when you access `.pixel_array` or export.
+- **Instance**: A single DICOM slice.
 
 ### 3. Safety Pipeline (The 10 Checkpoints)
 
