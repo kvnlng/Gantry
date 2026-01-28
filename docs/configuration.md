@@ -141,7 +141,7 @@ machines:
 
 ---
 
-### 6. Programmatic Configuration (API 2.0)
+### 6. Programmatic Configuration
 
 In addition to YAML files, you can manage the configuration dynamically using Python code via the `session.configuration` property.
 
