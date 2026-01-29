@@ -16,7 +16,7 @@ class ZoneDiscoverer:
     """
 
     @staticmethod
-    def discover_zones(instances: List[Instance], _min_occurrence: float = 0.1) -> List[List[int]]:
+    def discover_zones(instances: List[Instance], _min_occurrence: float = 0.1, min_confidence: float = 80.0) -> List[List[int]]:
         """
         Scans instances and returns a list of suggested zones [y1, y2, x1, x2].
 
@@ -24,6 +24,7 @@ class ZoneDiscoverer:
             instances: List of DICOM instances to scan.
             _min_occurrence: Fraction of instances that must contain text in a region
                             for it to be considered a "zone".
+            min_confidence: Minimum OCR confidence (0-100) to consider a region valid.
 
         Returns:
             List[List[int]]: List of suggested zones [y1, y2, x1, x2].
@@ -36,7 +37,8 @@ class ZoneDiscoverer:
             regions = analyze_pixels(inst)
             uid = inst.sop_instance_uid
             for r in regions:
-                tagged_boxes.append((list(r.box), uid))
+                if r.confidence >= min_confidence:
+                    tagged_boxes.append((list(r.box), uid))
 
         if not tagged_boxes:
             return []

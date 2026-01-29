@@ -999,10 +999,13 @@ class DicomSession:
         # Flatten
         # Flatten with source tracking to support noise filtering
         all_boxes_with_source = []
+        min_confidence = 80.0
+
         for i, regions in enumerate(raw_regions_lists):
             # Use index 'i' as unique source identifier (corresponds to sample[i])
             for r in regions:
-                all_boxes_with_source.append((list(r.box), i))
+                if r.confidence >= min_confidence:
+                    all_boxes_with_source.append((list(r.box), i))
 
         if not all_boxes_with_source:
              print("No text regions detected.")
