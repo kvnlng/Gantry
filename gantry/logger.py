@@ -1,3 +1,6 @@
+"""
+Logging configuration and helpers for the Gantry application.
+"""
 import logging
 import sys
 
@@ -22,7 +25,7 @@ def configure_logger(log_file=None):
         log_file = os.getenv("GANTRY_LOG_FILE", "gantry.log")
 
     logger = logging.getLogger("gantry")
-    
+
     # helper for default level
     log_level_map = {
         "DEBUG": logging.DEBUG,
@@ -32,7 +35,7 @@ def configure_logger(log_file=None):
         "CRITICAL": logging.CRITICAL
     }
     default_level = log_level_map.get(os.getenv("GANTRY_LOG_LEVEL", "DEBUG").upper(), logging.DEBUG)
-    
+
     logger.setLevel(default_level)
 
     # Reset handlers to prevent duplicates on reload
@@ -57,4 +60,10 @@ def configure_logger(log_file=None):
 
 
 def get_logger():
+    """
+    Retrieves the configured 'gantry' logger.
+
+    Returns:
+        logging.Logger: The gantry logger.
+    """
     return logging.getLogger("gantry")

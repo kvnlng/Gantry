@@ -45,61 +45,7 @@ from .validation import IODValidator
 from .sidecar import SidecarManager
 
 
-class DicomStore:
-    """
-    Root of the Object Graph + Persistence Logic.
-
-    This class holds the in-memory representation of the DICOM hierarchy
-    (List of Patients) and utilities for querying the graph state.
-    """
-
-    def __init__(self):
-        self.patients: List[Patient] = []
-
-    def get_unique_equipment(self) -> List[Equipment]:
-        """
-        Returns a list of all unique Equipment (Manufacturer/Model/Serial) found in the store.
-
-        Returns:
-            List[Equipment]: A list of unique Equipment objects.
-        """
-        unique = set()
-        for p in self.patients:
-            for st in p.studies:
-                for se in st.series:
-                    if se.equipment:
-                        unique.add(se.equipment)
-        return list(unique)
-
-    def get_known_files(self) -> Set[str]:
-        """
-        Returns a set of absolute file paths for all instances currently indexed.
-
-        Returns:
-            Set[str]: A set of file path strings.
-        """
-        files = set()
-        for p in self.patients:
-            for st in p.studies:
-                for se in st.series:
-                    for inst in se.instances:
-                        if inst.file_path:
-                            files.add(os.path.abspath(inst.file_path))
-        return files
-
-    def save_state(self, filepath: str):
-        logger = get_logger()
-        logger.info(f"Persisting session metadata to {filepath}...")
-        with open(filepath, 'wb') as f:
-            pickle.dump(self, f)
-        logger.info("Saved.")
-
-    @staticmethod
-    def load_state(filepath: str) -> 'DicomStore':
-        if not os.path.exists(filepath):
-            return DicomStore()
-        with open(filepath, 'rb') as f:
-            return pickle.load(f)
+from .store import DicomStore
 
 
 def populate_attrs(ds: Any, item: "DicomItem", text_index: list = None):
@@ -424,7 +370,7 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
         # If we have modified pixels in memory (redaction), we MUST use them.
         # If they were unloaded, we load them.
         arr = inst.pixel_array
-        
+
         if arr is None:
             try:
                 arr = inst.get_pixel_data()
@@ -433,13 +379,13 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
                 # Image implementations MUST have pixels.
                 # Non-image (SR, PR, KO, DOC) can proceed without.
                 mod = inst.attributes.get("0008,0060", "OT")
-                IMAGE_MODALITIES = {"CT", "MR", "US", "DX", "CR", 
+                IMAGE_MODALITIES = {"CT", "MR", "US", "DX", "CR",
                                     "MG", "NM", "PT", "XA", "RF", "SC", "OT"}
-                                    
+
                 # If it claims to be an image but has no pixels, fail hard (Safety)
                 if mod in IMAGE_MODALITIES:
                     raise RuntimeError(f"Pixels missing for Image Modality {mod}")
-                
+
                 # Otherwise (SR, etc.), proceed
                 arr = None
 
@@ -448,11 +394,11 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
             if ctx.redaction_zones:
                 # Local import to avoid circular dependency
                 from .services import RedactionService
-                
+
                 # Check writeability
                 if not arr.flags.writeable:
                     arr = arr.copy()
-                
+
                 # Apply zones
                 RedactionService.apply_redaction_to_array(arr, ctx.redaction_zones)
 
@@ -460,7 +406,7 @@ def _export_instance_worker(ctx: ExportContext) -> Optional[bool]:
             # If compression is requested, DO NOT convert to bytes here.
             # Pass the numpy array to _finalize_dataset -> _compress_j2k directly.
             # Only set PixelData if NOT compressing.
-            
+
             if not ctx.compression:
                 ds.PixelData = arr.tobytes()
 

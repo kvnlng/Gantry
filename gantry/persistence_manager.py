@@ -1,8 +1,10 @@
+"""
+Persistence manager for handling background save operations.
+"""
 import threading
 import queue
 import atexit
-import time
-from typing import List, Optional
+from typing import List
 from .entities import Patient
 from .persistence import SqliteStore
 from .logger import get_logger

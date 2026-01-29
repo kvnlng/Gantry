@@ -1,6 +1,10 @@
 import numpy as np
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Tuple
+from dataclasses import dataclass
 import logging
+import pydicom
+from pydicom.dataset import Dataset
+from pydicom.pixel_data_handlers.util import apply_voi_lut
 from gantry.entities import Instance
 from gantry.privacy import PhiFinding
 
@@ -14,38 +18,73 @@ except ImportError:
     HAS_OCR = False
     logger.warning("pytesseract or PIL not installed. OCR features will be disabled.")
 
-
-from dataclasses import dataclass
-from typing import List, Optional, Any, Tuple, Dict
-import logging
-from gantry.entities import Instance
-
-logger = logging.getLogger(__name__)
-
-try:
-    import pytesseract
-    from PIL import Image
-    HAS_OCR = True
-except ImportError:
-    HAS_OCR = False
-    logger.warning("pytesseract or PIL not installed. OCR features will be disabled.")
-
-
 @dataclass
 class TextRegion:
+    """
+    Represents a region of text detected within an image or frame.
+
+    Attributes:
+        text (str): The detected text string.
+        box (Tuple[int, int, int, int]): The bounding box of the text region (x, y, w, h).
+        confidence (float): The confidence score of the detection (0-100).
+        frame_index (int): The index of the frame where the text was detected (default 0).
+    """
     text: str
     box: Tuple[int, int, int, int]  # x, y, w, h
     confidence: float
     frame_index: int = 0
 
 
+def _get_voi_lut_dataset(instance: Instance) -> Dataset:
+    """
+    Constructs a minimal pydicom Dataset containing only the tags required for VOI LUT operations.
+    """
+    ds = Dataset()
+
+    # Critical VOI/Modality LUT tags
+    tags_to_copy = [
+        "0028,1050", # WindowCenter
+        "0028,1051", # WindowWidth
+        "0028,1052", # RescaleIntercept
+        "0028,1053", # RescaleSlope
+        "0028,1054", # RescaleType
+        "0028,3010", # VOILUTSequence (If supported by Gantry attributes, likely complex)
+        "0028,1055", # WindowCenterWidthExplanation
+    ]
+
+    for tag in tags_to_copy:
+        val = instance.attributes.get(tag)
+        if val is not None:
+            # Pydicom expects specific keywords or tags. 
+            # DicomItem stores tags as "GGGG,EEEE" strings.
+            # We can map them to keywords or set by tag.
+            # Setting by tag (int) is safer.
+            group, elem = [int(x, 16) for x in tag.split(',')]
+            # We need to assign valid VRs if possible, or let pydicom infer?
+            # Assigning raw value directly to ds[tag] might fail if VR unknown.
+            # Easiest way: ds.add_new(tag, VR, value)
+            # We assume DS or LO/SH.
+            try:
+                # Naive assignment, pydicom might complain about VR
+                # For WindowCenter/Width (DS), Rescale (DS)
+                vr = "DS"
+                if tag == "0028,1054": vr = "LO" # RescaleType
+                if tag == "0028,1055": vr = "LO" # Explanation
+                if tag == "0028,3010": continue # Skip Sequence for now (too complex to map back from dict manually here)
+
+                ds.add_new(pydicom.tag.Tag(group, elem), vr, val)
+            except Exception:
+                pass
+
+    return ds
+
 def detect_text_regions(pixel_data: np.ndarray, frame_idx: int = 0) -> List[TextRegion]:
     """
     Runs OCR on the provided pixel data and returns text regions with bounding boxes.
 
     Args:
-        pixel_data (np.ndarray): The image data.
-        frame_idx (int): The frame index associated with this data (for reporting).
+        pixel_data (np.ndarray): The image data (should be 2D).
+        frame_idx (int): The frame index associated with this data.
 
     Returns:
         List[TextRegion]: Detected text regions.
@@ -55,11 +94,14 @@ def detect_text_regions(pixel_data: np.ndarray, frame_idx: int = 0) -> List[Text
         return regions
 
     try:
-        # Normalize pixel types for PIL
+        # Normalize pixel types for PIL if not already uint8
+        # Note: VOI LUT should have theoretically handled contrast, but we still need 
+        # to ensure it fits in 8-bit for OCR.
         if pixel_data.dtype != np.uint8:
             p_min = pixel_data.min()
             p_max = pixel_data.max()
             if p_max > p_min:
+                # Linear scaling to 0-255
                 norm = ((pixel_data - p_min) / (p_max - p_min)) * 255.0
                 img_data = norm.astype(np.uint8)
             else:
@@ -68,19 +110,19 @@ def detect_text_regions(pixel_data: np.ndarray, frame_idx: int = 0) -> List[Text
             img_data = pixel_data
 
         img = Image.fromarray(img_data)
-        
+
         # Use image_to_data for detailed box info
         # config optimized for sparse text
         config = r'--oem 3 --psm 11'
-        
-        # Output is a dict with lists: level, page_num, block_num, par_num, line_num, word_num, left, top, width, height, conf, text
+
+        # Output is a dict with lists
         data = pytesseract.image_to_data(img, config=config, output_type=pytesseract.Output.DICT)
-        
+
         n_boxes = len(data['text'])
         for i in range(n_boxes):
             text = data['text'][i].strip()
             conf = int(data['conf'][i])
-            
+
             # Filter low confidence and empty text
             if conf > 0 and len(text) > 0:
                 (x, y, w, h) = (data['left'][i], data['top'][i], data['width'][i], data['height'][i])
@@ -90,10 +132,10 @@ def detect_text_regions(pixel_data: np.ndarray, frame_idx: int = 0) -> List[Text
                     confidence=float(conf),
                     frame_index=frame_idx
                 ))
-                 
+
     except Exception as e:
         logger.error(f"OCR failed: {e}")
-        
+
     return regions
 
 
@@ -107,10 +149,10 @@ def analyze_pixels(instance: Instance) -> List[TextRegion]:
     """
     Analyzes the pixel data of a DICOM Instance for burned-in text.
     Returns list of TextRegion objects (raw findings, not filtered).
-     Caller is responsible for filtering against rules.
+    Caller is responsible for filtered results.
     """
     all_regions = []
-    
+
     if not HAS_OCR:
         return all_regions
 
@@ -118,28 +160,47 @@ def analyze_pixels(instance: Instance) -> List[TextRegion]:
         pixel_array = instance.get_pixel_data()
         if pixel_array is None:
             return all_regions
+            
+        # Apply VOI LUT (Windowing) if metadata exists
+        # This converts high-bit DICOM to human-viewable contrast
+        try:
+           ds_voi = _get_voi_lut_dataset(instance)
+           # apply_voi_lut handles the math. It returns float64 or int usually.
+           # index=0 is default, but we might want to apply per frame if WindowWidth differs per frame 
+           # (though usually it's per series/image). 
+           # If pixel_array is 3D/4D, apply_voi_lut might work on the whole array if implemented, 
+           # but safer to do it. pydicom's apply_voi_lut expects array + ds.
+           pixel_array = apply_voi_lut(pixel_array, ds_voi)
+        except Exception as e:
+            # Fallback to raw data if VOI fails (e.g. missing tags)
+            # logger.debug(f"VOI LUT application failed: {e}")
+            pass
 
         frames = []
         shape = pixel_array.shape
+
+        # Heuristic to detect frames vs RGB
+        # If RGB, shape is (H, W, 3). If MultiFrame, (N, H, W). 
+        # CAUTION: apply_voi_lut might change shape? No, usually preserves.
         
-        # Heuristic to detect frames vs RGB (Same as before)
         if pixel_array.ndim == 2:
             frames.append(pixel_array)
         elif pixel_array.ndim == 3:
             if pixel_array.shape[-1] in [3, 4]:
-                frames.append(pixel_array)
+                frames.append(pixel_array) # Single RGB frame
             else:
                 for i in range(shape[0]):
                     frames.append(pixel_array[i])
         elif pixel_array.ndim == 4:
+             # (Frames, Rows, Cols, Samples)
              for i in range(shape[0]):
                     frames.append(pixel_array[i])
-                    
+
         for i, frame in enumerate(frames):
             regions = detect_text_regions(frame, frame_idx=i)
             all_regions.extend(regions)
-                 
+
     except Exception as e:
         logger.error(f"Failed to analyze pixels for {instance.sop_instance_uid}: {e}")
-        
+
     return all_regions

@@ -1,3 +1,6 @@
+"""
+Cryptography utilities for handling encryption keys and operations.
+"""
 import os
 from typing import Optional
 from cryptography.fernet import Fernet

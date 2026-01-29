@@ -8,15 +8,14 @@ This module contains the core service logic for:
 
 import hashlib
 import json
-import sys
 import traceback
 import gc
-from typing import Dict, List, Tuple
+from typing import Dict, List
 from tqdm import tqdm
 import numpy as np
 
-from .entities import Instance, Patient, DicomItem, DicomSequence
-from .io_handlers import DicomStore
+from .entities import Instance, DicomItem, DicomSequence
+from .store import DicomStore
 from .logger import get_logger
 
 
@@ -472,11 +471,11 @@ class RedactionService:
     def apply_redaction_to_array(arr: np.ndarray, rois: List[tuple]) -> bool:
         """
         Applies a list of ROIs to the pixel array in place.
-        
+
         Args:
             arr (np.ndarray): The pixel array to modify.
             rois (List[tuple]): List of (y1, y2, x1, x2) regions.
-            
+
         Returns:
             bool: True if any modification was applied.
         """
@@ -494,13 +493,13 @@ class RedactionService:
 
             rows = arr.shape[row_dim]
             cols = arr.shape[col_dim]
-            
+
             # Ensure Writability
-            # Note: The caller is responsible for ensuring 'arr' can be modified 
+            # Note: The caller is responsible for ensuring 'arr' can be modified
             # or assigning the copy back if they passed a read-only view that needed copying?
             # Actually, standard numpy semantics: if we modify in place, it works if writeable.
-            # If not writeable, we probably need to copy. But a static method receiving an array 
-            # can't "replace" the array reference in the caller. 
+            # If not writeable, we probably need to copy. But a static method receiving an array
+            # can't "replace" the array reference in the caller.
             # So we assume caller handles copy if needed, or we raise/return?
             # For this method, let's assume valid writeable array, or try to write.
             if not arr.flags.writeable:
@@ -508,7 +507,7 @@ class RedactionService:
                  # But our signature returns bool.
                  # Let's assume the caller must ensure writeability for a "void" style modifier.
                  # OR, we change signature to return the array?
-                 pass 
+                 pass
 
             for roi in rois:
                 try:
@@ -532,7 +531,7 @@ class RedactionService:
                     modified = True
                 except Exception:
                     pass
-            
+
             return modified
         except Exception:
             return False
@@ -540,13 +539,13 @@ class RedactionService:
     def _apply_roi_to_instance(self, inst: Instance, arr, roi: tuple) -> bool:
         """
         Applies a single ROI to the pixel array in place.
-        
+
         Wrapper around static apply_redaction_to_array for instance management.
         """
         if not arr.flags.writeable:
             arr = arr.copy()
             inst.set_pixel_data(arr)
-            
+
         return self.apply_redaction_to_array(arr, [roi])
 
     def _apply_redaction_flags(self, inst: Instance):
