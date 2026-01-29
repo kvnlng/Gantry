@@ -997,31 +997,43 @@ class DicomSession:
         )
 
         # Flatten
-        all_regions = []
-        for lst in raw_regions_lists:
-            all_regions.extend(lst)
+        # Flatten with source tracking to support noise filtering
+        all_boxes_with_source = []
+        for i, regions in enumerate(raw_regions_lists):
+            # Use index 'i' as unique source identifier (corresponds to sample[i])
+            for r in regions:
+                all_boxes_with_source.append((list(r.box), i))
 
-        # 4. Merge
-        # We need to construct a dummy instance list? No, we need regions.
-        # ZoneDiscoverer logic was: takes instances -> analyzes -> merges.
-        # We just did analysis.
-        # Let's modify discovery usage or extract merge logic.
+        if not all_boxes_with_source:
+             print("No text regions detected.")
+             return []
 
-        # Access internal merge method or refactor ZoneDiscoverer to accept regions?
-        # Since I just wrote it, I know I can just call _merge_overlapping_boxes with box lists.
-        # Boxes needed as [x,y,w,h]
+        boxes_only = [b[0] for b in all_boxes_with_source]
 
-        boxes = [list(r.box) for r in all_regions]
+        # 4. Clustering (Merge with padding)
+        # Use padded clustering to fix fragmentation
+        clusters = ZoneDiscoverer.group_boxes(boxes_only, padding=5)
 
-        # We need to access the static method. ideally public.
-        # I'll use the private one for now as it's in same package context effectively.
-        merged = ZoneDiscoverer._merge_overlapping_boxes(boxes)
-
-        # Filter tiny and convert to [y1, y2, x1, x2]
         final_zones = []
-        for b in merged:
-            if b[2] > 5 and b[3] > 5:
-                x, y, w, h = b
+        n_total = len(sample)
+        min_occurrence = 0.1 # 10% threshold
+
+        for cluster_indices in clusters:
+            # Union the boxes in the cluster
+            cluster_boxes = [boxes_only[i] for i in cluster_indices]
+            merged_box = ZoneDiscoverer._union_box_list(cluster_boxes)
+
+            # Check Frequency (Noise Filtering)
+            unique_sources = {all_boxes_with_source[i][1] for i in cluster_indices}
+            occurrence_rate = len(unique_sources) / n_total
+
+            if occurrence_rate < min_occurrence:
+                continue
+
+            # Filter tiny and convert to [y1, y2, x1, x2]
+            if merged_box[2] > 5 and merged_box[3] > 5:
+                # Convert [x, y, w, h] -> [y1, y2, x1, x2]
+                x, y, w, h = merged_box
                 final_zones.append([y, y + h, x, x + w])
 
         print(f"Discovery complete. Suggested {len(final_zones)} zones.")
