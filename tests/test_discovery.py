@@ -9,11 +9,11 @@ class TestZoneDiscoverer(unittest.TestCase):
         
         # Overlap
         b2 = [5, 5, 10, 10] # Starts inside b1
-        self.assertTrue(ZoneDiscoverer._boxes_overlap(b1, b2), "Boxes should overlap")
+        self.assertTrue(ZoneDiscoverer._boxes_overlap(b1, b2, 0, 0), "Boxes should overlap")
         
         # No overlap (Right)
         b3 = [20, 0, 10, 10]
-        self.assertFalse(ZoneDiscoverer._boxes_overlap(b1, b3), "Boxes should NOT overlap")
+        self.assertFalse(ZoneDiscoverer._boxes_overlap(b1, b3, 0, 0), "Boxes should NOT overlap")
         
         # Touching (Should be false or true depending on strictness? Code says strict inequality)
         # r1 < l2: 10 < 10 is False.
@@ -24,7 +24,7 @@ class TestZoneDiscoverer(unittest.TestCase):
         # If they touch, `r1 == l2`, so `r1 < l2` is MATCH False.
         # So they overlap.
         b4 = [10, 0, 10, 10]
-        self.assertTrue(ZoneDiscoverer._boxes_overlap(b1, b4), "Touching boxes should overlap (merge edge)")
+        self.assertTrue(ZoneDiscoverer._boxes_overlap(b1, b4, 0, 0), "Touching boxes should overlap (merge edge)")
 
     def test_merge_simple(self):
         # Two overlapping boxes
