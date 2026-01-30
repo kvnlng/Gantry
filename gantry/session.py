@@ -2,7 +2,7 @@ import os
 import re
 import datetime
 import concurrent.futures
-from typing import List, Union
+from typing import List, Union, Dict, Any
 
 import yaml
 from tqdm import tqdm
@@ -945,16 +945,18 @@ class DicomSession:
 
         return count
 
-    def discover_redaction_zones(self, serial_number: str, sample_size: int = 50) -> List[List[int]]:
+    def discover_redaction_zones(self, serial_number: str, sample_size: int = 50, min_confidence: float = 80.0) -> List[Dict[str, Any]]:
         """
-        Analyzes instances of a specific machine to discover potential redaction zones.
+        Scans a random sample of instances from a specific machine (by serial number) to discover
+        common locations of burned-in text.
 
         Args:
-            serial_number (str): The serial number of the machine to target.
-            sample_size (int): Max number of instances to analyze (for speed).
+            serial_number: Device Serial Number to filter by.
+            sample_size: Number of images to sample for valid statistics.
+            min_confidence: Minimum OCR confidence (0-100) to include a region.
 
         Returns:
-            List[List[int]]: A list of suggested zones [x, y, w, h].
+            List[Dict]: Suggested zones with metadata.
         """
         get_logger().info(f"Discovering zones for {serial_number}...")
 
@@ -997,11 +999,10 @@ class DicomSession:
         )
 
         # Flatten
-        # Flatten with source tracking to support noise filtering
         all_boxes_with_source = []
-        min_confidence = 80.0
 
         for i, regions in enumerate(raw_regions_lists):
+
             # Use index 'i' as unique source identifier (corresponds to sample[i])
             for r in regions:
                 if r.confidence >= min_confidence:
@@ -1013,10 +1014,10 @@ class DicomSession:
 
         boxes_only = [list(item[0].box) for item in all_boxes_with_source]
 
-        # 4. Clustering (Merge with padding)
-        # Use padded clustering to fix fragmentation
-        # Increased padding to 20 to better group sentences/paragraphs
-        clusters = ZoneDiscoverer.group_boxes(boxes_only, padding=20)
+        # 4. Clustering (Merge with Asymmetric Padding)
+        # pad_x=100 so "Hospital ... Name" on same line gets merged.
+        # pad_y=10 so different lines are kept separate.
+        clusters = ZoneDiscoverer.group_boxes(boxes_only, pad_x=100, pad_y=10)
 
         final_zones = []
         n_total = len(sample)
@@ -1030,34 +1031,41 @@ class DicomSession:
             # Check Frequency (Noise Filtering)
             unique_sources = {all_boxes_with_source[i][1] for i in cluster_indices}
             occurrence_rate = len(unique_sources) / n_total
-
+            
+            # Classification
+            cluster_texts = [all_boxes_with_source[i][0].text for i in cluster_indices]
+            
+            cluster_type = "TEXT"
+            has_proper_noun = False
+            has_name_pattern = False
+            
+            for t in cluster_texts:
+                cls = ZoneDiscoverer._classify_text(t)
+                if cls == "NAME_PATTERN":
+                    has_name_pattern = True
+                elif cls == "PROPER_NOUN_CANDIDATE":
+                    has_proper_noun = True
+            
+            if has_name_pattern:
+                cluster_type = "LIKELY_NAME"
+            elif has_proper_noun:
+                cluster_type = "PROPER_NOUN"
 
             if occurrence_rate < min_occurrence:
-                continue
-
-            # Heuristic Filter: Reduce Noise
-            # If a cluster contains ONLY isolated single characters (and only 1 region), likely noise.
-            # We keep it if:
-            # 1. It has more than 1 region (e.g. "M" "D" close together -> "MD")
-            # 2. OR the single region text length is > 1 (e.g. "CONFIDENTIAL")
-            cluster_regions = [all_boxes_with_source[i][0] for i in cluster_indices]
-            
-            is_noise = False
-            if len(cluster_regions) == 1:
-                text = cluster_regions[0].text
-                # If strictly 1 char and isolated
-                if len(text) < 2:
-                    is_noise = True
-            
-            if is_noise:
-                # logger.debug(f"Skipping noise zone: '{cluster_regions[0].text}'")
                 continue
 
             # Filter tiny and convert to [y1, y2, x1, x2]
             if merged_box[2] > 5 and merged_box[3] > 5:
                 # Convert [x, y, w, h] -> [y1, y2, x1, x2]
                 x, y, w, h = merged_box
-                final_zones.append([y, y + h, x, x + w])
+                zone_rect = [y, y + h, x, x + w]
+                
+                final_zones.append({
+                    "zone": zone_rect,
+                    "type": cluster_type,
+                    "occurrence": occurrence_rate,
+                    "examples": list(set(cluster_texts))[:3]
+                })
 
         print(f"Discovery complete. Suggested {len(final_zones)} zones.")
         return final_zones

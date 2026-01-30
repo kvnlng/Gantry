@@ -79,9 +79,9 @@ def generate_ct_pixels(rows, cols, frames, text, text_pos):
         return np.stack(frame_list, axis=0) # (Frames, Rows, Cols)
     return frame_list[0]
 
-def main():
+def main(output_dir="test_data/redaction_examples"):
     fake = faker.Faker()
-    output_dir = os.path.abspath("test_data/redaction_examples")
+    output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
     
     # Scenarios: (Manufacturer, Model, Text, (x, y))

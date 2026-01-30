@@ -49,7 +49,7 @@ def verify_discovery():
         
         # Apply to config
         print("Applying discovered zones to config...")
-        session.configuration.rules[0]["redaction_zones"] = zones
+        session.configuration.rules[0]["redaction_zones"] = [z['zone'] for z in zones]
         
         # 5. Verify again (Should now runs and filter)
         print("\n--- Re-Verifying with Discovered Zones ---")

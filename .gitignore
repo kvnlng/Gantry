@@ -22,6 +22,7 @@ export_metadata.csv
 reproduce_issue.py
 debug_ocr_input.png
 reproduce_export_bug.py
+reproduce_issue_v2.py
 
 # C extensions
 *.so

@@ -25,6 +25,10 @@ setup(
             "mkdocs-material>=9.0.0",
             "mkdocstrings[python]>=0.20.0",
             "mkdocs-awesome-pages-plugin>=2.8.0"
+        ],
+        "nlp": [
+            "spacy>=3.7.0",
+            "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl"
         ]
     }
 )
