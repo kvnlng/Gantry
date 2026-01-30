@@ -12,6 +12,18 @@ import scripts.generate_redaction_example as gen
 class TestDiscoveryIntegration(unittest.TestCase):
 
     def setUp(self):
+        # Seed for determinism
+        import random
+        random.seed(42)
+        try:
+            from faker import Faker
+            Faker.seed(42)
+        except ImportError:
+            pass
+            
+        if not gen.HAS_DEPS:
+            self.skipTest("Requires 'pillow' and 'faker' which are not installed")
+        
         # Create temp environment
         self.test_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.test_dir, "test.db")
@@ -45,36 +57,36 @@ class TestDiscoveryIntegration(unittest.TestCase):
         # We should find ANY serial that has data.
         
         eqs = self.session.store.get_unique_equipment()
-        target_serial = eqs[0].device_serial_number
         
-        # 3. Discover Zones
-        # Use low confidence to ensure we catch the faint text
-        zones = self.session.discover_redaction_zones(
-            target_serial, 
-            sample_size=10, 
-            min_confidence=50.0
-        )
-        
-        # 4. Assertions
-        found_proper_noun = False
         found_merged_zone = False
+        found_proper_noun = False
         
-        for z in zones:
-            z_type = z.get('type')
-            z_rect = z.get('zone') # [y1, y2, x1, x2]
-            width = z_rect[3] - z_rect[2]
+        for eq in eqs:
+            serial = eq.device_serial_number
+            print(f"Scanning {serial} ({eq.manufacturer})...")
             
-            if z_type == "PROPER_NOUN":
-                found_proper_noun = True
+            zones = self.session.discover_redaction_zones(
+                serial, 
+                sample_size=10, 
+                min_confidence=50.0
+            )
+            
+            for z in zones:
+                z_type = z.get('type')
+                z_rect = z.get('zone')
+                width = z_rect[3] - z_rect[2]
+                print(f"  Zone: {z_rect} Type: {z_type} Width: {width} Examples: {z.get('examples')}")
                 
-                # The "Hospital | Name" line is wide.
-                # "Hospital" is ~100px. "Name" is ~150px. Gap is ~30px. Total ~280px.
-                # If unmerged, max width is < 200.
-                if width > 250:
-                    found_merged_zone = True
+                if z_type == "PROPER_NOUN":
+                    found_proper_noun = True # At least one machine found a name
+                    if width > 250:
+                        found_merged_zone = True
+            
+            if found_merged_zone:
+                break
         
-        self.assertTrue(found_proper_noun, "Should detect at least one PROPER_NOUN zone")
-        self.assertTrue(found_merged_zone, "Should detect a merged zone (Width > 250px) indicating Hospital and Name are combined")
+        self.assertTrue(found_proper_noun, "Should detect at least one PROPER_NOUN zone across all machines")
+        self.assertTrue(found_merged_zone, "Should detect a merged zone (Width > 250px)")
 
 if __name__ == '__main__':
     unittest.main()

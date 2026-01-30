@@ -12,9 +12,9 @@ from gantry.io_handlers import DicomExporter
 try:
     from PIL import Image, ImageDraw, ImageFont
     import faker
+    HAS_DEPS = True
 except ImportError:
-    print("Requires 'pillow' and 'faker'. pip install pillow faker")
-    sys.exit(1)
+    HAS_DEPS = False
 
 def generate_ct_pixels(rows, cols, frames, text, text_pos):
     """
@@ -80,6 +80,9 @@ def generate_ct_pixels(rows, cols, frames, text, text_pos):
     return frame_list[0]
 
 def main(output_dir="test_data/redaction_examples"):
+    if not HAS_DEPS:
+        print("Requires 'pillow' and 'faker'. pip install pillow faker")
+        sys.exit(1)
     fake = faker.Faker()
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
