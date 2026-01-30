@@ -1005,17 +1005,18 @@ class DicomSession:
             # Use index 'i' as unique source identifier (corresponds to sample[i])
             for r in regions:
                 if r.confidence >= min_confidence:
-                    all_boxes_with_source.append((list(r.box), i))
+                    all_boxes_with_source.append((r, i))
 
         if not all_boxes_with_source:
              print("No text regions detected.")
              return []
 
-        boxes_only = [b[0] for b in all_boxes_with_source]
+        boxes_only = [list(item[0].box) for item in all_boxes_with_source]
 
         # 4. Clustering (Merge with padding)
         # Use padded clustering to fix fragmentation
-        clusters = ZoneDiscoverer.group_boxes(boxes_only, padding=5)
+        # Increased padding to 20 to better group sentences/paragraphs
+        clusters = ZoneDiscoverer.group_boxes(boxes_only, padding=20)
 
         final_zones = []
         n_total = len(sample)
@@ -1030,7 +1031,26 @@ class DicomSession:
             unique_sources = {all_boxes_with_source[i][1] for i in cluster_indices}
             occurrence_rate = len(unique_sources) / n_total
 
+
             if occurrence_rate < min_occurrence:
+                continue
+
+            # Heuristic Filter: Reduce Noise
+            # If a cluster contains ONLY isolated single characters (and only 1 region), likely noise.
+            # We keep it if:
+            # 1. It has more than 1 region (e.g. "M" "D" close together -> "MD")
+            # 2. OR the single region text length is > 1 (e.g. "CONFIDENTIAL")
+            cluster_regions = [all_boxes_with_source[i][0] for i in cluster_indices]
+            
+            is_noise = False
+            if len(cluster_regions) == 1:
+                text = cluster_regions[0].text
+                # If strictly 1 char and isolated
+                if len(text) < 2:
+                    is_noise = True
+            
+            if is_noise:
+                # logger.debug(f"Skipping noise zone: '{cluster_regions[0].text}'")
                 continue
 
             # Filter tiny and convert to [y1, y2, x1, x2]
