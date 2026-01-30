@@ -6,6 +6,23 @@ Gantry requires **Python 3.9+**.
 pip install "git+https://github.com/kvnlng/Gantry.git"
 ```
 
+## Optional Features
+
+### Natural Language Processing (NLP)
+
+To enable advanced entity detection (e.g., precise Patient Name recognition) for Redaction Zone Discovery:
+
+```bash
+pip install "git+https://github.com/kvnlng/Gantry.git#egg=gantry[nlp]"
+```
+
+Or manually:
+
+```bash
+pip install spacy
+python -m spacy download en_core_web_sm
+```
+
 !!! note
     The `imagecodecs` dependency is included and strongly recommended for handling JPEG Lossless and other compressed Transfer Syntaxes.
 

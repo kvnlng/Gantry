@@ -62,24 +62,60 @@ for finding in report:
 
 ## Setting Up New Machines (Zone Discovery)
 
-When you add a new machine to your configuration (Scaffolding), it typically has no redaction zones defined. Gantry will **skip** configured machines that have empty redaction zones to prevent noise.
+When you add a new machine to your configuration (Scaffolding), it typically has no redaction zones defined. Gantry uses **Zone Discovery** to analyze a sample of images and find repeating "hotspots" of burned-in text.
 
-To find the initial zones:
+### Smart Discovery
 
-1. **Run Discovery**:
+Gantry 0.6+ introduces smart text classification to help you identify **Proper Nouns** (like Patient Names) versus static text (like "Hospital" or "Slice ID").
 
-    ```python
-    zones = session.discover_redaction_zones(serial_number="SN-NEW", sample_size=50)
-    print(f"Suggested Zones: {zones}")
+```python
+# 1. Run Discovery
+# min_confidence=60 allows catching faint text
+zones = session.discover_redaction_zones(
+    serial_number="SN-NEW", 
+    sample_size=50, 
+    min_confidence=60.0
+)
+
+# 2. Inspect Results (Rich Metadata)
+for z in zones:
+    print(f"Type: {z['type']}")         # PROPER_NOUN, LIKELY_NAME, or TEXT
+    print(f"Zone: {z['zone']}")         # [y1, y2, x1, x2]
+    print(f"Examples: {z['examples']}") # ['Smith^John', 'Hospital A', ...]
+    print("-" * 20)
+```
+
+### Entity Detection Modes
+
+Discovery uses a tiered approach to classify text:
+
+1. **Regex Heuristics (Default)**: Extremely fast. Detects DICOM name patterns (e.g., `Smith^John`) and capitalized phrases.
+2. **NLP (Optional)**: If you install the optional NLP extras, Gantry uses **spaCy** for high-precision Named Entity Recognition (NER). This improves detection of names in natural formats (e.g., "John Smith" without carets).
+
+    ```bash
+    pip install gantry[nlp]
     ```
 
-    This analyzes a sample of images to find "hotspots" of burned-in text.
+### Applying Zones
 
-2. **Update Configuration**:
-    Add the suggested zones to your `priv_config.yaml`.
+Once identified, add the `zone` coordinates to your `priv_config.yaml`.
 
-3. **Validate**:
-    Run `session.scan_pixel_content("SN-NEW")` to confirm that the leaks are now covered.
+```yaml
+machines:
+  - serial_number: "SN-NEW"
+    redaction_zones:
+      # Found: PROPER_NOUN ['Smith^John']
+      - [20, 50, 200, 30]
+```
+
+### Validation
+
+After updating the config, run a scan to confirm coverage:
+
+```python
+report = session.scan_pixel_content("SN-NEW")
+# Should be 0 findings if zones are correct
+```
 
 ## Automated Remediation
 
