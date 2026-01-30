@@ -65,11 +65,14 @@ class TestDiscoveryIntegration(unittest.TestCase):
             serial = eq.device_serial_number
             print(f"Scanning {serial} ({eq.manufacturer})...")
             
-            zones = self.session.discover_redaction_zones(
+            # Result is now a DiscoveryResult object
+            # We must group it to get zones
+            result = self.session.discover_redaction_zones(
                 serial, 
                 sample_size=10, 
                 min_confidence=50.0
             )
+            zones = result.to_zones(pad_x=100, pad_y=10)
             
             for z in zones:
                 z_type = z.get('type')

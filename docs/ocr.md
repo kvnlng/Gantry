@@ -70,14 +70,18 @@ Gantry 0.6+ introduces smart text classification to help you identify **Proper N
 
 ```python
 # 1. Run Discovery
-# min_confidence=60 allows catching faint text
-zones = session.discover_redaction_zones(
+# Returns a DiscoveryResult object containing all detected text
+result = session.discover_redaction_zones(
     serial_number="SN-NEW", 
     sample_size=50, 
     min_confidence=60.0
 )
 
-# 2. Inspect Results (Rich Metadata)
+# 2. Convert to Zones (Grouping)
+# You can adjust padding to merge text on the same line
+zones = result.to_zones(pad_x=100, pad_y=10)
+
+# 3. Inspect Results (Rich Metadata)
 for z in zones:
     print(f"Type: {z['type']}")         # PROPER_NOUN, LIKELY_NAME, or TEXT
     print(f"Zone: {z['zone']}")         # [y1, y2, x1, x2]

@@ -38,7 +38,8 @@ def verify_discovery():
         
     # 4. Test Discovery
     print("\n--- Testing Discovery ---")
-    zones = session.discover_redaction_zones(serial, sample_size=10)
+    result = session.discover_redaction_zones(serial, sample_size=10)
+    zones = result.to_zones() # Use defaults
     print(f"Discovered Zones: {zones}")
     
     if len(zones) > 0:

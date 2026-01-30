@@ -945,19 +945,17 @@ class DicomSession:
 
         return count
 
-    def discover_redaction_zones(self, serial_number: str, sample_size: int = 50, min_confidence: float = 80.0) -> List[Dict[str, Any]]:
+    def discover_redaction_zones(self, serial_number: str, sample_size: int = 50, min_confidence: float = 80.0):
         """
-        Scans a random sample of instances from a specific machine (by serial number) to discover
+        Scans a random sample of instances from a specific machine to discover
         common locations of burned-in text.
 
-        Args:
-            serial_number: Device Serial Number to filter by.
-            sample_size: Number of images to sample for valid statistics.
-            min_confidence: Minimum OCR confidence (0-100) to include a region.
-
         Returns:
-            List[Dict]: Suggested zones with metadata.
+            DiscoveryResult: Object containing all detected text candidates.
+            Call .to_zones() on the result to get grouped redaction zones.
         """
+        from gantry.discovery import DiscoveryResult, DiscoveryCandidate, ZoneDiscoverer
+        
         get_logger().info(f"Discovering zones for {serial_number}...")
 
         # 1. Gather instances
@@ -970,7 +968,7 @@ class DicomSession:
 
         if not target_instances:
             print(f"No instances found for serial {serial_number}")
-            return []
+            return DiscoveryResult([], 0)
 
         print(f"Found {len(target_instances)} instances. Using sample of {min(len(target_instances), sample_size)}.")
 
@@ -981,16 +979,8 @@ class DicomSession:
         else:
             sample = target_instances
 
-        # 3. Analyze (Parallel?)
-        # Discovery logic is currently serial inside discover_zones?
-        # Actually ZoneDiscoverer.discover_zones iterates list and calls analyze_pixels.
-        # We should parallelize this part if heavy.
-
-        # Let's re-use run_parallel logic?
-        # But ZoneDiscoverer expects list.
-        # Let's map analyze_pixels then pass results to merger.
-
-
+        # 3. Analyze
+        # We reuse the parallel analysis logic
         raw_regions_lists = run_parallel(
             pixel_analysis.analyze_pixels,
             sample,
@@ -998,77 +988,27 @@ class DicomSession:
             force_threads=True
         )
 
-        # Flatten
-        all_boxes_with_source = []
-
+        candidates = []
+        
         for i, regions in enumerate(raw_regions_lists):
-
-            # Use index 'i' as unique source identifier (corresponds to sample[i])
+            # i serves as the unique source index
             for r in regions:
                 if r.confidence >= min_confidence:
-                    all_boxes_with_source.append((r, i))
+                    # Classify immediately (or could be lazy)
+                    cls = ZoneDiscoverer._classify_text(r.text)
+                    
+                    cand = DiscoveryCandidate(
+                        text=r.text,
+                        confidence=r.confidence,
+                        box=list(r.box),
+                        source_index=i,
+                        classification=cls
+                    )
+                    candidates.append(cand)
 
-        if not all_boxes_with_source:
-             print("No text regions detected.")
-             return []
-
-        boxes_only = [list(item[0].box) for item in all_boxes_with_source]
-
-        # 4. Clustering (Merge with Asymmetric Padding)
-        # pad_x=100 so "Hospital ... Name" on same line gets merged.
-        # pad_y=10 so different lines are kept separate.
-        clusters = ZoneDiscoverer.group_boxes(boxes_only, pad_x=100, pad_y=10)
-
-        final_zones = []
-        n_total = len(sample)
-        min_occurrence = 0.1 # 10% threshold
-
-        for cluster_indices in clusters:
-            # Union the boxes in the cluster
-            cluster_boxes = [boxes_only[i] for i in cluster_indices]
-            merged_box = ZoneDiscoverer._union_box_list(cluster_boxes)
-
-            # Check Frequency (Noise Filtering)
-            unique_sources = {all_boxes_with_source[i][1] for i in cluster_indices}
-            occurrence_rate = len(unique_sources) / n_total
-            
-            # Classification
-            cluster_texts = [all_boxes_with_source[i][0].text for i in cluster_indices]
-            
-            cluster_type = "TEXT"
-            has_proper_noun = False
-            has_name_pattern = False
-            
-            for t in cluster_texts:
-                cls = ZoneDiscoverer._classify_text(t)
-                if cls == "NAME_PATTERN":
-                    has_name_pattern = True
-                elif cls == "PROPER_NOUN_CANDIDATE":
-                    has_proper_noun = True
-            
-            if has_name_pattern:
-                cluster_type = "LIKELY_NAME"
-            elif has_proper_noun:
-                cluster_type = "PROPER_NOUN"
-
-            if occurrence_rate < min_occurrence:
-                continue
-
-            # Filter tiny and convert to [y1, y2, x1, x2]
-            if merged_box[2] > 5 and merged_box[3] > 5:
-                # Convert [x, y, w, h] -> [y1, y2, x1, x2]
-                x, y, w, h = merged_box
-                zone_rect = [y, y + h, x, x + w]
-                
-                final_zones.append({
-                    "zone": zone_rect,
-                    "type": cluster_type,
-                    "occurrence": occurrence_rate,
-                    "examples": list(set(cluster_texts))[:3]
-                })
-
-        print(f"Discovery complete. Suggested {len(final_zones)} zones.")
-        return final_zones
+        result = DiscoveryResult(candidates, len(sample))
+        print(f"Discovery complete. Found {len(candidates)} raw candidates.")
+        return result
 
     def get_cohort_report(self, expand_metadata: bool = False) -> 'pd.DataFrame':
         """
