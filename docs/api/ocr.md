@@ -8,7 +8,15 @@
       show_root_heading: true
       show_source: true
       members:
-        - discover_zones
+        - group_boxes
+
+::: gantry.discovery.DiscoveryResult
+    handler: python
+    options:
+        show_root_heading: true
+        members:
+            - filter
+            - to_zones
 
 ## Verification
 

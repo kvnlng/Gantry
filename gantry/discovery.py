@@ -79,7 +79,7 @@ class DiscoveryResult:
             zone_type = "TEXT"
             if any(c.classification == "NAME_PATTERN" for c in subset):
                 zone_type = "LIKELY_NAME"
-            elif any(c.classification == "PROPER_NOUN" for c in subset):
+            elif any(c.classification in ("PROPER_NOUN", "PROPER_NOUN_CANDIDATE") for c in subset):
                 zone_type = "PROPER_NOUN"
             
             # Average Confidence
@@ -124,13 +124,10 @@ class ZoneDiscoverer:
             if ZoneDiscoverer._nlp_model is None:
                 try:
                     import spacy
-                    try:
-                        ZoneDiscoverer._nlp_model = spacy.load("en_core_web_sm")
-                        logger.info("Loaded spaCy NLP model.")
-                    except OSError:
-                        logger.warning("spaCy model 'en_core_web_sm' not found.")
-                        ZoneDiscoverer._nlp_model_failed = True
-                except ImportError:
+                    ZoneDiscoverer._nlp_model = spacy.load("en_core_web_sm")
+                    logger.info("Loaded spaCy NLP model.")
+                except Exception as e:
+                    logger.warning(f"Failed to load or import spaCy: {e}. Fallback to regex.")
                     ZoneDiscoverer._nlp_model_failed = True
         
         if ZoneDiscoverer._nlp_model:

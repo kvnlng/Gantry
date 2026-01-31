@@ -23,7 +23,6 @@ from .parallel import run_parallel
 from .configuration import GantryConfiguration
 from . import pixel_analysis
 from .automation import ConfigAutomator
-from .discovery import ZoneDiscoverer
 
 def scan_worker(args):
     """

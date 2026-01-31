@@ -4,6 +4,8 @@ from gantry.discovery import ZoneDiscoverer
 
 class TestZoneDiscovererNLP(unittest.TestCase):
     
+    @patch('gantry.discovery.ZoneDiscoverer._nlp_model', None)
+    @patch('gantry.discovery.ZoneDiscoverer._nlp_model_failed', True)
     def test_classify_text_regex(self):
         # 1. Name Pattern
         self.assertEqual(ZoneDiscoverer._classify_text("Smith^John"), "NAME_PATTERN")

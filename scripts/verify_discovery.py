@@ -1,6 +1,10 @@
 import sys
 import os
 import shutil
+
+# Ensure we use local gantry package
+sys.path.insert(0, os.path.abspath('.'))
+
 from gantry.session import DicomSession
 
 def verify_discovery():
