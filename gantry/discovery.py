@@ -34,6 +34,9 @@ class DiscoveryResult:
     def __len__(self):
         return len(self.candidates)
 
+    def __iter__(self):
+        return iter(self.candidates)
+
     def filter(self, min_confidence: float = 0.0) -> 'DiscoveryResult':
         """Returns a new result with filtered candidates."""
         filtered = [c for c in self.candidates if c.confidence >= min_confidence]

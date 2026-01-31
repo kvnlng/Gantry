@@ -75,5 +75,27 @@ class TestZoneDiscoverer(unittest.TestCase):
     def test_empty(self):
         self.assertEqual(ZoneDiscoverer._merge_overlapping_boxes([]), [])
 
+class TestDiscoveryResult(unittest.TestCase):
+    def test_iteration(self):
+        from gantry.discovery import DiscoveryResult, DiscoveryCandidate
+        
+        c1 = DiscoveryCandidate("A", 0.9, [0,0,10,10], 0, "TEXT")
+        c2 = DiscoveryCandidate("B", 0.8, [20,20,10,10], 1, "TEXT")
+        
+        res = DiscoveryResult([c1, c2], n_sources=2)
+        
+        # Test iteration
+        items = list(res)
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0], c1)
+        self.assertEqual(items[1], c2)
+        
+        # Test iterator protocol
+        it = iter(res)
+        self.assertEqual(next(it), c1)
+        self.assertEqual(next(it), c2)
+        with self.assertRaises(StopIteration):
+            next(it)
+
 if __name__ == '__main__':
     unittest.main()
