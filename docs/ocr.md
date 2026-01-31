@@ -89,6 +89,62 @@ for z in zones:
     print("-" * 20)
 ```
 
+### Advanced Usage: Power Users & Data Scientists
+
+Gantry's `DiscoveryResult` provides powerful tools for deep inspection, ideal for data science workflows.
+
+#### 1. Data Science Integration (Pandas/Matplotlib)
+
+Export results directly to a Pandas DataFrame or a density matrix for custom analysis.
+
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Export to Pandas
+df = result.to_dataframe()
+high_conf = df[df['confidence'] > 90.0]
+print(high_conf['text'].value_counts().head())
+
+# Export Density Matrix (for Heatmaps)
+matrix = result.get_density_matrix(bins=(100, 100))
+plt.imshow(matrix, cmap='hot', interpolation='nearest')
+plt.title("Burned-in Text Heatmap")
+plt.show()
+```
+
+#### 2. Lambda Filtering
+
+Apply arbitrary logic to filter candidates using Python lambdas.
+
+```python
+# Keep candidates that look like dates OR appear in the first 10 frames
+filtered = result.filter(lambda c: 
+    re.match(r"\d{4}", c.text) or c.source_index < 10
+)
+zones = filtered.to_zones()
+```
+
+#### 3. Temporal Stability Analysis
+
+Identify whether a zone is static (overlay) or transient (noise/motion).
+
+```python
+report = result.analyze_temporal_stability()
+for item in report:
+    print(f"Zone: {item['zone']} | Status: {item['status']} ({item['occurrence']*100:.1f}%)")
+# Output:
+# Zone: [10, 10, 100, 20] | Status: STATIC_ALWAYS (100.0%)
+```
+
+#### 4. Quick Visualization
+
+For a quick terminal-based check without external libraries:
+
+```python
+print(result.visualize_heatmap(bins=(20, 20)))
+```
+
 ### Entity Detection Modes
 
 Discovery uses a tiered approach to classify text:

@@ -11,7 +11,7 @@ from gantry.pixel_analysis import analyze_pixels
 logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable, Union, Tuple
 
 @dataclass
 class DiscoveryCandidate:
@@ -37,10 +37,132 @@ class DiscoveryResult:
     def __iter__(self):
         return iter(self.candidates)
 
-    def filter(self, min_confidence: float = 0.0) -> 'DiscoveryResult':
-        """Returns a new result with filtered candidates."""
-        filtered = [c for c in self.candidates if c.confidence >= min_confidence]
+    def filter(self, predicate: Union[float, Callable] = 0.0) -> 'DiscoveryResult':
+        """
+        Returns a new result with filtered candidates.
+        
+        Args:
+            predicate: Either a float (min_confidence) or a callable accepting a DiscoveryCandidate.
+        """
+        if callable(predicate):
+            filtered = [c for c in self.candidates if predicate(c)]
+        else:
+            filtered = [c for c in self.candidates if c.confidence >= predicate]
         return DiscoveryResult(filtered, self.n_sources)
+
+    def to_dataframe(self):
+        """
+        Returns a pandas DataFrame of the candidates.
+        Requires 'pandas' to be installed.
+        """
+        try:
+            import pandas as pd
+            return pd.DataFrame([vars(c) for c in self.candidates])
+        except ImportError:
+            raise ImportError("Pandas is required for to_dataframe()")
+
+    def get_density_matrix(self, bins: Tuple[int, int] = (10, 10)) -> List[List[int]]:
+        """
+        Returns a 2D matrix (list of lists) representing candidate density.
+        Ideal for plotting with matplotlib (e.g., plt.imshow).
+        
+        Args:
+            bins: Tuple of (rows, cols) for the grid.
+        """
+        if not self.candidates:
+            return [[0] * bins[1] for _ in range(bins[0])]
+
+        rows, cols = bins
+        grid = [[0] * cols for _ in range(rows)]
+        
+        # Normalize to 0-1
+        xs = [c.box[0] for c in self.candidates]
+        ys = [c.box[1] for c in self.candidates]
+        
+        max_x, max_y = max(xs) if xs else 1, max(ys) if ys else 1
+        # Avoid div by zero
+        max_x = max_x or 1
+        max_y = max_y or 1
+
+        for c in self.candidates:
+            # Map center of box
+            cx = c.box[0] + c.box[2] // 2
+            cy = c.box[1] + c.box[3] // 2
+            
+            c_idx = min(int((cx / max_x) * cols), cols - 1)
+            r_idx = min(int((cy / max_y) * rows), rows - 1)
+            
+            grid[r_idx][c_idx] += 1
+            
+        return grid
+
+    def visualize_heatmap(self, bins: Tuple[int, int] = (10, 10)) -> str:
+        """
+        Returns an ASCII heatmap of candidate distribution.
+        
+        Args:
+            bins: Tuple of (rows, cols) for the grid.
+        """
+        grid = self.get_density_matrix(bins)
+        rows, cols = bins
+            
+        # Render
+        output = [f"Discovery Heatmap ({len(self.candidates)} candidates):"]
+        for r in range(rows):
+            line = "|"
+            for c in range(cols):
+                count = grid[r][c]
+                char = " "
+                if count > 0: char = "."
+                if count > 5: char = "o"
+                if count > 10: char = "O"
+                if count > 50: char = "#"
+                line += char
+            line += "|"
+            output.append(line)
+        return "\n".join(output)
+
+    def analyze_temporal_stability(self) -> List[Dict[str, Any]]:
+        """
+        Analyzes candidates to determine if they are static (overlay) or transient (noise).
+        
+        Returns:
+            List of dicts describing stability of grouped regions.
+        """
+        zones = self.to_zones(min_occurrence=0.0) # a relaxed clustering
+        stability_report = []
+        
+        for z in zones:
+            zone_rect = z['zone']
+            occurrence = z['occurrence']
+            
+            status = "TRANSIENT"
+            if occurrence > 0.9:
+                status = "STATIC_ALWAYS"
+            elif occurrence > 0.5:
+                status = "STATIC_FREQUENT"
+                
+            stability_report.append({
+                "zone": zone_rect,
+                "occurrence": occurrence,
+                "status": status,
+                "example": z['examples'][0] if z['examples'] else ""
+            })
+            
+        return stability_report
+
+    def inspect_clusters(self, pad_x: int = 20, pad_y: int = 10) -> List[List[DiscoveryCandidate]]:
+        """
+        Returns the raw clusters of candidates before they are merged.
+        Useful for debugging why certain words are grouping together.
+        """
+        if not self.candidates:
+            return []
+            
+        boxes = [c.box for c in self.candidates]
+        cluster_indices = ZoneDiscoverer.group_boxes(boxes, pad_x=pad_x, pad_y=pad_y)
+        
+        return [[self.candidates[i] for i in indices] for indices in cluster_indices]
 
     def to_zones(self, pad_x: int = 20, pad_y: int = 10, min_occurrence: float = 0.1) -> List[Dict[str, Any]]:
         """
