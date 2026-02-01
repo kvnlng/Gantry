@@ -30,11 +30,11 @@ Benchmark performed by producing instances with frames ranging from 1 to 100 in 
 | 2                               | 100             | 177.36          | 0.0002           | 0.0042         | 0.0124          | 0.0244             | 74.21           | 58.13           | 309.74     |
 
 Test machine:
-* machine-type: n2-highmem-16
-* image-family: ubuntu-2204-lts
-* image-project: ubuntu-os-cloud
-* boot-disk-size: 1TB
-* boot-disk-type: pd-ssd
+- machine-type: n2-highmem-16
+- image-family: ubuntu-2204-lts
+- image-project: ubuntu-os-cloud
+- boot-disk-size: 1TB
+- boot-disk-type: pd-ssd
 
 ## Architecture
 
@@ -222,6 +222,27 @@ You can also export the full inventory to Parquet for external tools
 
 ```python
 session.export_dataframe("cohort.parquet", expand_metadata=True)
+```
+
+### 5b. Advanced Discovery (Data Science)
+
+The `discovery` module now supports direct integration with Pandas for analyzing tag density and diversity.
+
+```python
+# Scan for all DICOM tags (public and private)
+discovery = session.scan_for_discovery()
+
+# 1. Convert to DataFrame
+df = discovery.to_dataframe()
+print(df.head())
+#    Tag          Count  Keyword                VR
+# 0  (0010,0010)  500    PatientName            PN
+# 1  (0008,0018)  500    SOPInstanceUID         UI
+
+# 2. Get Density Matrix (useful for spotting sparse private tags)
+density = discovery.get_density_matrix()
+print(density)
+# {'0010,0010': 1.0, '0009,1001': 0.05} # 95% missing private tag
 ```
 
 ### 6. Recover Identity (Optional)

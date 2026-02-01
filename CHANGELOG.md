@@ -5,6 +5,23 @@ All notable changes to the "Gantry" project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Developer Guide**: Added `docs/developer_guide.md` covering linting and testing standards.
+- **Advanced Discovery**: Added `DiscoveryResult.to_dataframe()` and `get_density_matrix()` for data science integration.
+- **Iterability**: Made `DiscoveryResult` iterable, yielding `(tag_string, count)` tuples.
+
+### Changed
+
+- **Pylint Compliance**: Addressed hundreds of linting issues across `gantry/` and `tests/`.
+  - Enforced `encoding='utf-8'` on all file operations.
+  - Standardized import ordering.
+  - Added missing docstrings.
+  - Refactored `gantry/discovery.py` lazy imports.
+- **Testing**: Cleaned up test suite (whitespace, indentation, imports) to achieve a clean lint score (7.62/10).
+
 ## [0.6.1] - 2026-01-23
 
 ### Fixed
