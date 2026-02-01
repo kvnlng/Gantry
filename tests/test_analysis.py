@@ -9,24 +9,24 @@ import os
 def test_phi_report_analysis(tmp_path):
     db_path = str(tmp_path / "analysis.db")
     session = DicomSession(db_path)
-    
+
     # Setup data with PHI
     p = Patient("P_PHI", "John Doe")
     session.store.patients.append(p)
     session.save()
-    
+
     # Scan
     report = session.scan_for_phi()
     assert isinstance(report, PhiReport)
     assert len(report) > 0 # Should find Name and ID
-    
+
     # Test DataFrame
     df = report.to_dataframe()
     assert isinstance(df, pd.DataFrame)
     assert "patient_id" in df.columns
     assert "reason" in df.columns
     assert "John Doe" in df["value"].values
-    
+
     # Verify iteration behavior (list-like)
     count = 0
     for finding in report:
@@ -38,7 +38,7 @@ def test_batch_preserve_from_report(tmp_path):
     key_path = str(tmp_path / "batch.key")
     session = DicomSession(db_path)
     session.enable_reversible_anonymization(key_path)
-    
+
     # Create patient
     pid = "BATCH_P1"
     p = Patient(pid, "Batch Patient")
@@ -53,15 +53,15 @@ def test_batch_preserve_from_report(tmp_path):
     p.studies.append(st)
     session.store.patients.append(p)
     session.save()
-    
+
     # Scan
     report = session.scan_for_phi()
-    
+
     # Preserve using Report directly
     session.lock_identities_batch(report)
     session.save()
     session.persistence_manager.shutdown()
-    
+
     # Verify persistence
     import sqlite3
     conn = sqlite3.connect(db_path)

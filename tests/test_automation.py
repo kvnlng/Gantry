@@ -5,7 +5,7 @@ from gantry.privacy import PhiReport, PhiFinding
 from gantry.configuration import GantryConfiguration
 
 class TestAutomationIntegration(unittest.TestCase):
-    
+
     def test_auto_remediate(self):
         # Setup Session Mock
         session = MagicMock(spec=DicomSession)
@@ -15,13 +15,13 @@ class TestAutomationIntegration(unittest.TestCase):
             "serial_number": "SN-AUTO",
             "redaction_zones": [[0, 0, 50, 50]]
         }]
-        
+
         # Setup Report with PARTIAL_LEAK
-        # Text is at 25, 25, 100, 100 
+        # Text is at 25, 25, 100, 100
         # (Union with 0,0,50,50 -> 0,0,125,125)
         # Wait: union logic: min(0,25)=0, min(0,25)=0, max(50,125)=125, max(50,125)=125
         # Width: 125-0 = 125, Height: 125-0 = 125
-        
+
         f = PhiFinding(
             entity_uid="uid",
             entity_type="Instance",
@@ -36,15 +36,15 @@ class TestAutomationIntegration(unittest.TestCase):
             "rule_serial": "SN-AUTO"
         }
         report = PhiReport([f])
-        
+
         # Test remediation logic directly via Automator (since Session method is just valid wrapper)
         from gantry.automation import ConfigAutomator
-        
+
         suggestions = ConfigAutomator.suggest_config_updates(report, session.configuration)
         self.assertEqual(len(suggestions), 1)
         self.assertEqual(suggestions[0]['action'], "EXPAND_ZONE")
         self.assertEqual(suggestions[0]['new_zone'], [0, 0, 125, 125])
-        
+
         # Apply
         count = ConfigAutomator.apply_suggestions(session, suggestions)
         self.assertEqual(count, 1)

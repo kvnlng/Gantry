@@ -6,7 +6,7 @@ from pydicom.valuerep import DSfloat
 from gantry.persistence import GantryJSONEncoder, gantry_json_object_hook
 
 class TestJsonSerialization:
-    
+
     def test_multivalue_serialization(self):
         """
         Verifies that pydicom MultiValue objects are serialized as lists.
@@ -14,9 +14,9 @@ class TestJsonSerialization:
         # Create a MultiValue similar to ImagePositionPatient
         mv = MultiValue(DSfloat, ['0.5', '1.5', '2.5'])
         data = {"ImagePositionPatient": mv}
-        
+
         json_str = json.dumps(data, cls=GantryJSONEncoder)
-        
+
         # Verify result is a valid JSON string with a list
         decoded = json.loads(json_str)
         assert decoded["ImagePositionPatient"] == [0.5, 1.5, 2.5]
@@ -27,15 +27,15 @@ class TestJsonSerialization:
         Verifies that bytes are serialized to base64 dicts and restored.
         """
         data = {"MyBytes": b"HiddenData"}
-        
+
         # 1. Encode
         json_str = json.dumps(data, cls=GantryJSONEncoder)
         decoded_raw = json.loads(json_str)
-        
+
         # Verify encoding format
         assert decoded_raw["MyBytes"]["__type__"] == "bytes"
         assert decoded_raw["MyBytes"]["data"] == base64.b64encode(b"HiddenData").decode('ascii')
-        
+
         # 2. Decode via Hook
         restored = json.loads(json_str, object_hook=gantry_json_object_hook)
         assert restored["MyBytes"] == b"HiddenData"
@@ -51,9 +51,9 @@ class TestJsonSerialization:
                 {"Raw": b"123"}
             ]
         }
-        
+
         json_str = json.dumps(data, cls=GantryJSONEncoder)
         restored = json.loads(json_str, object_hook=gantry_json_object_hook)
-        
+
         assert restored["Complex"][0]["Pos"] == [1.0, 2.0]
         assert restored["Complex"][1]["Raw"] == b"123"

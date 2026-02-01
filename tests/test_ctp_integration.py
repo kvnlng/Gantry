@@ -8,7 +8,7 @@ TEST_SCRIPT_CONTENT = """
 **************
      CT
 **************
-GE 
+GE
 
  CT Dose Series
   { CodeMeaning.containsIgnoreCase("IEC Body Dosimetry Phantom") }
@@ -22,17 +22,17 @@ GE
 class TestCTPParser:
     def test_parsing_basic(self):
         rules = CTPParser.parse_script(TEST_SCRIPT_CONTENT)
-        
+
         # We expect 2 rules
         assert len(rules) == 1 # Actually, first condition doesn't have Manufacturer, so our parser logic might skip it.
         # Let's check logic:
         # First block: CodeMeaning... -> No Manufacturer in condition -> Parser returns None
         # Second block: Manufacturer... -> Returns rule
-        
+
         assert rules[0]["manufacturer"] == "GE MEDICAL"
         # Coordinates: (0,0,512,110) -> [0, 110, 0, 512] (r1, r2, c1, c2)
         assert rules[0]["redaction_zones"] == [[0, 110, 0, 512]]
-        
+
         # Refinement Check:
         assert "_ctp_condition" not in rules[0]
         assert "Manufacturer.containsIgnoreCase" in rules[0]["comment"]
@@ -52,25 +52,25 @@ class TestCTPParser:
         """
         script_path = tmp_path / "test.script"
         output_path = tmp_path / "val_rules.yaml"
-        
+
         with open(script_path, "w") as f:
             f.write(TEST_SCRIPT_CONTENT)
-            
+
         # Simulate running the tool (invoking the main block logic or using subprocess)
         # Using subprocess to be true to CLI
         import subprocess
         import sys
-        
+
         cmd = [sys.executable, "-m", "gantry.utils.ctp_parser", str(script_path), str(output_path)]
         subprocess.check_call(cmd)
-        
+
         assert os.path.exists(output_path)
-        
+
         # Verify content is YAML
         import yaml
         with open(output_path, "r") as f:
             data = yaml.safe_load(f)
-            
+
         assert "rules" in data
         assert len(data["rules"]) == 1
         assert data["rules"][0]["manufacturer"] == "GE MEDICAL"

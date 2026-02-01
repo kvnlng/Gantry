@@ -27,7 +27,7 @@ class TestSharedExecutorLifecycle(unittest.TestCase):
         """Verify that close() shuts down the executor."""
         executor = self.session._executor
         self.session.close()
-        
+
         # Verify shutdown
         with self.assertRaises(RuntimeError):
             executor.submit(sum, [1, 2])
@@ -40,17 +40,17 @@ class TestSharedExecutorLifecycle(unittest.TestCase):
         # Setup mock behavior
         mock_isfile.return_value = True # Pretend it's a file
         mock_isdir.return_value = False
-        
+
         mock_run_parallel.return_value = []
-        
+
         # Act
         self.session.ingest("dummy_file.dcm")
-        
+
         # Assert
         # Check that run_parallel was called with executor=self.session._executor
         # We need to ensure new_files was populated. Reference io_handlers.py
         # DicomStore.get_known_files returns set(). Defaults are fine.
-        
+
         self.assertTrue(mock_run_parallel.called)
         args, kwargs = mock_run_parallel.call_args
         self.assertIn('executor', kwargs)
@@ -60,10 +60,10 @@ class TestSharedExecutorLifecycle(unittest.TestCase):
     @patch('gantry.session.DicomSession.save')
     def test_export_uses_executor(self, mock_save, mock_run_parallel):
         """Verify that export passes the executor to run_parallel."""
-        
+
         # Setup
         mock_run_parallel.return_value = []
-        
+
         # Construct Object Graph to make total_instances > 0
         p = MagicMock()
         p.patient_id = "P1"
@@ -72,38 +72,38 @@ class TestSharedExecutorLifecycle(unittest.TestCase):
         inst = MagicMock()
         inst.instance_number = 1
         inst.sop_instance_uid = "1.2.3.4.5"
-        
+
         # Link them
         p.studies = [st]
         st.series = [se]
         se.instances = [inst]
-        
+
         # Add to store
         self.session.store.patients.append(p)
-        
+
         # Patch generator to avoid SQL errors
         with patch('gantry.io_handlers.DicomExporter.generate_export_from_db') as mock_gen:
             mock_gen.return_value = ["task1"]
-            
+
             # Act
             self.session.export("out_folder", safe=False)
-            
+
             # Assert
             # Assert
             self.assertTrue(mock_run_parallel.called)
             args, kwargs = mock_run_parallel.call_args
-            
+
             # MEMORY LEAK FIX: We now use maxtasksperchild=10, which requires a FRESH pool.
             # So checking that it matches self.session._executor is now WRONG.
             # We should check that maxtasksperchild passed is 10.
-            
+
             self.assertIn('maxtasksperchild', kwargs)
             self.assertEqual(kwargs['maxtasksperchild'], 25)
-            
+
             # If executor IS passed, it might be ignored or handled differently, but
             # our session logic explicitly does NOT pass self._executor for export_batch w/ recycling.
             # In session.py we call export_batch(..., maxtasksperchild=10) and NO executor arg.
-            
+
             passed_executor = kwargs.get('executor')
             self.assertNotEqual(passed_executor, self.session._executor)
 
@@ -113,13 +113,13 @@ class TestSharedExecutorLifecycle(unittest.TestCase):
         """Verify that the same executor is reused across multiple calls."""
         mock_isfile.return_value = True
         mock_run.return_value = []
-        
+
         self.session.ingest("file1")
         exec1 = mock_run.call_args[1].get('executor')
-        
+
         self.session.ingest("file2")
         exec2 = mock_run.call_args[1].get('executor')
-        
+
         self.assertEqual(exec1, exec2)
         self.assertEqual(exec1, self.session._executor)
 

@@ -217,10 +217,8 @@ class SqliteStore:
                     # print("DEBUG: Commit successful")
                 except Exception as e:
                     # print(f"DEBUG: Rollback due to {e}")
-                    conn.rollback()
-                    raise e
                     self._memory_conn.rollback()
-                    raise
+                    raise e
         else:
             # File-based DB: create fresh connection per transaction
             conn = sqlite3.connect(self.db_path, timeout=900.0)

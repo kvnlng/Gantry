@@ -13,18 +13,18 @@ def test_recursive_import(tmp_path):
 
     # 2. Create Dummy Patients - MANUAL WRITE
 
-    
+
     # Needs valid pixels for export? The Importer only needs metadata.
     # But Exporter might fail if we don't handle missing pixels gracefully or mock them.
     # Let's use the valid dummy_patient fixture logic if possible, or just minimalist manual pydicom write.
-    
+
     # Alternative: Write minimal valid DICOMs manually using pydicom to avoid complexity of Exporter+Builder deps here if desired.
     # But let's try to trust our tools.
-    
+
     import pydicom
     from pydicom.dataset import FileDataset, FileMetaDataset
     from pydicom.uid import ImplicitVRLittleEndian
-    
+
     def write_dcm(path, pid):
         meta = FileMetaDataset()
         meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2"

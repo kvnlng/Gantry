@@ -11,7 +11,7 @@ def test_load_valid_config(tmp_path):
     p = tmp_path / "valid.yaml"
     import yaml
     p.write_text(yaml.dump(data))
-    
+
     rules = ConfigLoader.load_redaction_rules(str(p))
     assert len(rules) == 1
     assert rules[0]["serial_number"] == "SN1"
@@ -24,7 +24,7 @@ def test_missing_file():
 def test_invalid_yaml(tmp_path):
     p = tmp_path / "bad.yaml"
     p.write_text("unclosed: { brace")
-    
+
     with pytest.raises(ValueError, match="Invalid YAML"):
         ConfigLoader.load_redaction_rules(str(p))
 
@@ -36,7 +36,7 @@ def test_validation_logic(tmp_path):
     p.write_text(yaml.dump(data))
     with pytest.raises(ValueError, match="Missing 'serial_number'"):
         ConfigLoader.load_redaction_rules(str(p))
-        
+
     # 2. Invalid ROI Type
     data = {"machines": [{"serial_number": "S", "redaction_zones": [{"roi": "bad"}]}]}
     p = tmp_path / "bs2.yaml"
@@ -62,7 +62,7 @@ def test_phi_config_override(tmp_path):
     p = tmp_path / "phi.yaml"
     import yaml
     p.write_text(yaml.dump(data))
-    
+
     tags = ConfigLoader.load_phi_config(str(p))
     assert "0010,0010" in tags
     assert tags["0010,0010"] == "PatientName"

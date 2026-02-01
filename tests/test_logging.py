@@ -23,7 +23,7 @@ def test_import_with_progress(tmp_path, monkeypatch):
     # 1. Setup Dummy Files
     dcm_dir = tmp_path / "dicoms"
     dcm_dir.mkdir()
-    
+
     # Create 5 dummy files
     for i in range(5):
         fp = dcm_dir / f"test_{i}.dcm"
@@ -43,10 +43,10 @@ def test_import_with_progress(tmp_path, monkeypatch):
 
     # 3. Create Session (initializes logger)
     session = DicomSession(str(tmp_path / "session.db"))
-    
+
     # 4. Import Folder
     session.ingest(str(dcm_dir))
-    
+
     # 5. Verify Logger created file
     log_file = os.getenv("GANTRY_LOG_FILE", "gantry.log")
     assert os.path.exists(log_file)

@@ -11,13 +11,13 @@ from gantry.entities import Patient, Study, Series, Instance
 def mock_patient(tmp_path):
     # Create object graph
     p = Patient("PID_001", "Test Subject")
-    
+
     s = Study("STUDY_UID_1", datetime.date(2025, 1, 1))
     p.studies.append(s)
-    
+
     se = Series("SERIES_UID_1", "CT", 1)
     s.series.append(se)
-    
+
     # Create fake instance with minimal attributes
     inst = Instance("SOP_UID_1", "1.2.840.10008.5.1.4.1.1.2", 0)
     inst.attributes = {
@@ -30,9 +30,9 @@ def mock_patient(tmp_path):
     # Mock pixel data
     # Set pixel_array explicitly (supported by parallel export for in-memory objects)
     inst.pixel_array = np.zeros((512, 512), dtype=np.uint16)
-    
+
     se.instances.append(inst)
-    
+
     return p
 
 @pytest.fixture
@@ -43,28 +43,28 @@ def mock_validator(monkeypatch):
 
 def test_structured_export(mock_patient, mock_validator, tmp_path):
     out_dir = tmp_path / "export_test"
-    
+
     # Run export
     # Run export
     # Mock run_parallel to run synchronously so the IODValidator patch applies!
     from unittest.mock import patch
     with patch('gantry.io_handlers.run_parallel', side_effect=lambda func, items, *a, **k: [func(i) for i in items]):
         DicomExporter.save_patient(mock_patient, str(out_dir))
-    
+
     # Expected Structure:
     # out_dir / Subject_PID_001 / Study_20250101_Chest_CT / Series_1_Axial_3mm / 0010.dcm
-    
+
     subject_dir = out_dir / "Subject_PID_001"
     assert subject_dir.exists(), "Subject directory missing"
-    
+
     study_dirs = list(subject_dir.glob("Study_*"))
     assert len(study_dirs) == 1
     assert "20250101_Chest_CT" in study_dirs[0].name
-    
+
     series_dirs = list(study_dirs[0].glob("Series_*"))
     assert len(series_dirs) == 1
     assert "1_Axial_3mm" in series_dirs[0].name
-    
+
     files = list(series_dirs[0].glob("*.dcm"))
     assert len(files) == 1
     assert files[0].name == "0010.dcm"

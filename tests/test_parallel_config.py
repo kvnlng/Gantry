@@ -7,7 +7,7 @@ def identity(x):
     return x
 
 class TestParallelConfig(unittest.TestCase):
-    
+
     def setUp(self):
         # Save original environ
         self.original_environ = os.environ.copy()
@@ -16,7 +16,7 @@ class TestParallelConfig(unittest.TestCase):
         os.environ["GANTRY_FORCE_PROCESSES"] = "1"
         if "GANTRY_FORCE_THREADS" in os.environ:
             del os.environ["GANTRY_FORCE_THREADS"]
-        
+
     def tearDown(self):
         # Restore original environ to prevent side effects
         os.environ.clear()
@@ -26,22 +26,22 @@ class TestParallelConfig(unittest.TestCase):
     def test_run_parallel_max_workers_env(self, mock_executor):
         """Test that GANTRY_MAX_WORKERS controls the number of workers."""
         os.environ["GANTRY_MAX_WORKERS"] = "42"
-        
+
         # Mock context manager
         mock_instance = mock_executor.return_value
         mock_instance.__enter__.return_value = mock_instance
         mock_instance.map.return_value = [1, 2, 3]
-        
+
         parallel.run_parallel(identity, [1, 2, 3], show_progress=False)
-        
+
         mock_executor.assert_called_with(max_workers=42)
 
     @patch('gantry.parallel.concurrent.futures.ProcessPoolExecutor')
     def test_run_parallel_chunksize_env(self, mock_executor):
         """Test that GANTRY_CHUNKSIZE is respected."""
         os.environ["GANTRY_CHUNKSIZE"] = "5"
-        
-        # Setup mock 
+
+        # Setup mock
         mock_instance = mock_executor.return_value
         mock_instance.__enter__.return_value = mock_instance
         mock_instance.map.return_value = [1, 2, 3]
@@ -55,11 +55,11 @@ class TestParallelConfig(unittest.TestCase):
     def test_run_parallel_maxtasksperchild(self, mock_get_context):
         """Test that GANTRY_MAX_TASKS_PER_CHILD triggers multiprocessing.Pool."""
         os.environ["GANTRY_MAX_TASKS_PER_CHILD"] = "10"
-        
+
         mock_ctx = mock_get_context.return_value
         mock_pool = mock_ctx.Pool.return_value
         mock_pool.__enter__.return_value = mock_pool
-        
+
         # Mock iterator with next(timeout) support
         class MockIterator:
             def __init__(self, items):
@@ -68,7 +68,7 @@ class TestParallelConfig(unittest.TestCase):
                 return next(self._iter)
             def __iter__(self):
                 return self
-        
+
         mock_pool.imap_unordered.return_value = MockIterator([1, 2, 3])
 
         parallel.run_parallel(identity, [1, 2, 3], show_progress=False)
@@ -84,11 +84,11 @@ class TestParallelConfig(unittest.TestCase):
         """Test GANTRY_DISABLE_GC with maxtasksperchild path."""
         os.environ["GANTRY_MAX_TASKS_PER_CHILD"] = "5"
         os.environ["GANTRY_DISABLE_GC"] = "1"
-        
+
         mock_ctx = mock_get_context.return_value
         mock_pool = mock_ctx.Pool.return_value
         mock_pool.__enter__.return_value = mock_pool
-        
+
         # Mock iterator
         class MockIterator:
             def __init__(self, items):
@@ -97,11 +97,11 @@ class TestParallelConfig(unittest.TestCase):
                 return next(self._iter)
             def __iter__(self):
                 return self
-                
+
         mock_pool.imap_unordered.return_value = MockIterator([1])
 
         parallel.run_parallel(identity, [1], show_progress=False)
-        
+
         mock_ctx.Pool.assert_called()
         call_kwargs = mock_ctx.Pool.call_args[1]
         self.assertEqual(call_kwargs.get('initializer'), mock_gc_off)
@@ -114,13 +114,13 @@ class TestParallelConfig(unittest.TestCase):
         # Ensure we don't trigger maxtasks path
         if "GANTRY_MAX_TASKS_PER_CHILD" in os.environ:
             del os.environ["GANTRY_MAX_TASKS_PER_CHILD"]
-            
+
         mock_instance = mock_executor.return_value
         mock_instance.__enter__.return_value = mock_instance
         mock_instance.map.return_value = [1]
-            
+
         parallel.run_parallel(identity, [1], show_progress=False)
-        
+
         mock_executor.assert_called()
         call_kwargs = mock_executor.call_args[1]
         self.assertEqual(call_kwargs.get('initializer'), mock_gc_off)
@@ -130,14 +130,14 @@ class TestParallelConfig(unittest.TestCase):
     def test_run_parallel_show_progress_env(self, mock_tqdm, mock_executor):
         """Test that GANTRY_SHOW_PROGRESS=0 disables tqdm."""
         os.environ["GANTRY_SHOW_PROGRESS"] = "0"
-        
+
         mock_instance = mock_executor.return_value
         mock_instance.__enter__.return_value = mock_instance
         mock_instance.map.return_value = [1]
-        
+
         # Pass show_progress=True explicitly
         parallel.run_parallel(identity, [1], show_progress=True)
-        
+
         # tqdm should NOT be called
         mock_tqdm.assert_not_called()
 

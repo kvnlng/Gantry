@@ -18,7 +18,7 @@ class TestRedactionParallel(unittest.TestCase):
         # Ensure thread/db resources are released
         if hasattr(self.session, "store_backend"):
             self.session.store_backend.stop()
-        
+
         # Give a momentary pause for OS file handle release (Windows/sometimes Linux)
         import time; time.sleep(0.1)
         shutil.rmtree(self.test_dir)
@@ -30,31 +30,31 @@ class TestRedactionParallel(unittest.TestCase):
         """
         # Setup 10 machines
         machine_serials = [f"M{i}" for i in range(10)]
-        
+
         for i, serial in enumerate(machine_serials):
             p = Patient(f"P{i}", f"Pat{i}")
             st = Study(f"S{i}", "20230101")
             se = Series(f"Se{i}", "CT", 1)
             se.equipment = Equipment("Man", "Mod", serial)
-            
+
             inst = Instance(f"I{i}", f"1.2.3.{i}", 1)
-            # inst.rows = 50 
+            # inst.rows = 50
             # inst.columns = 50
-            
+
             # Mock Pixel Data Loader
             # We create a unique array for each to verify modification
             # In a real threading scenario, we want to ensure no race conditions on shared resources (like the DB/Log)
             def make_loader():
                 arr = np.zeros((50, 50), dtype=np.uint8) + 255
                 return lambda: arr
-            
+
             inst._pixel_loader = make_loader()
-            
+
             se.instances.append(inst)
             st.series.append(se)
             p.studies.append(st)
             self.session.store.patients.append(p)
-            
+
             # Index it manually if not using full session.ingest (RedactionService indexes on init)
             # RedactionService is created inside execute_config, so it will index current store.
 
@@ -65,13 +65,13 @@ class TestRedactionParallel(unittest.TestCase):
                 "serial_number": serial,
                 "redaction_zones": [[0, 10, 0, 10]] # Top-Left 10x10 zeroed
             })
-        
+
         self.session.configuration.rules = rules
-        
+
         # Execute
         # This will use ThreadPoolExecutor inside
         self.session.redact()
-        
+
         # Verify Results
         # Each instance should have the top-left 10x10 region black (0)
         # And the rest white (255)
@@ -83,7 +83,7 @@ class TestRedactionParallel(unittest.TestCase):
                         # ROI: 0:10, 0:10
                         roi = arr[0:10, 0:10]
                         rest = arr[10:, 10:]
-                        
+
                         self.assertTrue(np.all(roi == 0), f"Instance {inst.sop_instance_uid}: ROI not redacted")
                         # We can't strictly assert 'rest' is all 255 if ROI overlaps, but here it doesn't.
                         # Actually 'rest' is not the full complement.
@@ -101,19 +101,19 @@ class TestRedactionParallel(unittest.TestCase):
         st = Study("S1", "20230101")
         se = Series("Se1", "CT", 1)
         se.equipment = Equipment("Man", "Mod", serial)
-        
+
         for i in range(50):
             inst = Instance(f"I{i}", f"1.2.3.{i}", 1)
-            
+
             # Mock loader
             def make_loader():
                 # Randomize slightly to simulating work? No need for correctness.
                 arr = np.zeros((50, 50), dtype=np.uint8) + 255
                 return lambda: arr
-            
+
             inst._pixel_loader = make_loader()
             se.instances.append(inst)
-            
+
         st.series.append(se)
         p.studies.append(st)
         self.session.store.patients.append(p)
@@ -123,17 +123,17 @@ class TestRedactionParallel(unittest.TestCase):
             "serial_number": serial,
             "redaction_zones": [[0, 10, 0, 10]]
         }]
-        
+
         # Execute
         self.session.redact()
-        
+
         # Verify
         count_redacted = 0
         for inst in se.instances:
             arr = inst.get_pixel_data()
             if np.all(arr[0:10, 0:10] == 0):
                 count_redacted += 1
-        
+
         self.assertEqual(count_redacted, 50, "All 50 instances should be redacted")
 
 if __name__ == '__main__':

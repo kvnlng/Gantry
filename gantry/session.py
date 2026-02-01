@@ -72,7 +72,7 @@ def scan_worker(args):
     return findings
 
 
-    return findings
+
 
 def _verify_worker(args):
     """
@@ -497,7 +497,7 @@ class DicomSession:
         kb_machines = []
         if os.path.exists(kb_path):
             try:
-                with open(kb_path, 'r') as f:
+                with open(kb_path, 'r', encoding='utf-8') as f:
                     kb_data = json.load(f)
                     kb_machines = kb_data.get("machines", [])
             except BaseException:
@@ -533,11 +533,11 @@ class DicomSession:
                 if not matched_rule and os.path.exists(ctp_path):
                     try:
                         if ctp_path.endswith('.yaml'):
-                            with open(ctp_path, 'r') as f:
+                            with open(ctp_path, 'r', encoding='utf-8') as f:
                                 ctp_data = yaml.safe_load(f)
                         else:
                             import json
-                            with open(ctp_path, 'r') as f:
+                            with open(ctp_path, 'r', encoding='utf-8') as f:
                                 ctp_data = json.load(f)
 
                         ctp_rules = ctp_data.get("rules", [])
@@ -761,7 +761,7 @@ class DicomSession:
 """
             final_content = header + "\n" + "\n".join(new_lines) + "\n"
 
-            with open(output_path, 'w') as f:
+            with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(final_content)
 
             get_logger().info(

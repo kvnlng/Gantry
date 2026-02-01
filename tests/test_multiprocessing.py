@@ -10,9 +10,9 @@ def test_parallel_import_and_scan(tmp_path):
     # 1. Generate Data
     raw_dir = tmp_path / "raw"
     db_path = str(tmp_path / "parallel.db")
-    
+
     # Create 20 files
-    # We create one patient per loop or just one patient with many instances? 
+    # We create one patient per loop or just one patient with many instances?
     # Loop creates P_0, P_1...
     for i in range(20):
         # We need actual .dcm files for import
@@ -31,7 +31,7 @@ def test_parallel_import_and_scan(tmp_path):
             .end_study()
             .build()
         )
-        
+
         # Inject dummy pixels to pass export validation
         import numpy as np
         for st in p.studies:
@@ -44,18 +44,18 @@ def test_parallel_import_and_scan(tmp_path):
     # 2. Parallel Import
     session = DicomSession(db_path)
     session.ingest(str(raw_dir))
-    
+
     assert len(session.store.patients) == 20
-    
+
     # 3. Parallel Scan
     report = session.scan_for_phi()
     assert isinstance(report, PhiReport)
     assert len(report) >= 20 # At least Names should be flagged
-    
+
     # 4. Verify Rehydration
     # Check if finding.entity refers to the LIVE object in session.store
     finding = report[0]
     live_patient = next(p for p in session.store.patients if p.patient_id == finding.entity_uid)
-    
+
     # Identity check might fail if rehydration missed, logic check is safer
     assert finding.entity is live_patient, "Finding entity should be the live object, not a clone"

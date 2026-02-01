@@ -22,21 +22,21 @@ def report_resource_usage(stage_name):
     # Let's simple report MB (assuming KB input for Linux, dividing by 1024, or Mac dividing by 1024*1024?)
     # Safer to just print raw.
     print(f"[{stage_name}] Max RSS: {usage.ru_maxrss} (units OS dependent)")
-    
+
 def run_benchmark(input_dir, output_dir, db_path, return_stats=False, compress_export=True):
     print(f"--- Starting Safety Pipeline Stress Test ---")
     print(f"Input: {input_dir}")
     print(f"Output: {output_dir}")
     print(f"DB: {db_path}")
-    
+
     # ensure clean start
     if os.path.exists(db_path):
         os.remove(db_path)
     if os.path.exists(output_dir):
         shutil.rmtree(output_dir)
-        
+
     start_global = time.time()
-    
+
     # [1] Initialize & Ingest
     print("\n[Step 1 & 2] Ingest")
     t0 = time.time()
@@ -45,7 +45,7 @@ def run_benchmark(input_dir, output_dir, db_path, return_stats=False, compress_e
     sess.save()
     duration_ingest = time.time() - t0
     print(f"Ingest Duration: {duration_ingest:.2f}s")
-    
+
     # [3] Examine
     print("\n[Step 3] Examine")
     t0 = time.time()
@@ -59,12 +59,12 @@ def run_benchmark(input_dir, output_dir, db_path, return_stats=False, compress_e
     # Write a dynamic config compatible with generated data
     # Machines: GantryGen, Siemens, GE, Philips, Canon, Toshiba, Hitachi, Fujifilm
     # Serial Format: GEN_{MFR}_001
-    
+
     machines_list = [
-        "GantryGen", "Siemens", "GE", "Philips", 
+        "GantryGen", "Siemens", "GE", "Philips",
         "Canon", "Toshiba", "Hitachi", "Fujifilm"
     ]
-    
+
     machine_yaml_blocks = []
     for mfr in machines_list:
         # Match logic in generate_dataset.py
@@ -74,7 +74,7 @@ def run_benchmark(input_dir, output_dir, db_path, return_stats=False, compress_e
     redaction_zones:
       - [0, 10, 0, 10]"""
         machine_yaml_blocks.append(block)
-        
+
     machines_yaml = "\n".join(machine_yaml_blocks)
 
     config_path = "stress_config.yaml"
@@ -95,7 +95,7 @@ phi_tags:
   "0008,0031": {{ "action": "EMPTY" }}
 """)
     sess.load_config(config_path)
-    
+
     # [5] Audit (Measure Twice)
     print("\n[Step 5] Audit")
     t0 = time.time()
@@ -112,14 +112,14 @@ phi_tags:
     sess.save()
     duration_backup = time.time() - t0
     print(f"Backup Duration: {duration_backup:.2f}s")
-    
+
     # [7] Anonymize (Metadata)
     print("\n[Step 7] Anonymize")
     t0 = time.time()
     sess.anonymize(report)
     duration_anonymize = time.time() - t0
     print(f"Anonymize Duration: {duration_anonymize:.2f}s")
-    
+
     # [8] Redact (Pixel Data)
     print("\n[Step 8] Redact")
     t0 = time.time()
@@ -127,7 +127,7 @@ phi_tags:
     duration_redact = time.time() - t0
     print(f"Redact Duration: {duration_redact:.2f}s")
     report_resource_usage("Post-Redact")
-    
+
     # [9] Verify & Export (Cut Once)
     print("\n[Step 9] Export (Verify & Write)")
     t0 = time.time()
@@ -137,10 +137,10 @@ phi_tags:
     duration_export = time.time() - t0
     print(f"Export Duration: {duration_export:.2f}s")
     report_resource_usage("Post-Export")
-    
+
     # Calculate Totals
     total_time = time.time() - start_global
-    
+
     # Get counts for throughput calculation
     # We can infer from session.store
     # (Checking private store objects is messy but acceptable for a benchmark script)
@@ -176,7 +176,7 @@ phi_tags:
     print("Resource Usage:")
     report_resource_usage("Final")
     print("="*60)
-    
+
     # Ensure Shutdown
     try:
         sess.close()
@@ -206,5 +206,5 @@ if __name__ == "__main__":
     parser.add_argument("--db", default="benchmark.db")
     parser.add_argument("--compress", action="store_true", help="Enable Export Compression (J2K)")
     args = parser.parse_args()
-    
+
     run_benchmark(args.input, args.output, args.db, compress_export=args.compress)

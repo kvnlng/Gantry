@@ -7,7 +7,7 @@ def service():
     return RemediationService()
 
 class TestDateShifting:
-    
+
     def test_shift_date_standard_da(self, service):
         """Test standard DA format (YYYYMMDD)"""
         # 2023-05-15 + 10 days = 2023-05-25
@@ -28,9 +28,9 @@ class TestDateShifting:
     def test_shift_date_dt_millis(self, service):
         """Test DT format with milliseconds (YYYYMMDD.HHMMSS.ffffff)"""
         # Note: input has 3 digit millis (677), which standard python %f expects 6 digits usually or might fail if not careful.
-        # However, strptime %f expects microseconds (6 digits). 
-        # If input is .677, it might assume .677000. 
-        # Actually DICOM DT allows variable precision. 
+        # However, strptime %f expects microseconds (6 digits).
+        # If input is .677, it might assume .677000.
+        # Actually DICOM DT allows variable precision.
         # Let's see if simple %f works or if we need custom handling.
         # Python's %f works with 6 digits. For partial, it might be tricky.
         # Let's test what we expect. Explicitly handling 3 digits might be needed if standard %f fails.

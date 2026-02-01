@@ -36,18 +36,18 @@ def test_redaction_service(dummy_patient):
     # Verify Redaction Flags
     # 1. UID should change
     assert inst.sop_instance_uid != "1.2.840.111.1.1.1"
-    
+
     # 2. Image Type
     img_type = inst.attributes.get("0008,0008")
     assert "DERIVED" in img_type
-    
+
     # 3. Description
     desc = inst.attributes.get("0008,2111")
     assert "Gantry Pixel Redaction" in desc
-    
+
     # 4. Burned In Annotation
     assert inst.attributes.get("0028,0301") == "NO"
-    
+
     # 5. Code Sequence
     seq = inst.sequences.get("0008,9215")
     assert seq is not None

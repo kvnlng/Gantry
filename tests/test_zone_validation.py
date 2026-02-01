@@ -4,11 +4,11 @@ from gantry.config_manager import ConfigLoader
 
 def test_zone_validation_flexible_format(tmp_path):
     """
-    Regression Test: Ensures that redaction zones can be specified EITHER as 
+    Regression Test: Ensures that redaction zones can be specified EITHER as
     a list of integers [y1, y2, x1, x2] OR as a dictionary {"roi": ...}.
     This supports both manual configuration and automated CTP imports.
     """
-    
+
     # 1. Test List Format (e.g. from CTP)
     list_zone_rule = {
         "serial_number": "TEST_LIST_ZONE",
@@ -18,7 +18,7 @@ def test_zone_validation_flexible_format(tmp_path):
     }
     # Should not crash
     ConfigLoader._validate_rule(list_zone_rule, 0)
-    
+
     # 2. Test Dict Format (Standard Gantry)
     dict_zone_rule = {
         "serial_number": "TEST_DICT_ZONE",

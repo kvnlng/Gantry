@@ -5,7 +5,7 @@ from gantry.entities import Instance
 from gantry import pixel_analysis
 
 class TestPixelAnalysis(unittest.TestCase):
-    
+
     @patch('gantry.pixel_analysis.HAS_OCR', True)
     @patch('gantry.pixel_analysis.pytesseract')
     def test_detect_text_simple(self, mock_pytesseract):
@@ -20,15 +20,15 @@ class TestPixelAnalysis(unittest.TestCase):
             'height': [10, 10]
         }
         mock_pytesseract.image_to_data.return_value = mock_data
-        
+
         # Test 2D Array
         pixel_data = np.zeros((100, 100), dtype=np.uint8)
-        
+
         result = pixel_analysis.detect_text(pixel_data)
-        
+
         self.assertEqual(result, "DETECTED TEXT")
         mock_pytesseract.image_to_data.assert_called_once()
-    
+
     @patch('gantry.pixel_analysis.HAS_OCR', True)
     @patch('gantry.pixel_analysis.pytesseract')
     def test_analyze_pixels_integration(self, mock_pytesseract):
@@ -42,15 +42,15 @@ class TestPixelAnalysis(unittest.TestCase):
             'height': [20]
         }
         mock_pytesseract.image_to_data.return_value = mock_data
-        
+
         instance = MagicMock(spec=Instance)
         instance.sop_instance_uid = "1.2.3.4"
         # Return a fake image
         instance.get_pixel_data.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
-        
+
         # Run
         findings = pixel_analysis.analyze_pixels(instance)
-        
+
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].text, "SECRET")
         # TextRegion doesn't have entity_uid, that's added later when creating PhiFinding
@@ -60,7 +60,7 @@ class TestPixelAnalysis(unittest.TestCase):
     def test_graceful_degradation(self):
         instance = MagicMock(spec=Instance)
         instance.get_pixel_data.return_value = np.zeros((100, 100), dtype=np.uint8)
-        
+
         findings = pixel_analysis.analyze_pixels(instance)
         self.assertEqual(len(findings), 0)
 

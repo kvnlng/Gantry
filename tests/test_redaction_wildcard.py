@@ -17,19 +17,19 @@ class TestWildcardRedaction(unittest.TestCase):
         self.test_dir = "test_data_wildcard"
         self.output_dir = "test_output_wildcard"
         self.db_path = "test_wildcard.db"
-        
+
         # Clean up
         if os.path.exists(self.test_dir): shutil.rmtree(self.test_dir)
         if os.path.exists(self.output_dir): shutil.rmtree(self.output_dir)
         if os.path.exists(self.db_path): os.remove(self.db_path)
-        
+
         os.makedirs(self.test_dir)
-        
+
         # Generate Dummy Data with Different Serial Numbers
         self.create_dummy_dicom(self.test_dir, "S1", "MachineA")
         self.create_dummy_dicom(self.test_dir, "S2", "MachineB")
         self.create_dummy_dicom(self.test_dir, "S3", "MachineC")
-        
+
         # Initialize Session
         self.sess = DicomSession(self.db_path)
         self.sess.ingest(self.test_dir)
@@ -55,7 +55,7 @@ class TestWildcardRedaction(unittest.TestCase):
         ds.Manufacturer = "TestMfg"
         ds.ManufacturerModelName = "TestModel"
         ds.DeviceSerialNumber = serial_number
-        
+
         # Create Pixel Data (10x10 white square)
         arr = np.ones((10, 10), dtype=np.uint8) * 255
         ds.Rows = 10
@@ -67,7 +67,7 @@ class TestWildcardRedaction(unittest.TestCase):
         ds.SamplesPerPixel = 1
         ds.PhotometricInterpretation = "MONOCHROME2"
         ds.PixelData = arr.tobytes()
-        
+
         path = os.path.join(folder, f"{filename}.dcm")
         ds.save_as(path, write_like_original=False)
 
@@ -76,7 +76,7 @@ class TestWildcardRedaction(unittest.TestCase):
         Verify that a rule with serial_number='*' is applied to ALL machines.
         """
         # 1. Create Config with Wildcard (*)
-        # We redact a 5x5 box at top-left. Since original is all 255 (white), 
+        # We redact a 5x5 box at top-left. Since original is all 255 (white),
         # checking for 0 (black) confirms redaction.
         config_content = """
 machines:
@@ -87,7 +87,7 @@ machines:
 """
         with open("test_wildcard.yaml", "w") as f:
             f.write(config_content)
-            
+
         # Verify Store Content
         print(f"DEBUG: Patients: {len(self.sess.store.patients)}")
         for p in self.sess.store.patients:
@@ -97,12 +97,12 @@ machines:
                 for se in st.series:
                     sn = se.equipment.device_serial_number if se.equipment else "None"
                     print(f"      Series: {se.series_instance_uid} (SN: {sn}) - Instances: {len(se.instances)}")
-            
+
         # 2. Load and Apply
         self.sess.load_config("test_wildcard.yaml")
         self.sess.redact()
         self.sess.save(sync=True)
-        
+
         # 3. Verify ALL instances were modified
         # We can inspect the store directly
         count = 0
@@ -116,7 +116,7 @@ machines:
                         self.assertEqual(arr[0,0], 0, f"Instance {inst.sop_instance_uid} (SN: {se.equipment.device_serial_number}) was NOT redacted.")
                         # Check Bottom-Right pixel (should be 255)
                         self.assertEqual(arr[9,9], 255, "Redaction area too large/broad.")
-                        
+
                         # Verify Redaction Hash attribute is set
                         self.assertIsNotNone(inst.attributes.get("_GANTRY_REDACTION_HASH"))
 

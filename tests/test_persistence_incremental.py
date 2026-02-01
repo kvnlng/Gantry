@@ -36,26 +36,26 @@ def test_dirty_tracking_initialization():
 def test_dirty_tracking_attribute_change():
     inst = Instance("1.2.3", "1.2.3", 1)
     inst._dirty = False # Simulate saved state
-    
+
     inst.set_attr("0010,0010", "New Name")
     assert inst._dirty is True
 
 def test_dirty_tracking_pixel_change():
     inst = Instance("1.2.3", "1.2.3", 1)
-    inst._dirty = False 
-    
+    inst._dirty = False
+
     inst.set_pixel_data(np.zeros((10,10)))
     assert inst._dirty is True
 
 def test_incremental_insert(store):
     p = create_mock_patient("P_INC", count=5)
     store.save_all([p])
-    
+
     # Verify DB
     patients = store.load_all()
     assert len(patients) == 1
     assert len(patients[0].studies[0].series[0].instances) == 5
-    
+
     # Verify Cleanup (objects in memory should mark clean?)
     # ideally save_all marks them clean
     assert p.studies[0].series[0].instances[0]._dirty is False
@@ -63,24 +63,24 @@ def test_incremental_insert(store):
 def test_incremental_no_op(store):
     p = create_mock_patient("P_NOOP", count=5)
     store.save_all([p])
-    
+
     # Manually check modification times or use logs
     # Here we just ensure data remains
     store.save_all([p])
-    
+
     patients = store.load_all()
     assert len(patients) == 1
 
 def test_incremental_update(store):
     p = create_mock_patient("P_UPD", count=1)
     store.save_all([p])
-    
+
     inst = p.studies[0].series[0].instances[0]
     inst.set_attr("0010,0010", "Changed Name")
     assert inst._dirty is True
-    
+
     store.save_all([p])
-    
+
     # Verify in DB
     patients_loaded = store.load_all()
     loaded_inst = patients_loaded[0].studies[0].series[0].instances[0]
@@ -90,16 +90,16 @@ def test_incremental_update(store):
 def test_incremental_delete(store):
     p = create_mock_patient("P_DEL", count=3)
     store.save_all([p])
-    
+
     # Remove one instance
     removed_inst = p.studies[0].series[0].instances.pop(0)
-    
+
     store.save_all([p])
-    
+
     # Verify DB
     patients = store.load_all()
     assert len(patients[0].studies[0].series[0].instances) == 2
-    
+
 def test_persistence_resiliency(store):
     """Ensure partial saves don't corrupt DB (transaction test implicitly via sqlite)"""
     pass

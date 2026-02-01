@@ -3,15 +3,14 @@ Module for discovering common locations of burned-in text (hotspots) in DICOM in
 """
 import logging
 import re
-from typing import List, Tuple, Any, Dict, Union
+from dataclasses import dataclass
+from typing import List, Tuple, Any, Dict, Union, Callable, Optional
 
-from gantry.entities import Instance
-from gantry.pixel_analysis import analyze_pixels
+# Lazy imports for optional dependencies
+# import pandas as pd
+# import spacy
 
 logger = logging.getLogger(__name__)
-
-from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Callable, Union, Tuple
 
 @dataclass
 class DiscoveryCandidate:
@@ -24,7 +23,7 @@ class DiscoveryCandidate:
 
 class DiscoveryResult:
     """
-    Holds the raw results of a discovery scan and provides methods to filter 
+    Holds the raw results of a discovery scan and provides methods to filter
     and group them into actionable redaction zones.
     """
     def __init__(self, candidates: List[DiscoveryCandidate], n_sources: int):
@@ -40,7 +39,7 @@ class DiscoveryResult:
     def filter(self, predicate: Union[float, Callable] = 0.0) -> 'DiscoveryResult':
         """
         Returns a new result with filtered candidates.
-        
+
         Args:
             predicate: Either a float (min_confidence) or a callable accepting a DiscoveryCandidate.
         """
@@ -65,7 +64,7 @@ class DiscoveryResult:
         """
         Returns a 2D matrix (list of lists) representing candidate density.
         Ideal for plotting with matplotlib (e.g., plt.imshow).
-        
+
         Args:
             bins: Tuple of (rows, cols) for the grid.
         """
@@ -74,11 +73,11 @@ class DiscoveryResult:
 
         rows, cols = bins
         grid = [[0] * cols for _ in range(rows)]
-        
+
         # Normalize to 0-1
         xs = [c.box[0] for c in self.candidates]
         ys = [c.box[1] for c in self.candidates]
-        
+
         max_x, max_y = max(xs) if xs else 1, max(ys) if ys else 1
         # Avoid div by zero
         max_x = max_x or 1
@@ -88,24 +87,24 @@ class DiscoveryResult:
             # Map center of box
             cx = c.box[0] + c.box[2] // 2
             cy = c.box[1] + c.box[3] // 2
-            
+
             c_idx = min(int((cx / max_x) * cols), cols - 1)
             r_idx = min(int((cy / max_y) * rows), rows - 1)
-            
+
             grid[r_idx][c_idx] += 1
-            
+
         return grid
 
     def visualize_heatmap(self, bins: Tuple[int, int] = (10, 10)) -> str:
         """
         Returns an ASCII heatmap of candidate distribution.
-        
+
         Args:
             bins: Tuple of (rows, cols) for the grid.
         """
         grid = self.get_density_matrix(bins)
         rows, cols = bins
-            
+
         # Render
         output = [f"Discovery Heatmap ({len(self.candidates)} candidates):"]
         for r in range(rows):
@@ -125,30 +124,30 @@ class DiscoveryResult:
     def analyze_temporal_stability(self) -> List[Dict[str, Any]]:
         """
         Analyzes candidates to determine if they are static (overlay) or transient (noise).
-        
+
         Returns:
             List of dicts describing stability of grouped regions.
         """
         zones = self.to_zones(min_occurrence=0.0) # a relaxed clustering
         stability_report = []
-        
+
         for z in zones:
             zone_rect = z['zone']
             occurrence = z['occurrence']
-            
+
             status = "TRANSIENT"
             if occurrence > 0.9:
                 status = "STATIC_ALWAYS"
             elif occurrence > 0.5:
                 status = "STATIC_FREQUENT"
-                
+
             stability_report.append({
                 "zone": zone_rect,
                 "occurrence": occurrence,
                 "status": status,
                 "example": z['examples'][0] if z['examples'] else ""
             })
-            
+
         return stability_report
 
     def inspect_clusters(self, pad_x: int = 20, pad_y: int = 10) -> List[List[DiscoveryCandidate]]:
@@ -158,16 +157,16 @@ class DiscoveryResult:
         """
         if not self.candidates:
             return []
-            
+
         boxes = [c.box for c in self.candidates]
         cluster_indices = ZoneDiscoverer.group_boxes(boxes, pad_x=pad_x, pad_y=pad_y)
-        
+
         return [[self.candidates[i] for i in indices] for indices in cluster_indices]
 
     def to_zones(self, pad_x: int = 20, pad_y: int = 10, min_occurrence: float = 0.1) -> List[Dict[str, Any]]:
         """
         Groups candidates into suggested redaction zones.
-        
+
         Args:
             pad_x: Horizontal padding for merging (higher values merge words on same line).
             pad_y: Vertical padding.
@@ -178,35 +177,35 @@ class DiscoveryResult:
 
         # 1. Prepare boxes for clustering
         boxes = [c.box for c in self.candidates]
-        
+
         # 2. Cluster
         clusters = ZoneDiscoverer.group_boxes(boxes, pad_x=pad_x, pad_y=pad_y)
-        
+
         final_zones = []
-        
+
         for cluster_indices in clusters:
             subset = [self.candidates[i] for i in cluster_indices]
-            
+
             # Geometry Union
             merged_box = ZoneDiscoverer._union_box_list([c.box for c in subset])
-            
+
             # Frequency Check
             unique_sources = {c.source_index for c in subset}
             occurrence_rate = len(unique_sources) / self.n_sources
-            
+
             if occurrence_rate < min_occurrence:
                 continue
-                
+
             # Aggregated Metadata
             texts = list({c.text for c in subset}) # Dedup
-            
+
             # Smart Type Classification based on the group
             zone_type = "TEXT"
             if any(c.classification == "NAME_PATTERN" for c in subset):
                 zone_type = "LIKELY_NAME"
             elif any(c.classification in ("PROPER_NOUN", "PROPER_NOUN_CANDIDATE") for c in subset):
                 zone_type = "PROPER_NOUN"
-            
+
             # Average Confidence
             avg_conf = sum(c.confidence for c in subset) / len(subset)
 
@@ -221,7 +220,7 @@ class DiscoveryResult:
                     "confidence": avg_conf,
                     "examples": texts[:3]
                 })
-                
+
         return final_zones
 
 class ZoneDiscoverer:
@@ -239,11 +238,11 @@ class ZoneDiscoverer:
         clean = text.strip()
         if not clean:
             return "TEXT"
-            
+
         # 1. Explicit DICOM Name Pattern
         if '^' in clean and any(c.isalpha() for c in clean):
             return "NAME_PATTERN"
-            
+
         # 2. NLP (spaCy) - Optional
         if not ZoneDiscoverer._nlp_model_failed:
             if ZoneDiscoverer._nlp_model is None:
@@ -254,13 +253,13 @@ class ZoneDiscoverer:
                 except Exception as e:
                     logger.warning(f"Failed to load or import spaCy: {e}. Fallback to regex.")
                     ZoneDiscoverer._nlp_model_failed = True
-        
+
         if ZoneDiscoverer._nlp_model:
             doc = ZoneDiscoverer._nlp_model(clean)
             for ent in doc.ents:
                 if ent.label_ in ("PERSON", "ORG"): # Accept ORG too
                     return "PROPER_NOUN"
-            
+
         # 3. Fallback Heuristic
         words = clean.split()
         cap_count = 0
@@ -268,10 +267,10 @@ class ZoneDiscoverer:
             w_clean = re.sub(r'[^\w\s]', '', w)
             if w_clean and w_clean[0].isupper() and len(w_clean) > 1:
                 cap_count += 1
-        
+
         if cap_count > 0:
             return "PROPER_NOUN_CANDIDATE"
-            
+
         return "TEXT"
 
     @staticmethod
@@ -279,10 +278,10 @@ class ZoneDiscoverer:
         """Groups boxes into overlapping clusters."""
         if not boxes:
             return []
-        
+
         px = pad_x if pad_x is not None else padding
         py = pad_y if pad_y is not None else padding
-        
+
         n = len(boxes)
         adj = [[] for _ in range(n)]
 

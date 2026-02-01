@@ -16,13 +16,13 @@ class TestOCRFormal(unittest.TestCase):
         self.instance = MagicMock(spec=Instance)
         self.instance.sop_instance_uid = "1.2.3"
         self.instance.equipment = Equipment("TestMan", "TestModel", "SN-001")
-        
+
         # Define a rule that covers [0,0,100,100]
         self.rules = [{
             "serial_number": "SN-001",
             "redaction_zones": [[0, 0, 100, 100]]
         }]
-        
+
         self.verifier = RedactionVerifier(self.rules)
 
     @patch('gantry.verification.analyze_pixels')
@@ -32,7 +32,7 @@ class TestOCRFormal(unittest.TestCase):
         mock_ocr.return_value = [
             TextRegion("SafeText", (10, 10, 50, 50), 90.0)
         ]
-        
+
         findings = self.verifier.verify_instance(self.instance, self.instance.equipment)
         self.assertEqual(len(findings), 0)
 
@@ -43,7 +43,7 @@ class TestOCRFormal(unittest.TestCase):
         mock_ocr.return_value = [
             TextRegion("LeakText", (200, 200, 50, 50), 90.0)
         ]
-        
+
         findings = self.verifier.verify_instance(self.instance, self.instance.equipment)
         self.assertEqual(len(findings), 1)
         f = findings[0]
@@ -58,11 +58,11 @@ class TestOCRFormal(unittest.TestCase):
         # Intersect: 50,0,50,100 (Area 5000)
         # Text Area: 100*100 = 10000
         # Coverage: 0.5
-        
+
         mock_ocr.return_value = [
             TextRegion("PartialText", (50, 0, 100, 100), 90.0)
         ]
-        
+
         findings = self.verifier.verify_instance(self.instance, self.instance.equipment)
         self.assertEqual(len(findings), 1)
         f = findings[0]

@@ -41,7 +41,7 @@ def test_decode_error_handling(mock_dataset):
     mock_uid = MagicMock(spec=UID)
     mock_uid.__eq__.side_effect = lambda x: x == JPEGLossless # Allow comparison
     mock_dataset.file_meta.TransferSyntaxUID = JPEGLossless
-    
+
     # Mock generate_fragments (used by single frame path)
     with patch('gantry.imagecodecs_handler.generate_fragments', return_value=[b"chunk"]):
         # Unconditionally patch the local reference to imagecodecs in the handler
@@ -57,7 +57,7 @@ def test_rle_lossless_handling(mock_dataset):
     mock_uid.is_encapsulated = True
     # We need equality check to pass for the handler's if-check
     mock_uid.__eq__.side_effect = lambda x: x == RLELossless
-    
+
     mock_dataset.file_meta.TransferSyntaxUID = mock_uid
     expected_output = np.zeros((10, 10), dtype=np.uint8)
 
@@ -71,18 +71,18 @@ def test_rle_lossless_handling(mock_dataset):
 def test_multi_frame_handling(mock_dataset):
     """Test multi-frame image decoding logic."""
     mock_dataset.NumberOfFrames = 2
-    
+
     mock_uid = MagicMock()
     mock_uid.is_encapsulated = True
     mock_uid.__eq__.side_effect = lambda x: x == JPEGLossless
     mock_dataset.file_meta.TransferSyntaxUID = mock_uid
-    
+
     frame1 = np.zeros((10, 10), dtype=np.uint8)
     frame2 = np.ones((10, 10), dtype=np.uint8)
-    
+
     # Mock generate_frames to return two frames
     with patch('gantry.imagecodecs_handler.generate_frames', return_value=[b"f1", b"f2"]):
-         with patch('gantry.imagecodecs_handler.imagecodecs') as mock_ic:
+        with patch('gantry.imagecodecs_handler.imagecodecs') as mock_ic:
             mock_ic.ljpeg_decode.side_effect = [frame1, frame2]
             result = imagecodecs_handler.get_pixel_data(mock_dataset)
             assert result.shape == (2, 10, 10)

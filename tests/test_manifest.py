@@ -26,7 +26,7 @@ def mock_manifest():
 def test_json_renderer(tmp_path, mock_manifest):
     output = tmp_path / "manifest.json"
     generate_manifest_file(mock_manifest, str(output), "json")
-    
+
     assert output.exists()
     with open(output, 'r') as f:
         data = json.load(f)
@@ -38,7 +38,7 @@ def test_json_renderer(tmp_path, mock_manifest):
 def test_html_renderer(tmp_path, mock_manifest):
     output = tmp_path / "manifest.html"
     generate_manifest_file(mock_manifest, str(output), "html")
-    
+
     assert output.exists()
     content = output.read_text()
     assert "<!DOCTYPE html>" in content
@@ -50,11 +50,11 @@ def test_html_renderer(tmp_path, mock_manifest):
 def test_session_integration(tmp_path):
     # Mock DicomSession internal store
     session = DicomSession(persistence_file=":memory:")
-    
+
     # Needs actual logic or extensive mocking of session.store structure.
     # For now, let's skip full integration test if we assume unit tests cover the renderer.
     # Or strict mock:
-    
+
     # We can rely on the fact that if we call generate_manifest, it iterates.
     # Since session.store is empty by default
     output = tmp_path / "session_manifest.html"

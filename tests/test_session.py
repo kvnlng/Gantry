@@ -7,7 +7,7 @@ from gantry.io_handlers import DicomExporter
 def test_session_persistence(tmp_path, dummy_patient):
     """Test saving and loading state."""
     db_file = tmp_path / "session.db"
-    
+
     # 1. Create Session
     session = DicomSession(str(db_file))
     session.store.patients.append(dummy_patient)
@@ -31,17 +31,17 @@ def test_load_config(tmp_path, config_file):
 def test_load_empty_config(tmp_path):
     """Ensure session handles config files with no machines gracefully."""
     session = DicomSession(str(tmp_path / "empty.db"))
-    
+
     empty_conf = tmp_path / "empty_rules.yaml"
     import yaml
     with open(empty_conf, "w") as f:
         yaml.dump({"version": "1.0", "machines": []}, f)
-        
+
     session.load_config(str(empty_conf))
     assert len(session.configuration.rules) == 0
-    
+
     # Should not crash on execution
-    session.redact() 
+    session.redact()
 
 
 

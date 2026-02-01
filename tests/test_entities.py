@@ -60,17 +60,17 @@ def test_lazy_loading(tmp_path):
 def test_pixel_bits_allocated():
     """Verify that BitsAllocated is correctly inferred from dtype."""
     inst = Instance()
-    
+
     # Test uint8 (8 bits)
     arr_uint8 = np.zeros((10, 10), dtype=np.uint8)
     inst.set_pixel_data(arr_uint8)
     assert inst.attributes["0028,0100"] == 8
-    
+
     # Test uint16 (16 bits)
     arr_uint16 = np.zeros((10, 10), dtype=np.uint16)
     inst.set_pixel_data(arr_uint16)
     assert inst.attributes["0028,0100"] == 16
-    
+
     arr_int32 = np.zeros((10, 10), dtype=np.int32)
     inst.set_pixel_data(arr_int32)
     assert inst.attributes["0028,0100"] == 32
@@ -86,13 +86,13 @@ def test_photometric_defaults():
     inst = Instance()
     inst.set_pixel_data(np.zeros((10, 10)))
     assert inst.attributes["0028,0004"] == "MONOCHROME2"
-    
+
     # Case 2: Preserving MONOCHROME1
     inst2 = Instance()
     inst2.attributes["0028,0004"] = "MONOCHROME1"
     inst2.set_pixel_data(np.zeros((10, 10)))
     assert inst2.attributes["0028,0004"] == "MONOCHROME1"
-    
+
     # Case 3: Forcing RGB
     inst3 = Instance()
     # Even if it said MONOCHROME2, if we pass RGB data it must switch
