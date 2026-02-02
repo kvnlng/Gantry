@@ -7,6 +7,8 @@ edit_uri: edit/main/docs_site/
 
 theme:
   name: material
+  font:
+    text: Roboto
   palette: 
     - scheme: default
       primary: teal
@@ -22,6 +24,8 @@ theme:
         name: Switch to light mode
   features:
     - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.path
     - navigation.sections
     - navigation.expand
     - navigation.top
