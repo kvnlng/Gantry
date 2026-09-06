@@ -29,18 +29,18 @@ graph LR
 
 ## 3. Safety Pipeline (The 10 Checkpoints)
 
-Isocenter enforces a strict checkpoint system to ensure data safety:
+Ten steps, in the order the code expects them. Nothing touches disk until step 9, and the report comes last because export is where the final data-loss rows are written; a report generated before any export says so in its own text.
 
 1. **Ingest**: Load raw data into the managed session index.
 2. **Examine**: Inventory the cohort and equipment.
 3. **Configure**: Define privacy tags and redaction rules.
-4. **Audit (Target)**: Measure PHI risks against the configuration.
-5. **Backup**: (Optional) Securely lock original identities for reversibility.
+4. **Audit**: Measure PHI risks against the configuration.
+5. **Backup**: (Optional) Lock original identities under a key for reversibility.
 6. **Anonymize**: Apply remediation to metadata (in-memory).
 7. **Redact**: Scrub pixel data for specific machines (in-memory).
-8. **Verify**: Re-audit the session to ensure a clean state.
-9. **Report**: Generate a signed Compliance Report (Manifest, Exceptions, Audit Trail).
-10. **Export**: Write clean DICOM files to disk.
+8. **Verify**: Re-audit the session to confirm a clean state.
+9. **Export**: Write clean DICOM files to disk.
+10. **Report**: Generate the compliance report (manifest, audit trail, exceptions, grade, and a signature block for the reviewer) from the audit log, including what export recorded.
 
 ## 4. Persistence Architecture (Hybrid Storage)
 
