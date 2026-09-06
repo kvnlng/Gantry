@@ -1397,10 +1397,11 @@ things about it are easy to get wrong and are pinned by
 <code>tests/test_version_contract.py</code>:</p>
 <ul>
 <li><strong><code>license</code> is a Zenodo vocabulary id, not an SPDX id</strong>, and those are
-  lowercase. <code>agpl-3.0-or-later</code> resolves at
+  lowercase. <code>apache-2.0</code> resolves at
   <code>zenodo.org/api/vocabularies/licenses/</code>; the SPDX spelling
-  <code>AGPL-3.0-or-later</code> returns 404, and would have gone into the record as
-  a licence Zenodo could not match.</li>
+  <code>Apache-2.0</code> returns 404, and would have gone into the record as a
+  licence Zenodo could not match. (The same held for <code>agpl-3.0-or-later</code>
+  before #348 changed the licence.)</li>
 <li><strong>No <code>version</code> field.</strong> The GitHub integration fills it in from the
   release tag. Pinning it here would add a third place for the number to
   drift.</li>
