@@ -5,6 +5,16 @@ All notable changes to the "Isocenter" project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Relicensed from AGPL-3.0-or-later to Apache-2.0 (#348).** `LICENSE` now carries the Apache License 2.0 text and a `NOTICE` file carries the copyright line; `setup.py` declares `license="Apache-2.0"` with the matching classifier; `.zenodo.json` and `CITATION.cff` name the same license, and `tests/test_packaging_contract.py` and `tests/test_version_contract.py` hold all of them together.
+
+  **Why.** A library is adopted by being imported, and Isocenter's whole ecosystem is permissive: pydicom, numpy, pandas, pillow, imagecodecs, PyYAML, pyarrow, cryptography, tqdm and python-dotenv are every one of them MIT, BSD, or Apache. Under AGPL a project that imported Isocenter into an MIT codebase arguably took on AGPL terms, institutional legal review flagged it by default, and a vendor could not embed it at all. AGPL earns that cost as the open half of a dual-licensing model, and there is none. Apache-2.0 over MIT for the explicit patent grant, which is the clause institutional reviewers look for.
+
+  **What is not retroactive.** Releases up to and including 0.9.2 were published under AGPL-3.0-or-later and remain available under it; a relicense changes what future releases grant, not what past ones did. The maintainer is the sole copyright holder (every source commit in the history; the empty-identity commits are MkDocs deploys on `gh-pages`), so no third-party consent was required.
+
 ## [0.9.2] - 2026-09-05
 
 ### Breaking

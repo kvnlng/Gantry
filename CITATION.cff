@@ -30,7 +30,7 @@ abstract: >-
   PhysioNet WFDB, including a waveform annotation bridge to Murmur
   Studio. Source data is never modified.
 type: software
-license: AGPL-3.0-or-later
+license: Apache-2.0
 repository-code: "https://github.com/kvnlng/Isocenter"
 doi: "10.5281/zenodo.22104298"
 url: "https://kvnlng.github.io/Isocenter/"
