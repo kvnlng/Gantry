@@ -1,5 +1,5 @@
 site_name: Isocenter
-site_description: A high-performance Python DICOM Object Model and Redaction Toolkit.
+site_description: De-identify a DICOM cohort without touching the source files, and hand compliance a report that names anything the run could not do.
 site_url: https://kvnlng.github.io/Isocenter/
 repo_url: https://github.com/kvnlng/Isocenter
 repo_name: kvnlng/Isocenter
@@ -7,21 +7,18 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  # The "clinical ledger" system (#350): Material's text and code fonts
+  # come from here; Newsreader for headings and every colour come from
+  # docs/stylesheets/extra.css, which remaps Material's CSS variables.
+  # One light scheme only -- the design has no dark variant yet, and a
+  # dark toggle that switched to Material's stock slate would break the
+  # system rather than extend it.
+  custom_dir: docs/overrides
   font:
-    text: Roboto
-  palette: 
-    - scheme: default
-      primary: teal
-      accent: indigo
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - scheme: slate
-      primary: teal
-      accent: indigo
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
+    text: Source Sans 3
+    code: JetBrains Mono
+  palette:
+    scheme: default
   features:
     - navigation.tabs
     - navigation.tabs.sticky
@@ -75,6 +72,10 @@ docs_dir: docs
 # Internal design specs live under docs/ by convention but are not site content.
 exclude_docs: |
   superpowers/
+  overrides/
+
+extra_css:
+  - stylesheets/extra.css
 
 nav:
   - Home: index.md

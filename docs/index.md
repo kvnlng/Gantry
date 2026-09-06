@@ -1,8 +1,16 @@
-# Isocenter
+---
+title: Isocenter
+template: home.html
+hide:
+  - navigation
+  - toc
+---
 
-**De-identify a DICOM cohort without touching the source files, and hand compliance a report that names anything the run could not do.**
-
-![Isocenter](images/IMG_0653.jpeg)
+<!-- The hero (the one-line claim, the install command, the report
+     excerpt) and the pipeline band are rendered by docs/overrides/home.html
+     above this file's content. This file carries the rest of the landing
+     page as ordinary markdown; extra.css lays the "What it refuses to do"
+     and "What it does" lists out as the ledger's clause grid. -->
 
 ## The situation
 
