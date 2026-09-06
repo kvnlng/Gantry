@@ -1,59 +1,56 @@
 # Isocenter
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22104298.svg)](https://doi.org/10.5281/zenodo.22104298)
+[![PyPI](https://img.shields.io/pypi/v/isocenter.svg)](https://pypi.org/project/isocenter/)
+[![Tests](https://github.com/kvnlng/Isocenter/actions/workflows/tests.yml/badge.svg)](https://github.com/kvnlng/Isocenter/actions/workflows/tests.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**A Python DICOM Object Model and Redaction Toolkit.**
+**De-identify a DICOM cohort without touching the source files, and hand compliance a report that names anything the run could not do.**
 
-Isocenter provides a high-performance, object-oriented interface for managing, analyzing, and de-identifying DICOM datasets. It is designed for large-scale ingestion, precise pixel redaction, and strict PHI compliance.
+Isocenter is a Python library for indexing, de-identifying, and exporting DICOM datasets at cohort scale. It builds a SQLite metadata index and a pixel/waveform sidecar beside a read-only source tree, applies your de-identification profile and pixel redaction rules to an in-memory object graph, grades its own output, and writes clean copies to a new directory as DICOM or PhysioNet WFDB.
 
-## Features
+## Who it is for
 
-- **Object-Oriented API**: Work with `Patient`, `Study`, `Series`, and `Instance` objects directly.
-- **Persistent Sessions**: All metadata is indexed in a SQLite database, allowing you to pause/resume large jobs and providing an audit trail.
-- **Parallel Processing**: Multi-process ingestion and export for maximum throughput.
-- **Robust Redaction**:
-  - **Metadata**: Configurable tag removal, replacement, and shifting.
-  - **Pixel Data**: Machine-specific redaction zones (ROI) to scrub burned-in PHI.
-  - **Reversibility**: Optional cryptographic identity preservation.
-- **Codecs**: Robust support for JPEG Lossless, JPEG 2000, and other compressed formats via `imagecodecs`.
-- **Waveforms**: Ingest DICOM waveform IODs (ECG, hemodynamic) and export PhysioNet WFDB records, bridging to [Murmur Studio](https://github.com/kvnlng/Murmur).
-- **Free-threaded Python Ready**: `run_parallel()` uses threads rather than processes when there is no GIL to escape, for true parallelism. Tested on **3.14t** (`PYTHON_GIL=0`) on every pull request and again at release.
-- **Enterprise-Grade Scalability**:
-  - **Process-Isolated Redaction**: Guarantees zero memory leaks by isolating heavy pixel operations.
-  - **Deep Memory Management**: Validated sub-linear memory scaling on 100GB+ datasets.
+You have a cohort of studies and a protocol an IRB approved. You need to hand a de-identified copy to a collaborator, a registry, or a model, and to hand your compliance reviewer a record of what was removed, what stayed because the protocol allowed it, and anything the run lost on the way. Isocenter is the library your script imports to do that.
+
+There is no command-line tool and none is planned. The Python API is the whole interface, because the people who de-identify cohorts write scripts, and a library that lives in the script can be paused, resumed, inspected, and audited in ways a batch command cannot.
+
+## What it refuses to do
+
+The behaviours that matter most are refusals, so they come first.
+
+- **Modify a source file.** Ingest reads; anonymize and redact change an in-memory graph; nothing reaches disk until `export()` writes copies to a directory you name. A crashed or abandoned run leaves the originals exactly as they were.
+- **Grade a lossy export `PASS`.** Every step that can lose data writes an audit row, and the compliance report reads those rows. A cohort that lost a file, a private tag, a waveform group, or a pixel frame grades `REVIEW_REQUIRED` and names the loss. An export that wrote nothing raises `ExportError` rather than returning quietly.
+- **Pass through pixels it could not decode.** If a compressed frame cannot be decompressed, because of a missing codec or a corrupt stream, the export fails on that instance rather than copying bytes it never inspected.
+- **Advertise a Python version it does not test.** The suite runs on Python 3.12 and on the free-threaded 3.14t build on every pull request, and on all four supported versions at release. The classifiers on PyPI list only those, and a test fails if the matrix is narrowed without removing the classifier.
+
+## What it does
+
+- **Object model.** `Patient`, `Study`, `Series`, and `Instance` objects over pydicom, with attributes keyed by tag. Pixel and waveform data load lazily and can be released.
+- **Persistent session.** Metadata is indexed in SQLite and heavy bytes in an append-only sidecar, so a 10,000-instance cohort reopens without rescanning, and a job can be paused and resumed. Every action is written to an audit log.
+- **Protocol-conformant de-identification.** A profile decides which tags go, are replaced, or are date-shifted; a field the protocol permits stays. PHI detection walks nested sequences structurally, not only the top level. Date jitter is deterministic per patient so intervals survive.
+- **Machine-specific pixel redaction.** Redaction zones are keyed by device, because the same model in the same room burns identifiers into the same place every time. An optional OCR pass (`pip install isocenter[ocr]`) finds where text actually lands, and existing CTP `DicomPixelAnonymizer.script` rules import directly.
+- **Reversible anonymization, if you choose it.** Original identities can be encrypted under a Fernet key and stored in a private tag before anonymization, and recovered later by whoever holds the key. The export discloses when recoverable identities are present.
+- **Codecs.** JPEG Lossless, JPEG 2000, JPEG-LS, RLE, and baseline JPEG, through `imagecodecs`, with strict validation on the way out.
+- **Waveforms.** DICOM waveform IODs (ECG, hemodynamic) ingest alongside images and export as PhysioNet WFDB records, with a `<record>.annotations.json` bridge to [Murmur Studio](https://github.com/kvnlng/Murmur).
+- **Parallelism that fits the interpreter.** Heavy work runs through one dispatcher that uses processes on a GIL build and threads on free-threaded Python, tuned by environment variables documented in [`docs/environment.md`](docs/environment.md).
 
 ## Performance
 
-Benchmark performed by producing instances with frames ranging from 1 to 100 in three phases. Each phase increases in single magnitude. Then a standard workflow is performed, measuring each step. The final results follow.
+One benchmark has a recorded run behind it: 100 multi-frame files, about 50 GB raw, ingest through export on an `n2-highmem-16`, January 2026. Across that run peak memory grew about 3x while the data grew 10x. The numbers, the machine, and the architecture that produced them are on the [performance page](https://kvnlng.github.io/Isocenter/performance/). Larger runs are planned; they will appear there when they exist, not here.
 
-| Phase                           | Total Instances | Ingest Duration | Examine Duration | Audit Duration | Backup Duration | Anonymize Duration | Redact Duration | Export Duration | Total Time |
-|:--------------------------------|:---------------:|----------------:|-----------------:|---------------:|----------------:|-------------------:|----------------:|----------------:|-----------:|
-| 0                               | 1               | 2.20            | 0.0001           | 0.0014         | 0.0061          | 0.0066             | 1.85            | 2.97            | 7.04       |
-| 1                               | 10              | 22.45           | 0.0001           | 0.0024         | 0.0060          | 0.0064             | 9.33            | 9.94            | 41.74      |
-| 2                               | 100             | 177.36          | 0.0002           | 0.0042         | 0.0124          | 0.0244             | 74.21           | 58.13           | 309.74     |
+Sizing guidance from that run and from redaction and JPEG 2000 export work in practice:
 
-Test machine:
-- machine-type: n2-highmem-16
-- image-family: ubuntu-2204-lts
-- image-project: ubuntu-os-cloud
-- boot-disk-size: 1TB
-- boot-disk-type: pd-ssd
+- **Memory**: 2 GB RAM per vCPU as a floor; 8 GB per vCPU for heavy multi-frame JPEG 2000 export.
+- **Concurrency**: all cores by default. Set `ISOCENTER_MAX_WORKERS` to limit it if a worker is killed for memory.
 
 ## Architecture
 
-Isocenter acts as a smart indexing layer over your raw DICOM files. It does *not* modify your original data. Instead, it builds a lightweight metadata index (SQLite) and exposes a clean Python Object Model for manipulation.
+Isocenter is an indexing layer over your files, not a copy of them.
 
-### 1. The Session Facade
-
-The `Session` object is your single entry point. It manages:
-
-- **Persistence**: Auto-saving state to `isocenter.db`.
-- **Inventory**: Tracking Patients, Studies, and Series.
-- **Transactions**: Atomic persistence of changes.
-
-### 2. Object Model
-
-Isocenter abstracts DICOM into a semantic hierarchy, removing the pain of manual tag iteration.
+- **The `Session` facade** is the single entry point. It owns persistence, the inventory of patients, studies, and series, and the worker pool. It supports `with`, and `close()` releases the pool and the background threads.
+- **The object graph** is `Patient → Study → Series → Instance`. An instance holds its pixel or waveform data through a loader that reads from the sidecar on demand.
+- **Storage** has three tiers: standard tags in a JSON column queried with SQLite's JSON operators, private tags in a sparse attribute table, and pixel and waveform bytes in the sidecar by offset and length. `compact()` reclaims sidecar space.
 
 ```mermaid
 graph LR
@@ -63,25 +60,20 @@ graph LR
     Instance --> Pixels((Pixel Data))
 ```
 
-- **Patient**: Root entity (Name, ID).
-- **Study**: A distinct visit/exam.
-- **Series**: A scan or reconstruction (e.g., "ct_soft_kernel").
-- **Instance**: A single DICOM slice.
+### The pipeline
 
-### 3. Safety Pipeline (The 10 Checkpoints)
+Ten steps, in the order the code expects them. Nothing touches disk until step 9, and the report comes last because export is where the last data-loss rows are written.
 
-Isocenter provides a system to ensure data safety:
-
-1. **Ingest**: Load raw data into the managed session index.
-2. **Examine**: Inventory the cohort and equipment.
-3. **Configure**: Define privacy tags and redaction rules.
-4. **Audit**: Measure PHI risks against the configuration.
-5. **Backup**: (*Optional*) Securely lock original identities for reversibility.
-6. **Anonymize**: Apply remediation to metadata (in-memory).
-7. **Redact**: Scrub pixel data for specific machines (in-memory).
-8. **Verify**: Re-audit the session to ensure a clean state.
-9. **Report**: Generate a signed Compliance Report (Manifest, Exceptions, Audit Trail).
-10. **Export**: Write clean DICOM files to disk.
+1. **Ingest**: build the index and sidecar from the source tree.
+2. **Examine**: inventory the cohort and its equipment.
+3. **Configure**: scaffold and edit the privacy profile and redaction rules.
+4. **Audit**: measure PHI against the configuration.
+5. **Backup** (optional): lock original identities under a key for reversibility.
+6. **Anonymize**: apply metadata remediation, in memory.
+7. **Redact**: scrub pixel zones for matched machines, in memory.
+8. **Verify**: audit again and confirm a clean state.
+9. **Export**: write clean files to a new directory.
+10. **Report**: generate the compliance report from the audit log, including what export recorded.
 
 ## Installation
 
@@ -102,39 +94,11 @@ cd Isocenter
 pip install -e ".[dev]"
 ```
 
-## Citing Isocenter
-
-If Isocenter's de-identification is part of how a dataset was prepared,
-it belongs in the methods section rather than the acknowledgements. Use
-GitHub's **Cite this repository** button, which reads `CITATION.cff`.
-
-Each release is archived on Zenodo. Cite the concept DOI,
-[10.5281/zenodo.22104298](https://doi.org/10.5281/zenodo.22104298), which
-always resolves to the latest version -- not the per-version DOI, so the
-citation follows the work rather than freezing on whichever version was
-current when you wrote it. If you need to record the exact version used,
-name it in the text (`Isocenter v0.8.1`) and leave the DOI pointing at
-the concept record.
-
-Isocenter is the upstream half of a pair: it builds and de-identifies the
-corpus that [Murmur Studio](https://github.com/kvnlng/Murmur)
-([10.5281/zenodo.21077528](https://doi.org/10.5281/zenodo.21077528))
-reviews. Work that used both should cite both.
-
-## System Requirements
-
-Isocenter's parallel processing engine is designed to maximize CPU utilization. However, heavy operations like JPEG 2000 compression require significant memory per worker.
-
-- **Memory**: Isocenter is memory-intensive during specific operations (e.g., Pixel Redaction, J2K Export).
-  - **Minimum**: 2GB RAM per vCPU.
-  - **Recommended (Heavy Workloads)**: 8GB RAM per vCPU (e.g., for massive multi-frame J2K compression).
-- **Concurrency**: By default, Isocenter uses all available cores (`1:1` ratio). Use `ISOCENTER_MAX_WORKERS` env var to limit this if OOM occurs.
-
 ## Quick Start
 
 ### 1. Initialize a Session
 
-Isocenter uses a **persistent session** to manage your workflow. Unlike scripts that run once and forget, a Session creates a local SQLite database (`isocenter.db`) to index your data. This allows you to pause, resume, and audit your work without re-scanning thousands of files.
+A `Session` creates a local SQLite database to index your data, so you can pause, resume, and audit a job without rescanning thousands of files.
 
 ```python
 from isocenter import Session
@@ -147,7 +111,7 @@ session = Session("my_project.db")
 
 ### 2. Ingest & Examine
 
-Ingestion builds a lightweight **metadata index** of your DICOM files. Isocenter scans your folders recursively, extracting patient/study/series information into the database *without moving or modifying your original files*. It is resilient to nested directories and non-DICOM clutter.
+Ingestion builds the metadata index. Isocenter scans your folders recursively, extracting patient, study, and series information into the database *without moving or modifying your original files*. Nested directories and non-DICOM clutter are fine.
 
 ```python
 session.ingest("/path/to/dicom/data")
@@ -161,13 +125,13 @@ session.examine()
 
 Before changing anything, define your privacy rules.
 
-1. Use `create_config` to generate a scaffolding based on your inventory
+1. Use `create_config` to generate a scaffold based on your inventory.
 
-2. Edit that config file for the required protocol [Configuration](#configuration)
+2. Edit that file for your protocol; see [Configuration](#configuration).
 
-3. Use `audit` to scan your inventory against the rules you created in the config file
+3. Use `audit` to scan the inventory against the rules.
 
-This "Measure Twice, Cut Once" approach lets you identify all PHI risks before applying any irreversible changes.
+Measure first, then cut: the audit tells you what the run will change before anything is changed.
 
 ```python
 # Create a default configuration file (v2.0 YAML)
@@ -185,7 +149,7 @@ print(f"Found {len(report)} potential PHI issues.")
 
 ### 4. Backup Identity (Optional)
 
-To enable reversible anonymization, generate a cryptographic key and "lock" the original patient identities into a secure, encrypted DICOM tag. This must be done *before* anonymization. Our CryptoEngine handles encryption and decryption of bytes using Fernet symmetric key (AES-128-CBC w/ HMAC-SHA256)
+To enable reversible anonymization, generate a key and lock the original patient identities into an encrypted private tag. This must be done *before* anonymization. Encryption is Fernet (AES-128-CBC with HMAC-SHA256) from the `cryptography` package.
 
 ```python
 # Enable encryption (generates 'isocenter.key')
@@ -199,11 +163,11 @@ session.save()
 
 ### 5. Anonymize, Redact & Export
 
-Remediation is a multi-stage process performed in-memory:
+Remediation happens in memory, then export writes the result:
 
-1. **Anonymize**: Strips or replaces metadata tags (PatientID, Names, Dates) based on your config.
-2. **Redact**: Loads pixel data and scrubs burned-in PHI from defined regions.
-3. **Export**: The final "Gatekeeper". Writes clean files to a new directory. Setting `check_burned_in=True` ensures the export halts if any verification checks fail (e.g., corrupt images or missing codecs).
+1. **Anonymize**: strips, replaces, or shifts metadata tags according to your config.
+2. **Redact**: loads pixel data and scrubs the configured zones on matched machines.
+3. **Export**: writes clean files to a new directory. With `check_burned_in=True` the export scans first and skips every instance that still carries an identifier, and the skip is recorded so the report can grade it.
 
 ```python
 # Apply metadata remediation (anonymization) using the findings
@@ -217,7 +181,7 @@ session.redact()
 session.export("/path/to/export_clean", check_burned_in=True, use_compression=True)
 ```
 
-Progress for the save, memory release, and export phases will be displayed:
+`export()` returns a summary of what was written and raises `ExportError` if it planned files and delivered none. Progress for the save, memory release, and export phases is displayed:
 
 ```text
 Preparing for export (Auto-Save & Memory Release)...
@@ -229,9 +193,9 @@ Exporting session to: /path/to/export_clean
 Exporting:  15%|██▌       | 15/100 [00:05<00:30,  2.80patient/s]
 ```
 
-### 5a. Analytics & Export
+### 5a. Analytics & Subset Export
 
-Isocenter supports **Exploratory Data Analysis (EDA)**. You can interrogate your cohort using Pandas and perform targeted exports based on metadata criteria.
+You can interrogate the cohort with pandas and export a subset chosen by metadata.
 
 ```python
 # 0. Ensure that data is persisted to disk
@@ -247,7 +211,7 @@ target_df = df[ (df.Modality == 'CT') & (df.SliceThickness > 2.5) ]
 session.export("export_thick_cts", subset=target_df)
 ```
 
-You can also export the full inventory to Parquet for external tools
+You can also export the full inventory to Parquet for external tools:
 
 ```python
 session.export_dataframe("cohort.parquet", expand_metadata=True)
@@ -316,9 +280,18 @@ past the largest origin clamps into the last bin. Read it as "where did the hits
 relative to each other", and take the actual coordinates from `to_zones()` or from
 each candidate's `box`.
 
-### 6. Recover Identity (Optional)
+### 6. Report
 
-If you have a valid key (`isocenter.key`) and need to retrieve the original identity of an anonymized patient:
+The report comes last, after export, because export is where the final data-loss rows are written. A report generated before any export says so in its own text.
+
+```python
+# Generate the compliance report after processing
+session.generate_report("compliance_report.md")
+```
+
+### 7. Recover Identity (Optional)
+
+If you have the key (`isocenter.key`) and need the original identity of an anonymized patient:
 
 ```python
 # Load the session containing anonymized data
@@ -336,11 +309,9 @@ print(f"Restored: {session.store.patients[0].patient_name}")
 
 ## Configuration
 
-Isocenter uses a **Unified YAML Configuration** to control all aspects of de-identification.
+One YAML file controls de-identification. See the **[Configuration Guide](https://kvnlng.github.io/Isocenter/configuration/)** for the full reference.
 
 ### Example `config.yaml`
-
-See the **[Complete Configuration Guide](https://kvnlng.github.io/Isocenter/configuration/)** for a full reference.
 
 ```yaml
 # 1. Privacy Profile (Optional)
@@ -364,84 +335,64 @@ machines:
       - [0, 50, 0, 800] # ROI: [row_start, row_end, col_start, col_end]
 ```
 
-## Advanced Features
+## The compliance report
 
-### Pixel Redaction
+`generate_report()` writes a Markdown document from the session's audit log:
 
-Isocenter can scrub burned-in PHI from pixels based on matching the equipment's `DeviceSerialNumber`. Define `redaction_zones` in your config to automatically verify and scrub these regions during export/anonymization.
+- **Cohort manifest**: the patients, studies, and series processed.
+- **Audit trail**: counts of every action taken (anonymize, redact, export) and every loss recorded.
+- **Exceptions**: every warning and error the run raised, listed rather than summarised.
+- **Grade**: `PASS` or `REVIEW_REQUIRED`. There is no `FAIL`; a run that lost something is a run a person must look at, and the report says what to look at.
+- **A signature block** for the reviewer who accepts it. The report is evidence for whatever review your institution runs; it is not itself a certification.
 
-### Reversible Anonymization
+Two screens run during processing and feed the report: instances whose `BurnedInAnnotation (0028,0301)` is `YES` are flagged for manual review, and every exception in a batch is captured rather than dropped.
 
-To maintain a secure link back to the original identity:
+## Migrating from CTP
 
-```python
-# Enable encryption (generates 'isocenter.key')
-session.enable_reversible_anonymization()
-
-# Lock identities BEFORE anonymization to store encrypted original data
-# You can specify exactly which tags to preserve
-session.lock_identities("PATIENT_123", tags_to_lock=["0010,0010", "0010,0030"])
-```
-
-Users can later recover the identity if they possess the correct key:
-
-```python
-session.recover_patient_identity("ANON_123")
-```
-
-### Strict Codec & Export Safety
-
-Isocenter performs strict validation during export. If a compressed image cannot be decompressed (e.g., due to missing codecs or corruption), the export **will fail** rather than passing through unverified data. This ensures 100% PHI safety.
-
-Supported Transfer Syntaxes:
-
-- JPEG Lossless (Process 14, SV1)
-- JPEG 2000 (Lossless & Lossy)
-- JPEG-LS
-- RLE Lossless
-- Standard JPEG Baseline/Extended
-
-## Compliance & Certification
-
-### 1. Automated Compliance Reports
-
-Generate single-step, audit-ready Markdown reports for HIPAA/GDPR documentation. Reports include:
-
-- **Cohort Manifest**: Summary of all processed patients/studies.
-- **Audit Trail**: Aggregated counts of every action (Anonymize, Redact, Export).
-- **Exceptions**: Explicit listing of any warnings or errors encountered.
-- **Validation Status**: Automatic `PASS`/`REVIEW_REQUIRED` grading.
-
-```python
-# Generate a formal report after processing
-session.generate_report("compliance_report.md")
-```
-
-### 2. Safety Checks
-
-Isocenter can screen for high-risk attributes:
-
-- **Burned-In Annotation Check**: Flags images where `BurnedInAnnotation (0028,0301)` is "YES", enforcing manual review.
-- **Exception Tracking**: Captures all system errors during batch processing for the final report.
-
-## Migration Tools
-
-### Clinical Trial Processor (CTP)
-
-Isocenter includes a utility to convert legacy CTP `DicomPixelAnonymizer.script` files into Isocenter's YAML configuration format.
+Isocenter reads Clinical Trial Processor `DicomPixelAnonymizer.script` files and converts them to its YAML rules:
 
 ```bash
 # Convert CTP script to Isocenter YAML
 python -m isocenter.utils.ctp_parser /path/to/anonymizer.script output_rules.yaml
 ```
 
-This parser extracts:
+The parser carries over manufacturer and model matching and the redaction zones, converting CTP's `x,y,w,h` to Isocenter's `[row_start, row_end, col_start, col_end]`.
 
-- Manufacturer/Model matching criteria.
-- Redaction zones (automatically converting `x,y,w,h` to `r1,r2,c1,c2`).
+## Waveforms
+
+DICOM waveform IODs ingest like any other instance, and export as PhysioNet WFDB records:
+
+```python
+session.export("/path/to/wfdb_out", format="wfdb")
+```
+
+Each record is written with a `<record>.annotations.json` file that Murmur Studio reads. Multi-group waveform records are not yet supported end to end; ingest keeps the first group, warns, and writes a `DATA_LOSS` audit row so the report grades the run `REVIEW_REQUIRED` rather than passing it. The [waveform guide](https://kvnlng.github.io/Isocenter/waveforms/) has the details and the current limits.
+
+## Citing Isocenter
+
+If Isocenter's de-identification is part of how a dataset was prepared,
+it belongs in the methods section rather than the acknowledgements. Use
+GitHub's **Cite this repository** button, which reads `CITATION.cff`.
+
+Each release is archived on Zenodo. Cite the concept DOI,
+[10.5281/zenodo.22104298](https://doi.org/10.5281/zenodo.22104298), which
+always resolves to the latest version -- not the per-version DOI, so the
+citation follows the work rather than freezing on whichever version was
+current when you wrote it. If you need to record the exact version used,
+name it in the text (`Isocenter v0.9.2`) and leave the DOI pointing at
+the concept record.
+
+Isocenter is the upstream half of a pair: it builds and de-identifies the
+corpus that [Murmur Studio](https://github.com/kvnlng/Murmur)
+([10.5281/zenodo.21077528](https://doi.org/10.5281/zenodo.21077528))
+reviews. Work that used both should cite both.
 
 ## License
 
 Apache License 2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
 Releases up to and including 0.9.2 were published under the GNU Affero General Public License v3.0 or later and remain available under it; the change is not retroactive. If you cite Isocenter, `CITATION.cff` carries the DOI and the license together.
+
+## Contact
+
+Questions, bug reports, and requests go to [GitHub Issues](https://github.com/kvnlng/Isocenter/issues). For anything that should not be public, write to <support@isocenter.net>.
