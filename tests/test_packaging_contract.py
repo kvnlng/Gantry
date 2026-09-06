@@ -252,25 +252,42 @@ def _setup_keyword(name):
 def test_distribution_metadata_matches_the_shipped_licence():
     """PyPI needs the licence declared, and it must match the LICENSE file.
 
-    Isocenter moved from MIT to AGPLv3, and a distribution that ships an
-    AGPL LICENSE while declaring nothing (or MIT) misstates the terms
-    under which it is published -- the one piece of packaging metadata
-    with legal weight rather than merely operational.
+    Isocenter moved from MIT to AGPLv3, and then to Apache-2.0 (#348: a
+    library is adopted by being imported, and the pydicom ecosystem it
+    sits in is permissive). A distribution that ships one LICENSE while
+    declaring another misstates the terms under which it is published --
+    the one piece of packaging metadata with legal weight rather than
+    merely operational. Three places name the licence and this test holds
+    them together: the LICENSE text, the `license` field, and the
+    classifier PyPI categorises by.
     """
     licence_text = (REPO / "LICENSE").read_text()
-    assert "AFFERO GENERAL PUBLIC LICENSE" in licence_text, (
-        "LICENSE is no longer AGPL; this test pins the two together and "
-        "needs updating alongside the licence change")
+    assert "Apache License" in licence_text and "Version 2.0" in licence_text, (
+        "LICENSE is no longer Apache-2.0; this test pins the three "
+        "declarations together and needs updating alongside the licence "
+        "change")
+    assert "AFFERO" not in licence_text.upper(), (
+        "LICENSE still carries AGPL text; a file naming two licences "
+        "publishes neither")
 
     declared = _setup_keyword("license")
     assert declared, "setup.py declares no license; PyPI would show 'UNKNOWN'"
-    assert "AGPL" in declared.upper() or "AFFERO" in declared.upper(), (
-        f"setup.py declares license={declared!r} but LICENSE is AGPLv3")
+    assert declared == "Apache-2.0", (
+        f"setup.py declares license={declared!r} but LICENSE is Apache-2.0; "
+        "the field is an SPDX expression and this is its spelling")
 
     classifiers = _setup_keyword("classifiers") or []
-    assert any("Affero" in item for item in classifiers), (
-        "no AGPL licence classifier; PyPI categorises by classifier, not by "
-        "the license field")
+    assert "License :: OSI Approved :: Apache Software License" in classifiers, (
+        "no Apache licence classifier; PyPI categorises by classifier, not "
+        "by the license field")
+    assert not any("Affero" in item for item in classifiers), (
+        "the AGPL classifier is still present; two licence classifiers "
+        "advertise a dual licence that does not exist")
+
+    citation = (REPO / "CITATION.cff").read_text()
+    assert "license: Apache-2.0" in citation, (
+        "CITATION.cff names a different licence from LICENSE; this file "
+        "is what tooling copies into bibliographies")
 
 
 def test_classifiers_do_not_advertise_unsupported_python_versions():

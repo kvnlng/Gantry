@@ -116,10 +116,11 @@ def test_the_zenodo_license_is_an_id_zenodo_recognises():
     """`.zenodo.json` mints the DOI record's metadata; a bad id is silent.
 
     Zenodo resolves licences against its own vocabulary, not SPDX, and
-    those ids are lowercase: `agpl-3.0-or-later` returns 200 from
-    `/api/vocabularies/licenses/`, `AGPL-3.0-or-later` returns 404. The
-    file carried the SPDX spelling, which reads correctly to everyone
-    except the service that has to match it.
+    those ids are lowercase: `apache-2.0` returns 200 from
+    `/api/vocabularies/licenses/`, `Apache-2.0` returns 404 (checked
+    2026-09-06, when the licence changed from `agpl-3.0-or-later` for
+    #348). The file once carried the SPDX spelling, which reads correctly
+    to everyone except the service that has to match it.
 
     Checked as a literal rather than over the network: a test that calls
     Zenodo fails when Zenodo is down, which says nothing about this repo.
@@ -129,7 +130,7 @@ def test_the_zenodo_license_is_an_id_zenodo_recognises():
 
     deposit = json.loads((ROOT / ".zenodo.json").read_text(encoding="utf-8"))
 
-    assert deposit["license"] == "agpl-3.0-or-later", (
+    assert deposit["license"] == "apache-2.0", (
         "the licence id in .zenodo.json is not the one Zenodo's vocabulary "
         "uses; the deposit would not carry the licence it names")
 

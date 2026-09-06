@@ -439,3 +439,9 @@ This parser extracts:
 
 - Manufacturer/Model matching criteria.
 - Redaction zones (automatically converting `x,y,w,h` to `r1,r2,c1,c2`).
+
+## License
+
+Apache License 2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+
+Releases up to and including 0.9.2 were published under the GNU Affero General Public License v3.0 or later and remain available under it; the change is not retroactive. If you cite Isocenter, `CITATION.cff` carries the DOI and the license together.

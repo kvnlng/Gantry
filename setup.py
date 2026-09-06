@@ -35,12 +35,12 @@ setup(
         "Issues": "https://github.com/kvnlng/Isocenter/issues",
         "Changelog": "https://github.com/kvnlng/Isocenter/blob/main/CHANGELOG.md",
     },
-    license="AGPL-3.0-or-later",
+    license="Apache-2.0",
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Healthcare Industry",
         "Intended Audience :: Science/Research",
-        "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+        "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
         # Only versions CI actually runs. Advertising more is the same
         # unbacked promise the old python_requires=">=3.9" was.
