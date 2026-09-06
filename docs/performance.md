@@ -1,75 +1,63 @@
 # Performance
 
-Isocenter is designed for massive scale. Recent stress tests verify robust linear scaling on datasets up to 100GB.
+This page carries the one benchmark that has a recorded run behind it, the machine it ran on, and the architecture that produced the numbers. Larger runs are planned; they will be added here with their own machine and date when they exist, and nothing on this page describes a run that has not happened.
 
-![Benchmark Scaling](images/benchmark_scaling.png)
+## The recorded run
 
-## 100GB Scalability Test
+**January 2026, Google Cloud `n2-highmem-16`, Ubuntu 22.04, 1 TB `pd-ssd` boot disk.** The stress harness (`python -m tests.benchmarks.run_stress_test`) generated multi-frame instances with frame counts from 1 to 100, in three phases of one order of magnitude each, and ran the full pipeline on each phase: ingest, examine, audit, backup, anonymize, redact, export with JPEG 2000 compression.
 
-- **Input**: 101,000 files (50GB Single-Frame + 50GB Multi-Frame).
-- **Import Speed**: Uses **Sidecar Generation** to extract pixel data upfront, ensuring constant-time access during analysis.
-- **Export Speed**: High-speed streaming write using cached sidecar data.
-- **Memory**: Peaks at stable levels regardless of dataset size due to aggressive offloading.
+### Peak memory
 
-The architecture uses O(1) memory streaming, ensuring it never runs out of RAM even when processing terabytes of data.
+| Phase | Files | Raw data | Peak RSS | Change |
+| :--- | :--- | :--- | :--- | :--- |
+| 0 | 1 | ~0.5 GB | ~0.5 GB | |
+| 1 | 10 | ~5 GB | ~3.8 GB | ~7.6x for 10x data |
+| 2 | 100 | ~50 GB | ~11.3 GB | ~3x for 10x data |
 
-## Memory Management Architecture
+From phase 1 to phase 2 the data grew tenfold and peak memory grew about threefold. That is the measurement. It is consistent with the design below, in which resident memory is bounded by the working set of the workers rather than by the size of the cohort, and it is the only scaling claim this page makes.
 
-Isocenter employs a "Deep Memory Management" strategy to handle large-scale datasets on consumer hardware.
+### Timing
 
-### 1. Process Isolation (Redaction)
+Seconds per step.
 
-Pixel redaction is the most memory-intensive operation (loading 500MB+ arrays). Isocenter uses **Process Isolation** (`ProcessPoolExecutor`) to execute these tasks.
+| Phase | Instances | Ingest | Examine | Audit | Backup | Anonymize | Redact | Export | Total |
+|:---|:---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 1 | 2.20 | 0.0001 | 0.0014 | 0.0061 | 0.0066 | 1.85 | 2.97 | 7.04 |
+| 1 | 10 | 22.45 | 0.0001 | 0.0024 | 0.0060 | 0.0064 | 9.33 | 9.94 | 41.74 |
+| 2 | 100 | 177.36 | 0.0002 | 0.0042 | 0.0124 | 0.0244 | 74.21 | 58.13 | 309.74 |
 
-- Each worker process loads the pixel data, applies redactions, and then **exits**.
-- This guarantees that the operating system reclaims all memory resources immediately after each task, preventing fragmentation or reference leaks in the main process.
+Ingest, redact, and export are the steps that touch pixels, and they scale with the data. Examine, audit, anonymize, and backup work on the metadata index and stay small.
 
-### 2. Streaming Ingest
+### What the run does not tell you
 
-The ingestion pipeline uses a streaming generator pattern with a `chunksize=1`.
+- It used generated multi-frame files, not a clinical archive. Real cohorts have more instances per gigabyte and more metadata per instance.
+- It is one machine, one run. Repeat it before using the numbers for sizing, and record the machine.
+- It is not the 412 GB three-phase design described in the benchmark runbook. That design has not been run to completion, and its numbers do not exist.
 
-- Files are processed one by one.
-- Results are yielded immediately to the database.
-- The IPC queue never buffers more than a single item, keeping memory footprint constant (O(1)) regardless of input size.
+## The architecture behind the numbers
 
-### 3. Zero-Copy Persistence
+### Pixel data lives in a sidecar, not in memory
 
-To prevent memory spikes during export:
+At ingest, pixel and waveform bytes are appended to a binary sidecar beside the SQLite index and referenced by offset and length. An `Instance` holds a loader, not an array. `get_pixel_data()` reads from the sidecar on demand and `unload_pixel_data()` releases the array, so a cohort's pixels are never resident as a whole. `unload_pixel_data()` refuses to drop an array that was replaced in memory and not yet written, because the loader would bring back the old frame; `discard_pixel_data()` is the explicit form of that decision.
 
-- Pixel data is passed directly from NumPy arrays to the storage backend.
-- We utilize buffer interfaces and on-the-fly `zlib` compression to avoid creating intermediate Python byte strings (which would double memory usage).
+### Redaction runs in worker processes
 
-## Scalability Benchmarks
+Pixel redaction loads full arrays and is the most memory-intensive step. It runs through a process pool: each worker loads the instance's pixels, applies the zones, writes the result, and returns. On a free-threaded interpreter the same dispatcher uses threads instead, because there is no GIL to escape. The worker count, chunk size, and strategy are set by the environment variables in [Environment Variables](environment.md). Export is the exception: it always runs in processes and recycles each worker after 25 tasks, on every interpreter, because the imaging C libraries leak and a thread has no process to recycle. That bounds any growth inside an export worker to 25 tasks, and it is why `ISOCENTER_FORCE_THREADS` does not reach `export()`.
 
-Recent stress tests (January 2026) verified robust sub-linear scaling capabilities.
+### Ingest streams results into the index
 
-| Phase | Files | Raw Data | Max RSS (Memory) | Status | Scaling Factor |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Phase 0** | 1 | ~500 MB | ~0.5 GB | Success | 1x |
-| **Phase 1** | 10 | ~5 GB | ~3.8 GB | Success | ~7.6x |
-| **Phase 2** | 100 | ~50 GB | ~11.3 GB | **Success** | **<3x** |
+Files are scanned by workers and their results are written to the index as they arrive rather than collected and written at the end, so ingest memory does not grow with the number of files scanned. The `ISOCENTER_CHUNKSIZE` variable trades per-task overhead against how many results are in flight at once.
 
-**Key Finding:** Increasing the dataset size by **10x** (10 to 100 files) only resulted in a **3x** increase in peak memory usage. This demonstrates that Isocenter effectively decouples memory consumption from dataset size.
+### The index is queried, not loaded
 
-Timing results:
+Standard tags live in a JSON column and are read with SQLite's JSON operators; private tags live in a sparse table. Reopening a session loads metadata for the cohort from the index in one pass rather than one file at a time, and pixels stay in the sidecar until asked for.
 
-| Phase                           | Total Instances | Ingest Duration | Examine Duration | Audit Duration | Backup Duration | Anonymize Duration | Redact Duration | Export Duration | Total Time |
-|:--------------------------------|:---------------:|----------------:|-----------------:|---------------:|----------------:|-------------------:|----------------:|----------------:|-----------:|
-| Phase 0 (1 Multi-Frame Files)   | 1               | 2.20            | 0.0001           | 0.0014         | 0.0061          | 0.0066             | 1.85            | 2.97            | 7.04       |
-| Phase 1 (10 Multi-Frame Files)  | 10              | 22.45           | 0.0001           | 0.0024         | 0.0060          | 0.0064             | 9.33            | 9.94            | 41.74      |
-| Phase 2 (100 Multi-Frame Files) | 100             | 177.36          | 0.0002           | 0.0042         | 0.0124          | 0.0244             | 74.21           | 58.13           | 309.74     |
+## Sizing guidance
 
+- **Memory**: 2 GB RAM per vCPU as a floor. 8 GB per vCPU for heavy multi-frame JPEG 2000 export, which holds a decoded and an encoded copy of a frame at once.
+- **Concurrency**: all cores by default. Set `ISOCENTER_MAX_WORKERS` to limit it if a worker is killed for memory.
+- **Disk**: the sidecar holds the cohort's pixels, so budget roughly the raw data size for it plus the export.
 
-Test machine:
-* machine-type: n2-highmem-16
-* image-family: ubuntu-2204-lts
-* image-project: ubuntu-os-cloud
-* boot-disk-size: 1TB
-* boot-disk-type: pd-ssd
+## Running it yourself
 
-## Micro-Benchmarks (Metadata Operations)
-
-| Operation | Scale | Time (Mac M3 Max) | Throughput |
-|-----------|-------|-------------------|------------|
-| **Identity Locking** | 100,000 Instances | ~0.13 s | **769k / sec** |
-| **Persist Findings** | 100,000 Issues | ~0.13 s | **770k / sec** |
+`python -m tests.benchmarks.run_stress_test` runs the harness locally against a directory you name. The runbook in the repository's `.agent/workflows/gcp_benchmark.md` describes provisioning a cloud VM for a larger run. If you run one, open an issue with the machine, the date, and the table; this page is where it belongs.

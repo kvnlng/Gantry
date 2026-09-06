@@ -39,7 +39,7 @@ theme:
 extra:
   social:
     - icon: fontawesome/solid/paper-plane
-      link: mailto:[EMAIL_ADDRESS]
+      link: mailto:support@isocenter.net
 
 copyright: Copyright &copy; 2026 Kevin Long
 
@@ -97,6 +97,7 @@ nav:
       - 'Persistence': api/persistence.md
       - 'Intelligent OCR': api/ocr.md
   - Project Info:
+      - 'For institutions': for-institutions.md
       # Points at the real file rather than a copy inside docs/. The
       # copy drifted 97 lines behind and stopped at 0.6.0 (#52); a
       # changelog with two homes only ever has one that is current.
