@@ -302,7 +302,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="https://github.com/kvnlng/Isocenter/blob/main/CHANGELOG.md" class="md-tabs__link">
+        <a href="for-institutions/" class="md-tabs__link">
           
   
   
@@ -432,10 +432,65 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
+  <a href="#the-situation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Features
+        The situation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-it-refuses-to-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it refuses to do
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-it-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it does
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#start-here" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start here
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#measured-not-promised" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured, not promised
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#license-and-citation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        License and citation
       
     </span>
   </a>
@@ -1114,6 +1169,34 @@
   
   
     <li class="md-nav__item">
+      <a href="for-institutions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For institutions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="https://github.com/kvnlng/Isocenter/blob/main/CHANGELOG.md" class="md-nav__link">
         
   
@@ -1197,10 +1280,65 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
+  <a href="#the-situation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Features
+        The situation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-it-refuses-to-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it refuses to do
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-it-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it does
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#start-here" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start here
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#measured-not-promised" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured, not promised
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#license-and-citation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        License and citation
       
     </span>
   </a>
@@ -1236,22 +1374,39 @@
 
 
 <h1 id="isocenter">Isocenter</h1>
-<p><strong>A Python DICOM Object Model and Redaction Toolkit.</strong></p>
+<p><strong>De-identify a DICOM cohort without touching the source files, and hand compliance a report that names anything the run could not do.</strong></p>
 <p><img alt="Isocenter" src="images/IMG_0653.jpeg" /></p>
-<p>Isocenter provides a high-performance, object-oriented interface for managing, analyzing, and de-identifying DICOM datasets. It is designed for large-scale ingestion, precise pixel redaction, and strict PHI compliance.</p>
-<h2 id="features">Features</h2>
+<h2 id="the-situation">The situation</h2>
+<p>You have a cohort of studies and a protocol an IRB approved. You need to hand a de-identified copy to a collaborator, a registry, or a model. You also need to hand your compliance reviewer a record: what was removed, what stayed because the protocol allowed it, and anything the run lost on the way.</p>
+<p>Isocenter is the Python library your script imports to do that. It builds a SQLite metadata index and a pixel/waveform sidecar beside a read-only source tree, applies your de-identification profile and pixel redaction rules to an in-memory object graph, grades its own output, and writes clean copies to a new directory as DICOM or PhysioNet WFDB.</p>
+<p>There is no command-line tool. The Python API is the whole interface, because a library that lives in your script can be paused, resumed, inspected, and audited in ways a batch command cannot.</p>
+<h2 id="what-it-refuses-to-do">What it refuses to do</h2>
 <ul>
-<li><strong>Object-Oriented API</strong>: Work with <code>Patient</code>, <code>Study</code>, <code>Series</code>, and <code>Instance</code> objects directly.</li>
-<li><strong>Persistent Sessions</strong>: All metadata is indexed in a SQLite database, allowing you to pause/resume large jobs and providing an audit trail.</li>
-<li><strong>Parallel Processing</strong>: Multi-process ingestion and export for maximum throughput.</li>
-<li><strong>Robust Redaction</strong>:</li>
-<li><strong>Metadata</strong>: Configurable tag removal, replacement, and shifting.</li>
-<li><strong>Pixel Data</strong>: Machine-specific redaction zones (ROI) to scrub burned-in PHI.</li>
-<li><strong>Reversibility</strong>: Optional cryptographic identity preservation.</li>
-<li><strong>Codecs</strong>: Robust support for JPEG Lossless, JPEG 2000, and other compressed formats via <code>imagecodecs</code>.</li>
-<li><strong>Free-threaded Python Ready</strong>: Fully compatible with Python 3.13t+ (no-GIL) for true parallelism.</li>
-<li><strong>Deep Memory Management</strong>: Automatic pixel offloading allows processing datasets far exceeding available RAM.</li>
+<li><strong>Modify a source file.</strong> Ingest reads. Anonymize and redact change an in-memory graph. Nothing reaches disk until <code>export()</code> writes copies to a directory you name, so a crashed or abandoned run leaves the originals as they were.</li>
+<li><strong>Grade a lossy export <code>PASS</code>.</strong> Every step that can lose data writes an audit row, and the report reads those rows. A cohort that lost a file, a private tag, a waveform group, or a pixel frame grades <code>REVIEW_REQUIRED</code> and names the loss. An export that wrote nothing raises rather than returning quietly.</li>
+<li><strong>Pass through pixels it could not decode.</strong> A frame that cannot be decompressed fails its instance's export rather than being copied uninspected.</li>
+<li><strong>Advertise a Python version it does not test.</strong> The suite runs on Python 3.12 and on the free-threaded 3.14t build on every pull request, and on all four supported versions at release. The PyPI classifiers list only those.</li>
 </ul>
+<h2 id="what-it-does">What it does</h2>
+<ul>
+<li><strong>An object model over pydicom.</strong> <code>Patient</code>, <code>Study</code>, <code>Series</code>, and <code>Instance</code>, with attributes keyed by tag. Pixel and waveform data load lazily from the sidecar and can be released. See <a href="architecture/">Architecture</a>.</li>
+<li><strong>A persistent session.</strong> Reopen a 10,000-instance cohort without rescanning, pause and resume a job, and read the audit log of every action. See the <a href="quickstart/">Quick Start</a>.</li>
+<li><strong>Protocol-conformant de-identification.</strong> A profile decides which tags go, are replaced, or are date-shifted. A field the protocol permits stays. PHI detection walks nested sequences structurally. See <a href="configuration/">Configuration</a>.</li>
+<li><strong>Machine-specific pixel redaction.</strong> Zones are keyed by device. An optional OCR pass finds where burned-in text actually lands, and CTP <code>DicomPixelAnonymizer.script</code> rules import directly. See <a href="ocr/">Intelligent OCR</a> and <a href="migration/">Migration Tools</a>.</li>
+<li><strong>Reversible anonymization, if you choose it.</strong> Original identities encrypted under a Fernet key, stored in a private tag, recoverable by whoever holds the key. The export discloses when recoverable identities are present.</li>
+<li><strong>Waveforms.</strong> DICOM waveform IODs in, PhysioNet WFDB records out, with an annotation bridge to Murmur Studio. See <a href="waveforms/">Waveforms &amp; WFDB</a>.</li>
+<li><strong>A compliance report.</strong> Manifest, audit trail, every exception listed, a <code>PASS</code> or <code>REVIEW_REQUIRED</code> grade, and a signature block for the reviewer who accepts it. See <a href="analytics/">Analytics &amp; Reporting</a>.</li>
+</ul>
+<h2 id="start-here">Start here</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>isocenter
+</code></pre></div>
+<p>Then the <a href="quickstart/">Quick Start</a> walks the pipeline end to end: ingest, examine, configure, audit, anonymize, redact, export, report. The <a href="configuration/">Configuration</a> guide is where your protocol becomes a profile.</p>
+<p>If you are evaluating Isocenter for an institution rather than running it, <a href="for-institutions/">For institutions</a> is the page to read: the license, the citation, and what the report gives a reviewer.</p>
+<h2 id="measured-not-promised">Measured, not promised</h2>
+<p>One benchmark has a recorded run behind it: 100 multi-frame files, about 50 GB raw, ingest through export, January 2026. The numbers and the machine are on the <a href="performance/">Performance</a> page, and larger runs will appear there when they exist.</p>
+<h2 id="license-and-citation">License and citation</h2>
+<p>Apache License 2.0 from the release after 0.9.2; earlier releases remain under AGPL-3.0-or-later. Each release is archived on Zenodo under the concept DOI <a href="https://doi.org/10.5281/zenodo.22104298">10.5281/zenodo.22104298</a>, and the repository carries a <code>CITATION.cff</code>. If Isocenter's de-identification is part of how a dataset was prepared, it belongs in the methods section.</p>
+<p>Questions and bug reports go to <a href="https://github.com/kvnlng/Isocenter/issues">GitHub Issues</a>. For anything that should not be public, write to <a href="&#109;&#97;&#105;&#108;&#116;&#111;&#58;&#115;&#117;&#112;&#112;&#111;&#114;&#116;&#64;&#105;&#115;&#111;&#99;&#101;&#110;&#116;&#101;&#114;&#46;&#110;&#101;&#116;">&#115;&#117;&#112;&#112;&#111;&#114;&#116;&#64;&#105;&#115;&#111;&#99;&#101;&#110;&#116;&#101;&#114;&#46;&#110;&#101;&#116;</a>.</p>
 
 
 
@@ -1331,7 +1486,7 @@
     
     
     
-    <a href="mailto:[EMAIL_ADDRESS]" target="_blank" rel="noopener" title="" class="md-social__link">
+    <a href="mailto:support@isocenter.net" target="_blank" rel="noopener" title="" class="md-social__link">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M536.4-26.3c9.8-3.5 20.6-1 28 6.3s9.8 18.2 6.3 28l-178 496.9c-5 13.9-18.1 23.1-32.8 23.1-14.2 0-27-8.6-32.3-21.7l-64.2-158c-4.5-11-2.5-23.6 5.2-32.6l94.5-112.4c5.1-6.1 4.7-15-.9-20.6s-14.6-6-20.6-.9l-112.4 94.3c-9.1 7.6-21.6 9.6-32.6 5.2L38.1 216.8c-13.1-5.3-21.7-18.1-21.7-32.3 0-14.7 9.2-27.8 23.1-32.8z"/></svg>
     </a>
   

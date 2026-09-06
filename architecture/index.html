@@ -304,7 +304,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="https://github.com/kvnlng/Isocenter/blob/main/CHANGELOG.md" class="md-tabs__link">
+        <a href="../for-institutions/" class="md-tabs__link">
           
   
   
@@ -1202,6 +1202,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../for-institutions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    For institutions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="https://github.com/kvnlng/Isocenter/blob/main/CHANGELOG.md" class="md-nav__link">
         
   
@@ -1469,18 +1497,18 @@
 <li><strong>Instance</strong>: A single DICOM slice. <strong>Pixel data is extracted upfront</strong>; the heavyweight pixel array is sequestered in a binary sidecar immediately upon ingestion and loaded into memory only when needed.</li>
 </ul>
 <h2 id="3-safety-pipeline-the-10-checkpoints">3. Safety Pipeline (The 10 Checkpoints)</h2>
-<p>Isocenter enforces a strict checkpoint system to ensure data safety:</p>
+<p>Ten steps, in the order the code expects them. Nothing touches disk until step 9, and the report comes last because export is where the final data-loss rows are written; a report generated before any export says so in its own text.</p>
 <ol>
 <li><strong>Ingest</strong>: Load raw data into the managed session index.</li>
 <li><strong>Examine</strong>: Inventory the cohort and equipment.</li>
 <li><strong>Configure</strong>: Define privacy tags and redaction rules.</li>
-<li><strong>Audit (Target)</strong>: Measure PHI risks against the configuration.</li>
-<li><strong>Backup</strong>: (Optional) Securely lock original identities for reversibility.</li>
+<li><strong>Audit</strong>: Measure PHI risks against the configuration.</li>
+<li><strong>Backup</strong>: (Optional) Lock original identities under a key for reversibility.</li>
 <li><strong>Anonymize</strong>: Apply remediation to metadata (in-memory).</li>
 <li><strong>Redact</strong>: Scrub pixel data for specific machines (in-memory).</li>
-<li><strong>Verify</strong>: Re-audit the session to ensure a clean state.</li>
-<li><strong>Report</strong>: Generate a signed Compliance Report (Manifest, Exceptions, Audit Trail).</li>
+<li><strong>Verify</strong>: Re-audit the session to confirm a clean state.</li>
 <li><strong>Export</strong>: Write clean DICOM files to disk.</li>
+<li><strong>Report</strong>: Generate the compliance report (manifest, audit trail, exceptions, grade, and a signature block for the reviewer) from the audit log, including what export recorded.</li>
 </ol>
 <h2 id="4-persistence-architecture-hybrid-storage">4. Persistence Architecture (Hybrid Storage)</h2>
 <p>Isocenter uses <code>sqlite3</code> for metadata management, employing a <strong>Hybrid Storage Model</strong> to balance query performance with schema flexibility.</p>
@@ -1750,7 +1778,7 @@ private tags with a binary VR</a>.</p>
     
     
     
-    <a href="mailto:[EMAIL_ADDRESS]" target="_blank" rel="noopener" title="" class="md-social__link">
+    <a href="mailto:support@isocenter.net" target="_blank" rel="noopener" title="" class="md-social__link">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M536.4-26.3c9.8-3.5 20.6-1 28 6.3s9.8 18.2 6.3 28l-178 496.9c-5 13.9-18.1 23.1-32.8 23.1-14.2 0-27-8.6-32.3-21.7l-64.2-158c-4.5-11-2.5-23.6 5.2-32.6l94.5-112.4c5.1-6.1 4.7-15-.9-20.6s-14.6-6-20.6-.9l-112.4 94.3c-9.1 7.6-21.6 9.6-32.6 5.2L38.1 216.8c-13.1-5.3-21.7-18.1-21.7-32.3 0-14.7 9.2-27.8 23.1-32.8z"/></svg>
     </a>
   
