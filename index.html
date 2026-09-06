@@ -1,4 +1,5 @@
 
+
 <!doctype html>
 <html lang="en" class="no-js">
   <head>
@@ -6,7 +7,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="A high-performance Python DICOM Object Model and Redaction Toolkit.">
+        <meta name="description" content="De-identify a DICOM cohort without touching the source files, and hand compliance a report that names anything the run could not do.">
       
       
       
@@ -25,7 +26,7 @@
     
     
       
-        <title>Isocenter</title>
+        <title>Isocenter - Isocenter</title>
       
     
     
@@ -46,12 +47,14 @@
         
         
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
-        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Sans+3:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Source Sans 3";--md-code-font:"JetBrains Mono"}</style>
       
     
     
       <link rel="stylesheet" href="assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="stylesheets/extra.css">
     
     <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -64,12 +67,10 @@
   
     
     
-      
     
     
     
-    
-    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="indigo">
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
   
     
     <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
@@ -78,7 +79,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#isocenter" class="md-skip">
+        <a href="#the-situation" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +115,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Home
+              Isocenter
             
           </span>
         </div>
@@ -122,33 +123,7 @@
     </div>
     
       
-        <form class="md-header__option" data-md-component="palette">
-  
     
-    
-    
-    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
-    
-      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
-      </label>
-    
-  
-    
-    
-    
-    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
-    
-      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
-      </label>
-    
-  
-</form>
-      
-    
-    
-      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
     
     
     
@@ -324,14 +299,71 @@
     <div class="md-container" data-md-component="container">
       
       
+  
         
       
+  <section class="ledger-hero">
+    <div class="ledger-hero__inner">
+      <div class="ledger-hero__copy">
+        <div class="ledger-eyebrow">A Python library</div>
+        <h1>De-identify a DICOM cohort without touching the source files.</h1>
+        <p class="ledger-hero__lede">And hand compliance a report that names anything the run could not do.</p>
+        <div class="ledger-hero__actions">
+          <div class="ledger-install"><span>$</span><code>pip install isocenter</code></div>
+          <a href="quickstart/">Read the quick start</a>
+        </div>
+        <p class="ledger-hero__note">Python 3.12 or later. Apache-2.0. No command-line tool: the Python API is the whole interface.</p>
+      </div>
+      <div class="ledger-report" aria-label="Example compliance report excerpt">
+        <div class="ledger-report__head"><strong>Compliance report</strong><code>compliance_report.md</code></div>
+        <div class="ledger-report__rows">
+          <div class="ledger-report__row"><span>Patients</span><code>14</code></div>
+          <div class="ledger-report__row"><span>Instances written</span><code>191 of 192 requested</code></div>
+          <div class="ledger-report__row"><span>Tags remediated</span><code>6,528</code></div>
+          <div class="ledger-report__row"><span>Pixel zones redacted</span><code>150</code></div>
+          <div class="ledger-report__row"><span>Data loss recorded</span><code>1 · waveform group 2 of 2</code></div>
+          <div class="ledger-report__row"><span>Grade</span><span class="ledger-report__grade">REVIEW_REQUIRED</span></div>
+        </div>
+        <div class="ledger-report__foot">One record lost a waveform group at ingest. The report says which, and the grade will not read PASS until a person has looked. Illustrative figures.</div>
+      </div>
+    </div>
+  </section>
+  <section class="ledger-pipeline">
+    <div class="ledger-pipeline__inner">
+      <div class="ledger-pipeline__head">
+        <h2>The pipeline</h2>
+        <span>Ten steps. Nothing touches disk until step 9; the report comes last.</span>
+      </div>
+      <svg viewBox="0 0 1120 150" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The ten pipeline steps: ingest, examine, configure, audit, backup, anonymize, redact, verify in memory; then export and report on disk.">
+        <line x1="20" y1="60" x2="1100" y2="60" stroke="#1f1d19" stroke-width="1.5"></line>
+        <rect x="8" y="14" width="880" height="92" fill="none" stroke="#b9cfcc" stroke-width="1" stroke-dasharray="4 4" rx="3"></rect>
+        <text x="20" y="128" font-family="Source Sans 3, Arial, sans-serif" font-size="13" fill="#2e6b66">In memory. The source tree is never written to.</text>
+        <rect x="904" y="14" width="208" height="92" fill="none" stroke="#1f1d19" stroke-width="1" rx="3"></rect>
+        <text x="916" y="128" font-family="Source Sans 3, Arial, sans-serif" font-size="13" fill="#1f1d19">On disk, in a new directory.</text>
+        <g font-family="Source Sans 3, Arial, sans-serif" font-size="14" fill="#1f1d19" text-anchor="middle">
+          <circle cx="60" cy="60" r="14" fill="#f6f3ec" stroke="#1f1d19" stroke-width="1.5"></circle><text x="60" y="65" font-size="12">1</text><text x="60" y="40">Ingest</text>
+          <circle cx="170" cy="60" r="14" fill="#f6f3ec" stroke="#1f1d19" stroke-width="1.5"></circle><text x="170" y="65" font-size="12">2</text><text x="170" y="40">Examine</text>
+          <circle cx="280" cy="60" r="14" fill="#f6f3ec" stroke="#1f1d19" stroke-width="1.5"></circle><text x="280" y="65" font-size="12">3</text><text x="280" y="40">Configure</text>
+          <circle cx="390" cy="60" r="14" fill="#f6f3ec" stroke="#1f1d19" stroke-width="1.5"></circle><text x="390" y="65" font-size="12">4</text><text x="390" y="40">Audit</text>
+          <circle cx="500" cy="60" r="14" fill="#f6f3ec" stroke="#1f1d19" stroke-width="1.5"></circle><text x="500" y="65" font-size="12">5</text><text x="500" y="40">Backup</text>
+          <circle cx="610" cy="60" r="14" fill="#2e6b66" stroke="#2e6b66" stroke-width="1.5"></circle><text x="610" y="65" font-size="12" fill="#f6f3ec">6</text><text x="610" y="40">Anonymize</text>
+          <circle cx="720" cy="60" r="14" fill="#2e6b66" stroke="#2e6b66" stroke-width="1.5"></circle><text x="720" y="65" font-size="12" fill="#f6f3ec">7</text><text x="720" y="40">Redact</text>
+          <circle cx="830" cy="60" r="14" fill="#f6f3ec" stroke="#1f1d19" stroke-width="1.5"></circle><text x="830" y="65" font-size="12">8</text><text x="830" y="40">Verify</text>
+          <circle cx="960" cy="60" r="14" fill="#1f1d19" stroke="#1f1d19" stroke-width="1.5"></circle><text x="960" y="65" font-size="12" fill="#f6f3ec">9</text><text x="960" y="40">Export</text>
+          <circle cx="1060" cy="60" r="14" fill="#1f1d19" stroke="#1f1d19" stroke-width="1.5"></circle><text x="1060" y="65" font-size="12" fill="#f6f3ec">10</text><text x="1060" y="40">Report</text>
+        </g>
+      </svg>
+    </div>
+  </section>
+
       <main class="md-main" data-md-component="main">
         <div class="md-main__inner md-grid">
           
             
               
-              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" hidden>
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -378,8 +410,6 @@
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
       
       
-        
-      
       
         <label class="md-nav__link md-nav__link--active" for="__toc">
           
@@ -421,8 +451,6 @@
 <nav class="md-nav md-nav--secondary" aria-label="Table of contents">
   
   
-  
-    
   
   
     <label class="md-nav__title" for="__toc">
@@ -1261,7 +1289,9 @@
             
             
               
-              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" hidden>
                 <div class="md-sidebar__scrollwrap">
                   <div class="md-sidebar__inner">
                     
@@ -1269,8 +1299,6 @@
 <nav class="md-nav md-nav--secondary" aria-label="Table of contents">
   
   
-  
-    
   
   
     <label class="md-nav__title" for="__toc">
@@ -1354,28 +1382,26 @@
             
           
           
-            <div class="md-content" data-md-component="content">
-              
-                
-
-
-
+  <div class="md-content ledger-home" data-md-component="content">
+    <article class="md-content__inner md-typeset">
+      
+        
   
 
-
-              
-              <article class="md-content__inner md-typeset">
-                
-                  
 
 
   
   
 
 
-<h1 id="isocenter">Isocenter</h1>
-<p><strong>De-identify a DICOM cohort without touching the source files, and hand compliance a report that names anything the run could not do.</strong></p>
-<p><img alt="Isocenter" src="images/IMG_0653.jpeg" /></p>
+  <h1>Home</h1>
+
+<!-- The hero (the one-line claim, the install command, the report
+     excerpt) and the pipeline band are rendered by docs/overrides/home.html
+     above this file's content. This file carries the rest of the landing
+     page as ordinary markdown; extra.css lays the "What it refuses to do"
+     and "What it does" lists out as the ledger's clause grid. -->
+
 <h2 id="the-situation">The situation</h2>
 <p>You have a cohort of studies and a protocol an IRB approved. You need to hand a de-identified copy to a collaborator, a registry, or a model. You also need to hand your compliance reviewer a record: what was removed, what stayed because the protocol allowed it, and anything the run lost on the way.</p>
 <p>Isocenter is the Python library your script imports to do that. It builds a SQLite metadata index and a pixel/waveform sidecar beside a read-only source tree, applies your de-identification profile and pixel redaction rules to an in-memory object graph, grades its own output, and writes clean copies to a new directory as DICOM or PhysioNet WFDB.</p>
@@ -1414,15 +1440,20 @@
 
 
 
+  
+  
 
 
 
 
+  
 
-                
-              </article>
-            </div>
-          
+
+
+      
+    </article>
+  </div>
+
           
   <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
 
@@ -1440,6 +1471,8 @@
         <footer class="md-footer">
   
     
+      
+        
       
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
