@@ -153,6 +153,9 @@ in the rewrite, each with the reason.
 | "Fully compatible with Python 3.13t+" | `docs/index.md` | CI runs 3.14t only. 3.13t is untested and unclaimed. |
 | "HIPAA compliant" or "guarantees compliance" | Anywhere | Compliance is the covered entity's determination against its protocol. Isocenter supports a de-identification workflow and produces the record a reviewer needs. That sentence is the ceiling. |
 | Any adoption, user, site, or community count | Anywhere | Zero stars and two forks today. Nothing to count; nothing claimed. |
+| "This ensures 100% PHI safety" | README, codec section | Strict codec validation refuses to pass through pixels it could not decode. That is a refusal, and a good one; it is not a percentage. |
+| "Compliance & Certification" | README, section heading | Nothing is certified by anyone. The section describes a report. Call it "The compliance report". |
+| "audit-ready Markdown reports for HIPAA/GDPR documentation" | README | The report is evidence a reviewer reads under whatever regime applies. Naming regimes implies conformance was assessed against them, and it was not. |
 
 Two related rules. **Benchmark numbers carry their machine and date**
 wherever they appear, and live on the performance page rather than the
