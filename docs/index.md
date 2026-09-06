@@ -55,4 +55,4 @@ One benchmark has a recorded run behind it: 100 multi-frame files, about 50 GB r
 
 Apache License 2.0 from the release after 0.9.2; earlier releases remain under AGPL-3.0-or-later. Each release is archived on Zenodo under the concept DOI [10.5281/zenodo.22104298](https://doi.org/10.5281/zenodo.22104298), and the repository carries a `CITATION.cff`. If Isocenter's de-identification is part of how a dataset was prepared, it belongs in the methods section.
 
-Questions and bug reports go to [GitHub Issues](https://github.com/kvnlng/Isocenter/issues). For anything that should not be public, write to <support@isocenter.net>.
+Bug reports and questions about documented behaviour go to [GitHub Issues](https://github.com/kvnlng/Isocenter/issues), in public and for free. Help beyond that, such as configuring a profile for your protocol, integrating Isocenter into a pipeline, or reviewing a run's report, is available as paid consulting: write to <support@isocenter.net> with what you need, and use the same address for anything that should not be public.
