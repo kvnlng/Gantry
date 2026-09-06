@@ -3,6 +3,7 @@
 **Status:** proposed; adopted when the pull request carrying it merges, which is the review gate
 **Base:** `origin/main` @ `e244c0a` ("docs: the TestPyPI rehearsal becomes a release step")
 **Issue:** #350 (the promotion kit). Adjacent: #348 (relicense to Apache-2.0, PR #349), #29 (no CLI, closed as not planned), #153 (report after export), #57/#84 (nested-sequence scan), #36 (multi-group waveform loss is audited).
+**Superseded in part:** section 9's "paid support" clause, the same day it was written; see the struck text there.
 **Scope:** internal. Excluded from the docs site by `exclude_docs`, and the source every public artifact in #350 derives from. A dated record: when a later change falsifies a clause, add a `**Superseded in part:**` line here and strike the clause in place rather than rewriting it.
 
 This document exists so that the README, the docs landing page, the PyPI
@@ -247,5 +248,11 @@ the docs landing page PR replaces it.
 - Whether to seek a JOSS or similar software paper. A paper is a
   citation channel for audience 1 and 4; it is out of scope until 1.0.
 - The 1.0 date. The zero-bug-bounce process decides that.
-- Paid support. Not planned near term; a permissive licence keeps it
-  possible. Nothing public mentions it until it exists.
+- ~~Paid support. Not planned near term; a permissive licence keeps it
+  possible. Nothing public mentions it until it exists.~~ **Superseded
+  the same day (#350, later PR):** paid consulting is offered from the
+  start. Bug reports and questions about documented behaviour are free
+  and public on GitHub Issues; help beyond that (protocol configuration,
+  pipeline integration, report review, features a study needs) is paid
+  consulting via `support@isocenter.net`. Every public contact statement
+  says so.

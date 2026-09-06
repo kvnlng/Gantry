@@ -57,4 +57,6 @@ Python 3.12 or later, on Linux, macOS, or Windows, on the team's own hardware. S
 
 ## Contact
 
-Questions that can be public go to [GitHub Issues](https://github.com/kvnlng/Isocenter/issues). Anything that should not be public goes to <support@isocenter.net>.
+Bug reports and questions about documented behaviour go to [GitHub Issues](https://github.com/kvnlng/Isocenter/issues), where they are answered in public and for free.
+
+Support beyond that is offered as paid consulting, under a written engagement: configuring de-identification to a protocol, integrating Isocenter into an institution's pipeline, reviewing a run's report ahead of a compliance review, or building a feature a study needs. Write to <support@isocenter.net> with what you need. The same address is for anything that should not be public.

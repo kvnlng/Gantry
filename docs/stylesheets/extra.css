@@ -91,6 +91,11 @@
 .md-typeset a:hover { color: var(--ledger-accent-dark); border-bottom-color: var(--ledger-accent); }
 .md-typeset code { background: rgba(31, 29, 25, 0.06); color: var(--ledger-ink); border-radius: 2px; padding: 0 0.3em; }
 .md-typeset pre > code { background: var(--ledger-ink); color: #efebe1; border-radius: 4px; }
+/* Inline highlighted code -- mkdocstrings signatures (`code.highlight
+ * language-python`) and pymdownx.inlinehilite -- carries Pygments spans
+ * whose colours above are chosen for the dark block background. Give it
+ * the same dark ground, or the spans paint light-on-light and vanish. */
+.md-typeset code.highlight { background: var(--ledger-ink); color: #efebe1; padding: 0.15em 0.5em; border-radius: 3px; }
 .md-typeset .highlight { border-radius: 4px; }
 .md-typeset hr { border-bottom: 1px solid var(--ledger-rule); }
 .md-typeset table:not([class]) { border: 1px solid var(--ledger-rule); font-size: 0.75rem; }
