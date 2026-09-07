@@ -896,26 +896,21 @@ def test_the_stall_watchdog_fires_inside_the_run_tests_step():
 PROBE_WORKFLOW = REPO / ".github" / "workflows" / "hang-probe.yml"
 
 
-def _cap_expression_parts(value, where):
-    """Split a `${{ <product> + N }}` cap into its product text and `N`.
+#: Characters that make a GitHub Actions expression unparseable. The
+#: documented operator set is `( ) [ ] . ! < <= > >= == != && ||`; there
+#: is no arithmetic, so any of these inside a `${{ }}` is a workflow the
+#: API refuses to load rather than a workflow that computes something.
+_ARITHMETIC = "+-*/"
 
-    The probe's loop-step and job caps are expressions over the dispatch
-    inputs (`iterations * per_iteration_minutes`) plus a constant; the
-    constant is the only part a test can compare, and only if the product
-    text is the same on both sides. Both are returned so the caller can
-    check that too rather than assuming it.
+
+def _expressions(text):
+    """Every `${{ ... }}` body in `text`, with quoted literals removed.
+
+    String literals are stripped first so a hyphen inside one (a branch
+    name, a formatted label) is not read as subtraction.
     """
-    text = str(value).strip()
-    assert text.startswith("${{"), (
-        f"{where} is {value!r}, not a `${{{{ ... }}}}` expression; the "
-        "probe's caps are derived from its inputs so a longer loop cannot "
-        "silently run into a fixed cap and die as 'cancelled' -- the "
-        "exact shape of #243/#250")
-    match = re.fullmatch(r"\$\{\{\s*(.*?)\s*\+\s*(\d+)\s*\}\}", text)
-    assert match, (
-        f"{where} is {value!r}; expected the form "
-        "`${{ <product> + <constant> }}` so the constant can be compared")
-    return match.group(1), int(match.group(2))
+    for body in re.findall(r"\$\{\{(.*?)\}\}", text, re.S):
+        yield body, re.sub(r"'[^']*'", "''", body)
 
 
 def test_the_hang_probe_never_runs_on_the_gate():
@@ -935,12 +930,26 @@ def test_the_hang_probe_never_runs_on_the_gate():
     and `assert "on" in workflow` would pass vacuously. Do not "fix" the
     lookup.
 
-    The caps are the same inequality tests.yml carries, with one
-    difference: the loop step's and the job's caps are expressions over
-    the dispatch inputs, so the test parses their `+ N` tails and checks
-    the constants rather than restating the arithmetic -- job constant
-    greater than loop constant plus the sum of every literal step cap,
-    so whatever hangs, the timeout that fires belongs to a step.
+    The caps are the same inequality tests.yml carries: the job cap
+    exceeds the sum of every step cap, so whatever hangs, the timeout
+    that fires belongs to a step. Both are plain integers here.
+
+    **And no expression in the file may contain arithmetic**, which is
+    the assertion this test was missing. The two caps were first written
+    as a product of the dispatch inputs plus a constant, and GitHub
+    cannot parse that -- `HTTP 422: failed to parse workflow: (Line:
+    102, Col: 22): Unexpected symbol: '+'` -- because the expression
+    language has no arithmetic operators. The workflow merged and was
+    inert: **this test passed on it**, because it parsed the `+ N` tail
+    out of the string and compared the numbers, grading the arithmetic's
+    text and never whether GitHub could evaluate it. A guard that passes
+    on a workflow nothing can load is worse than no guard, so the
+    arithmetic check below is on the raw `${{ }}` bodies.
+
+    Only *inside* the expressions: the loop script legitimately does
+    shell arithmetic (`deadline=$(( ${{ inputs.per_iteration_minutes }}
+    * 60 ))`), where the `*` is bash's and the expression is only the
+    substitution. Widening this to whole lines would go red on that.
     """
     import yaml
 
@@ -994,20 +1003,35 @@ def test_the_hang_probe_never_runs_on_the_gate():
     assert all(isinstance(cap, int) for cap in literal), (
         f"every step but the loop carries a literal cap; got {literal!r}")
 
-    loop_product, loop_constant = _cap_expression_parts(
-        loop["timeout-minutes"], "the loop step's timeout-minutes")
-    job_product, job_constant = _cap_expression_parts(
-        job.get("timeout-minutes"), "jobs.probe.timeout-minutes")
-    assert loop_product == job_product, (
-        f"the loop cap grows as {loop_product!r} and the job cap as "
-        f"{job_product!r}; the constants are only comparable when both "
-        "grow with the same product")
-    assert job_constant > loop_constant + sum(literal), (
-        f"jobs.probe.timeout-minutes (... + {job_constant}) does not "
-        f"exceed the loop cap (... + {loop_constant}) plus the literal "
-        f"step caps ({sum(literal)}); some step's timeout is unreachable "
-        "and a hang there dies as 'cancelled' with no failing step in "
-        "the log -- the exact shape of #243/#250")
+    # The assertion that would have caught the 422. See the docstring.
+    for body, without_strings in _expressions(text):
+        found = sorted(set(without_strings) & set(_ARITHMETIC))
+        assert not found, (
+            f"the expression `${{{{{body}}}}}` in hang-probe.yml uses "
+            f"{found}, and GitHub Actions expressions have no arithmetic "
+            "operators -- the documented set is ( ) [ ] . ! < <= > >= == "
+            "!= && ||. The whole workflow becomes unparseable: `HTTP 422: "
+            "failed to parse workflow: Unexpected symbol`, and it cannot "
+            "be dispatched at all. Size the value as a literal instead "
+            "(#250)")
+
+    loop_cap = loop["timeout-minutes"]
+    job_cap = job.get("timeout-minutes")
+    for where, cap in (("the loop step's timeout-minutes", loop_cap),
+                       ("jobs.probe.timeout-minutes", job_cap)):
+        assert isinstance(cap, int), (
+            f"{where} is {cap!r}, not an integer; it cannot be an "
+            "expression over the inputs, because GHA expressions have no "
+            "arithmetic -- see the check above (#250)")
+    assert job_cap > loop_cap + sum(literal), (
+        f"jobs.probe.timeout-minutes ({job_cap}) does not exceed the loop "
+        f"step's cap ({loop_cap}) plus the literal step caps "
+        f"({sum(literal)}); some step's timeout is unreachable and a hang "
+        "there dies as 'cancelled' with no failing step in the log -- the "
+        "exact shape of #243/#250")
+    assert job_cap <= 360, (
+        f"jobs.probe.timeout-minutes ({job_cap}) exceeds GitHub's "
+        "360-minute maximum for a job on a hosted runner")
 
 
 # ---------------------------------------------------------------------------

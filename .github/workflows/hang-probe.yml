@@ -34,9 +34,12 @@ on:
     inputs:
       iterations:
         description: >
-          Full-suite runs per arm. Hard ceiling 22: 22 x 15 + 25 = 355
-          minutes, under the 360-minute job maximum. Each iteration is
-          ~6 minutes on a healthy runner.
+          Full-suite runs per arm. Hard ceiling 22 at the default 15
+          minutes: 22 x 15 = 330 fits inside the loop step's 340-minute
+          cap, and the caps are literals rather than expressions (GHA
+          expressions have no arithmetic), so exceeding it is not
+          refused -- the step cap simply fires mid-loop. Each iteration
+          is ~6 minutes on a healthy runner.
         type: number
         required: false
         default: 10
@@ -95,11 +98,25 @@ jobs:
     # Backstop only. Same inequality tests.yml carries: this must exceed
     # the SUM of every step cap below, or some step's own timeout is
     # unreachable and a hang there dies as 'cancelled' with no failing
-    # step in the log (#243). The loop cap is iterations x minutes + 5,
-    # the five literal step caps sum to 15, and this is + 25, so
-    # 25 > 5 + 15. `test_the_hang_probe_never_runs_on_the_gate` parses
-    # the two constants and checks the inequality.
-    timeout-minutes: ${{ fromJSON(inputs.iterations) * fromJSON(inputs.per_iteration_minutes) + 25 }}
+    # step in the log (#243). 356 > 340 (the loop step) + 15 (the five
+    # literal 3s), and 356 is inside GitHub's 360-minute job maximum.
+    #
+    # **A literal, because GitHub Actions expressions have no arithmetic
+    # operators.** This was written as a product of the two inputs plus
+    # 25 when the probe first merged, and the whole workflow was
+    # unparseable: `gh workflow run` answered `HTTP 422: failed to parse
+    # workflow: (Line: 102, Col: 22): Unexpected symbol: '+'`. The
+    # documented operator set is `( ) [ ] . ! < <= > >= == != && ||` --
+    # no `+`, `-`, `*` or `/` -- so a cap cannot be derived from the
+    # inputs at all. These two numbers are therefore sized for the
+    # **input ceiling** (22 iterations x 15 minutes = 330), not for the
+    # inputs of any one run, which makes them a pure backstop: the
+    # script itself declares HANG at `per_iteration_minutes`, so one of
+    # these firing means the script is stuck, and that is the one thing
+    # it cannot classify. `test_the_hang_probe_never_runs_on_the_gate`
+    # checks the inequality on the two literals and, separately, that no
+    # expression in this file contains arithmetic.
+    timeout-minutes: 356
 
     steps:
     - uses: actions/checkout@v7
@@ -159,11 +176,15 @@ jobs:
     - name: Loop the suite until it hangs or the budget runs out
       id: loop
       shell: bash
-      # Enough for every iteration to reach its own deadline plus the
-      # kill sequence, and no more: a hang is declared by the script at
-      # `per_iteration_minutes`, so this cap firing means the script
-      # itself is stuck, which is the only thing it cannot classify.
-      timeout-minutes: ${{ fromJSON(inputs.iterations) * fromJSON(inputs.per_iteration_minutes) + 5 }}
+      # Enough for the whole loop at the input ceiling (22 x 15 = 330)
+      # plus the kill sequences, and no more: a hang is declared by the
+      # script at `per_iteration_minutes`, so this cap firing means the
+      # script itself is stuck, which is the only thing it cannot
+      # classify. A literal rather than a product of the inputs,
+      # because GHA expressions have no arithmetic operators and the
+      # computed form made the workflow unparseable -- see the job cap
+      # above for the 422.
+      timeout-minutes: 340
       env:
         PYTHON_GIL: "1"
         # Child-side stall diagnostics, as tests.yml sets them: each pool
