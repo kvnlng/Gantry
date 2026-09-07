@@ -648,13 +648,32 @@ mechanism, and E is the one that distinguishes the two Arm B scopes.
 | B | `_swap_in_compacted_sidecar`, parking between the two `os.replace` calls | the writer raises `FileNotFoundError` | the writer succeeds |
 | C | `_apply_new_offsets` | the intruder's correct row is overwritten; the read raises | the row survives |
 | D | `_rewrite_live_frames`, intruder persists an instance whose blob row did not exist at `_read_blob_index` | `offset + length > os.path.getsize(sidecar_path)`; the read raises `Incomplete read from sidecar` | the row is inside the file and reads back |
-| E | `_rewrite_live_frames`, intruder does `set_pixel_data` + **`session.save(sync=True)`** rather than `persist_pixel_data` | the row is the compaction map's value; the read raises `Integrity Error`/hash mismatch | the read returns the new pixels — **and this one goes green under Arm B at either scope**, which is why it must not be the only phase in the suite |
+| E | `_rewrite_live_frames`, intruder does `set_pixel_data` + **`session.save(sync=True)`** rather than `persist_pixel_data` | the row is the compaction map's value; the read raises `Integrity Error`/hash mismatch | the read returns the new pixels — **only if the lock is held through `_rewire_sidecar_loaders`**, see below |
 
 **Assert `has_pending_saves() is False` inside every window.** That is
 the assertion that pins Q3 and stops someone reading the #295 refusal as
 covering this. Phase E is the one that makes it a measurement rather
 than an inspection: a `save(sync=True)` runs to completion inside the
 window and the guard still reads `False`.
+
+**Phase E's Arm B column is reasoned, not measured, and the reasoning
+has a release point in it.** Arm B cannot be run without the production
+change, so this is an argument and it is stated so the implementer can
+check it rather than inherit it. `session.compact()` is
+`save(sync=True)` → guard → `compact_sidecar()` →
+`_rewire_sidecar_loaders(updates, wave_updates)`. **If the lock were
+released at the end of `compact_sidecar()`**, phase E's intruder would
+run in the gap before the rewiring: its `save_all` appends to the *new*
+sidecar (correct), commits a correct row, and leaves the in-memory
+loader on the new offset — and `_rewire_sidecar_loaders` then overwrites
+that loader from a map computed before the write existed. Database row
+right, resident loader wrong, and the readback after
+`discard_pixel_data()` raises the same hash mismatch; only a reopen
+would read correctly. That is a *different* corruption from phase E's,
+not an absence of one, and it is why §6.1 specifies the hold as
+`compact_sidecar()` **plus** `_rewire_sidecar_loaders`. An implementer
+who scopes the lock to `compact_sidecar()` alone will see this test stay
+red and conclude Arm B does not work. It does; the scope was wrong.
 
 **Phase E's helper needs its own `set_pixel_data` inside the window for
 the same reason as the others**, and one more: `session.save(sync=True)`

@@ -40,9 +40,15 @@ where it used to be dropped, and no source file ever said so.** The rule
 you set is "the tag's own recorded VR", and the recorded VR is a fact
 about the *source element*, which was present. But the `None` here came
 from a caller — not from the file, and **not from anywhere inside
-`isocenter/` either**: `grep -rn 'set_attr(.*, None' isocenter/` returns
-nothing, so no anonymisation or remediation arm writes a `None` value
-today and this shape is reachable only from user code. That was worth
+`isocenter/` either**. Two greps, because one would only have covered
+the `set_attr` spelling: `set_attr(.*, None` across `isocenter/` returns
+nothing, and `\] = None`, `.pop(`, `del .*attributes` across
+`remediation.py`, `privacy.py` and `session.py` returns only *deletions*
+— `del entity.attributes[proposal.target_attr]` (`remediation.py:289`,
+the REMOVE arm) and `inst.attributes.pop(tag, None)`
+(`session.py:1195`). **The removal arms delete the key; none of them
+writes a `None` value.** So this shape is reachable only from user code.
+That was worth
 checking rather than asserting, because if a remediation arm *did* write
 `None` to a private tag, this would be the ordinary pipeline path rather
 than an edge, and every remediated private tag would already be filing a
