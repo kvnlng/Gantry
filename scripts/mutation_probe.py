@@ -118,6 +118,7 @@ TARGETS = {
                                   "tests/test_binary_retention_threshold.py",
                                   "tests/test_check_reversibility.py",
                                   "tests/test_codecs_strict.py",
+                                  "tests/test_compaction_races_a_concurrent_write.py",
                                   "tests/test_compress_handlers.py",
                                   "tests/test_compress_j2k_coverage.py",
                                   "tests/test_data_loss_reporting.py",
