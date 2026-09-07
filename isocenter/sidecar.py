@@ -1,7 +1,6 @@
 import os
 import zlib
 from typing import Tuple
-from threading import Lock
 
 
 class SidecarManager:
@@ -15,7 +14,6 @@ class SidecarManager:
 
     def __init__(self, filepath: str):
         self.filepath = filepath
-        self._lock = Lock()
         self._ensure_file()
 
     def _ensure_file(self):
@@ -117,15 +115,12 @@ class SidecarManager:
 
     size = property(lambda self: os.path.getsize(self.filepath))
 
-    def __getstate__(self):
-        """Exclude lock from pickling."""
-        state = self.__dict__.copy()
-        # Remove the unpickleable lock
-        if '_lock' in state:
-            del state['_lock']
-        return state
-
-    def __setstate__(self, state):
-        """Recreate lock on unpickling."""
-        self.__dict__.update(state)
-        self._lock = Lock()
+    # No `__getstate__`/`__setstate__`. They existed to drop and rebuild a
+    # `threading.Lock` that nothing ever acquired (#366); with it gone the
+    # only attribute is `filepath`, a string, and default pickling carries
+    # it. This class deliberately holds **no mutable state**, which is why
+    # `compact_sidecar` could rebind `self.sidecar` for years without
+    # consequence -- a fresh manager is indistinguishable from the one it
+    # replaced. Keep it that way: adding mutable state here would make
+    # every pickled copy in a spawned worker a separate answer, and would
+    # resurrect the rebind as a real bug.

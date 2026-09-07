@@ -669,10 +669,18 @@ class SqliteStore:
         # `_pixel_loader`/`_pixel_hash` *after* the redacted frame was
         # bound: the instance then reads back unredacted pixels under a
         # full redaction attestation, self-consistently, because the
-        # stale hash matches the stale frame (#274). Lock order:
-        # `_pixel_swap_lock` before `sidecar._lock`, never reversed; and
-        # never held across a sqlite write, whose busy timeout can be
-        # waited out while holding it.
+        # stale hash matches the stale frame (#274). Never held across a
+        # sqlite write, whose busy timeout can be waited out while
+        # holding it.
+        #
+        # This used to document a lock order, `_pixel_swap_lock` before
+        # `sidecar._lock`. There was no `sidecar._lock` to order against:
+        # it was constructed and never acquired, here or anywhere (#366).
+        # Writers serialise on `fcntl.flock` inside `write_frame`, which
+        # is a different mechanism with different reach -- it is
+        # cross-process, and `read_frame` does not take it at all. What
+        # is genuinely unserialised is writers against `compact_sidecar`,
+        # which is #368 and is not a lock-ordering question.
         self._pixel_swap_lock = threading.Lock()
         self._audit_thread = threading.Thread(
             target=_audit_worker_loop,
@@ -747,7 +755,7 @@ class SqliteStore:
                 except Exception as e:
                     # print(f"DEBUG: Rollback due to {e}")
                     self._memory_conn.rollback()
-                    raise e
+                    raise
         else:
             # File-based DB: create fresh connection per transaction
             conn = sqlite3.connect(self.db_path, timeout=_SQLITE_BUSY_TIMEOUT_S)
@@ -2021,7 +2029,7 @@ class SqliteStore:
             # instances dirty (see
             # `test_a_failed_save_reports_the_error_that_caused_it`).
             self.logger.error(f"Failed to save vertical attributes for {instance_uid}: {e}")
-            raise e
+            raise
 
     def load_vertical_attributes(self, instance_uid: str) -> Dict[Tuple[str, str], Any]:
         """
@@ -2583,7 +2591,7 @@ class SqliteStore:
 
         except Exception as e:
             self.logger.error(f"Failed to persist pixel swap for {instance.sop_instance_uid}: {e}")
-            raise e
+            raise
 
     def save_all(self, patients: List[Patient],
                  prune_absent_patients: bool = False):
@@ -3134,9 +3142,12 @@ class SqliteStore:
           the upsert's COALESCE, the instance stays dirty, and the next
           save writes the truth.
         """
-        # Lock order: `_pixel_swap_lock` before `sidecar._lock` (inside
-        # `write_frame`), never reversed. No sqlite work happens in here;
-        # the caller writes the rows later, off this lock.
+        # No sqlite work happens in here; the caller writes the rows
+        # later, off this lock. (This cited a `_pixel_swap_lock` ->
+        # `sidecar._lock` order until #366 established that
+        # `sidecar._lock` was never acquired by anything. `write_frame`
+        # takes an `fcntl.flock` on the file, which is cross-process and
+        # not part of any Python lock hierarchy.)
         #
         # The lock must open *before* the first read of `pixel_array`,
         # not after it. `Instance.unload_pixel_data()` nulls that field
@@ -3637,7 +3648,16 @@ class SqliteStore:
 
             os.remove(backup_path)
 
-            self.sidecar = SidecarManager(self.sidecar_path)
+            # No `self.sidecar = SidecarManager(...)` rebind here. It was
+            # inert -- `SidecarManager` holds only `filepath`, and
+            # `write_frame`/`read_frame` open by path on every call, so the
+            # replacement was indistinguishable from the object it replaced
+            # (#366). Deleted rather than kept "for safety": a rebind that
+            # does nothing reads as though it were re-pointing a writer at
+            # the compacted file, which is a guarantee this code does not
+            # make and cannot make -- a concurrent writer holds whatever
+            # manager it already read. That is #368, and no assignment here
+            # closes it.
             self._log_compaction_result(start_time, original_size, written_bytes)
             return uid_map
 
