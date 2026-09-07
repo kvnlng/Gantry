@@ -2818,38 +2818,52 @@ class SidecarPixelLoader:
         else:
             target_shape = (rows, cols)
 
+        # The element count the padding fallback compares `arr.size`
+        # against. Computed here, ahead of the reshape, because the guard
+        # below has to run before the reshape and not inside its `except`.
+        target_size = 1
+        for d in target_shape:
+            target_size *= d
+
+        # A declared geometry of nothing is an integrity failure, not a
+        # shape to reshape or pad towards. Without this, a one-byte frame
+        # took the padding fallback -- `arr.size >= 0` is always true,
+        # `arr[:0]` is empty -- and a `(0, 0)` array went back to the
+        # caller with the integrity hash *passing*, because the hash is
+        # over the raw bytes. The export worker then failed with
+        # `Compression failed: cannot write empty image`; a caller who
+        # never exports got an empty image that looked like data. The
+        # reachable shape is an instance whose `pixel_array` was assigned
+        # directly, so no Rows/Columns were ever written (#343).
+        #
+        # Ahead of the reshape, not inside its `except`: an *empty* frame
+        # reshapes to `(0, 0)` without raising (`np.frombuffer(b"")
+        # .reshape((0, 0))` succeeds), so a guard in the fallback never
+        # saw it and the empty array came back exactly as before.
+        #
+        # `target_size == 0` and nothing wider. It is the quantity the
+        # fallback compares against, so it names exactly the case the
+        # fallback mishandles; `frames` enters the shape only when > 1
+        # and `samples` is normalised to at least 1, so it is zero
+        # exactly when Rows or Columns is (Rows=2, Columns=2, Frames=0
+        # loads as `(2, 2)`). `arr.size != target_size` would break every
+        # odd-length source, whose one-byte DICOM pad is what the
+        # fallback exists for. Same prefix as the hash mismatch so it
+        # rides the export worker's `Pixel Loader failed` channel into an
+        # ERROR row. Here in `__call__` and not in a wrapper: this loader
+        # pickles into spawned export workers, and a guard installed on
+        # the parent would not be in the child.
+        if target_size == 0:
+            raise RuntimeError(
+                f"Integrity Error: {self.sop_instance_uid} declares no "
+                f"pixel geometry (Rows={rows}, Columns={cols}, "
+                f"Frames={frames}); a stored frame of {len(raw)} bytes "
+                f"cannot be reshaped to nothing")
+
         try:
             arr_reshaped = arr.reshape(target_shape)
         except ValueError:
             # Handle padding
-            target_size = 1
-            for d in target_shape:
-                target_size *= d
-            # A declared geometry of nothing is an integrity failure, not
-            # a shape to pad towards. Without this, `arr.size >= 0` is
-            # always true, `arr[:0]` is empty, and a `(0, 0)` array went
-            # back to the caller with the integrity hash *passing* -- the
-            # hash is over the raw bytes, six lines up. The export worker
-            # then failed with `Compression failed: cannot write empty
-            # image`; a caller who never exports got an empty image that
-            # looked like data. The reachable shape is an instance whose
-            # `pixel_array` was assigned directly, so no Rows/Columns
-            # were ever written (#343). Exactly `target_size == 0` and
-            # nothing wider: `arr.size != target_size` would break every
-            # odd-length source, whose one-byte DICOM pad is what the
-            # fallback below exists for; `rows == 0 or cols == 0` alone
-            # misses `frames == 0` on a multi-frame declaration. Same
-            # prefix as the hash mismatch so it rides the export worker's
-            # `Pixel Loader failed` channel into an ERROR row. Here in
-            # `__call__` and not in a wrapper: this loader pickles into
-            # spawned export workers, and a guard installed on the parent
-            # would not be in the child.
-            if target_size == 0:
-                raise RuntimeError(
-                    f"Integrity Error: {self.sop_instance_uid} declares no "
-                    f"pixel geometry (Rows={rows}, Columns={cols}, "
-                    f"Frames={frames}); a stored frame of {len(raw)} bytes "
-                    f"cannot be reshaped to nothing")
             if arr.size >= target_size:
                 arr = arr[:target_size]
                 arr_reshaped = arr.reshape(target_shape)

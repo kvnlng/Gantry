@@ -1004,6 +1004,23 @@ def test_a_stored_frame_whose_geometry_is_zero_refuses_to_load(tmp_path):
         "the error does not say which descriptor is missing")
 
 
+def test_a_zero_byte_frame_with_zero_geometry_is_refused_too(tmp_path):
+    """The guard runs before the reshape, or this case slips past it.
+
+    `np.frombuffer(b"").reshape((0, 0))` succeeds, so a guard inside the
+    reshape's `except ValueError` is never reached for an empty frame and
+    the `(0, 0)` array comes back exactly as before the fix. Found in
+    review of #343; the guard sits ahead of the reshape because of this
+    case alone, and this is the test that goes red if it moves back.
+    """
+    loader = _one_frame_loader(tmp_path, b"", {})
+
+    with pytest.raises(RuntimeError, match="declares no pixel geometry") as exc:
+        loader()
+
+    assert "0 bytes" in str(exc.value)
+
+
 def test_a_frame_with_one_byte_of_dicom_padding_still_reshapes(tmp_path):
     """The one-byte pad is kept, so the guard cannot widen to any surplus.
 
