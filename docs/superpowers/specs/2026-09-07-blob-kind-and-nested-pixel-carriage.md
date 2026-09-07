@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-07
 **Status:** Design proposed. **Nothing here is approved.** §0 carries
-eight OPEN QUESTIONS; Q1 is the one that decides whether this ships at
+nine OPEN QUESTIONS; Q1 is the one that decides whether this ships at
 all, because the brief this spec was written from asks for work that is
 **already on `main`**. Every recommendation below is marked as a
 recommendation.
@@ -27,8 +27,8 @@ survive is §12's test list.
 
 ## 0. OPEN QUESTIONS for the owner
 
-Eight. Q1 and Q5 change what ships; Q2 changes what a user sees; the
-rest are scope lines.
+Nine. Q1 and Q5 change what ships; Q2 changes what a user sees; Q9 is
+the one added after review; the rest are scope lines.
 
 **Q1 — the brief's premise is stale, and half the approved work is
 already merged.** The instruction this spec was written from says "the
@@ -127,6 +127,31 @@ lossy-JPEG icons, whose decoded Photometric Interpretation changes
 today's `DATA_LOSS` row, because rewriting an icon's Photometric
 Interpretation is a correctness claim this spec has no measurement for.
 
+Two things Q6 needs before it is answerable, both established after the
+first draft:
+
+- *How is the case detected?* An icon shares the file's transfer
+  syntax, so the trigger is `ds.file_meta.TransferSyntaxUID` being in
+  the lossy-JPEG family (`JPEGBaseline8Bit`, `JPEGExtended12Bit`,
+  `JPEG2000`, `JPEGLSNearLossless`, and `pydicom.uid.JPEGLossyCompressedPixelTransferSyntaxes`
+  is the maintained list). Without a stated trigger the refusal is a
+  recommendation with no implementation.
+- *Does the top level already have this problem?* **Yes, apparently, and
+  it is unmeasured.** `ingest_worker` never mentions `0028,0004`,
+  `PhotometricInterpretation` or `resolve_photometric_interpretation`
+  (grep over `inspect.getsource`, `scratchpad/probe_review.log`) — the
+  only `0028,xxxx` it touches is `0028,0006` PlanarConfiguration. So
+  whatever pydicom's decoder returns for a lossy YBR source, ingest
+  stores it and the declared PI rides through unchanged, at the **top
+  level** as much as inside an icon. I could not measure the decoded
+  result: this venv's pydicom has no JPEG *encoder*
+  (`ImportError: cannot import name 'JPEGBaseline8BitEncoder'`), so I
+  could not build the fixture. **Marked unmeasured deliberately rather
+  than asserted.** If the top level does silently mis-declare PI, then
+  by "one spelling per behaviour" the nested path must do the same thing
+  the top level does — and the right fix is a separate issue about the
+  top level, not a nested-only refusal that makes the two paths differ.
+
 **Q7 — one PR or two?** §11 recommends **one**. The two halves of the
 nested work (store the bytes; write them back) have no independently
 observable value: carrying bytes nothing writes back changes nothing a
@@ -143,6 +168,23 @@ recommendation is to put the same validation on the second, so there is
 one answer to "is this a legal kind". Measured cost: one `re.fullmatch`
 per blob row, against 0.015 ms per row for the row write itself (§7.2).
 Mark it in or out.
+
+**Q9 — how hard should the shifted-index guard be?** (Added after
+review; see §8.2.) The blob key is a *position*, recorded at ingest and
+resolved at export, and a sibling removed in between makes a stale path
+resolve to the **wrong item** rather than to nothing. Verified that no
+site in the tree can do this today — the only two item-level deletions
+(`persistence.py:974`, `io_handlers.py:1226`) are tail truncations
+keeping item 0, and remediation removes whole sequences rather than
+single items — so this is latent, not live. §8.2 recommends the cheap
+form: compare the resolved item's declared geometry against the blob's
+length before writing, and file a `DATA_LOSS` row on mismatch. The
+stronger form stores the icon's Rows/Columns on the blob row and
+compares those, catching equal-length mismatches too, at the cost of two
+columns on `instance_blobs` and a schema migration. Cheap form
+recommended; the owner should say if the stronger one is wanted before
+the table is widened, because widening it later is the expensive
+direction.
 
 ---
 
@@ -594,6 +636,22 @@ whether the bytes were carried. State that in a comment, because the
 tidier-looking alternative — a static `True` in `_is_routed` — is what a
 later reader will reach for.
 
+*Two spellings of the removal, and which to pick.* The rule above
+appends every candidate to both `nested` and `dropped` and has
+`ingest_worker` `remove()` the successes. That reconciles two lists by
+count, and it works only because a `(tag, value)` entry for one icon is
+indistinguishable from another's — correct, but fragile in a way a
+reader cannot see. The alternative keeps the decision in one place:
+`populate_attrs` grows an optional `nested` parameter and, **when it is
+not None**, routes a nested (7fe0,0010) into `nested` *instead of*
+`dropped`; `ingest_worker` then appends the failures to `dropped`
+itself, where it is the code that knows. When `nested is None` — the
+direct `populate_attrs` callers in the tests — behaviour is exactly
+today's. **Recommended: the second.** Same one-decision property, no
+two-list reconciliation, and the `nested is None` default keeps every
+existing caller untouched. Mentioned as a developer's call because both
+satisfy the rule; only the second makes the rule visible in the code.
+
 Successfully decoded blobs ride out as
 `meta['nested_pixels'] = [(path, terminal_tag, raw_bytes, sha256), …]`,
 for the reason `waveform_groups` and `dropped_private_binary` do: the
@@ -733,6 +791,14 @@ The prefix cannot collide with the legacy literals. Measured
 (`scratchpad/probe_batch.py`), after adding bare `pixels` and `waveform`
 rows to a store of 200 nested ones: `LIKE 'pixels:%' -> 200`,
 `= 'pixels' -> 1`.
+
+One caveat on the operator. SQLite's `LIKE` is ASCII case-insensitive by
+default, so `LIKE 'pixels:%'` would also match `PIXELS:…`. Under Q8
+answered *yes* that is unreachable — the gate rejects uppercase, so no
+such row can exist, and `LIKE` is fine. Under Q8 answered *no*, an
+ungated `record_blob_ref` caller could write one, and the correct
+spelling becomes `GLOB 'pixels:*'`, which is case-sensitive. Decide the
+operator with Q8, not independently of it.
 
 `_create_pixel_loader` (`persistence.py:885-888`), the helper
 `_wire_waveform_loader` mirrors on the waveform side, is the model for building each nested
@@ -886,6 +952,60 @@ passes the live `inst` (`io_handlers.py:3198-3199`), and the fixture
 generators in `scripts/` build graphs with no loaders at all — so their
 nested dict is empty and the post-pass is a no-op for them.
 
+### 8.2 The key is positional, and the graph mutates in between — the shift guard
+
+**The invariant this section defends: position is the only identity a
+sequence item has.** The path is recorded at *ingest* and resolved at
+*export*, and everything that happens in between — hydration, audit,
+remediation, redaction — can change the sequence's contents. §5.4's
+`resolve → None → DATA_LOSS row` rule handles an item that was
+**removed**. It does not handle an item whose **index shifted** because
+an earlier sibling was removed: that path resolves, to the *wrong item*,
+and the icon is written into it silently. Silent wrong bytes is this
+repo's worst failure class, and it is the same hazard CLAUDE.md names
+for `entity_path` and `_live_target`.
+
+Enumerated every item-level mutation in the tree
+(`grep -n '\.items\.pop\|\.items\.remove\|del .*\.items\['` over
+`isocenter/`) — there are exactly two, and **neither can shift a
+surviving item's index today**:
+
+- `persistence.py:974` `del seq.items[1:]` (`_prune_hollow_multiplex_items`)
+- `io_handlers.py:1226` `del wf_seq.items[1:]` (the #160 ingest prune)
+
+Both are tail truncations of Waveform Sequence keeping item 0, so no
+survivor moves. Remediation's `seq_removals` (`privacy.py:417`) raises
+`REMOVE_TAG` on a *sequence tag* — it deletes whole sequences, never one
+item out of several — so it destroys paths (handled) rather than
+shifting them.
+
+So the hazard is latent, not live. **Recommendation: add the guard
+anyway**, because the check is two lines and the alternative is that the
+first person to write `items.pop(i)` anywhere in this codebase silently
+corrupts exports with no test able to see it. Before `add_new`, the
+post-pass compares the resolved item's own descriptors against the blob:
+
+```python
+expected = (item.Rows * item.Columns * item.SamplesPerPixel
+            * (item.BitsAllocated // 8)
+            * int(getattr(item, 'NumberOfFrames', 1) or 1))
+if expected != len(decoded):
+    # The path resolved to an item whose geometry is not the one the
+    # bytes were taken from -- an index shifted under us. Refuse the
+    # write; a DATA_LOSS row is the honest outcome and a wrong icon is
+    # not. Position is the only identity a sequence item has, which is
+    # why this check exists rather than a trusted lookup.
+    losses.append(...); continue
+```
+
+It is not a proof of identity — two icons of equal geometry are
+indistinguishable by it — but it converts the *detectable* half of the
+failure from silent-wrong-bytes into a reported loss, which is the
+difference that matters. Q9 (below, added after review) asks the owner
+whether the stronger form is wanted: store the icon's Rows/Columns
+alongside the blob and compare those, which catches equal-length
+mismatches too at the cost of widening `instance_blobs`.
+
 ---
 
 ## 9. The de-identification gate (Q2)
@@ -896,9 +1016,41 @@ and carrying the bytes removes that protection without saying so.
 
 **Recommendation.** In `_export_instance_worker`, the nested writeback
 is skipped — and the enclosing `IconImageSequence` **item removed from
-`ds`** — when `ctx.redaction_zones` is non-empty for the instance. A
-`DATA_LOSS` row is appended saying the icon was dropped because the
-frame it derives from was redacted.
+`ds`** — when the instance was redacted. A `DATA_LOSS` row is appended
+saying the icon was dropped because the frame it derives from was
+redacted.
+
+**"Was redacted" must be two conditions, not one.** The obvious gate,
+`ctx.redaction_zones`, is *not sufficient*, and this was checked rather
+than assumed. `ctx.redaction_zones` comes from `_redaction_zones_for`
+(`session.py:3604-3610`), which looks the zones up **at export time**,
+from the **current** configuration, keyed on
+`series.equipment.device_serial_number`. `RedactionService` does not
+consult that: it redacts whatever `rois` its caller passed
+(`services.py:433-465` and `:758-794`). So the zones list is empty at
+export while the pixels are redacted whenever any of these holds — the
+config rule was edited or the serial number changed between `redact()`
+and `export()`; `RedactionService` was driven directly with ad-hoc
+`rois`; the series has no `equipment` (the lookup returns `[]` on the
+first branch). In each case the top-level frame ships zeroed and the
+icon ships intact: a thumbnail of exactly what redaction removed.
+
+The instance itself carries the answer. `services.py:464` and `:794`
+both write `inst.attributes["_ISOCENTER_REDACTION_HASH"] = config_hash`
+on every path that actually modified pixels, and `:433`/`:758` read it
+back as the skip attestation. So the gate is:
+
+```python
+redacted = bool(ctx.redaction_zones) or (
+    "_ISOCENTER_REDACTION_HASH" in ctx.instance.attributes)
+```
+
+The attestation is the load-bearing half; `ctx.redaction_zones` stays as
+the belt for a redaction that is configured but has not run yet in this
+session. Note the attestation is over the *configuration*, not the
+pixels (#237) — which is fine here, because the question being asked is
+only "did redaction touch this instance", not "is that redaction
+current".
 
 Three reasons for the item removal rather than a bare skip:
 
@@ -992,7 +1144,7 @@ per CLAUDE.md.
 | Test | Why it flips | What it must assert instead |
 | --- | --- | --- |
 | `tests/test_private_binary_ingest.py:578` `test_pixel_data_inside_a_sequence_item_is_reported` | The bytes are carried, so the row must **stop** being filed. Reporting a loss that did not happen is #194's defect at a third site — the owner's #183 comment asks for this assertion by name. | Renamed to say the nested pixel data is *carried*; asserts zero `DATA_LOSS` rows for `7fe0,0010`, and that a blob row exists under kind `pixels:0088,0200/0/7fe0,0010`. |
-| `tests/test_private_binary_ingest.py:615` `test_the_top_level_pixel_data_of_that_same_file_is_still_not_reported` | Asserts `len(rows) == 1` — the one row being the nested icon. That row is gone. | `len(rows) == 0`, with the docstring's point (a blanket exemption would file a loss on every image) restated against the new boundary. |
+| `tests/test_private_binary_ingest.py:615` `test_the_top_level_pixel_data_of_that_same_file_is_still_not_reported` | **Stays green as written — do not budget time to change it.** Measured (`scratchpad/probe_review.py`): its icon carries only `Rows`, `Columns` and 4 bytes, so borrowing `file_meta` and calling `.pixel_array` on that item raises `AttributeError: Missing required element: (0028,0100) 'Bits Allocated'`. By §5.4 a decode failure leaves the entry in `dropped`, so its `len(rows) == 1` still holds. Contrast the `:578` fixture, whose icon has the full macro and decodes to `[1, 2, 3, 4]`. | Unchanged, but re-purposed: it becomes the §12.4.6 undecodable-icon tripwire, and its docstring should say so. Enriching the fixture to full Icon Image Macro descriptors is what would flip it — do that only if the intent is to test the top-level boundary against a *carried* icon, and then it becomes `len(rows) == 0`. |
 | `tests/test_private_binary_ingest.py:638` `test_float_pixel_data_inside_a_sequence_item_is_reported` | **Must stay green** under Q5's recommendation. Named here because a developer widening `_is_routed` by depth alone will break it, and it is the tripwire that catches exactly that. | Unchanged. Add a line to its docstring saying the grammar spells this and the spec declined to carry it. |
 | `tests/test_redaction_identity.py:248` `test_the_store_holds_one_instance_and_one_pixel_blob` | Asserts the blob list is exactly `[(new_uid, "pixels")]`. Its fixture carries no icon today, so it may stay green — but the moment a nested blob is added to that fixture it goes red, and it is the only test that pins UID-follows-blob. | Extended with a second case: an instance with an icon, redacted, asserting the nested row is present under the **new** UID and absent under the old one (§7.5). |
 
@@ -1038,6 +1190,22 @@ per CLAUDE.md.
    makes Q2's answer executable rather than a paragraph.
 6. **An undecodable nested icon still files its loss row** (§5.4) — the
    #194-shape tripwire.
+   `tests/test_private_binary_ingest.py:615` already *is* this test:
+   its bare-descriptor icon cannot decode (measured, §12.2), so it stays
+   green and should be re-documented rather than rewritten.
+7. **A shifted index refuses rather than writes** (§8.2). Build an
+   instance with two icons, remove the first item from the sequence
+   after ingest and before export, and assert the export files a
+   `DATA_LOSS` row instead of writing icon 1's bytes into icon 0's item.
+   The failure this catches is silent-wrong-bytes and nothing else in
+   the suite can see it.
+8. **The redaction gate fires without configured zones** (§9). Redact an
+   instance, then clear the configuration rule (or change the series'
+   device serial) so `_redaction_zones_for` returns `[]`, and export.
+   The icon must still be dropped, on the strength of
+   `_ISOCENTER_REDACTION_HASH` alone. A test gated only on
+   `ctx.redaction_zones` passes while the hole is open, which is why
+   this one is specified separately from test 5.
 
 ### 12.5 Mutation probe
 
