@@ -49,16 +49,15 @@ def test_html_renderer(tmp_path, mock_manifest):
 
 def test_session_integration(tmp_path):
     # Mock DicomSession internal store
-    session = DicomSession(persistence_file=":memory:")
+    with DicomSession(persistence_file=":memory:") as session:
+        # Needs actual logic or extensive mocking of session.store structure.
+        # For now, let's skip full integration test if we assume unit tests cover the renderer.
+        # Or strict mock:
 
-    # Needs actual logic or extensive mocking of session.store structure.
-    # For now, let's skip full integration test if we assume unit tests cover the renderer.
-    # Or strict mock:
-
-    # We can rely on the fact that if we call generate_manifest, it iterates.
-    # Since session.store is empty by default
-    output = tmp_path / "session_manifest.html"
-    session.generate_manifest(str(output))
-    assert output.exists()
-    content = output.read_text()
-    assert "Files:</strong> 0" in content
+        # We can rely on the fact that if we call generate_manifest, it iterates.
+        # Since session.store is empty by default
+        output = tmp_path / "session_manifest.html"
+        session.generate_manifest(str(output))
+        assert output.exists()
+        content = output.read_text()
+        assert "Files:</strong> 0" in content

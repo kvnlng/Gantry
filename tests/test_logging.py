@@ -42,14 +42,13 @@ def test_import_with_progress(tmp_path, monkeypatch):
     monkeypatch.setattr(isocenter.parallel, "tqdm", MockTqdm)
 
     # 3. Create Session (initializes logger)
-    session = DicomSession(str(tmp_path / "session.db"))
+    with DicomSession(str(tmp_path / "session.db")) as session:
+        # 4. Import Folder
+        session.ingest(str(dcm_dir))
 
-    # 4. Import Folder
-    session.ingest(str(dcm_dir))
-
-    # 5. Verify Logger created file
-    log_file = os.getenv("ISOCENTER_LOG_FILE", "isocenter.log")
-    assert os.path.exists(log_file)
-    with open(log_file, "r") as f:
-        content = f.read()
-        assert "Importing 5 files" in content
+        # 5. Verify Logger created file
+        log_file = os.getenv("ISOCENTER_LOG_FILE", "isocenter.log")
+        assert os.path.exists(log_file)
+        with open(log_file, "r") as f:
+            content = f.read()
+            assert "Importing 5 files" in content

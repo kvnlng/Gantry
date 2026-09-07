@@ -66,9 +66,10 @@ class TestRedactionParallel(unittest.TestCase):
         self.session = DicomSession(self.db_path)
 
     def tearDown(self):
-        # Ensure thread/db resources are released
-        if hasattr(self.session, "store_backend"):
-            self.session.store_backend.stop()
+        # Ensure thread/db resources are released. `store_backend.stop()`
+        # alone did not: it leaves the ProcessPoolExecutor and the
+        # persistence thread behind (#371).
+        self.session.close()
 
         # Give a momentary pause for OS file handle release (Windows/sometimes Linux)
         import time; time.sleep(0.1)

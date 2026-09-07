@@ -30,19 +30,19 @@ def test_reproduce_no_pixel_data_crash(tmp_path):
     ds.save_as(str(dcm_path))
 
     # 2. Ingest
-    session = DicomSession(":memory:")
-    session.ingest(str(tmp_path))
+    with DicomSession(":memory:") as session:
+        session.ingest(str(tmp_path))
 
-    assert len(session.store.patients) == 1
+        assert len(session.store.patients) == 1
 
-    # 3. Export - Should NOT Crash
-    export_dir = tmp_path / "export"
+        # 3. Export - Should NOT Crash
+        export_dir = tmp_path / "export"
 
-    try:
-        session.export(str(export_dir))
-    except RuntimeError as e:
-        pytest.fail(f"Export should NOT have crashed for file w/o pixels: {e}")
+        try:
+            session.export(str(export_dir))
+        except RuntimeError as e:
+            pytest.fail(f"Export should NOT have crashed for file w/o pixels: {e}")
 
-    # Verify export occurred (e.g. file exists)
-    # The 'Subject_123' folder should be there.
-    assert (export_dir / "Subject_123").exists()
+        # Verify export occurred (e.g. file exists)
+        # The 'Subject_123' folder should be there.
+        assert (export_dir / "Subject_123").exists()
