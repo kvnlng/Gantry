@@ -66,24 +66,24 @@ def test_monochrome_preservation(tmp_path):
 
 
     # Ingest
-    session = DicomSession(":memory:")
-    session.ingest(str(tmp_path))
+    with DicomSession(":memory:") as session:
+        session.ingest(str(tmp_path))
 
-    # Export
-    out_dir = tmp_path / "export_mono"
-    session.export(str(out_dir))
+        # Export
+        out_dir = tmp_path / "export_mono"
+        session.export(str(out_dir))
 
-    # Verify
-    exported_files = list(out_dir.rglob("*.dcm"))
-    assert len(exported_files) == 2
+        # Verify
+        exported_files = list(out_dir.rglob("*.dcm"))
+        assert len(exported_files) == 2
 
-    for f in exported_files:
-        ds = pydicom.dcmread(f)
-        ds_orig = pydicom.dcmread(dcm_path_m2) if ds.SOPInstanceUID == pydicom.dcmread(dcm_path_m2).SOPInstanceUID else pydicom.dcmread(dcm_path_m1)
+        for f in exported_files:
+            ds = pydicom.dcmread(f)
+            ds_orig = pydicom.dcmread(dcm_path_m2) if ds.SOPInstanceUID == pydicom.dcmread(dcm_path_m2).SOPInstanceUID else pydicom.dcmread(dcm_path_m1)
 
-        assert ds.PhotometricInterpretation == ds_orig.PhotometricInterpretation, \
-            f"PhotometricInterpretation mismatch! Expected {ds_orig.PhotometricInterpretation}, got {ds.PhotometricInterpretation}"
-        assert ds.SamplesPerPixel == 1
+            assert ds.PhotometricInterpretation == ds_orig.PhotometricInterpretation, \
+                f"PhotometricInterpretation mismatch! Expected {ds_orig.PhotometricInterpretation}, got {ds.PhotometricInterpretation}"
+            assert ds.SamplesPerPixel == 1
 
 def test_rgb_preservation(tmp_path):
     # Test 3: RGB
@@ -96,26 +96,26 @@ def test_rgb_preservation(tmp_path):
     create_dicom(dcm_path_rgb, rows=rows, cols=cols, samples=3, photometric="RGB", bits=8, pixel_data=arr.tobytes())
 
     # Ingest
-    session = DicomSession(":memory:")
-    session.ingest(str(tmp_path))
+    with DicomSession(":memory:") as session:
+        session.ingest(str(tmp_path))
 
-    # Export
-    out_dir = tmp_path / "export_rgb"
-    session.export(str(out_dir))
+        # Export
+        out_dir = tmp_path / "export_rgb"
+        session.export(str(out_dir))
 
-    # Verify
-    exported_files = list(out_dir.rglob("*.dcm"))
-    assert len(exported_files) == 1
-    ds = pydicom.dcmread(exported_files[0])
+        # Verify
+        exported_files = list(out_dir.rglob("*.dcm"))
+        assert len(exported_files) == 1
+        ds = pydicom.dcmread(exported_files[0])
 
-    assert ds.PhotometricInterpretation == "RGB"
-    assert ds.SamplesPerPixel == 3
-    assert ds.Rows == rows
-    assert ds.Columns == cols
-    assert ds.PlanarConfiguration == 0 # Enforced by our fix
+        assert ds.PhotometricInterpretation == "RGB"
+        assert ds.SamplesPerPixel == 3
+        assert ds.Rows == rows
+        assert ds.Columns == cols
+        assert ds.PlanarConfiguration == 0 # Enforced by our fix
 
-    # Verify Data
-    assert np.array_equal(ds.pixel_array, arr)
+        # Verify Data
+        assert np.array_equal(ds.pixel_array, arr)
 
 def test_samples_per_pixel_integrity(tmp_path):
     # Verify that we don't accidentally promote grayscale to 3 channels or vice versa
@@ -123,12 +123,12 @@ def test_samples_per_pixel_integrity(tmp_path):
     create_dicom(dcm_path, samples=1, photometric="MONOCHROME2")
 
     # Ingest
-    session = DicomSession(":memory:")
-    session.ingest(str(tmp_path))
+    with DicomSession(":memory:") as session:
+        session.ingest(str(tmp_path))
 
-    out_dir = tmp_path / "export_spp"
-    session.export(str(out_dir))
+        out_dir = tmp_path / "export_spp"
+        session.export(str(out_dir))
 
-    ds = pydicom.dcmread(list(out_dir.rglob("*.dcm"))[0])
-    assert ds.SamplesPerPixel == 1
-    assert "PixelData" in ds
+        ds = pydicom.dcmread(list(out_dir.rglob("*.dcm"))[0])
+        assert ds.SamplesPerPixel == 1
+        assert "PixelData" in ds

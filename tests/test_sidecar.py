@@ -54,41 +54,41 @@ def test_sidecar_manager_basics(clean_env):
 
 def test_session_sidecar_persistence(clean_env):
     """Test full integration with DicomSession."""
-    session = DicomSession(TEST_DB)
+    with DicomSession(TEST_DB) as session:
+        # Create Instance with Pixels
+        arr = np.zeros((50, 50, 3), dtype=np.uint8)
+        arr[25, 25] = [1, 2, 3]
 
-    # Create Instance with Pixels
-    arr = np.zeros((50, 50, 3), dtype=np.uint8)
-    arr[25, 25] = [1, 2, 3]
+        p = Patient("P_TEST", "Test Patient")
+        st = Study("S_TEST", "20230101")
+        se = Series("SE_TEST", "OT", 1)
+        inst = Instance("I_TEST", "1.2.3", 1)
+        inst.set_pixel_data(arr)
 
-    p = Patient("P_TEST", "Test Patient")
-    st = Study("S_TEST", "20230101")
-    se = Series("SE_TEST", "OT", 1)
-    inst = Instance("I_TEST", "1.2.3", 1)
-    inst.set_pixel_data(arr)
+        se.instances.append(inst)
+        st.series.append(se)
+        p.studies.append(st)
+        session.store.patients.append(p)
 
-    se.instances.append(inst)
-    st.series.append(se)
-    p.studies.append(st)
-    session.store.patients.append(p)
+        # Save (Bypassing async to ensure immediate write for test)
+        # session.save() is async.
+        session.store_backend.save_all(session.store.patients)
 
-    # Save (Bypassing async to ensure immediate write for test)
-    # session.save() is async.
-    session.store_backend.save_all(session.store.patients)
+        assert os.path.exists(TEST_PIXELS)
+        assert os.path.getsize(TEST_PIXELS) > 0
 
-    assert os.path.exists(TEST_PIXELS)
-    assert os.path.getsize(TEST_PIXELS) > 0
+        # Reload -- nested, so the writing session is still open
+        # while the second reads, as it was before #371.
+        with DicomSession(TEST_DB) as session2:
+            patients = session2.store.patients
+            assert len(patients) == 1
 
-    # Reload
-    session2 = DicomSession(TEST_DB)
-    patients = session2.store.patients
-    assert len(patients) == 1
+            loaded_inst = patients[0].studies[0].series[0].instances[0]
 
-    loaded_inst = patients[0].studies[0].series[0].instances[0]
+            # Check Lazy Loading
+            assert loaded_inst.pixel_array is None
 
-    # Check Lazy Loading
-    assert loaded_inst.pixel_array is None
-
-    # Check Access
-    rec_arr = loaded_inst.get_pixel_data()
-    assert rec_arr.shape == (50, 50, 3)
-    assert np.array_equal(rec_arr[25, 25], [1, 2, 3])
+            # Check Access
+            rec_arr = loaded_inst.get_pixel_data()
+            assert rec_arr.shape == (50, 50, 3)
+            assert np.array_equal(rec_arr[25, 25], [1, 2, 3])

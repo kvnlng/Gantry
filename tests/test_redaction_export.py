@@ -91,43 +91,42 @@ def test_export_compressed_redaction(tmp_path):
     # 3. Ingest
     # DicomSession loads configuration internally usually, or via set_configuration?
     # Checking source: __init__(self, db_path='session_store.db', clean=True, store_backend=None)
-    session = DicomSession(str(db_path))
+    with DicomSession(str(db_path)) as session:
+        # Inject our custom configuration with the rule
+        # The session creates a default configuration on init. We can override it.
+        session.configuration = config
 
-    # Inject our custom configuration with the rule
-    # The session creates a default configuration on init. We can override it.
-    session.configuration = config
+        # Use DicomImporter directly or check session methods
+        # Session generally exposes import functionality.
+        # Based on outline: ingest(self, directory: str)
+        session.ingest(str(src_dir))
 
-    # Use DicomImporter directly or check session methods
-    # Session generally exposes import functionality.
-    # Based on outline: ingest(self, directory: str)
-    session.ingest(str(src_dir))
+        # 4. Export WITH Compression (and implicit redaction)
+        # Important: We DO NOT call session.redact(). We expect export to handle it.
+        out_dir = tmp_path / "export"
+        session.export(str(out_dir), use_compression=True)
 
-    # 4. Export WITH Compression (and implicit redaction)
-    # Important: We DO NOT call session.redact(). We expect export to handle it.
-    out_dir = tmp_path / "export"
-    session.export(str(out_dir), use_compression=True)
+        # 5. Verify Export
+        # Find the exported file
+        exported_files = list(out_dir.glob("**/*.dcm"))
+        assert len(exported_files) == 1
 
-    # 5. Verify Export
-    # Find the exported file
-    exported_files = list(out_dir.glob("**/*.dcm"))
-    assert len(exported_files) == 1
+        ds_out = pydicom.dcmread(str(exported_files[0]))
 
-    ds_out = pydicom.dcmread(str(exported_files[0]))
+        # Check Compression (J2K Transfer Syntax)
+        # 1.2.840.10008.1.2.4.90 is JPEG 2000 Image Compression (Lossless Only)
+        # 1.2.840.10008.1.2.4.91 is JPEG 2000 Image Compression
+        assert ds_out.file_meta.TransferSyntaxUID in ['1.2.840.10008.1.2.4.90', '1.2.840.10008.1.2.4.91']
 
-    # Check Compression (J2K Transfer Syntax)
-    # 1.2.840.10008.1.2.4.90 is JPEG 2000 Image Compression (Lossless Only)
-    # 1.2.840.10008.1.2.4.91 is JPEG 2000 Image Compression
-    assert ds_out.file_meta.TransferSyntaxUID in ['1.2.840.10008.1.2.4.90', '1.2.840.10008.1.2.4.91']
+        # Check Redaction
+        # The region [20:40, 20:40] should be 0
+        arr = ds_out.pixel_array
+        patch = arr[20:40, 20:40]
 
-    # Check Redaction
-    # The region [20:40, 20:40] should be 0
-    arr = ds_out.pixel_array
-    patch = arr[20:40, 20:40]
+        # Sum should be 0 (fully blacked out)
+        assert patch.sum() == 0, f"Region was not redacted! Sum: {patch.sum()}"
 
-    # Sum should be 0 (fully blacked out)
-    assert patch.sum() == 0, f"Region was not redacted! Sum: {patch.sum()}"
-
-    # Check Integrity of non-redacted parts (should still be 1000)
-    # e.g. [50:60, 50:60]
-    background = arr[50:60, 50:60]
-    assert background.mean() == 1000, "Background pixels were modified inappropriately"
+        # Check Integrity of non-redacted parts (should still be 1000)
+        # e.g. [50:60, 50:60]
+        background = arr[50:60, 50:60]
+        assert background.mean() == 1000, "Background pixels were modified inappropriately"

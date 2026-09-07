@@ -63,22 +63,22 @@ def test_pixel_integrity(tmp_path):
     assert ds_in.PlanarConfiguration == 1
 
     # 3. Ingest and Export
-    session = DicomSession(":memory:")
-    session.ingest(str(input_dir))
+    with DicomSession(":memory:") as session:
+        session.ingest(str(input_dir))
 
-    export_dir = tmp_path / "export_rgb"
-    session.export(str(export_dir), use_compression=False)
+        export_dir = tmp_path / "export_rgb"
+        session.export(str(export_dir), use_compression=False)
 
-    # 4. Verify Output
-    exported_files = list(export_dir.rglob("*.dcm"))
-    ds_out = pydicom.dcmread(exported_files[0])
+        # 4. Verify Output
+        exported_files = list(export_dir.rglob("*.dcm"))
+        ds_out = pydicom.dcmread(exported_files[0])
 
-    # WE EXPECT THIS TO PASS now.
+        # WE EXPECT THIS TO PASS now.
 
-    # Check if BitsAllocated matches data size
-    expected_bytes = rows * cols * 3 # 8 bit RGB = 3 bytes/pixel
-    assert len(ds_out.PixelData) == expected_bytes, \
-        f"PixelData size mismatch! Got {len(ds_out.PixelData)}, expected {expected_bytes}"
+        # Check if BitsAllocated matches data size
+        expected_bytes = rows * cols * 3 # 8 bit RGB = 3 bytes/pixel
+        assert len(ds_out.PixelData) == expected_bytes, \
+            f"PixelData size mismatch! Got {len(ds_out.PixelData)}, expected {expected_bytes}"
 
-    # Check Pixel Values
-    assert np.array_equal(ds_out.pixel_array, arr_rgb), "RGB Pixel data mismatch!"
+        # Check Pixel Values
+        assert np.array_equal(ds_out.pixel_array, arr_rgb), "RGB Pixel data mismatch!"

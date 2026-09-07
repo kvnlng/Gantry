@@ -650,6 +650,333 @@ def test_every_top_level_tests_module_is_one_pytest_collects():
         "points, or delete them:\n    " + "\n    ".join(offenders))
 
 
+# --- A session a test opens is a session the test must close ---
+#
+# `Session.close()` releases a `ProcessPoolExecutor` and two threads
+# holding sqlite handles. A test that constructs one and walks away
+# leaks all of it for the remainder of the pytest process -- measured at
+# five threads and five child subprocesses for a single ingest-and-export
+# session -- and this suite's history is load-dependent races (#250,
+# #343, #274, #297). #371 found 36 top-level modules doing it across 58
+# construction sites; one of the 36 was fixed in the commit before this
+# test landed, so it went red on the remaining 35 / 57.
+
+_SESSION_CONSTRUCTORS = frozenset({"Session", "DicomSession"})
+_SESSION_MODULES = frozenset({"isocenter", "isocenter.session"})
+
+
+def _session_constructor_names(tree):
+    """Local names bound to isocenter's Session class in one module.
+
+    Resolved from the imports rather than hard-coded, because the tree
+    spells this four ways: `from isocenter import Session`, `from
+    isocenter.session import DicomSession`, and both `as` renames of
+    those. A sweep keyed on the literal string `DicomSession(` misses
+    `tests/test_unified_config.py`, which is how #371's first pass
+    counted 28 offenders where there were 29.
+    """
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in _SESSION_MODULES:
+            for alias in node.names:
+                if alias.name in _SESSION_CONSTRUCTORS:
+                    names.add(alias.asname or alias.name)
+    return names
+
+
+def _enclosing_scopes(tree):
+    """Map every node to its nearest enclosing function, and to its class."""
+    function_of = {}
+    class_of = {}
+
+    def walk(node, function, klass):
+        for child in ast.iter_child_nodes(node):
+            function_of[child] = function
+            class_of[child] = klass
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                walk(child, child, klass)
+            elif isinstance(child, ast.ClassDef):
+                walk(child, function, child)
+            else:
+                walk(child, function, klass)
+
+    walk(tree, None, None)
+    return function_of, class_of
+
+
+def _dotted(node):
+    """`self.session` -> "self.session"; anything else -> None."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _is_pytest_fixture(node):
+    """Is this function decorated as a pytest fixture?"""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    return any("fixture" in ast.unparse(dec) for dec in node.decorator_list)
+
+
+def _escapes(scope, target, after):
+    """Is `target` handed to someone else, so this scope stops owning it?
+
+    Two spellings, both idioms in this tree:
+
+    * `return session` (also inside a tuple) -- a factory whose caller
+      closes what it is given.
+    * `opened.append(session)` -- registration with a list a fixture's
+      teardown closes in a loop. The loop variable is a different name
+      from the one assigned here, so no name match can see that close;
+      what is checkable is that the session left this scope.
+
+    The first does **not** apply to a `@pytest.fixture` itself. A fixture
+    that `return`s a session hands it to a test function, and a test has
+    no idiom for closing what a fixture gave it -- `populated_session` in
+    `tests/test_reporting_features.py` was exactly that, and leaked into
+    every test that requested it. A fixture owning a session must
+    `yield` it and close after, or register it with a list its teardown
+    drains; both of those this function and `_closes` already accept.
+    """
+    if _is_pytest_fixture(scope):
+        returns_escape = False
+    else:
+        returns_escape = True
+    for node in ast.walk(scope):
+        if (returns_escape and isinstance(node, ast.Return)
+                and node.value is not None):
+            if node.lineno > after:
+                values = (node.value.elts
+                          if isinstance(node.value, ast.Tuple)
+                          else [node.value])
+                if any(isinstance(v, ast.Name) and v.id == target
+                       for v in values):
+                    return True
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("append", "add")
+                and node.lineno > after):
+            if any(isinstance(a, ast.Name) and a.id == target
+                   for a in node.args):
+                return True
+    return False
+
+
+def _closes(scope, target, after=None):
+    """Is `<target>.close` mentioned inside `scope` (optionally later)?
+
+    The attribute reference, not only a call of it: `self.addCleanup(
+    session.close)` and `stack.callback(session.close)` are how two
+    modules in this tree hand the close to someone else, and demanding
+    `session.close()` would flag both.
+    """
+    for node in ast.walk(scope):
+        if isinstance(node, ast.Attribute) and node.attr == "close":
+            if _dotted(node.value) == target:
+                if after is None or node.lineno > after:
+                    return True
+        # `with session:` re-enters the same object and exits it.
+        if isinstance(node, ast.withitem):
+            if _dotted(node.context_expr) == target:
+                if after is None or node.context_expr.lineno > after:
+                    return True
+    return False
+
+
+def _unclosed_session_sites(path, source):
+    """Construction sites in one module that nothing visibly closes.
+
+    Yields `(lineno, shape)` for each. See the test below for exactly
+    which shapes count as closed and which do not.
+    """
+    tree = ast.parse(source, filename=str(path))
+    constructors = _session_constructor_names(tree)
+    if not constructors:
+        return [], 0
+
+    parent_of = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent_of[child] = node
+    function_of, class_of = _enclosing_scopes(tree)
+
+    offenders = []
+    total = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            if node.func.id not in constructors:
+                continue
+        elif isinstance(node.func, ast.Attribute):
+            if node.func.attr not in _SESSION_CONSTRUCTORS:
+                continue
+            if not isinstance(node.func.value, ast.Name):
+                continue
+            if node.func.value.id != "isocenter":
+                continue
+        else:
+            continue
+
+        total += 1
+        parent = parent_of.get(node)
+
+        # (a) `with Session(...) as s:` -- the shape to prefer.
+        if isinstance(parent, ast.withitem):
+            continue
+        # (d) `return Session(...)` -- a factory hands ownership on.
+        if isinstance(parent, ast.Return):
+            continue
+
+        if isinstance(parent, ast.Assign) and len(parent.targets) == 1:
+            target = parent.targets[0]
+            # (b) `s = Session(...)` ... `s.close()` later in the
+            # function. Bounded below by this line so an earlier close of
+            # a name since rebound does not vouch for the new session,
+            # and bounded above by the next rebinding of the same name.
+            if isinstance(target, ast.Name):
+                scope = function_of.get(node) or tree
+                if _closes(scope, target.id, after=node.lineno):
+                    continue
+                # (e)/(f) ownership left this scope; see `_escapes`.
+                if _escapes(scope, target.id, after=node.lineno):
+                    continue
+                offenders.append((node.lineno, f"{target.id} = ..."))
+                continue
+            # (c) `self.session = Session(...)` in setUp, closed from
+            # tearDown or addCleanup. Different method, so no ordering
+            # can be asked for; the class is the scope.
+            dotted = _dotted(target)
+            if dotted is not None:
+                scope = class_of.get(node) or function_of.get(node) or tree
+                if _closes(scope, dotted):
+                    continue
+                offenders.append((node.lineno, f"{dotted} = ..."))
+                continue
+
+        offenders.append(
+            (node.lineno, f"unrecognised shape ({type(parent).__name__})"))
+    return offenders, total
+
+
+def test_a_session_a_test_opens_is_a_session_the_test_closes():
+    """A `Session` built by a test and never closed leaks threads and
+    subprocesses into every test that runs after it (#371).
+
+    `close()` shuts down a `ProcessPoolExecutor` and joins two threads
+    holding sqlite handles. `tests/test_naming_structure.py` was measured
+    at **five threads and five child processes** still live after its one
+    test returned; they stay for the life of the pytest process, and this
+    suite's recurring failures are load-dependent races (#250, #343,
+    #274, #297). 36 modules leaked this way across 58 sites, one of
+    which was already fixed when this test was written -- so its own
+    red-first run listed the remaining 35 modules and 57 sites.
+
+    **What this checks.** Every call to a name the module imported from
+    `isocenter`/`isocenter.session` as `Session` or `DicomSession` --
+    resolved from the imports, so an `as` rename is still seen -- must be
+    written in one of four shapes:
+
+    * `with Session(...) as s:`, the preferred one;
+    * `s = Session(...)` with `s.close` named later in the same function
+      (a call, or a bare reference handed to `addCleanup`/`callback`), or
+      a later `with s:`;
+    * `self.session = Session(...)` with `self.session.close` named
+      anywhere in the enclosing class -- `setUp` and `tearDown` are
+      different methods, so no ordering can be required here;
+    * `return Session(...)`, or `s = Session(...)` later returned, a
+      factory handing ownership to its caller -- but not from a
+      `@pytest.fixture`, which has no caller that would close it;
+    * `opened.append(s)`, registration with a list a fixture teardown
+      drains in a loop, where the loop variable is a different name and
+      no name match could see the close.
+
+    Anything else is flagged, including shapes that may well be correct
+    (`stack.enter_context(Session(...))`, a tuple target, a bare
+    expression statement). None exist in the tree today. If one is
+    wanted, teach this test the shape rather than deleting the test --
+    but prefer writing the site as a plain `with`, which is what the
+    flag is asking for.
+
+    **What this does not catch, and it is a real list.**
+
+    * *Reachability, only spelling.* A `close()` in a branch that does
+      not run, or after the line that raises, satisfies this test and
+      leaks at runtime. That is why `with` is the preferred shape and
+      `try/finally` the fallback: both are structural. This test cannot
+      tell a `finally` from an `else`.
+    * *Factories and registration.* `return Session(...)` is accepted
+      without following the caller, and `opened.append(s)` without
+      following the list, so a helper whose callers leak passes here.
+      Every such helper in the tree today has callers that close.
+    * *Sessions built elsewhere.* A module that gets its session from
+      `conftest.py`, a fixture in another file, or a plain
+      `isocenter.Session` attribute access that is not spelled
+      `isocenter.Session(...)`, is invisible to the import scan.
+    * *`tests/benchmarks/`.* Top level only, for the same reason as
+      `test_every_top_level_tests_module_is_one_pytest_collects` above.
+    * *Whether close is the right close.* Two sessions assigned to one
+      name with one `close()` between them pass for both; the rebinding
+      bound only stops a close *above* the construction from counting.
+
+    It is per-site, not per-file, which is the whole point. The grep
+    that found #371 (`contains DicomSession(` and `contains neither
+    "with DicomSession" nor ".close()"`) reported 28 modules; this test
+    reported 35 on the same tree. The seven it missed are three
+    different ways a file-level grep is wrong, all worth knowing:
+
+    * `tests/test_unified_config.py` spells the constructor `Session`,
+      the alias the grep did not look for;
+    * `test_analysis`, `test_analysis_persistence` and
+      `test_optimization` contain `conn.close()` -- a sqlite
+      connection, not a session;
+    * `test_api_coherence` and `test_wfdb_conformance` contain a real
+      `session.close()` belonging to a *different* session several
+      tests away from the leaking one;
+    * `test_sidecar` matched on **prose**: its docstring reads "Test
+      full integration with DicomSession", which the `with
+      DicomSession` exclusion counted as a context manager.
+    """
+    walked = {path for path in (REPO / "tests").glob("*.py")}
+    tracked = _tracked_top_level_test_modules()
+    if tracked is not None:
+        walked = {p for p in walked if f"tests/{p.name}" in tracked}
+
+    offenders = {}
+    sites = 0
+    for path in sorted(walked):
+        found, total = _unclosed_session_sites(
+            path, path.read_text(encoding="utf-8"))
+        sites += total
+        if found:
+            offenders[f"tests/{path.name}"] = found
+
+    # A green result is only meaningful if the sweep found the sessions.
+    # 290 recognised construction sites on the tree this landed in -- a
+    # measurement, not a pin: the floor is deliberately far under it so
+    # that adding or removing tests is not a conflict here.
+    assert sites >= 200, (
+        f"only {sites} Session construction sites found under tests/; the "
+        "sweep is broken and this test would otherwise pass vacuously "
+        "(#371)")
+
+    report = "\n".join(
+        f"    {name}:{lineno}  {shape}"
+        for name in sorted(offenders)
+        for lineno, shape in offenders[name])
+    assert not offenders, (
+        f"{sum(len(v) for v in offenders.values())} Session construction "
+        f"site(s) in {len(offenders)} module(s) leak a "
+        "ProcessPoolExecutor and two sqlite threads into every test that "
+        "runs afterwards (#371). Write each as `with Session(...) as s:`, "
+        "or close it in a `finally`/`tearDown`/`addCleanup`:\n" + report)
+
+
 def test_the_build_backend_is_declared_exactly_once():
     """pip needs a PEP 517 backend, and setup.py stays the metadata.
 

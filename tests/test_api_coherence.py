@@ -256,25 +256,25 @@ def test_use_compression_none_means_no_compression(tmp_path):
     ds.preamble = b"\0" * 128
     pydicom.dcmwrite(str(input_dir / "test.dcm"), ds, write_like_original=False)
 
-    session = DicomSession(":memory:")
-    session.ingest(str(input_dir))
+    with DicomSession(":memory:") as session:
+        session.ingest(str(input_dir))
 
-    out = tmp_path / "output"
-    session.export(str(out), use_compression=None, show_progress=False)
+        out = tmp_path / "output"
+        session.export(str(out), use_compression=None, show_progress=False)
 
-    exported_file = None
-    for root, _, files in os.walk(out):
-        for f in files:
-            if f.endswith(".dcm"):
-                exported_file = os.path.join(root, f)
-                break
+        exported_file = None
+        for root, _, files in os.walk(out):
+            for f in files:
+                if f.endswith(".dcm"):
+                    exported_file = os.path.join(root, f)
+                    break
 
-    assert exported_file is not None, "Exported file not found"
+        assert exported_file is not None, "Exported file not found"
 
-    out_ds = pydicom.dcmread(exported_file)
-    assert out_ds.file_meta.TransferSyntaxUID != JPEG2000Lossless, (
-        "use_compression=None produced a JPEG2000-compressed export; "
-        "None must mean 'no compression', not 'use the default'")
+        out_ds = pydicom.dcmread(exported_file)
+        assert out_ds.file_meta.TransferSyntaxUID != JPEG2000Lossless, (
+            "use_compression=None produced a JPEG2000-compressed export; "
+            "None must mean 'no compression', not 'use the default'")
 
 
 def test_session_can_be_used_as_a_context_manager(tmp_path):

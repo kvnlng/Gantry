@@ -73,20 +73,20 @@ def test_audit_log(store):
 def test_session_integration(tmp_path):
     # Verify DicomSession uses the store
     db_path = tmp_path / "test_session.db"
-    sess = DicomSession(str(db_path))
-    # Simulate adding data (Session usually relies on Import, but let's manipulate internal store)
-    p = Patient("PX", "Test")
-    sess.store.patients.append(p)
+    with DicomSession(str(db_path)) as sess:
+        # Simulate adding data (Session usually relies on Import, but let's manipulate internal store)
+        p = Patient("PX", "Test")
+        sess.store.patients.append(p)
 
-    # Save
-    sess.save()
-    sess.persistence_manager.shutdown()
+        # Save
+        sess.save()
+        sess.persistence_manager.shutdown()
 
-    # Verify DB
-    with sqlite3.connect(str(db_path)) as conn:
-        count = conn.execute("SELECT count(*) FROM patients").fetchone()[0]
+        # Verify DB
+        with sqlite3.connect(str(db_path)) as conn:
+            count = conn.execute("SELECT count(*) FROM patients").fetchone()[0]
 
-    assert count == 1
+        assert count == 1
 
     # Cleanup auto by tmp_path
 

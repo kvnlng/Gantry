@@ -60,29 +60,29 @@ def test_parallel_export(tmp_path):
     create_dcm(input_dir / "5.dcm", "PAT2", "STUDY3", "SERIES4", "2.1.1.1", seri_num=4, inst_num=1)
 
     # 2. Ingest
-    session = DicomSession(":memory:")
-    session.ingest(str(input_dir))
+    with DicomSession(":memory:") as session:
+        session.ingest(str(input_dir))
 
-    assert len(session.store.patients) == 2
+        assert len(session.store.patients) == 2
 
-    # 3. Export
-    export_dir = tmp_path / "export"
-    session.export(str(export_dir))
+        # 3. Export
+        export_dir = tmp_path / "export"
+        session.export(str(export_dir))
 
-    # 4. Verify Output
-    # We expect recursive finding of 5 .dcm files
-    exported_files = list(export_dir.rglob("*.dcm"))
+        # 4. Verify Output
+        # We expect recursive finding of 5 .dcm files
+        exported_files = list(export_dir.rglob("*.dcm"))
 
-    print("\n--- Exported Files ---")
-    for f in exported_files:
-        print(f)
-    print("----------------------\n")
+        print("\n--- Exported Files ---")
+        for f in exported_files:
+            print(f)
+        print("----------------------\n")
 
-    assert len(exported_files) == 5, f"Should have exported 5 files, found {len(exported_files)}"
+        assert len(exported_files) == 5, f"Should have exported 5 files, found {len(exported_files)}"
 
-    # Verify content of one
-    one_dcm = exported_files[0]
-    ds = pydicom.dcmread(one_dcm)
-    assert ds.PatientID in ["PAT1", "PAT2"]
+        # Verify content of one
+        one_dcm = exported_files[0]
+        ds = pydicom.dcmread(one_dcm)
+        assert ds.PatientID in ["PAT1", "PAT2"]
 
-    print(f"Verified parallel export of {len(exported_files)} files.")
+        print(f"Verified parallel export of {len(exported_files)} files.")

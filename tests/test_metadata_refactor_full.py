@@ -17,7 +17,10 @@ class TestMetadataRefactorFull(unittest.TestCase):
         self.session = DicomSession(self.db_path)
 
     def tearDown(self):
-        self.session.store_backend.stop()
+        # `store_backend.stop()` alone left the ProcessPoolExecutor and
+        # the persistence thread running; `close()` is the whole release
+        # (#371).
+        self.session.close()
         del self.session
         shutil.rmtree(self.test_dir)
 

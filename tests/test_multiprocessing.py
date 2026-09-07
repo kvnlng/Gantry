@@ -42,20 +42,20 @@ def test_parallel_import_and_scan(tmp_path):
         DicomExporter.write_tree(p, str(raw_dir))
 
     # 2. Parallel Import
-    session = DicomSession(db_path)
-    session.ingest(str(raw_dir))
+    with DicomSession(db_path) as session:
+        session.ingest(str(raw_dir))
 
-    assert len(session.store.patients) == 20
+        assert len(session.store.patients) == 20
 
-    # 3. Parallel Scan
-    report = session.audit()
-    assert isinstance(report, PhiReport)
-    assert len(report) >= 20 # At least Names should be flagged
+        # 3. Parallel Scan
+        report = session.audit()
+        assert isinstance(report, PhiReport)
+        assert len(report) >= 20 # At least Names should be flagged
 
-    # 4. Verify Rehydration
-    # Check if finding.entity refers to the LIVE object in session.store
-    finding = report[0]
-    live_patient = next(p for p in session.store.patients if p.patient_id == finding.entity_uid)
+        # 4. Verify Rehydration
+        # Check if finding.entity refers to the LIVE object in session.store
+        finding = report[0]
+        live_patient = next(p for p in session.store.patients if p.patient_id == finding.entity_uid)
 
-    # Identity check might fail if rehydration missed, logic check is safer
-    assert finding.entity is live_patient, "Finding entity should be the live object, not a clone"
+        # Identity check might fail if rehydration missed, logic check is safer
+        assert finding.entity is live_patient, "Finding entity should be the live object, not a clone"

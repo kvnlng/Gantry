@@ -68,34 +68,34 @@ class TestNewFeatures(unittest.TestCase):
 
     def test_export_compression_j2k(self):
         """Verify JPEG 2000 Export Feature"""
-        s = DicomSession(":memory:")
-        s.ingest(self.input_dir)
+        with DicomSession(":memory:") as s:
+            s.ingest(self.input_dir)
 
-        out = os.path.join(self.output_dir, "compressed")
-        s.export(out, use_compression=True)
+            out = os.path.join(self.output_dir, "compressed")
+            s.export(out, use_compression=True)
 
-        # Find the exported file
-        exported_file = None
-        for root, _, files in os.walk(out):
-            for f in files:
-                if f.endswith(".dcm"):
-                    exported_file = os.path.join(root, f)
-                    break
+            # Find the exported file
+            exported_file = None
+            for root, _, files in os.walk(out):
+                for f in files:
+                    if f.endswith(".dcm"):
+                        exported_file = os.path.join(root, f)
+                        break
 
-        self.assertIsNotNone(exported_file, "Exported file not found")
+            self.assertIsNotNone(exported_file, "Exported file not found")
 
-        # Verify
-        ds = pydicom.dcmread(exported_file)
+            # Verify
+            ds = pydicom.dcmread(exported_file)
 
-        # Check Transfer Syntax
-        self.assertEqual(ds.file_meta.TransferSyntaxUID, JPEG2000Lossless)
+            # Check Transfer Syntax
+            self.assertEqual(ds.file_meta.TransferSyntaxUID, JPEG2000Lossless)
 
-        # Check if we can Read Pixels
-        try:
-            arr = ds.pixel_array
-            self.assertEqual(arr.shape, (64, 64))
-        except Exception as e:
-            self.fail(f"Failed to decode compressed pixels: {e}")
+            # Check if we can Read Pixels
+            try:
+                arr = ds.pixel_array
+                self.assertEqual(arr.shape, (64, 64))
+            except Exception as e:
+                self.fail(f"Failed to decode compressed pixels: {e}")
 
 
 
@@ -126,19 +126,18 @@ class TestNewFeatures(unittest.TestCase):
             if os.path.exists("test_auto_key.db"):
                 os.remove("test_auto_key.db")
 
-            s = DicomSession("test_auto_key.db")
+            with DicomSession("test_auto_key.db") as s:
+                # 3. Verify Reversibility Service is active
+                self.assertIsNotNone(s.reversibility_service)
+                self.assertIsNotNone(s.reversibility_service.engine)
+                self.assertIsNotNone(s.reversibility_service.key_manager)
 
-            # 3. Verify Reversibility Service is active
-            self.assertIsNotNone(s.reversibility_service)
-            self.assertIsNotNone(s.reversibility_service.engine)
-            self.assertIsNotNone(s.reversibility_service.key_manager)
+                # 4. Verify Key Matches
+                # We can't easily extract the key from Fernet object directly without protected access,
+                # but we can check if it can encrypt/decrypt?
+                # Or just rely on it being not None.
 
-            # 4. Verify Key Matches
-            # We can't easily extract the key from Fernet object directly without protected access,
-            # but we can check if it can encrypt/decrypt?
-            # Or just rely on it being not None.
-
-            s.persistence_manager.shutdown()
+                s.persistence_manager.shutdown()
 
         finally:
             # Restore original key or delete test key

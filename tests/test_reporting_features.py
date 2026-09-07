@@ -42,7 +42,8 @@ def populated_session():
     se3.instances.append(i3)
 
     store.patients.extend([p1, p2])
-    return session
+    yield session
+    session.close()
 
 def test_inventory_output(populated_session, capsys):
     """Verifies inventory prints summary and grouped equipment."""

@@ -50,28 +50,28 @@ def test_ingest_planar_normalization(tmp_path):
     ds.save_as(str(dcm_path))
 
     # 2. Ingest
-    session = DicomSession(":memory:")
-    session.ingest(str(input_dir))
+    with DicomSession(":memory:") as session:
+        session.ingest(str(input_dir))
 
-    # 3. Verify Internal State
-    # Get the instance from the session
-    # We navigate: Session -> Patient -> Study -> Series -> Instance
-    assert len(session.store.patients) == 1
-    pat = session.store.patients[0]
-    metrics = pat.studies[0].series[0].instances[0]
+        # 3. Verify Internal State
+        # Get the instance from the session
+        # We navigate: Session -> Patient -> Study -> Series -> Instance
+        assert len(session.store.patients) == 1
+        pat = session.store.patients[0]
+        metrics = pat.studies[0].series[0].instances[0]
 
-    # The CRITICAL ASSERTION:
-    # Isocenter should have updated the metadata to match the numpy array (Interleaved)
-    # So PlanarConfiguration should be 0, not 1.
-    assert metrics.attributes["0028,0006"] == 0, "Ingestion failed to normalize PlanarConfiguration to 0"
+        # The CRITICAL ASSERTION:
+        # Isocenter should have updated the metadata to match the numpy array (Interleaved)
+        # So PlanarConfiguration should be 0, not 1.
+        assert metrics.attributes["0028,0006"] == 0, "Ingestion failed to normalize PlanarConfiguration to 0"
 
-    # 4. Verify Export retains consistency
-    export_dir = tmp_path / "export_norm"
-    session.export(str(export_dir), use_compression=False)
+        # 4. Verify Export retains consistency
+        export_dir = tmp_path / "export_norm"
+        session.export(str(export_dir), use_compression=False)
 
-    exported_files = list(export_dir.rglob("*.dcm"))
-    ds_out = pydicom.dcmread(exported_files[0])
+        exported_files = list(export_dir.rglob("*.dcm"))
+        ds_out = pydicom.dcmread(exported_files[0])
 
-    # Exported file should also specify PlanarConfig = 0
-    assert ds_out.PlanarConfiguration == 0
-    assert np.array_equal(ds_out.pixel_array, arr_rgb)
+        # Exported file should also specify PlanarConfig = 0
+        assert ds_out.PlanarConfiguration == 0
+        assert np.array_equal(ds_out.pixel_array, arr_rgb)

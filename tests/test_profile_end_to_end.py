@@ -66,48 +66,48 @@ def test_profile_remediation_end_to_end(tmp_path):
         }, f)
 
     # 3. Setup Session
-    session = DicomSession(":memory:")
-    session.ingest(str(tmp_path)) # Ingest
+    with DicomSession(":memory:") as session:
+        session.ingest(str(tmp_path)) # Ingest
 
-    # 4. Load Config
-    session.load_config(str(config_path))
+        # 4. Load Config
+        session.load_config(str(config_path))
 
-    # 5. Export (Applying Remediation)
-    export_dir = tmp_path / "clean_export"
-    # Note: 'audit()' or 'export(check_burned_in=True)' usually warns.
-    # Here we want to see if applying remediation actually works.
-    # We'll use apply_remediation directly or just check if a burned-in-safe export flags it.
+        # 5. Export (Applying Remediation)
+        export_dir = tmp_path / "clean_export"
+        # Note: 'audit()' or 'export(check_burned_in=True)' usually warns.
+        # Here we want to see if applying remediation actually works.
+        # We'll use apply_remediation directly or just check if a burned-in-safe export flags it.
 
-    # Method A: Check if scan finds it (Verification of config load + Privacy Inspector)
-    report = session.audit()
-    # Basic profile REMOVES PatientName. So scan should FLAG it.
+        # Method A: Check if scan finds it (Verification of config load + Privacy Inspector)
+        report = session.audit()
+        # Basic profile REMOVES PatientName. So scan should FLAG it.
 
-    flagged_tags = {f.tag for f in report}
-    assert "0010,0010" in flagged_tags # PatientName
-    assert "0010,0030" in flagged_tags # BirthDate
+        flagged_tags = {f.tag for f in report}
+        assert "0010,0010" in flagged_tags # PatientName
+        assert "0010,0030" in flagged_tags # BirthDate
 
-    # Method B: Apply and Export
-    # Generate risk report
-    risk_report = session.audit()
-    # Use RemediationService to apply (mocking internal flow if needed, but session usually has helpers)
-    session.anonymize(risk_report)
+        # Method B: Apply and Export
+        # Generate risk report
+        risk_report = session.audit()
+        # Use RemediationService to apply (mocking internal flow if needed, but session usually has helpers)
+        session.anonymize(risk_report)
 
-    session.export(str(export_dir))
+        session.export(str(export_dir))
 
-    # 6. Verify Exported File
-    out_files = list(export_dir.rglob("*.dcm"))
-    assert len(out_files) == 1
-    ds_out = pydicom.dcmread(out_files[0])
+        # 6. Verify Exported File
+        out_files = list(export_dir.rglob("*.dcm"))
+        assert len(out_files) == 1
+        ds_out = pydicom.dcmread(out_files[0])
 
-    # PatientName should be REMOVED or ANONYMIZED (Isocenter safety default)
-    # The profile says "REMOVE", but Isocenter's semantic layer enforces "ANONYMIZED" for Patient objects
-    # to ensure validity. Both are safe.
-    val = getattr(ds_out, "PatientName", "")
-    assert val == "" or str(val) == "ANONYMIZED"
-    assert "John" not in str(val)
+        # PatientName should be REMOVED or ANONYMIZED (Isocenter safety default)
+        # The profile says "REMOVE", but Isocenter's semantic layer enforces "ANONYMIZED" for Patient objects
+        # to ensure validity. Both are safe.
+        val = getattr(ds_out, "PatientName", "")
+        assert val == "" or str(val) == "ANONYMIZED"
+        assert "John" not in str(val)
 
-    # BirthDate has no hardcoded semantic override, so strictly REMOVE should work
-    assert "PatientBirthDate" not in ds_out or ds_out.PatientBirthDate == ""
+        # BirthDate has no hardcoded semantic override, so strictly REMOVE should work
+        assert "PatientBirthDate" not in ds_out or ds_out.PatientBirthDate == ""
 
 
 def test_series_description_is_remediated_by_the_basic_profile_via_documented_path(tmp_path):
@@ -131,30 +131,30 @@ def test_series_description_is_remediated_by_the_basic_profile_via_documented_pa
     dcm_path = tmp_path / "phi.dcm"
     create_simple_dicom(dcm_path, "John^Doe", series_description="Rhythm strip Jane Doe")
 
-    session = DicomSession(":memory:")
-    session.ingest(str(tmp_path))
+    with DicomSession(":memory:") as session:
+        session.ingest(str(tmp_path))
 
-    config_path = tmp_path / "config.yaml"
-    session.create_config(str(config_path))
-    session.load_config(str(config_path))
+        config_path = tmp_path / "config.yaml"
+        session.create_config(str(config_path))
+        session.load_config(str(config_path))
 
-    findings = session.audit()
-    session.anonymize(findings)
+        findings = session.audit()
+        session.anonymize(findings)
 
-    export_dir = tmp_path / "clean_export"
-    session.export(str(export_dir))
+        export_dir = tmp_path / "clean_export"
+        session.export(str(export_dir))
 
-    out_files = list(export_dir.rglob("*.dcm"))
-    assert len(out_files) == 1
-    ds_out = pydicom.dcmread(out_files[0])
+        out_files = list(export_dir.rglob("*.dcm"))
+        assert len(out_files) == 1
+        ds_out = pydicom.dcmread(out_files[0])
 
-    series_description = str(getattr(ds_out, "SeriesDescription", "<missing>"))
-    assert series_description == "", (
-        "SeriesDescription survived anonymize() unredacted -- the Basic "
-        f"profile's 0008,103E key never matched the lowercased graph key: "
-        f"got {series_description!r}")
-    assert "Jane Doe" not in series_description
-    assert "Rhythm strip" not in series_description
+        series_description = str(getattr(ds_out, "SeriesDescription", "<missing>"))
+        assert series_description == "", (
+            "SeriesDescription survived anonymize() unredacted -- the Basic "
+            f"profile's 0008,103E key never matched the lowercased graph key: "
+            f"got {series_description!r}")
+        assert "Jane Doe" not in series_description
+        assert "Rhythm strip" not in series_description
 
 
 def test_uppercase_tag_keys_are_normalized_at_the_inspector_boundary():
