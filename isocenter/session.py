@@ -504,11 +504,18 @@ def _redaction_worker_count() -> int:
     `ISOCENTER_MAX_WORKERS` overrides it. A malformed value used to raise
     inside the handler that swallowed everything, so a typo in a shell
     profile turned redaction into a no-op that reported success; now it
-    warns and falls back to the default.
+    warns and falls back to the default. A value below 1 is reported and
+    replaced by the same default (#341): until then this read clamped
+    `0` and every negative to a single worker with `max(1, override)`
+    and said nothing, while `run_parallel`'s read of the same variable
+    had been warning since #335 -- one variable, two answers. The floor
+    is `_env_int`'s now, so there is no clamp here to read as the guard.
+    The `max(1, ...)` on the default is a different thing and stays:
+    `cpu_count() // 2` is `0` on a one-CPU box.
     """
-    override = _env_int("ISOCENTER_MAX_WORKERS")
+    override = _env_int("ISOCENTER_MAX_WORKERS", minimum=1)
     if override is not None:
-        return max(1, override)
+        return override
     return max(1, min((os.cpu_count() or 1) // 2, 8))
 
 
@@ -3587,15 +3594,12 @@ class DicomSession:
         has no process to recycle, and the cost is pickling an
         `ExportContext` -- attributes, sequences, and a numpy array per
         task where pixels are resident -- across a pipe. Reversing it
-        means revisiting eight test files and `tests/profile_memory.py`,
-        which assume this subprocess boundary;
-        `test_export_runs_in_processes_by_decision` names them.
-        `tests/profile_memory.py` is the weakest of the nine and is
-        named anyway: pytest does not collect it (the filename matches
-        neither default pattern) and it cannot import (`psutil` is in no
-        extra), so its own `maxtasksperchild` assertion has drifted to
-        `10` unnoticed -- #347. It still records the assumption; it just
-        does not currently defend it.
+        means revisiting eight test files which assume this subprocess
+        boundary; `test_export_runs_in_processes_by_decision` names them
+        and pins the `25` below, and every one of the eight runs on
+        every push. (An uncollected ninth, `tests/profile_memory.py`,
+        was named here until #347 deleted it: it asserted `10` against
+        this `25` and nothing ever ran it.)
 
         `store_backend` is passed explicitly because this is a static
         method and the workers may be in subprocesses: the handle cannot

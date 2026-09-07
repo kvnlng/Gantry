@@ -719,20 +719,19 @@ def test_export_runs_in_processes_by_decision(monkeypatch, caplog):
 
     What it holds still: the `25`. If it ever becomes `None`, the export
     path takes threads on a free-threaded build, and eight test files
-    plus `tests/profile_memory.py` assume a subprocess boundary and must
-    be revisited before that lands --
+    assume a subprocess boundary and must be revisited before that
+    lands --
     `tests/test_private_tag_vr_roundtrip.py`,
     `tests/test_redaction_failure_is_reported.py`,
     `tests/test_float_pixel_data_export.py`,
     `tests/test_export_worker_graph_purity.py`,
     `tests/test_redaction_identity.py`,
     `tests/test_redaction_attestation.py`,
-    `tests/test_redaction_multizone.py` and this file.
-
-    `tests/profile_memory.py` is listed for its assumption, not for its
-    protection: it is neither collected nor importable, and its own
-    assertion drifted to `10` against the shipped `25` without anything
-    noticing (#347). The other eight run on every push.
+    `tests/test_redaction_multizone.py` and this file. All eight run on
+    every push. (A ninth, `tests/profile_memory.py`, was listed here for
+    its assumption rather than its protection until #347 deleted it: it
+    was neither collected nor importable, and its own assertion had
+    drifted to `10` against the shipped `25` with nothing noticing.)
     """
     from types import SimpleNamespace
 
@@ -756,10 +755,11 @@ def test_export_runs_in_processes_by_decision(monkeypatch, caplog):
 
     # The warning `_use_threads` emits repeats this number as a literal
     # sentence -- "session.export() always sets maxtasksperchild=25" --
-    # and nothing reads it from here, so it can drift exactly the way
-    # tests/profile_memory.py's `10` drifted from this same `25` (#347).
-    # Tying the two together is the whole point of capturing the kwarg:
-    # the shipped log line must quote what the shipped call passes.
+    # and nothing reads it from here, so it can drift exactly the way an
+    # uncollected `tests/profile_memory.py`, deleted in #347, had drifted
+    # to `10` from this same `25`. Tying the two together is the whole
+    # point of capturing the kwarg: the shipped log line must quote what
+    # the shipped call passes.
     monkeypatch.delenv("ISOCENTER_FORCE_THREADS", raising=False)
     with caplog.at_level(logging.WARNING):
         parallel._use_threads(True, captured["maxtasksperchild"])
@@ -840,3 +840,148 @@ def test_an_explicit_zero_tasks_per_child_argument_still_reaches_the_pool(
         1, 1, 0, False, False, False, "", None)
 
     assert strategy.maxtasksperchild == 0
+
+
+# --------------------------------------------------------------------
+# One floor for every integer tuning variable (#341)
+# --------------------------------------------------------------------
+#
+# #335 rejected `ISOCENTER_MAX_WORKERS` below 1 at its call site; #185
+# copied the arm for `ISOCENTER_MAX_TASKS_PER_CHILD`; `ISOCENTER_CHUNKSIZE`
+# kept the `or` both of them had removed, so `0` was discarded in silence
+# and `-1` travelled to the map call. Three variables, one helper, three
+# answers to "what does 0 mean". The floor now lives in `_env_int` itself,
+# as a keyword-only `minimum` every read site has to state, and the tests
+# below hold all three variables to one answer at once.
+
+_TUNING_INTEGERS = {
+    # variable: (the `_Strategy` field it settles, its documented default)
+    "ISOCENTER_MAX_WORKERS": ("max_workers", lambda: os.cpu_count() or 1),
+    "ISOCENTER_CHUNKSIZE": ("chunksize", lambda: 1),
+    "ISOCENTER_MAX_TASKS_PER_CHILD": ("maxtasksperchild", lambda: None),
+}
+
+
+@pytest.mark.parametrize(
+    "value", [None, "1", "2", "0", "-3", "banana"],
+    ids=lambda value: "unset" if value is None else value)
+@pytest.mark.parametrize(
+    "name", sorted(_TUNING_INTEGERS),
+    ids=lambda name: name.removeprefix("ISOCENTER_"))
+def test_a_tuning_integer_below_its_floor_is_reported_and_replaced_by_the_default(
+        name, value, monkeypatch, caplog):
+    """`0` and every negative are reported and replaced, for all three (#341).
+
+    **Red on exactly two of the eighteen cells when written:
+    `CHUNKSIZE-0` (the value is right by accident and nothing is said)
+    and `CHUNKSIZE--3` (`-3` is carried into the strategy, and nothing
+    is said).** The other sixteen are green on the tree they were
+    written against, and they are here on purpose: `ISOCENTER_MAX_WORKERS`
+    and `ISOCENTER_MAX_TASKS_PER_CHILD` were already fixed, one call site
+    each (#335, #185), and moving the floor into the shared helper is a
+    change to both of them as well. A matrix that holds all three to the
+    same answer is what stops the helper from regressing one variable
+    while it fixes the third.
+
+    Three cells carry weight that is easy to miss. The `1` cells are the
+    boundary -- the floor itself must be accepted without a word, which
+    is the only thing that tells `value < minimum` from `value <=
+    minimum`; for `ISOCENTER_CHUNKSIZE` the value `1` is also the default,
+    so its `1` cell is decided entirely by the silence assertion. The
+    "no warning" cells filter `caplog` to records that **name the
+    variable** rather than asserting the log is empty: an unrelated
+    warning would otherwise turn a healthy cell red and bury the one
+    that matters. The below-floor cells assert `set to <value>` and not a
+    bare `"0" in message`, which almost any message satisfies.
+    """
+    field, default = _TUNING_INTEGERS[name]
+    if value is None:
+        monkeypatch.delenv(name, raising=False)
+    else:
+        monkeypatch.setenv(name, value)
+
+    with caplog.at_level(logging.WARNING):
+        strategy = parallel._resolve_strategy(
+            None, 1, None, False, False, False, "", None)
+
+    actual = getattr(strategy, field)
+    naming = [record.message for record in caplog.records
+              if name in record.message]
+
+    if value is None:
+        assert actual == default(), (
+            f"with {name} unset, {field} should be the documented "
+            f"default {default()!r}, got {actual!r}")
+        assert not naming, (
+            f"{name} is unset and something warned about it: {naming}")
+    elif value in ("1", "2"):
+        assert actual == int(value), (
+            f"{name}={value} is a usable value and must be honoured; "
+            f"got {actual!r}")
+        assert not naming, (
+            f"{name}={value} is on or above the floor and was reported "
+            f"anyway -- the comparison has become `<=`: {naming}")
+    elif value == "banana":
+        assert actual == default(), (
+            f"a malformed {name} must fall back to the documented "
+            f"default {default()!r}, got {actual!r}")
+        assert any("'banana'" in message for message in naming), (
+            f"a malformed {name} was not reported quoting the value: "
+            f"{naming}")
+    else:
+        assert actual == default(), (
+            f"{name}={value} is below the floor and must fall back to "
+            f"the documented default {default()!r}, not be honoured or "
+            f"carried to the pool; got {actual!r}")
+        assert any(f"set to {value}" in message for message in naming), (
+            f"{name}={value} was rejected without a warning naming the "
+            f"variable and quoting the value (#341): {naming}")
+
+
+def test_env_int_returns_the_floor_itself_and_rejects_one_below_it(
+        monkeypatch, caplog):
+    """The floor is inclusive, and a rejection returns `None`, not the floor.
+
+    Red first on `TypeError`: `_env_int` had no `minimum` parameter.
+
+    The floor is 5 and not 1 on purpose. Every documented default in the
+    matrix above collapses to `1` on a one-CPU runner, so on such a box
+    a mutant that returns `minimum` instead of `None` on rejection is
+    indistinguishable from the correct helper everywhere but here.
+    """
+    monkeypatch.setenv("ISOCENTER_ZZ_TEST", "5")
+    with caplog.at_level(logging.WARNING):
+        assert parallel._env_int("ISOCENTER_ZZ_TEST", minimum=5) == 5, (
+            "the floor itself is a usable value and must be returned")
+    assert not [record for record in caplog.records
+                if "ISOCENTER_ZZ_TEST" in record.message], (
+        "a value on the floor was reported; the comparison is `<=`")
+
+    caplog.clear()
+    monkeypatch.setenv("ISOCENTER_ZZ_TEST", "4")
+    with caplog.at_level(logging.WARNING):
+        assert parallel._env_int("ISOCENTER_ZZ_TEST", minimum=5) is None, (
+            "a value below the floor must come back as None -- the "
+            "caller's `is not None` is the only test it should need -- "
+            "not as the floor and not as the value")
+    messages = [record.message for record in caplog.records
+                if "ISOCENTER_ZZ_TEST" in record.message]
+    assert any("set to 4" in message and "minimum of 5" in message
+               for message in messages), (
+        "the rejection must name the variable, the value and the floor, "
+        f"so it can be matched against what was typed: {messages}")
+
+
+def test_env_int_without_a_floor_returns_zero(monkeypatch, caplog):
+    """`minimum=None` means no floor, so `0` is a value like any other.
+
+    Red first on `TypeError`. This pins that the floor is stated per
+    read site and is not a `< 1` hard-coded inside the helper: a future
+    integer variable for which `0` is legitimate must be able to say so,
+    and the keyword is how it says it.
+    """
+    monkeypatch.setenv("ISOCENTER_ZZ_TEST", "0")
+    with caplog.at_level(logging.WARNING):
+        assert parallel._env_int("ISOCENTER_ZZ_TEST", minimum=None) == 0
+    assert not [record for record in caplog.records
+                if "ISOCENTER_ZZ_TEST" in record.message]
