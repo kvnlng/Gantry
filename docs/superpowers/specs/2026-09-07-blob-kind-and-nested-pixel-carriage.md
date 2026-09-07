@@ -1,11 +1,18 @@
 # One Grammar for `instance_blobs.kind`, and Nested Pixel Data Carried By It
 
 **Date:** 2026-09-07
-**Status:** Design proposed. **Nothing here is approved.** §0 carries
-ten OPEN QUESTIONS; Q1 is the one that decides whether this ships at
-all, because the brief this spec was written from asks for work that is
-**already on `main`**. Every recommendation below is marked as a
-recommendation.
+**Status:** Design proposed, then **implemented**. **Nothing here was
+approved when it was written.** §0 carries ten OPEN QUESTIONS; Q1 is the
+one that decides whether this ships at all, because the brief this spec
+was written from asks for work that is **already on `main`**. Every
+recommendation below is marked as a recommendation.
+**Amended during implementation: see §16.** Nine clauses were falsified
+by measurement while the code was being written, and §8.2's shift-guard
+mechanism is the one that matters — a reader who trusts it as written
+will delete the guard the implementation actually has. Each is marked in
+place with an `Amended, see §16.n` line and struck rather than
+rewritten, per CLAUDE.md's rule for a spec whose corrections were made
+*during* implementation rather than by a later change.
 **Tracking:** #183 (the second half only — see §1). The `kind` grammar
 is decided here for #277 and #150 option 3a as well, which is what #183
 asks for. Rests on #169, #170, #193, #194, #327. Touches the ground
@@ -138,8 +145,10 @@ first draft:
   `JPEG2000TransferSyntaxes` (`:402`), and there is **no**
   `JPEGLossyCompressedPixelTransferSyntaxes` — a name a draft of this
   spec cited and which does not exist. Each of those three lists mixes
-  lossless and lossy members, so the trigger has to be an explicit tuple
-  of the lossy UIDs, written in this codebase and tested. Without a
+  lossless and lossy members, so the trigger has to be ~~an explicit
+  tuple of the lossy UIDs~~ (**amended, see §16.6: an allow-list of
+  *carriable* UIDs, because a deny-list is wrong in the direction that
+  ships pixels**) written in this codebase and tested. Without a
   stated trigger the refusal is a recommendation with no implementation.
 - *Does the top level already have this problem?* **Yes, apparently, and
   it is unmeasured.** `ingest_worker` never mentions `0028,0004`,
@@ -198,10 +207,11 @@ the two Waveform Sequence deletions (`persistence.py:974`,
 `io_handlers.py:1226`) are tail truncations that do not. No blob path
 this spec introduces runs under the rebuilt list, so the exposure is
 nil today; the invariant is not intact, though, and Q9 is about how hard
-to defend it. §8.2 recommends the cheap form, which turns out to be free:
+to defend it. ~~§8.2 recommends the cheap form, which turns out to be free:
 `SidecarPixelLoader` already reshapes against the resolved item's
 descriptors, so the work is catching that `ValueError` and filing a
-`DATA_LOSS` row. The stronger form stores the icon's Rows/Columns on the
+`DATA_LOSS` row.~~ **Amended, see §16.3: the loader does not raise, so
+the cheap form was not free and an explicit check was written.** The stronger form stores the icon's Rows/Columns on the
 blob row and compares those, catching equal-geometry mismatches too, at
 the cost of two columns on `instance_blobs` and a schema migration.
 Cheap form recommended; the owner should say if the stronger one is
@@ -228,9 +238,10 @@ store, and "look up the referenced instance and ask if it was redacted"
 returns nothing for precisely the instances that were redacted. The
 lookup fails open, which is the worst available answer.
 
-The workable condition is store-wide, computed once in
-`_generate_export_contexts` and carried as one boolean on
-`ExportContext`: *does any instance in this store carry
+The workable condition is store-wide, ~~computed once in
+`_generate_export_contexts`~~ (**amended, see §16.4: there are two
+context builders and only one of them has a configuration**) and carried
+as one boolean on `ExportContext`: *does any instance in this store carry
 `_ISOCENTER_REDACTION_HASH`, or does any configuration rule carry
 `redaction_zones`?* Two options if it is true:
 
@@ -535,8 +546,12 @@ there, at the parse, not here at the key.
 
 ### 3.5 The parser
 
-One function, in `persistence.py` beside the gate it feeds, returning
-the `iter_item_tree` shape so callers do not each re-derive it:
+**Amended, see §16.1: the pair lives in a new module,
+`isocenter/blob_kind.py`, not in `persistence.py`.**
+
+One function, ~~in `persistence.py` beside the gate it feeds~~,
+returning the `iter_item_tree` shape so callers do not each re-derive
+it:
 
 ```python
 _BLOB_TAG = r"[0-9a-f]{4},[0-9a-f]{4}"
@@ -719,7 +734,8 @@ existing caller untouched. Mentioned as a developer's call because both
 satisfy the rule; only the second makes the rule visible in the code.
 
 Successfully decoded blobs ride out as
-`meta['nested_pixels'] = [(path, terminal_tag, raw_bytes, sha256), …]`,
+~~`meta['nested_pixels'] = [(path, terminal_tag, raw_bytes, sha256), …]`~~
+(**amended, see §16.5: a five-tuple carrying the source VR**),
 for the reason `waveform_groups` and `dropped_private_binary` do: the
 worker may be a subprocess with no store handle, and the return tuple's
 arity is unpacked at every call site (`io_handlers.py:1406`). #150's 3a
@@ -767,6 +783,8 @@ gains.
 ### 7.1 Where the loaders live
 
 **Recommendation: a dict on `Instance`, not a field on `DicomItem`.**
+The dict is right; ~~its values are not~~ — **amended, see §16.2: the
+values are `NestedPixelRef` provenance records, not built loaders.**
 
 ```python
 # Transient: nested sidecar payloads, keyed by their parsed blob kind.
@@ -1083,7 +1101,14 @@ reason to sidestep it rather than to answer it.) Compare the decoded
 array's shape instead: it is packing- and dtype-independent, and it is
 what the decode already hands back.
 
-**And the guard has a home already.** `SidecarPixelLoader.__call__`
+**Amended, see §16.3. Everything from here to the end of this
+subsection is false as written, and it is the one amendment that will
+cost a reader who misses it: it instructs them to delete the explicit
+check the implementation has, on the grounds that it is a second answer
+to one question. The loader is not the first answer. It does not
+raise.**
+
+~~**And the guard has a home already.**~~ `SidecarPixelLoader.__call__`
 (`io_handlers.py:2764-2840`) reshapes the raw bytes to
 `(frames, rows, cols, samples)` built from the item's own descriptors —
 so a nested loader wired by the `_create_pixel_loader` model
@@ -1105,8 +1130,11 @@ except ValueError:
     losses.append(...); continue
 ```
 
-Do not write a second byte-count check beside it — that would be two
-answers to one question, which is what this file's conventions forbid.
+~~Do not write a second byte-count check beside it — that would be
+two answers to one question, which is what this file's conventions
+forbid.~~ (**§16.3: there is no first answer to be second to. The
+implementation compares the item's descriptors against the provenance
+stored on the blob ref, before the loader is ever built.**)
 
 It is not a proof of identity: two icons of equal geometry are
 indistinguishable by it. But it converts the *detectable* half of the
@@ -1307,7 +1335,9 @@ per CLAUDE.md.
    #194-shape tripwire.
    `tests/test_private_binary_ingest.py:615` already *is* this test:
    its bare-descriptor icon cannot decode (measured, §12.2), so it stays
-   green and should be re-documented rather than rewritten.
+   green and should be ~~re-documented rather than rewritten~~
+   (**amended, see §16.7: it was renamed, because its old name asserted
+   the opposite of what it now checks**).
 7. **A shifted index refuses rather than writes** (§8.2). Build an
    instance with two icons, remove the first item from the sequence
    after ingest and before export, and assert the export files a
@@ -1398,3 +1428,193 @@ Three things found while measuring, none of them this change's:
    and is not one.
 3. **#150's option 3a costing is wrong about compaction** (§4). Worth a
    comment on that issue so #277 does not inherit the error.
+
+---
+
+## 16. Implementation amendments
+
+Written during the implementation of this spec, not afterwards by a
+later change — so these are amendments in CLAUDE.md's sense (the
+`§11 Amendments` case), not `Superseded in part`. Each entry names the
+clause, what was measured, and what the code does instead. The clauses
+themselves are struck in place above rather than rewritten.
+
+Measured in the implementation worktree, `isocenter.__file__` printed
+and read first per CLAUDE.md, on the same CPython 3.14.6 / pydicom 3.0.2
+this spec was measured with.
+
+### 16.1 §3.5 — the grammar is in `isocenter/blob_kind.py`
+
+`persistence.py` imports `SidecarPixelLoader` from `io_handlers.py`, and
+`io_handlers.py`'s ingest path has to *build* a kind — so putting
+`parse_blob_kind` in `persistence.py` closes an import cycle.
+`io_handlers` would have to import `persistence`, which imports
+`io_handlers`. Measured: with the parser in `persistence.py` and a
+function-local import in `io_handlers`, `pylint isocenter` reported
+**five** `cyclic-import` messages against a baseline of four on the same
+tree. Extracting the pair into its own leaf module — imported by both,
+importing neither — returned it to four. The grammar has no dependencies
+of its own, so a module is its natural home anyway; the cycle is just
+what made that unavoidable.
+
+### 16.2 §7.1 — the dict holds refs, not loaders
+
+The dict on `Instance` is right and is what shipped. Its **values** are
+not `SidecarPixelLoader` instances but a new `NestedPixelRef`
+(`io_handlers.py`) carrying `sidecar_path`, `offset`, `length`, `alg`,
+`blob_hash` and `geometry`.
+
+A `SidecarPixelLoader` freezes the reshape geometry at construction
+time. Construct one at hydration and it holds the descriptors of the
+item that sat at that path *then* — which is precisely the value the
+shift guard needs to compare *against*, so a loader cannot be both the
+carrier and the thing being checked. The ref stores that geometry as
+provenance and the export builds the loader from the item it resolves
+at export time, which makes the comparison possible at all.
+
+`geometry` is also what §16.3 needs.
+
+### 16.3 §8.2 — the loader does not raise, so the guard is explicit
+
+**The falsified claim:** "`SidecarPixelLoader.__call__` … already raises
+on a length that does not fit the resolved item's geometry", and
+therefore "do not write a second byte-count check beside it".
+
+**Measured:** it does not raise in either direction. `__call__` has a
+padding fallback:
+
+```python
+except ValueError:
+    # Handle padding
+    if arr.size >= target_size:
+        arr = arr[:target_size]
+        arr_reshaped = arr.reshape(target_shape)
+    else:
+        return arr  # Fallback to 1D
+```
+
+A 16-byte payload resolved against an item declaring 2x2x8-bit returned
+`b'\x00\x01\x02\x03'` — silently truncated, no exception, no warning.
+Too *short* returns a 1-D array, which no caller checks for. The
+integrity hash does not catch either, because it is taken over the raw
+bytes before the reshape and those bytes are unchanged.
+
+The fallback is load-bearing for a different population — a DICOM value
+is padded to an even length, so an odd-length frame legitimately arrives
+one byte long — and the top-level pixel path depends on it. So it was
+left alone and filed as **#373** rather than tightened inside this
+change.
+
+**What the implementation does instead:** `_write_back_nested_pixels`
+compares `nested_item_geometry(graph_item.attributes)` against
+`ref.geometry` before building any loader, and on a mismatch drops the
+sequence item with a `DATA_LOSS` row. Descriptors rather than byte
+counts, which also sidesteps the `BitsAllocated // 8 == 0` division this
+section already warned about for the 1-bit case.
+
+**Measured that the guard is load-bearing:** deleting that comparison
+turns `test_a_shifted_index_refuses_rather_than_writing_the_wrong_icon`
+red with `AssertionError: an icon whose path resolved to a different
+item must not be written` — the wrong icon written into its neighbour's
+item, which is the failure the section exists to prevent.
+
+### 16.4 §9 / Q10 — two context builders, and only one has a configuration
+
+`_generate_export_contexts` is a helper both export paths call, but the
+gate cannot be computed inside it: it is called from
+`DicomSession._build_export_plan` (`session.py`), which has
+`self.configuration.rules`, **and** from `DicomExporter.write_tree`
+(`io_handlers.py`), which is the serializer and has no session behind
+it. A `Configuration` does not exist to consult there.
+
+So `redaction_in_effect(instances, rules=None)` is one function called
+at two sites. The session path passes the whole store's instances *and*
+the rules; `write_tree` passes the tree it is about to write and `None`,
+which applies the `_ISOCENTER_REDACTION_HASH` attestation half only.
+That is the right split rather than a shortfall: the attestation is a
+property of the graph, so the serializer can see it, while "a rule is
+configured but has not run" is a pipeline fact the serializer has no
+access to by design.
+
+The boolean is still computed once per export and carried on
+`ExportContext.drop_nested_icons`, which is what Q10 asked for.
+
+**Measured that the gate is load-bearing:** replacing
+`redaction_in_effect`'s body with `return False` turns six tests red,
+every one of them in the direction that ships an icon out of a store
+that redacted.
+
+### 16.5 §5.4 — `meta['nested_pixels']` is a five-tuple
+
+`(path, terminal_tag, vr, raw_bytes, sha256)`. The extra member is the
+*source* element's VR. §8.2 is right that the writeback derives its VR
+from `BitsAllocated` and does not need a stored one — but the
+**no-sidecar fallback** in `import_files` files a `DATA_LOSS` row for
+each undecoded payload, and that row's text names the element's VR the
+way every other `dropped_private_binary` row does. Without it the row
+has to guess or omit it, and a loss row that misdescribes what was lost
+is the #194 shape one level down.
+
+### 16.6 §0 Q6 — an allow-list, not a deny-list
+
+The spec asks for "an explicit tuple of the lossy UIDs" to refuse.
+Implemented the other way round: `_CARRIABLE_TRANSFER_SYNTAXES` is an
+allow-list of eleven UIDs (the four uncompressed syntaxes, RLE Lossless,
+JPEG Lossless .57/.70, JPEG-LS Lossless .80, JPEG 2000 Lossless .90,
+HTJ2K Lossless .201/.202).
+
+The two lists differ only in what happens to a UID on neither: a
+deny-list carries it, an allow-list refuses it. Refusing an unknown
+syntax costs a `DATA_LOSS` row that names it; carrying one risks
+shipping pixels through a decoder whose colour-space behaviour nobody
+checked, which is the whole substance of Q6. A new lossy syntax added to
+DICOM lands on the safe side by default this way, and the failure is
+visible in the loss report rather than silent in the pixels.
+
+Written as raw UID strings rather than pydicom names, because §0 already
+established that those names are unstable — this spec cited a
+`JPEGLossyCompressedPixelTransferSyntaxes` that does not exist, and
+`pydicom 3.0.2` has no `JPEGXL*` names either.
+
+### 16.7 §12.4.6 — the existing test was renamed, not just re-documented
+
+`tests/test_private_binary_ingest.py`'s
+`test_pixel_data_inside_a_sequence_item_is_reported` and
+`test_the_top_level_pixel_data_of_that_same_file_is_still_not_reported`
+both assert about behaviour this change inverts. The first became
+`..._is_carried` with inverted assertions. The second was renamed to
+`test_an_undecodable_nested_icon_still_files_its_loss_row`: it is the
+§12.4.6 tripwire and it stays green, but its *name* asserted that a
+nested payload is not reported, which after this change is true only for
+the undecodable ones. A name that survives a change it contradicts is
+worse than one that was rewritten, and "one spelling per behaviour"
+applies to test names too.
+
+### 16.8 §12 — the fixtures need IOD-completeness the spec did not mention
+
+Every end-to-end test here exports a CT Image, and `IODValidator`
+refuses one missing `StudyTime`, `SliceThickness`, `KVP`,
+`ImagePositionPatient`, `ImageOrientationPatient` or `PixelSpacing`.
+Without them each test failed on a validation `ERROR` about geometry
+before reaching anything to do with icons — a red that says nothing
+about the subject under test. Noted because §15.2 is right that
+`IODValidator` certifies nothing about the Icon Image Macro, and it is
+easy to conclude from that it will not be in the way. It is in the way,
+just about something else.
+
+### 16.9 §12.4.7 — the shift test needs two icons under *one* sequence
+
+Written first with one icon under each of two Referenced Image Sequence
+items, which is the conformant shape. That shape cannot see the bug:
+removing an item from one parent's sequence shifts nothing in the
+other's, so an implementation that interleaved resolve-and-remove passed
+it. Rewritten with a two-item Icon Image Sequence — nonconformant VM,
+but the only cheap shape where one removal shifts another carried
+blob's index.
+
+**Measured:** with the removals performed inside the resolve loop
+instead of collected first, the rewritten test goes red on
+`assert 'IconImageSequence' not in exported`, the exported file carrying
+a one-item Icon Image Sequence with full descriptors and no Pixel Data
+— the Type 1 violation of PS3.3 C.7.6.1.1.6 that §10 is about. The
+original shape stayed green against the same mutation.

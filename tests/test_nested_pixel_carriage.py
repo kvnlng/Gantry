@@ -513,22 +513,41 @@ def test_the_gate_removes_the_icon_item_not_its_referencing_parent(tmp_path):
 
 def test_removing_one_icon_item_does_not_shift_the_next_one_out_of_reach(
         tmp_path):
-    """Two icons under one parent sequence, both dropped by the gate.
+    """Two icons under ONE parent sequence, both dropped by the gate.
 
-    Removing item 0 slides item 1 into index 0. A loop that resolves each
-    path as it removes would then find item 1's path resolving to None,
-    file a "gone" row for it, and leave it in the file -- descriptors with
-    no bytes, which is the Type 1 violation the gate is supposed to avoid.
+    Removing item 0 slides item 1 into index 0. A loop that resolved each
+    path as it removed would then find `0088,0200/1` resolving to None,
+    file a "gone" row for it, and leave item 1 in the file -- descriptors
+    with no bytes, which is the Type 1 violation the gate exists to avoid.
     So every path is resolved and every outcome decided before anything is
-    removed.
+    removed, and the removals are then done by object identity rather than
+    by index.
 
-    Two icons under ONE parent is the shape that can see this; one icon
-    each under two different parents cannot.
+    Two icons under one sequence is the only shape that can see this. One
+    icon each under two *different* parents cannot: removing from one
+    sequence shifts nothing in the other, so an interleaved loop passes.
+    This test was written that way first and passed against a deliberately
+    interleaved implementation, which is why it is spelled out here.
+
+    Icon Image Sequence is VM 1 in the standard, so a two-item one is
+    nonconformant -- but the sequence walk is generic, and this is the
+    cheapest shape that puts two carried blobs under one parent. The
+    conformant version of the same hazard is two Referenced Image Sequence
+    items each holding an icon, where the *outer* sequence is the one that
+    shifts; that is a deeper path to the same off-by-one.
     """
     db, _src = _ingest(
-        tmp_path, "twoicons",
-        referenced_icons=[_icon_item(b"\x01\x02\x03\x04"),
-                          _icon_item(b"\x05\x06\x07\x08")])
+        tmp_path, "shift",
+        icons=[_icon_item(b"\x01\x02\x03\x04"),
+               _icon_item(b"\x05\x06\x07\x08")])
+
+    # Both blobs are in the store under their own paths before the export
+    # has a chance to lose one.
+    assert sorted(_blob_kinds(db)) == [
+        "pixels",
+        "pixels:0088,0200/0/7fe0,0010",
+        "pixels:0088,0200/1/7fe0,0010",
+    ]
 
     out = tmp_path / "out"
     session = DicomSession(persistence_file=db)
@@ -538,10 +557,10 @@ def test_removing_one_icon_item_does_not_shift_the_next_one_out_of_reach(
     finally:
         session.close()
 
+    # Both items gone, so the emptied sequence is gone too. An interleaved
+    # implementation leaves the second item behind, descriptors and all.
     exported = _exported(out)
-    assert len(exported.ReferencedImageSequence) == 2
-    for ref in exported.ReferencedImageSequence:
-        assert "IconImageSequence" not in ref
+    assert "IconImageSequence" not in exported
 
 
 # --- 3. Carried or reported, never both and never neither ----------------
