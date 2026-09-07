@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-07
 **Status:** Design proposed. **Nothing here is approved.** §0 carries
-nine OPEN QUESTIONS; Q1 is the one that decides whether this ships at
+ten OPEN QUESTIONS; Q1 is the one that decides whether this ships at
 all, because the brief this spec was written from asks for work that is
 **already on `main`**. Every recommendation below is marked as a
 recommendation.
@@ -27,8 +27,8 @@ survive is §12's test list.
 
 ## 0. OPEN QUESTIONS for the owner
 
-Nine. Q1 and Q5 change what ships; Q2 changes what a user sees; Q9 is
-the one added after review; the rest are scope lines.
+Ten. Q1, Q5 and Q10 change what ships; Q2 changes what a user sees; Q9
+and Q10 were added after review; the rest are scope lines.
 
 **Q1 — the brief's premise is stale, and half the approved work is
 already merged.** The instruction this spec was written from says "the
@@ -131,11 +131,16 @@ Two things Q6 needs before it is answerable, both established after the
 first draft:
 
 - *How is the case detected?* An icon shares the file's transfer
-  syntax, so the trigger is `ds.file_meta.TransferSyntaxUID` being in
-  the lossy-JPEG family (`JPEGBaseline8Bit`, `JPEGExtended12Bit`,
-  `JPEG2000`, `JPEGLSNearLossless`, and `pydicom.uid.JPEGLossyCompressedPixelTransferSyntaxes`
-  is the maintained list). Without a stated trigger the refusal is a
-  recommendation with no implementation.
+  syntax, so the trigger is `ds.file_meta.TransferSyntaxUID` being in a
+  lossy family. **There is no single maintained list to point at.**
+  Checked against the installed pydicom 3.0.2: `uid.py` exports
+  `JPEGTransferSyntaxes` (`:391`), `JPEGLSTransferSyntaxes` (`:399`) and
+  `JPEG2000TransferSyntaxes` (`:402`), and there is **no**
+  `JPEGLossyCompressedPixelTransferSyntaxes` — a name a draft of this
+  spec cited and which does not exist. Each of those three lists mixes
+  lossless and lossy members, so the trigger has to be an explicit tuple
+  of the lossy UIDs, written in this codebase and tested. Without a
+  stated trigger the refusal is a recommendation with no implementation.
 - *Does the top level already have this problem?* **Yes, apparently, and
   it is unmeasured.** `ingest_worker` never mentions `0028,0004`,
   `PhotometricInterpretation` or `resolve_photometric_interpretation`
@@ -144,10 +149,24 @@ first draft:
   whatever pydicom's decoder returns for a lossy YBR source, ingest
   stores it and the declared PI rides through unchanged, at the **top
   level** as much as inside an icon. I could not measure the decoded
-  result: this venv's pydicom has no JPEG *encoder*
-  (`ImportError: cannot import name 'JPEGBaseline8BitEncoder'`), so I
-  could not build the fixture. **Marked unmeasured deliberately rather
-  than asserted.** If the top level does silently mis-declare PI, then
+  result, and the reason is narrower than a first draft of this spec
+  said. `JPEGBaseline8BitEncoder` does not exist in pydicom 3.0.2, but
+  `JPEG2000Encoder` does — and lossy J2K gives a YBR_ICT source, which
+  poses the identical question. It fails for a different reason:
+  `RuntimeError: Unable to compress … because all plugins are missing
+  dependencies: pylibjpeg - requires numpy, pylibjpeg>=2.0 and
+  pylibjpeg-openjpeg>=2.2`. Confirmed by import: `pylibjpeg`,
+  `openjpeg`, `libjpeg`, `gdcm` and `pyjpegls` are all absent; only
+  `PIL` is present. So **no lossy-compressed fixture of any family can
+  be built in this venv**, and taking this measurement means installing
+  `pylibjpeg-openjpeg` first. **Marked unmeasured deliberately rather
+  than asserted.**
+
+  Two things that narrow the question while it is open. Isocenter's own
+  compression is `_compress_j2k` (`io_handlers.py:2603`), which is
+  **Pillow, JPEG 2000 Lossless** — so isocenter never *writes* a lossy
+  YBR file and the concern is purely about lossy sources it *ingests*.
+  And the export's other path writes Implicit VR LE. If the top level does silently mis-declare PI, then
   by "one spelling per behaviour" the nested path must do the same thing
   the top level does — and the right fix is a separate issue about the
   top level, not a nested-only refusal that makes the two paths differ.
@@ -172,19 +191,66 @@ Mark it in or out.
 **Q9 — how hard should the shifted-index guard be?** (Added after
 review; see §8.2.) The blob key is a *position*, recorded at ingest and
 resolved at export, and a sibling removed in between makes a stale path
-resolve to the **wrong item** rather than to nothing. Verified that no
-site in the tree can do this today — the only two item-level deletions
-(`persistence.py:974`, `io_handlers.py:1226`) are tail truncations
-keeping item 0, and remediation removes whole sequences rather than
-single items — so this is latent, not live. §8.2 recommends the cheap
-form: compare the resolved item's declared geometry against the blob's
-length before writing, and file a `DATA_LOSS` row on mismatch. The
-stronger form stores the icon's Rows/Columns on the blob row and
-compares those, catching equal-length mismatches too, at the cost of two
-columns on `instance_blobs` and a schema migration. Cheap form
-recommended; the owner should say if the stronger one is wanted before
-the table is widened, because widening it later is the expensive
-direction.
+resolve to the **wrong item** rather than to nothing. One site in the
+tree already rebuilds a sequence's item list in a way that shifts
+survivors — `waveform.py:280` `ann_seq.items[:] = surviving_items` — and
+the two Waveform Sequence deletions (`persistence.py:974`,
+`io_handlers.py:1226`) are tail truncations that do not. No blob path
+this spec introduces runs under the rebuilt list, so the exposure is
+nil today; the invariant is not intact, though, and Q9 is about how hard
+to defend it. §8.2 recommends the cheap form, which turns out to be free:
+`SidecarPixelLoader` already reshapes against the resolved item's
+descriptors, so the work is catching that `ValueError` and filing a
+`DATA_LOSS` row. The stronger form stores the icon's Rows/Columns on the
+blob row and compares those, catching equal-geometry mismatches too, at
+the cost of two columns on `instance_blobs` and a schema migration.
+Cheap form recommended; the owner should say if the stronger one is
+wanted before the table is widened, because widening it later is the
+expensive direction.
+
+**Q10 — an icon under Referenced Image Sequence is a thumbnail of a
+*different* instance, and §9's gate does not see it.** (Added after
+review; this one changes what a developer builds.) This spec's own
+depth-2 headline spelling is
+`pixels:0008,1140/3/0088,0200/0/7fe0,0010` — an icon inside
+**Referenced Image Sequence**, which by PS3.3 C.7.6.16 is a thumbnail of
+the SOP instance being *referenced*, not of the instance carrying it.
+§9's gate asks whether *this* instance was redacted. If the referenced
+image was redacted and this one was not — a different series, no
+configured zones, no attestation — the gate passes and the export ships
+a thumbnail of exactly what redaction removed, one file over. Both
+halves of §9's condition are blind to it.
+
+It cannot be resolved per-instance either: redaction calls
+`regenerate_uid()` (`services.py:462`, `:792`), so this instance's
+`ReferencedSOPInstanceUID` now names a UID that is no longer in the
+store, and "look up the referenced instance and ask if it was redacted"
+returns nothing for precisely the instances that were redacted. The
+lookup fails open, which is the worst available answer.
+
+The workable condition is store-wide, computed once in
+`_generate_export_contexts` and carried as one boolean on
+`ExportContext`: *does any instance in this store carry
+`_ISOCENTER_REDACTION_HASH`, or does any configuration rule carry
+`redaction_zones`?* Two options if it is true:
+
+- **(a) Conservative — recommended.** Drop **every** nested icon in the
+  export, each with its `DATA_LOSS` row. One boolean, one query, no path
+  analysis, and no way to be wrong in the unsafe direction.
+- **(b) Narrow.** Drop only icons whose path passes through `0008,1140`
+  (and any other referencing sequence — Source Image Sequence
+  `0008,2112`, Referenced Series Sequence `0008,1115`, …). Keeps
+  self-icons under an unredacted instance, at the cost of a tag list
+  that is a standing invitation to be one entry short.
+
+Recommendation (a), on the grounds that this whole feature is worth
+nothing next to re-exporting a redacted frame as a thumbnail, and that a
+store which redacts anything is a store where the user has said what
+they care about. Note the effect: **in a session that redacts at all,
+recommendation (a) means nested icons are not carried** — which is a
+real limit on what #183 delivers and the owner should decide it
+knowingly rather than discover it. If that is unacceptable, (b) is the
+fallback and its tag list needs to be written down and tested.
 
 ---
 
@@ -965,10 +1031,9 @@ and the icon is written into it silently. Silent wrong bytes is this
 repo's worst failure class, and it is the same hazard CLAUDE.md names
 for `entity_path` and `_live_target`.
 
-Enumerated every item-level mutation in the tree
-(`grep -n '\.items\.pop\|\.items\.remove\|del .*\.items\['` over
-`isocenter/`) — there are exactly two, and **neither can shift a
-surviving item's index today**:
+Enumerated every item-level mutation in the tree. The first grep —
+`\.items\.pop|\.items\.remove|del .*\.items\[` — found two, and both are
+harmless:
 
 - `persistence.py:974` `del seq.items[1:]` (`_prune_hollow_multiplex_items`)
 - `io_handlers.py:1226` `del wf_seq.items[1:]` (the #160 ingest prune)
@@ -979,32 +1044,74 @@ survivor moves. Remediation's `seq_removals` (`privacy.py:417`) raises
 item out of several — so it destroys paths (handled) rather than
 shifting them.
 
-So the hazard is latent, not live. **Recommendation: add the guard
-anyway**, because the check is two lines and the alternative is that the
-first person to write `items.pop(i)` anywhere in this codebase silently
-corrupts exports with no test able to see it. Before `add_new`, the
-post-pass compares the resolved item's own descriptors against the blob:
+**That grep was not enough, and the wider one found a third site that
+does shift.** `\.items\s*=|\.items\[:\]|\.items\.clear|\.items\.insert`
+finds `waveform.py:280`:
 
 ```python
-expected = (item.Rows * item.Columns * item.SamplesPerPixel
-            * (item.BitsAllocated // 8)
-            * int(getattr(item, 'NumberOfFrames', 1) or 1))
-if expected != len(decoded):
+ann_seq.items[:] = surviving_items
+```
+
+`filter_dangling_annotation_refs` drops a Waveform Annotation Sequence
+item when **every** (group, channel) pair it named is gone, and it does
+so by rebuilding the list. An annotation naming only group 2 can sit at
+index 0, so item 1 becomes item 0: a genuine middle removal, live in the
+tree today, reached from both `_prune_hollow_multiplex_items` and the
+#160 ingest prune. Its own docstring is careful that *ordinals are never
+renumbered* for the Waveform Sequence — the sequence it does not
+mutate — and that care is exactly the invariant this section is about.
+
+**Practical exposure for this spec is nil**: nothing nests pixel data
+under Waveform Annotation Sequence, so no blob path passes through the
+list being rebuilt. But the claim "no site shifts an index" is false as
+a description of the codebase, and a spec that says otherwise teaches
+the wrong lesson. The correct statement is: *one site already rebuilds a
+sequence's item list, and the paths this spec introduces are simply not
+under it — yet.*
+
+**Recommendation: the guard goes in.** The check is cheap and the
+alternative is that the first path that does run under a rebuilt list
+silently corrupts exports with no test able to see it.
+
+**Compare shapes, not byte counts.** The obvious formula,
+`Rows * Columns * SamplesPerPixel * (BitsAllocated // 8) * frames`, has
+a division-to-zero: `BitsAllocated // 8` is `0` when BitsAllocated is
+`1`, so a 1-bit icon computes an expected length of 0 and is refused as
+a shift. (Whether the Icon Image Macro permits BitsAllocated 1 is a
+question I did not verify against the standard text — which is the
+reason to sidestep it rather than to answer it.) Compare the decoded
+array's shape instead: it is packing- and dtype-independent, and it is
+what the decode already hands back.
+
+**And the guard has a home already.** `SidecarPixelLoader.__call__`
+(`io_handlers.py:2764-2840`) reshapes the raw bytes to
+`(frames, rows, cols, samples)` built from the item's own descriptors —
+so a nested loader wired by the `_create_pixel_loader` model
+(`persistence.py:885-888`) **already raises on a length that does not
+fit the resolved item's geometry**. The work is therefore not a new
+check but catching that reshape and turning it into a `DATA_LOSS` row
+rather than an export failure:
+
+```python
+try:
+    decoded = loader()          # reshapes against the RESOLVED item
+except ValueError:
     # The path resolved to an item whose geometry is not the one the
-    # bytes were taken from -- an index shifted under us. Refuse the
-    # write; a DATA_LOSS row is the honest outcome and a wrong icon is
-    # not. Position is the only identity a sequence item has, which is
-    # why this check exists rather than a trusted lookup.
+    # bytes were taken from -- an index shifted under us. A DATA_LOSS
+    # row is the honest outcome; a wrong icon is not. Position is the
+    # only identity a sequence item has (see waveform.py:280 for a
+    # list this codebase already rebuilds), which is why the geometry
+    # is re-checked here rather than trusted.
     losses.append(...); continue
 ```
 
-It is not a proof of identity — two icons of equal geometry are
-indistinguishable by it — but it converts the *detectable* half of the
+Do not write a second byte-count check beside it — that would be two
+answers to one question, which is what this file's conventions forbid.
+
+It is not a proof of identity: two icons of equal geometry are
+indistinguishable by it. But it converts the *detectable* half of the
 failure from silent-wrong-bytes into a reported loss, which is the
-difference that matters. Q9 (below, added after review) asks the owner
-whether the stronger form is wanted: store the icon's Rows/Columns
-alongside the blob and compare those, which catches equal-length
-mismatches too at the cost of widening `instance_blobs`.
+difference that matters. Q9 asks whether the stronger form is wanted.
 
 ---
 
@@ -1051,6 +1158,14 @@ session. Note the attestation is over the *configuration*, not the
 pixels (#237) — which is fine here, because the question being asked is
 only "did redaction touch this instance", not "is that redaction
 current".
+
+**Both conditions are still per-instance, and that is not sufficient for
+an icon under Referenced Image Sequence** — which is this spec's own
+headline depth-2 spelling, and a thumbnail of a *different* SOP
+instance. That gap is **Q10**, and it changes what is built: under Q10's
+recommended answer the gate becomes store-wide and this per-instance
+pair is subsumed by it. Do not implement §9 as it stands without
+reading Q10 first.
 
 Three reasons for the item removal rather than a bare skip:
 
