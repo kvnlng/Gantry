@@ -2,7 +2,7 @@ import pytest
 import os
 import sqlite3
 from isocenter.persistence import SqliteStore
-from isocenter.entities import Patient, Study, Series, Instance
+from isocenter.entities import Patient, Study, Series, Instance, Equipment
 from isocenter.session import DicomSession
 
 @pytest.fixture
@@ -167,3 +167,85 @@ def test_an_instance_reloaded_after_remediation_still_needs_a_save_for_the_next_
         "the reloaded instance reports no unsaved changes after its PHI "
         "was stripped, so the next save skips it and the value stays in "
         "the database")
+
+
+# --- #290: both hydration routes rebuild equipment as ingest built it ------
+
+
+def _patient_with_equipment(equipment):
+    p = Patient("P1", "Patient One")
+    st = Study("S1", "20230101")
+    se = Series("SE1", "CT", 1, equipment=equipment)
+    se.instances.append(Instance("I1", "1.2.3", 1, file_path="/tmp/test.dcm"))
+    st.series.append(se)
+    p.studies.append(st)
+    return p
+
+
+@pytest.mark.parametrize("man, model", [("ACME", ""), ("", "Scanner")])
+def test_load_all_rebuilds_partial_equipment_in_field_order(store, man, model):
+    """`load_all` returns partial equipment with each field where it was saved (#290).
+
+    Before this test the store's equipment hydration had no reader in
+    the suite: with `manufacturer` and `model_name` swapped in
+    `load_all`'s `Equipment(...)` construction, the full suite was green
+    (measured: 1443 passed). The partial rows are what make the `or ->
+    and` mutant visible, and asserting each field against its input is
+    what makes the swap visible. The assertions are on the **loaded**
+    series, after `save_all` and a fresh `load_all`, so the fixture
+    cannot satisfy them from memory.
+    """
+    store.save_all([_patient_with_equipment(Equipment(man, model, "SN-BULK"))])
+
+    loaded = store.load_all()[0].studies[0].series[0].equipment
+
+    assert loaded is not None
+    assert loaded.manufacturer == man
+    assert loaded.model_name == model
+    assert loaded.device_serial_number == "SN-BULK"
+
+
+@pytest.mark.parametrize("man, model", [("ACME", ""), ("", "Scanner")])
+def test_load_patient_rebuilds_partial_equipment_in_field_order(
+        store, man, model):
+    """`load_patient` returns partial equipment with each field where it was saved (#290).
+
+    The per-patient route has its own `Equipment(...)` construction,
+    and the same measurement applies: the suite was green with its two
+    identifying fields swapped. Same shape as the `load_all` test so
+    the two routes are pinned to the same rule independently.
+    """
+    store.save_all([_patient_with_equipment(Equipment(man, model, "SN-BULK"))])
+
+    loaded = store.load_patient("P1").studies[0].series[0].equipment
+
+    assert loaded is not None
+    assert loaded.manufacturer == man
+    assert loaded.model_name == model
+    assert loaded.device_serial_number == "SN-BULK"
+
+
+def test_both_hydration_routes_agree_with_ingest_on_serial_only_equipment(store):
+    """A serial with no manufacturer or model reloads as no equipment, on both routes (#290).
+
+    The store keeps the serial -- the flattened row carries it -- and
+    both `load_all` and `load_patient` discard it, because the rule is
+    "a manufacturer or a model name" and a serial is neither. That is
+    today's rule pinned as it stands, not endorsed: the serial is what
+    every downstream rule matches on, so such a series can never match
+    one, and widening the predicate is filed separately from #290. What
+    this test guards until then is the three routes agreeing: it goes
+    red the day someone widens one hydration route and not the other,
+    or not ingest.
+    """
+    store.save_all([_patient_with_equipment(Equipment("", "", "SN-ONLY"))])
+
+    via_load_all = store.load_all()[0].studies[0].series[0].equipment
+    via_load_patient = store.load_patient("P1").studies[0].series[0].equipment
+    row = next(store.get_flattened_instances(patient_ids=["P1"]))
+
+    assert via_load_all is None
+    assert via_load_patient is None
+    assert row["device_serial_number"] == "SN-ONLY", (
+        "the store dropped the serial; the loss this test documents is "
+        "in the predicate, not the write")

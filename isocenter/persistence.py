@@ -1515,9 +1515,12 @@ class SqliteStore:
                 se_map = {}
                 for r in se_rows:
                     se = Series(r['series_instance_uid'], r['modality'], r['series_number'])
-                    if r['manufacturer'] or r['model_name']:
-                        se.equipment = Equipment(
-                            r['manufacturer'], r['model_name'], r['device_serial_number'])
+                    # Same rule as ingest and `load_patient`, by
+                    # construction: this used to be a third hand-copied
+                    # predicate, and the suite was green with the two
+                    # identifying fields swapped here (#290).
+                    se.equipment = Equipment.from_parts(
+                        r['manufacturer'], r['model_name'], r['device_serial_number'])
                     se_map[r['id']] = se
                     if r['study_id_fk'] in st_map:
                         st_map[r['study_id_fk']].series.append(se)
@@ -1654,9 +1657,10 @@ class SqliteStore:
                             se_r['series_instance_uid'],
                             se_r['modality'],
                             se_r['series_number'])
-                        if se_r['manufacturer'] or se_r['model_name']:
-                            se.equipment = Equipment(
-                                se_r['manufacturer'], se_r['model_name'], se_r['device_serial_number'])
+                        # Same rule as ingest and `load_all` (#290).
+                        se.equipment = Equipment.from_parts(
+                            se_r['manufacturer'], se_r['model_name'],
+                            se_r['device_serial_number'])
                         se_pk = se_r['id']
 
                         # Fetch Instances
@@ -2732,7 +2736,7 @@ class SqliteStore:
         stays dirty for the next, which is the same direction of error
         `mark_persisted`'s capture-before-write discipline already takes.
 
-        The selection is by `id(inst)`, never by SOP Instance UID. A UID
+        The selection is by object identity, never by SOP Instance UID. A UID
         can change in place between the prepass and here (redaction does
         exactly that), and a UID-keyed miss does not merely skip the
         write: `_delete_removed_instances` below then sees the instance's
@@ -2744,9 +2748,9 @@ class SqliteStore:
         captured, so a renamed instance is inserted under its new name
         and its old row is correctly reaped as removed.
         """
-        unsaved = [(inst, prepared[id(inst)][0])
+        unsaved = [(inst, prepared[inst][0])
                    for inst in series.instances
-                   if id(inst) in prepared]
+                   if inst in prepared]
         if not unsaved:
             return []
 
@@ -2828,7 +2832,7 @@ class SqliteStore:
             # stale capture. The instance's row is still written -- NOT
             # dropped -- because that is what a raced instance got before
             # this restructure, and #287 is a restructure.
-            frame = prepared[id(inst)][1]
+            frame = prepared[inst][1]
             if inst._revision != revision:
                 frame = _StoredFrame(None, None, None, None)
             rows.append((
@@ -2860,7 +2864,7 @@ class SqliteStore:
         return rows, blob_rows, vertical_rows
 
     def _prepare_pixel_frames(
-            self, patients, tally) -> Dict[int, Tuple[int, '_StoredFrame']]:
+            self, patients, tally) -> Dict[Instance, Tuple[int, '_StoredFrame']]:
         """Appends every dirty instance's pixel frame, before any transaction.
 
         Runs the whole Patient -> Study -> Series -> Instance walk once,
@@ -2871,9 +2875,9 @@ class SqliteStore:
         wait -- so the SQLite write lock is no longer held for the length
         of the save's pixel payload (#287).
 
-        Keyed by **object identity** (`id(inst)`), which is the only key
-        that survives everything that can happen between this walk and
-        the transaction's. Position cannot: `series_pk` is unknowable
+        Keyed by **object identity**, which is the only key that
+        survives everything that can happen between this walk and the
+        transaction's. Position cannot: `series_pk` is unknowable
         before the transaction and a series can be re-parented in
         between -- `_reparent_series` exists precisely because that
         happens. The SOP Instance UID cannot either, and that is the
@@ -2884,20 +2888,14 @@ class SqliteStore:
         while `_delete_removed_instances` deletes its old row as
         orphaned, losing the instance from the index entirely.
 
-        `id()` rather than the instance itself as a dict key. This used
-        to be forced -- `Instance` carried the dataclass default
-        `eq=True`, making it unhashable and value-comparing -- but since
-        #299 the entity classes are `eq=False`, so they hash and compare
-        by identity and `prepared[inst]` WOULD now work. It is kept
-        anyway: only the third of the three arguments above was ever
-        about hashability, and the other two (position is unknowable
-        before the transaction, and the SOP Instance UID is mutated in
-        place) stand on their own, so re-spelling this map is a separate
-        change to a load-bearing data-loss fix rather than a cleanup that
-        #299 licenses. Filed as #300. `id()` is safe here for the
-        usual reason it usually is not: `patients` holds the entire graph
-        alive for the whole of `save_all`, and this map does not outlive
-        that call, so no id can be recycled underneath it.
+        The key is the instance itself. Entities hash and compare by
+        identity since #299 (`eq=False` on every `TrackedEntity`
+        subclass; `tests/test_entity_state_vocabulary.py` pins it), so
+        two field-equal instances are two entries and a renamed one is
+        still found. Before #299 `Instance` carried the dataclass default
+        `eq=True`, was unhashable, and this had to be `id(inst)`; the
+        object key is what #300 closed, and
+        `tests/test_save_all_contract.py` asserts the key shape.
 
         Two consequences, both stated rather than hidden:
 
@@ -2919,10 +2917,10 @@ class SqliteStore:
         already produces.
 
         Returns:
-            Dict[int, Tuple[int, _StoredFrame]]: id(instance) ->
+            Dict[Instance, Tuple[int, _StoredFrame]]: instance ->
             (revision captured before the write, the frame written).
         """
-        prepared: Dict[int, Tuple[int, '_StoredFrame']] = {}
+        prepared: Dict[Instance, Tuple[int, '_StoredFrame']] = {}
         for patient in patients:
             for study in patient.studies:
                 for series in study.series:
@@ -2932,7 +2930,7 @@ class SqliteStore:
                         revision = inst._revision
                         frame = self._persist_pixels(
                             inst, tally, revision=revision)
-                        prepared[id(inst)] = (revision, frame)
+                        prepared[inst] = (revision, frame)
         return prepared
 
     def _persist_pixels(self, inst, tally, revision=None) -> '_StoredFrame':
@@ -3137,8 +3135,14 @@ class SqliteStore:
           join happened to produce.
 
         Args:
-            patient_ids (List[str], optional): Filter by list of Patient IDs.
-            instance_uids (List[str], optional): Filter by list of SOP Instance UIDs.
+            patient_ids (List[str], optional): Restrict the rows to these
+                Patient IDs. ``None`` means every patient in the store.
+                An empty list matches nobody -- it is a filter that
+                selected nothing, not an absent filter.
+            instance_uids (List[str], optional): Restrict the rows to
+                these SOP Instance UIDs. Same rule: ``None`` is no
+                filter, an empty list matches nobody. Both filters
+                together intersect.
             page_size (int, optional): Rows per page, defaulting to 500.
                 Trades resident memory against the number of queries.
                 Must be an `int` >= 1 -- `LIMIT 0` returns an empty page,
@@ -3211,12 +3215,30 @@ class SqliteStore:
         filters = []
         filter_params = []
 
-        if patient_ids:
+        # `is not None` rather than a truth test: `[]` must exclude
+        # everyone (#142). A caller computing a cohort that came back
+        # empty would otherwise walk the whole store -- silent
+        # over-export, from the DB reader the changelog points migrating
+        # `export_to_parquet` callers at. Same rule, same comment, as
+        # `get_cohort_report` and `_export_dicom` in `session.py`; the
+        # truth test here was the one reader of three that got it wrong.
+        #
+        # The empty list renders `p.patient_id IN ()`, and no
+        # short-circuit is added for it because SQLite accepts it as
+        # legal and false. That is a dialect extension, not SQL:
+        # sqlite.org/lang_expr.html -- "SQLite allows the parenthesized
+        # list of scalar values on the right-hand side of an IN or NOT
+        # IN operator to be an empty list but most other SQL database
+        # engines and the SQL92 standard require the list to contain at
+        # least one element." A port to another engine needs a
+        # short-circuit here; on SQLite one would be a second mechanism
+        # for one rule.
+        if patient_ids is not None:
             placeholders = ",".join("?" for _ in patient_ids)
             filters.append(f"p.patient_id IN ({placeholders})")
             filter_params.extend(patient_ids)
 
-        if instance_uids:
+        if instance_uids is not None:
             placeholders = ",".join("?" for _ in instance_uids)
             filters.append(f"i.sop_instance_uid IN ({placeholders})")
             filter_params.extend(instance_uids)

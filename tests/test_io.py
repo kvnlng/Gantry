@@ -107,11 +107,11 @@ def test_a_series_with_a_manufacturer_and_no_model_still_gets_its_equipment(
         tmp_path, man, model):
     """Partial equipment metadata is equipment (#282).
 
-    `import_files`' linkage arm builds `Equipment` under
-    `if meta['man'] or meta['model']`. Both directions of the partial
-    case are parametrized to document the issue's "or the reverse";
-    either one alone kills the `or -> and` mutant, so this buys
-    documentation rather than extra kill power.
+    `import_files`' linkage arm now calls `Equipment.from_parts`, whose
+    rule is "a manufacturer or a model name" (#290). Both directions of
+    the partial case are parametrized to document the issue's "or the
+    reverse"; either one alone kills the `or -> and` mutant, so this
+    buys documentation rather than extra kill power.
 
     The two field assertions are deliberate: `is not None` alone would
     survive an argument swap in the `Equipment(...)` construction.
@@ -130,6 +130,29 @@ def test_a_series_with_a_manufacturer_and_no_model_still_gets_its_equipment(
     assert series.equipment is not None
     assert series.equipment.manufacturer == (man or "")
     assert series.equipment.model_name == (model or "")
+
+
+def test_a_series_with_only_a_serial_number_ingests_without_equipment(tmp_path):
+    """DeviceSerialNumber with no manufacturer or model is not equipment (#290).
+
+    A characterization pin of the rule as it stands, not an endorsement
+    of it. Manufacturer (0008,0070) is Type 2 -- legally present and
+    empty -- and ManufacturerModelName is Type 3, so a file carrying
+    only a serial is a valid file. It ingests with `series.equipment is
+    None`, and because every downstream rule matches on the serial
+    (`_match_machine_rule`, the redaction task walk, `_redaction_zones_for`),
+    such a series can never match a rule and is skipped by redaction
+    silently. Widening `Equipment.from_parts` to the serial is filed
+    separately from #290; this test flips when it lands.
+    """
+    path = _write_minimal(tmp_path / "serial_only.dcm",
+                          DeviceSerialNumber="SN-ONLY")
+
+    store = DicomStore()
+    DicomImporter.import_files([path], store)
+
+    series = store.patients[0].studies[0].series[0]
+    assert series.equipment is None
 
 
 def _write_without_preamble(path):

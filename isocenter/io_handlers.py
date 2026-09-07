@@ -1674,8 +1674,11 @@ class DicomImporter:
                     series = series_map.get(ser_id)
                     if not series:
                         series = Series(ser_id, meta['modality'], meta['series_num'])
-                        if meta['man'] or meta['model']:
-                            series.equipment = Equipment(meta['man'], meta['model'], meta['dev_sn'])
+                        # The "is this equipment?" rule lives on
+                        # `Equipment.from_parts`, shared with both store
+                        # hydration routes and the builder (#290, #282).
+                        series.equipment = Equipment.from_parts(
+                            meta['man'], meta['model'], meta['dev_sn'])
                         study.series.append(series)
                         series_map[ser_id] = series
 

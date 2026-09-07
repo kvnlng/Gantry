@@ -365,6 +365,52 @@ class Equipment:
     model_name: str
     device_serial_number: str = ""
 
+    @classmethod
+    def from_parts(cls, manufacturer, model_name,
+                   device_serial_number) -> Optional["Equipment"]:
+        """Builds an `Equipment` from a file's or a row's three fields, or nothing.
+
+        A series has equipment iff it has a manufacturer or a model name.
+        That is a statement about what an `Equipment` *is* -- identity
+        is manufacturer and model; the serial is the optional field, as
+        the default on `device_serial_number` already says -- so the
+        rule lives here, beside the fields that define it, rather than
+        at each of the places that read those fields off a source. Until
+        #290 it was spelled three times (`DicomImporter.import_files`,
+        `SqliteStore.load_all`, `SqliteStore.load_patient`) and omitted
+        once (`SeriesBuilder.set_equipment`), and the whole suite stayed
+        green with manufacturer and model swapped at both hydration
+        sites. A classmethod rather than the constructor because a
+        frozen dataclass cannot express "maybe none" there --
+        `__post_init__` cannot return a value, and a `__new__` that
+        returns `None` breaks `dataclasses.replace` and pickling -- and
+        rather than a module-level function because `Equipment` is the
+        public name and this is discoverable from it.
+
+        Positional, in field order, all three required: the constructor
+        is positional and every call site holds a serial value, so a
+        default here would be a second spelling of the field's own.
+
+        **No normalisation.** `None` stays `None`; `from_parts("ACME",
+        None, None)` equals `Equipment("ACME", None, None)`, which is
+        what `load_patient` returns for such a row today.
+
+        **A serial alone is not equipment**, and that is the rule as it
+        stood, kept deliberately by #290 rather than widened inside a
+        behaviour-preserving refactor. The consequence is real: the
+        store keeps `device_serial_number` for such a series and every
+        reload discards it, while `_match_machine_rule` in `session.py` and the
+        redaction walk key on the serial. Widening the predicate is
+        filed separately; it is now one line in one place.
+
+        Returns:
+            Optional[Equipment]: the equipment, or `None` when neither
+            identifying field is present.
+        """
+        if not (manufacturer or model_name):
+            return None
+        return cls(manufacturer, model_name, device_serial_number)
+
 
 # --- Core Hierarchy ---
 

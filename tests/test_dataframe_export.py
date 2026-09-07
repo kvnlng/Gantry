@@ -72,21 +72,24 @@ def test_export_dataframe_expand_metadata(session_with_data):
     assert 'SliceThickness' in df.columns
     assert df.iloc[0]['SliceThickness'] == 1.5
 
-def test_get_flattened_instances_still_has_a_caller_holding_its_coverage(
+def test_get_flattened_instances_is_public_api_covered_on_itself(
         session_with_data):
-    """`SqliteStore.get_flattened_instances` has no production caller (#142).
+    """`SqliteStore.get_flattened_instances` is public API with no in-tree caller (#142).
 
-    It had exactly one, `DicomSession.export_to_parquet`, deleted in #55
-    when Parquet export was collapsed onto `export_dataframe`. This is
-    the second time the method has been left uncovered by a deletion
-    elsewhere: `DicomExporter.generate_export_from_db` went first, as
-    dead code, and took the only test exercising the method with it.
+    Public: `docs/api/persistence.md` renders `isocenter.persistence`
+    with no `members:` filter, so the method is on the docs site, and
+    the 0.9.1 CHANGELOG names it as the migration path for callers of
+    the deleted `export_to_parquet`. No in-tree caller, by decision: #55
+    chose the in-memory graph for `export_dataframe`, and #142 weighed
+    deleting the method and kept it.
 
-    So the coverage is anchored here, on the method itself, rather than
-    on whatever happens to call it this month. Whether the method should
-    survive with no caller is #142's question -- but it must not be
-    possible to delete it *by accident*, which is what losing the last
-    test would amount to.
+    The coverage is anchored here, on the method itself, rather than on
+    whatever happens to call it. That has been lost twice by deletions
+    elsewhere -- `DicomExporter.generate_export_from_db` went first, as
+    dead code, and took the only test exercising the method with it;
+    then `export_to_parquet` went in #55 and did the same -- and a
+    published method must not be deletable by accident, which is what
+    losing its last test would amount to.
     """
     rows = list(session_with_data.store_backend.get_flattened_instances(["P1"]))
 
@@ -488,6 +491,86 @@ def test_flattened_instances_pages_a_filtered_cohort_correctly():
             instance_uids=wanted, page_size=2))
 
         assert [r["sop_instance_uid"] for r in rows] == wanted
+    finally:
+        store.stop()
+
+
+def test_flattened_instances_empty_patient_id_list_selects_nobody():
+    """`patient_ids=[]` is a filter that matched nothing, not a missing filter (#142).
+
+    Mirrors `test_an_empty_patient_id_list_selects_nobody` for the DB
+    reader -- the one the 0.9.1 CHANGELOG points migrating
+    `export_to_parquet` callers at. The gate was a truth test, so a
+    computed-and-empty cohort walked the whole store: silent
+    over-export, in the exact shape `get_cohort_report`'s comment warns
+    about. `None` means every patient; `[]` means none.
+
+    Drains with `list(...)`, so nothing here parks a generator; a test
+    that does must use `_probe_on_a_thread` and `finally: gen.close()`.
+    """
+    store = _store_with_instances(":memory:", count=3)
+    try:
+        assert list(store.get_flattened_instances(patient_ids=[])) == []
+    finally:
+        store.stop()
+
+
+def test_flattened_instances_empty_instance_uid_list_selects_nobody():
+    """`instance_uids=[]` selects nobody, for the same reason (#142)."""
+    store = _store_with_instances(":memory:", count=3)
+    try:
+        assert list(store.get_flattened_instances(instance_uids=[])) == []
+    finally:
+        store.stop()
+
+
+def test_flattened_instances_applies_both_filters_together():
+    """`patient_ids` and `instance_uids` intersect; neither widens the other (#142).
+
+    Each filter alone was covered; together they were not. The join is a
+    string -- `" AND ".join(conditions)` -- which the mutation probe
+    cannot see and a hand-run can. Measured with `" OR "` on this
+    four-row store: at the default `page_size` (500, what this test
+    uses) the first page matches every row through `i.id > 0`, four
+    rows is a short page, the walk returns, and the first assertion
+    fails on four rows where one was expected. At a `page_size` no
+    larger than the rows the filters alone match (three here) the same
+    mutant loops forever, because the keyset condition shares the join
+    operator -- `" AND ".join(filters + ["i.id > ?"])` -- and the
+    filters keep matching rows below `after_id` on every page (measured:
+    `page_size=4` returns 7 rows and stops; 3, 2 and 1 never stop). The
+    drains are bounded with `islice` anyway, so a future small-page
+    variant of this test fails its assertion rather than stalling CI.
+    """
+    from itertools import islice
+    from isocenter.persistence import SqliteStore
+
+    store = SqliteStore(":memory:")
+    graph = []
+    for pid in ("P1", "P2"):
+        p = Patient(pid, f"Name {pid}")
+        st = Study(f"ST-{pid}", "20230101")
+        se = Series(f"SE-{pid}", "CT", 101, equipment=None)
+        for i in range(2):
+            inst = Instance(f"{pid}-I{i}", "1.2.840.123", i)
+            inst.attributes = {"Modality": "CT"}
+            se.instances.append(inst)
+        st.series.append(se)
+        p.studies.append(st)
+        graph.append(p)
+    store.save_all(graph)
+
+    def drain(**filters):
+        gen = store.get_flattened_instances(**filters)
+        try:
+            return [r["sop_instance_uid"] for r in islice(gen, 10)]
+        finally:
+            gen.close()
+
+    try:
+        assert drain(patient_ids=["P2"],
+                     instance_uids=["P2-I0", "P1-I0"]) == ["P2-I0"]
+        assert drain(patient_ids=["P1"], instance_uids=["P2-I0"]) == []
     finally:
         store.stop()
 

@@ -23,7 +23,7 @@ import pytest
 from isocenter.builders import DicomBuilder
 from isocenter.entities import (Patient, Study, Series, Instance, Equipment,
                                 TrackedEntity)
-from isocenter.persistence import SqliteStore
+from isocenter.persistence import SqliteStore, _SaveTally
 from isocenter.session import DicomSession
 
 
@@ -576,3 +576,37 @@ def test_audit_drains_a_running_save_before_it_records_what_it_found(
     finally:
         release.set()
         session.close()
+
+
+def test_the_prepared_map_is_keyed_on_the_instance_itself():
+    """The prepass hands the transaction a map keyed on `Instance` objects (#300).
+
+    Behaviour is identical under `id(inst)` and under the object key for
+    as long as the graph is alive, which it is for the whole of
+    `save_all`; this pin exists for a different reason. The map used to
+    be keyed on the SOP Instance UID, and #288 showed that was data loss:
+    a UID renamed between the prepass and the transaction missed the
+    map, the instance was skipped, and `_delete_removed_instances` then
+    reaped its old row. `id()` fixed that, and was the only hashable
+    identity key available while the entities were `eq=True`. Since
+    #299 they hash by identity (`tests/test_entity_state_vocabulary.py`
+    pins it), so the instance itself is the key, and this test is what
+    makes a reversion -- to `id()`, or back to the UID -- go through a
+    red test rather than a docstring. The behavioural half is
+    `test_an_instance_renamed_after_the_prepass_is_still_written`.
+
+    Set **equality**, not membership: a map that stored both `id(inst)`
+    and `inst` would satisfy `inst in prepared` and still leave the walk
+    with two spellings of one key.
+    """
+    store = SqliteStore(":memory:")
+    patient = make_patient(n_instances=2)
+    series = patient.studies[0].series[0]
+
+    prepared = store._prepare_pixel_frames([patient], _SaveTally())
+
+    assert set(prepared) == set(series.instances), (
+        f"prepared map keys are {[type(k).__name__ for k in prepared]}, "
+        "not the instances themselves")
+    for inst in series.instances:
+        assert prepared[inst][0] == inst._revision
