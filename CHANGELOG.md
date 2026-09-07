@@ -65,6 +65,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The hang probe could not be dispatched at all: its two computed `timeout-minutes` made the workflow unparseable (#250).** `.github/workflows/hang-probe.yml`'s job cap and loop-step cap are now the literals `356` and `340`; `tests/test_packaging_contract.py::test_the_hang_probe_never_runs_on_the_gate` gains the assertion that would have caught it.
+
+  **What happened.** The probe merged with its caps written as a product of the dispatch inputs plus a constant -- `iterations * per_iteration_minutes + 25` for the job, `+ 5` for the loop step -- and the first dispatch attempt answered:
+
+      HTTP 422: failed to parse workflow: (Line: 102, Col: 22): Unexpected symbol: '+'.
+      Located at position 70 within expression: fromJSON(inputs.iterations) *
+      fromJSON(inputs.per_iteration_minutes) + 25 ... (Line: 166, Col: 24): same for + 5
+
+  **Why.** **GitHub Actions expressions have no arithmetic operators.** The documented set is `( ) [ ] . ! < <= > >= == != && ||` -- no `+`, `-`, `*` or `/` -- so a cap cannot be derived from the inputs by any spelling, and a file containing one fails to *parse*: not the step, not the job, the whole workflow. It sat on `main` inert, and nothing said so, because the only thing that runs it is a manual dispatch.
+
+  **What replaced it.** Two literals sized for the documented input ceiling (22 iterations x 15 minutes = 330) rather than for the inputs of any one run: loop step 340, job 356. The required inequality is unchanged and now reads directly -- 356 > 340 + 15 (the five literal 3s), and 356 is inside GitHub's 360-minute job maximum -- so whatever hangs, the timeout that fires still belongs to a step (#243). The trade is stated at both sites: the caps no longer track a short run, which makes them a pure backstop, and that is what they already were in practice, since the loop script declares `HANG` at `per_iteration_minutes` and a step cap firing means the script itself is stuck. The `iterations` input's own description carries the new ceiling arithmetic.
+
+  **The guard was grading the arithmetic's text, not its validity -- and that is the lesson worth more than the fix.** `test_the_hang_probe_never_runs_on_the_gate` parsed the `+ N` tail out of each cap string and compared the two constants, so it asserted the inequality correctly and **passed on a workflow GitHub refuses to load**. A test that is green on a file nothing can parse is worse than no test: it converts "nobody checked" into "something checked". The replacement asserts on the raw `${{ }}` bodies that no expression in the file contains an arithmetic character, quotes the 422 in its failure message, and reads the two caps as plain integers; string literals are stripped before the scan so a hyphen inside one is not read as subtraction, and the scan is deliberately *inside* the expressions only, because the loop script's `deadline=$(( ${{ inputs.per_iteration_minutes }} * 60 ))` is bash arithmetic and legitimate. Verified by reintroducing the merged spelling: the new assertion fails naming `['*', '+']`.
+
+  Nothing else about the probe changed -- same triggers, same loop script, same two conftest hooks -- so the `Added` entry above still describes what it does. **Final proof is a dispatch**, which needs this on the default branch first.
+
 - **`get_flattened_instances([])` walked the whole store (#142).** `SqliteStore._iter_flattened_instances` gated its two filters with truth tests -- `if patient_ids:` and `if instance_uids:` -- so an empty list read as "no filter" and returned every row in the store. Both gates are now `is not None`.
 
   **What a previously-working call now does.** `store.get_flattened_instances(patient_ids=[])` and `store.get_flattened_instances(instance_uids=[])` return no rows, where they returned every row. `None` still means every patient. Nothing else changes: a non-empty list filters exactly as before, and both filters together intersect (a test now pins that too -- each alone was covered, the conjunction was not).
