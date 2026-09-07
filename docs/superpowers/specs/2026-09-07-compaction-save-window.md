@@ -11,6 +11,12 @@ Weighed against #26 (the v1.0.0 API freeze).
 (CPython 3.14.6) on macOS 25.6 / APFS / local SSD. All timings are
 warm-page-cache, buffered I/O, **no `fsync`** — §4.3 says what that means
 for reading them.
+**On the `scratchpad/*.py` and `*.log` citations below:** those probes
+were written in a session-local temp directory and **do not exist in the
+repo**. They are named so the numbers can be attributed, not so a later
+reader can run them. The reproduction that is meant to survive is §9's,
+which is specified as a repo test; §4's timings are quoted inline
+precisely because their scripts are gone.
 
 ---
 
@@ -23,22 +29,37 @@ reject, or take Arm B.
 therefore wrong.** #320 costs "a coarse save-wide lock held across the
 whole `save_all`". Measured, `save_all` is **one of five** places in
 production code that append a sidecar frame and commit its row
-separately (§3.4). The one my reproduction actually corrupts through is
-`persist_pixel_data`, not `save_all`. A lock that covers only `save_all`
-closes none of the four orderings in §2. If you take Arm B, you are
-taking a **sidecar-generation lock over five call sites**, not one lock
-around one method. Confirm you want that scope before it is built.
+separately (§3.4). Read that carefully, because the short version is
+easy to misread in Arm B's favour and easy to misread against it:
+
+- Each of the five reaches the **same** window. Phases A–D corrupt
+  through `persist_pixel_data`; **phase E corrupts through `save_all`**
+  and is measured (§2, phase E). So a lock over `save_all` **does** close
+  the `save_all`-driven variant of every ordering — that half of #320's
+  design is sound and I am not disputing it.
+- What it does **not** close is the same four orderings driven by the
+  other four sites — which is how my first four phases reached them, and
+  which includes the redaction path (`persist_pixel_data`) and both
+  ingest paths.
+
+So the correct sentence is not "Arm B closes nothing"; it is **"Arm B as
+#320 prices it closes one of the five ways in"**. If you take Arm B, you
+are taking a **sidecar-generation lock over five call sites**, not one
+lock around one method. Confirm you want that scope before it is built.
 
 **Q3 — a claim in `compact()`'s docstring and in #295's CHANGELOG entry
-is false as written.** Both say the refusal covers a save in flight at
-entry. `has_pending_saves()` reads only the persistence manager's
-in-flight set and queue; `Session.save(sync=True)` runs `save_all` on the
-**caller's** thread (`session.py:810-815`) and never enters either, and a
-redaction's `persist_pixel_data` is not a save at all. **Measured
-`has_pending_saves() == False` in all four corrupting orderings** (§2).
-The guard is real but it does not see the two writers that actually reach
-the window. This wants correcting whichever arm you take, and it is a
-docs/comment fix, not a behaviour change.
+is narrower than its wording suggests.** Both read as though the refusal
+covers *a save* in flight at entry. `has_pending_saves()` reads only the
+persistence manager's in-flight set and queue; `Session.save(sync=True)`
+runs `save_all` on the **caller's** thread (`session.py:810-815`) and
+never enters either, and a redaction's `persist_pixel_data` is not a save
+at all. **Measured `has_pending_saves() == False` in all five corrupting
+orderings** (§2) — including phase E, where a concurrent
+`save(sync=True)` writes a frame and commits its row entirely inside the
+window and the guard still reads `False`. Nothing ever claimed the guard
+saw a second writer, and its own docstring admits it is point-in-time;
+the correction wanted is to the two places whose prose over-reads it, and
+it is a docs/comment fix, not a behaviour change.
 
 **Q4 — a defect found while auditing, not folded in.** The lock order
 documented in three places — `_pixel_swap_lock` before `sidecar._lock`,
@@ -92,15 +113,19 @@ not trust*. Results:
 ## 2. The race, reproduced deterministically
 
 `compact_sidecar()` has four phases and the window is different in each,
-so it is not one race. Each ordering below is forced with a pair of
+so it is not one race. Five orderings follow: A–D vary *where* in the
+compaction the concurrent write lands, and E varies *which writer* does
+it — which is the axis Arm B's scope turns on (Q2). Each ordering below is forced with a pair of
 `threading.Event`s from a monkeypatched phase method — the style of
 `tests/test_export_flushes_before_it_sweeps.py` — so nothing depends on
 timing. A helper thread makes a pixel change and calls
 `store.persist_pixel_data(...)` inside the parked window; the main
 thread runs `session.compact()`.
 
-Scripts: `scratchpad/race320.py` (phases A, B, C) and
-`scratchpad/race320d.py` (phase D). Logs: `race320c.log`, `race320d.log`.
+Scripts: `scratchpad/race320.py` (phases A, B, C),
+`scratchpad/race320d.py` (phase D), `scratchpad/race320e.py` (phase E).
+Logs: `race320c.log`, `race320d.log`. Session-local; see the front
+matter.
 
 ### Phase A — the append lands during `_rewrite_live_frames`
 
@@ -177,21 +202,66 @@ an id that is not in `updates`, so `_apply_new_offsets` leaves it alone
        Incomplete read from sidecar. Expected 39, got 0.
 ```
 
+### Phase E — the intruder is `save(sync=True)`, not `persist_pixel_data`
+
+Phases A–D all write through `persist_pixel_data`, which is **not** a
+site #320's Arm B covers, so on their own they would leave the reader
+thinking Arm B closes nothing. It does not: the same window is reachable
+through `save_all`. Here the helper thread calls `set_pixel_data()` and
+then `session.save(sync=True)` inside the parked `_rewrite_live_frames`,
+so the frame is appended and its row committed by `save_all`:
+
+```
+   size_before: 98370
+   intruder: ok
+   row_after_save: (98370, 39)        <- into the pre-compaction inode
+   pending_after_intruder_save: False
+   compact: ok
+   size_after: 32790
+   row_final: (0, 16395)              <- overwritten by _apply_new_offsets
+   points_past_eof: False
+   readback: RuntimeError: Pixel Loader failed for 1.2.3.0:
+       Integrity Error: Pixel data hash mismatch for 1.2.3.0.
+       Expected cf606a7d..., got 0f83dd3e... Loader(offset=0, length=16395, alg=zlib)
+```
+
+Same window, same outcome, different way in. This is the ordering Arm B
+as #320 prices it **would** close, and it is why Q2 says "one of five",
+not "none".
+
 ### What this establishes
 
-1. **The race is real and reproducible on demand**, in four distinct
+1. **The race is real and reproducible on demand**, in five distinct
    orderings, and a test can be written for it (§9).
-2. **`has_pending_saves()` returns `False` in every one of them** — Q3.
-   `persist_pixel_data` is not a save; `save(sync=True)` from another
-   thread does not enter the manager. The #295 refusal cannot fire for
-   the population that reaches the window.
-3. **The outcome is loud data loss, not silent wrong data.** Three of
-   four phases end in an exception the caller cannot miss; the fourth
+2. **`has_pending_saves()` returns `False` in every one of them** — Q3,
+   and phase E measures the half that was otherwise only inspection:
+   a `save(sync=True)` that runs start to finish inside the window
+   leaves the guard reading `False`, because it runs `save_all` on the
+   caller's thread and never enters the manager's queue or in-flight
+   set. `persist_pixel_data` is not a save at all. The #295 refusal
+   cannot fire for the population that reaches the window.
+3. **The outcome is loud data loss, not silent wrong data.** Four of the
+   five phases end in an exception the caller cannot miss; the fifth
    (B) raises at the writer. Nothing here reads plausible-looking wrong
    pixels back into an export. The `_pixel_hash` written alongside every
    frame is what makes it loud, and it is loud after a reopen too,
    because `record_blob_ref` stores the hash and `_apply_new_offsets`
    rewrites only `offset` and `length`.
+
+   **This holds for waveforms too, and it was worth checking rather than
+   assuming.** `compact()` rewires waveform loaders as well as pixel ones
+   (`wave_updates` from `get_blob_refs('waveform')`), and `persist_blob`
+   (`persistence.py:2222`) is site #3 in §3.4's table — so the waveform
+   half reaches the same window. `SidecarWaveformLoader.read_raw()`
+   verifies a sha256 over the frame and raises
+   `ValueError: Waveform integrity check failed: expected …, got …`
+   (`io_handlers.py:2922-2928`), and the hash is armed from the blob
+   row (`persistence.py:915,920`), not from a field a rewrite touches.
+   Different exception type from the pixel path's
+   `RuntimeError: Integrity Error`, same property: detected, not
+   swallowed. Had this check been absent, the residual race would have
+   been *silent wrong samples* for waveforms and the recommendation in
+   §8 would not stand as written.
 
 Point 3 is a correction to what this issue inherits from #295 ("reads the
 wrong bytes or runs off the end of the file"). #295 was describing the
@@ -339,7 +409,7 @@ residual down as known and accepted.
 
 ### 5.1 What it costs
 
-The race stays, in all four orderings of §2. Quantified:
+The race stays, in all five orderings of §2. Quantified:
 
 * **Width**: the whole of `_rewrite_live_frames` + swap +
   `_apply_new_offsets` — **0.024 s** at 200 MB and **0.221 s** at 2 GB
@@ -436,8 +506,10 @@ under a fixed timeout.
 
 ### 6.5 What Arm B buys
 
-All four orderings of §2 become impossible rather than unlikely, for
-writers in the same process. It does not close a second *process*
+**Correctly scoped** (§6.1), all five orderings of §2 become impossible
+rather than unlikely, for writers in the same process. **As #320 prices
+it** — one lock around `save_all` — only phase E's route closes; phases
+A–D reach the window through `persist_pixel_data` and are untouched. It does not close a second *process*
 writing to the same store unless the lock is `fcntl`-based (§6.1), and
 `SidecarManager` already uses `fcntl` for exactly that reason.
 
@@ -489,11 +561,13 @@ The three sentences with the numbers behind them:
 > by violating a precondition `compact()` has always documented, and —
 > the finding that moves this — its outcome is **not** the silent wrong
 > pixels inherited from #295 but a hard `RuntimeError: Integrity Error`
-> on the next read of one instance, in three of four forced orderings,
-> surviving a reopen. Arm B as #320 costs it (one lock around `save_all`)
-> **closes none of those four orderings**, because every one of them
-> corrupts through `persist_pixel_data`, one of **five** separate
-> write-frame-then-commit-row sites (§3.4); the version that does work is
+> on the next read of one instance, in four of five forced orderings,
+> surviving a reopen, and for waveforms as well as pixels. Arm B as #320
+> costs it (one lock around `save_all`) closes **one of the five ways in**
+> — measured, phase E — and leaves the other four open, because
+> `save_all` is one of **five** separate write-frame-then-commit-row
+> sites (§3.4) and the redaction and ingest routes reach the same window
+> without it; the version that does work is
 > a sidecar-generation lock over all five plus a cross-process question
 > at the two ingest sites, which is a materially larger change than the
 > issue prices. Against that, Arm B's own measured benefit is a
@@ -505,12 +579,13 @@ The three sentences with the numbers behind them:
 
 The three amendments, all cheap, all inside Arm A:
 
-1. **Correct the false claim (Q3).** `compact()`'s docstring and the
-   comment at the refusal say the enforced half covers a save in flight.
+1. **Correct the over-read claim (Q3).** `compact()`'s docstring and the
+   comment at the refusal read as though the enforced half covers *a
+   save* in flight, and only one kind of save is in view.
    `has_pending_saves()` sees neither a concurrent `save(sync=True)` from
    another thread nor a redaction's `persist_pixel_data` — measured
-   `False` in all four orderings. Say what the guard actually covers: a
-   save queued on the persistence manager. This is a comment fix and it
+   `False` in all five orderings, phase E included. Say what the guard
+   actually covers: a save queued on the persistence manager. This is a comment fix and it
    is the difference between an accepted risk and a wrong claim.
 2. **Land §9's test as a characterization test.** A race nobody can
    reproduce is a race nobody can verify fixed, and this one reproduces
@@ -564,8 +639,8 @@ does `set_pixel_data(new)` + `persist_pixel_data`, then sets `released`.
   resident array and measures nothing. Call `discard_pixel_data()` first
   (not `unload_pixel_data()`, which refuses a diverged array — #293).
 
-**Assertions, per phase.** All four are worth having; each has a distinct
-mechanism.
+**Assertions, per phase.** All five are worth having; each has a distinct
+mechanism, and E is the one that distinguishes the two Arm B scopes.
 
 | Phase | Patch | Assert (Arm A, characterization) | Assert (Arm B) |
 | --- | --- | --- | --- |
@@ -573,10 +648,27 @@ mechanism.
 | B | `_swap_in_compacted_sidecar`, parking between the two `os.replace` calls | the writer raises `FileNotFoundError` | the writer succeeds |
 | C | `_apply_new_offsets` | the intruder's correct row is overwritten; the read raises | the row survives |
 | D | `_rewrite_live_frames`, intruder persists an instance whose blob row did not exist at `_read_blob_index` | `offset + length > os.path.getsize(sidecar_path)`; the read raises `Incomplete read from sidecar` | the row is inside the file and reads back |
+| E | `_rewrite_live_frames`, intruder does `set_pixel_data` + **`session.save(sync=True)`** rather than `persist_pixel_data` | the row is the compaction map's value; the read raises `Integrity Error`/hash mismatch | the read returns the new pixels — **and this one goes green under Arm B at either scope**, which is why it must not be the only phase in the suite |
 
 **Assert `has_pending_saves() is False` inside every window.** That is
 the assertion that pins Q3 and stops someone reading the #295 refusal as
-covering this.
+covering this. Phase E is the one that makes it a measurement rather
+than an inspection: a `save(sync=True)` runs to completion inside the
+window and the guard still reads `False`.
+
+**Phase E's helper needs its own `set_pixel_data` inside the window for
+the same reason as the others**, and one more: `session.save(sync=True)`
+from the helper is a second `save_all` overlapping the compaction's
+already-completed one, so the frame must be new to that second save or
+there is nothing for it to append.
+
+**A waveform variant is worth one test, not four.** Build an instance
+with a Waveform Sequence, `persist_blob(inst, 'waveform', samples)`
+inside phase A's window, and assert the read raises
+`ValueError: Waveform integrity check failed` (Arm A) / returns the new
+samples (Arm B). It is a different loader with a different exception
+type, and §2's "loud, not silent" claim is only as good as its weakest
+data path.
 
 Do **not** write these against `session.compact()`'s front door without
 the phase patches: the front door's leading `save(sync=True)` makes the

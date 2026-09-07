@@ -10,6 +10,11 @@ open. Touches the guard #154/#165/#190/#195 built.
 (CPython 3.14.6), `pydicom 3.0.2`, `numpy` as installed. Every figure
 below was taken in the worktree, with `isocenter.__file__` printed and
 read first per CLAUDE.md.
+**On the `scratchpad/*.py` citations below:** those probes lived in a
+session-local temp directory and **are not in the repo**. They are named
+so each number can be attributed, not so a later reader can re-run them;
+every figure is quoted inline for that reason, and the reproduction meant
+to survive is §7's test list.
 
 ---
 
@@ -34,7 +39,14 @@ whose whole value is that its population is measured.
 where it used to be dropped, and no source file ever said so.** The rule
 you set is "the tag's own recorded VR", and the recorded VR is a fact
 about the *source element*, which was present. But the `None` here came
-from a caller, an anonymisation or a remediation — not from the file. It
+from a caller — not from the file, and **not from anywhere inside
+`isocenter/` either**: `grep -rn 'set_attr(.*, None' isocenter/` returns
+nothing, so no anonymisation or remediation arm writes a `None` value
+today and this shape is reachable only from user code. That was worth
+checking rather than asserting, because if a remediation arm *did* write
+`None` to a private tag, this would be the ordinary pipeline path rather
+than an edge, and every remediated private tag would already be filing a
+`DATA_LOSS` row. It does not, and they do not. It
 is still not fabrication (§4), and following the rule uniformly is what
 keeps the implementation one branch rather than two. This spec follows
 the rule. It goes on the record because it flips
@@ -391,6 +403,18 @@ reach for when they try to "clean up" the `None` branch in `_merge`, and
 a comment there is where the trap gets explained (CLAUDE.md: *comments
 explain the trap, not the code*). It changes no behaviour and no test.
 
+**If you add it, it is an equivalent mutant and `scripts/mutation_probe`
+will report it as survived.** Deleting the line, or flipping its `False`
+to `True`, leaves every test green, because the `None` branch in `_merge`
+runs first and nothing else reaches `_value_fits_vr` with a `None`. That
+is not a test gap and must not be closed by writing a test around it:
+there is precedent — the `bool` arm of `_fallback_encoding` needed
+`test_a_bool_private_value_is_written_as_the_LO_string_True` (#283)
+precisely because it was *not* equivalent, and the distinction is worth
+keeping sharp. Record the line in the probe's expected-survivor set if
+one exists, or leave it and expect the finding; do not delete a
+documentation line because a probe cannot kill it.
+
 ### 5.2 Why widening `_value_fits_vr` is unsafe — measured
 
 `_value_fits_vr` has a recursive list arm
@@ -533,9 +557,25 @@ during this spec's preparation.)
 
 ### 7.2 Existing tests that go red first, and what each must become
 
-All in `tests/test_private_tag_empty_value_roundtrip.py`. Write the
-assertion changes **before** touching `io_handlers.py`, confirm each is
-red, then implement.
+All in `tests/test_private_tag_empty_value_roundtrip.py`, and **that
+file is the whole red list** — which was checked rather than assumed,
+because "three tests flip" is exactly the claim that is embarrassing to
+get wrong on a TDD hand-off. Two greps across `tests/`:
+
+* `"NoneType"` and `"no VR fits"` — hits are
+  `test_private_tag_export.py:382,522` (the `_fallback_encoding([])`
+  empty-list arm and the `bool` arm, neither of which this change
+  touches), `test_export_loss_audit.py:31` (its unencodable fixture is
+  `object()`, not `None`), and four unrelated files quoting a
+  `NoneType` message in prose.
+* a `None` value stored against a private tag — the only hits in the
+  whole suite are `test_private_tag_empty_value_roundtrip.py:199,204,223`,
+  i.e. this file's own store-level rows.
+
+So no test outside this file asserts either the drop or the
+`DATA_LOSS` row for a `None`-valued private tag. Write the assertion
+changes **before** touching `io_handlers.py`, confirm each is red, then
+implement.
 
 | Test | Today | Must become |
 | --- | --- | --- |
