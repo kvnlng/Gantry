@@ -127,6 +127,7 @@ TARGETS = {
                                   "tests/test_export_delivery_counters.py",
                                   "tests/test_export_error.py",
                                   "tests/test_export_failure_audit.py",
+                                  "tests/test_export_flushes_before_it_sweeps.py",
                                   "tests/test_export_loss_audit.py",
                                   "tests/test_export_merge_shape.py",
                                   "tests/test_export_pixels.py",

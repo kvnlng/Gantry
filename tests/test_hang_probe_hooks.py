@@ -33,16 +33,18 @@ CONFTEST = REPO / "tests" / "conftest.py"
 #: conftest comment for the argument.
 PROBE_VARIABLE = "ISOCENTER_HANG_PROBE_START_METHOD"
 
-not_posix = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="no fork start method and no SIGUSR1 on Windows")
+
+def _require_posix():
+    """Skip on Windows: no fork start method and no SIGUSR1 there.
+
+    A body-level skip call rather than a marker, because
+    `tests/test_skip_contract.py`'s visitor recognises this form and the
+    probe never runs on Windows anyway.
+    """
+    if sys.platform == "win32":
+        pytest.skip("no fork start method and no SIGUSR1 on Windows")
 
 
-@pytest.mark.skipif(
-    os.environ.get(PROBE_VARIABLE) == "fork",
-    reason="the override is installed in this session by design; the "
-           "probe's fork arm is what this test guards against happening "
-           "anywhere else")
 def test_the_fork_override_is_inert_without_its_variable(monkeypatch):
     """The cry-wolf guard: an unset variable changes nothing.
 
@@ -56,6 +58,10 @@ def test_the_fork_override_is_inert_without_its_variable(monkeypatch):
     with the variable unset (or the test is skipped, above). The
     `delenv` states the premise; it cannot re-run configure.
     """
+    if os.environ.get(PROBE_VARIABLE) == "fork":
+        pytest.skip("the override is installed in this session by design; "
+                    "the probe's fork arm is what this test guards against "
+                    "happening anywhere else")
     monkeypatch.delenv(PROBE_VARIABLE, raising=False)
 
     assert multiprocessing.get_context("spawn").get_start_method() == "spawn", (
@@ -65,7 +71,6 @@ def test_the_fork_override_is_inert_without_its_variable(monkeypatch):
         "population #260 removed")
 
 
-@not_posix
 def test_the_fork_override_reaches_every_pool_pin(pytester, monkeypatch):
     """With the variable set to `fork`, a request for spawn gets fork.
 
@@ -80,6 +85,7 @@ def test_the_fork_override_reaches_every_pool_pin(pytester, monkeypatch):
     `test_the_per_call_process_pool_pins_spawn` uses, so the two tests
     measure the same thing from opposite sides.
     """
+    _require_posix()
     pytester.makeconftest(CONFTEST.read_text(encoding="utf-8"))
     pytester.makepyfile(test_probe_fork="""
         import concurrent.futures
@@ -122,7 +128,6 @@ def test_the_fork_override_reaches_every_pool_pin(pytester, monkeypatch):
     result.assert_outcomes(passed=1)
 
 
-@not_posix
 def test_sigusr1_dumps_the_parents_threads(pytester, monkeypatch):
     """A SIGUSR1 to the pytest parent is a stack dump, not a death.
 
@@ -136,6 +141,7 @@ def test_sigusr1_dumps_the_parents_threads(pytester, monkeypatch):
     returns; the run must pass (the process survived) and stderr must
     carry faulthandler's `Current thread` header.
     """
+    _require_posix()
     pytester.makeconftest(CONFTEST.read_text(encoding="utf-8"))
     pytester.makepyfile(test_probe_usr1="""
         import os
