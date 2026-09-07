@@ -79,6 +79,17 @@ def test_the_export_save_has_landed_before_release_memory_runs(
     thread, and it must have returned before the sweep began. `run_parallel`
     is patched inline the way the colocation test does it -- the point is
     the parent's ordering, not the workers.
+
+    **The spelling is pinned on purpose, not only the order.**
+    `self.save(); self.persistence_manager.flush(); self.release_memory()`
+    would give the same ordering and turn this red, because the recorded
+    save would then return on `PersistenceWorker`. That is deliberate:
+    `save(sync=True)` already means "drain, then save on the caller's
+    thread", and a second spelling of that behaviour at this one call
+    site is the duplicate CLAUDE.md's "one spelling per behaviour" rule
+    exists to refuse (the brief rejected it as such). If the call site
+    ever legitimately changes spelling, change the thread named here
+    with it, and say why in the same commit.
     """
     events = []
     real_save_all = SqliteStore.save_all
