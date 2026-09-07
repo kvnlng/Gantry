@@ -1515,9 +1515,12 @@ class SqliteStore:
                 se_map = {}
                 for r in se_rows:
                     se = Series(r['series_instance_uid'], r['modality'], r['series_number'])
-                    if r['manufacturer'] or r['model_name']:
-                        se.equipment = Equipment(
-                            r['manufacturer'], r['model_name'], r['device_serial_number'])
+                    # Same rule as ingest and `load_patient`, by
+                    # construction: this used to be a third hand-copied
+                    # predicate, and the suite was green with the two
+                    # identifying fields swapped here (#290).
+                    se.equipment = Equipment.from_parts(
+                        r['manufacturer'], r['model_name'], r['device_serial_number'])
                     se_map[r['id']] = se
                     if r['study_id_fk'] in st_map:
                         st_map[r['study_id_fk']].series.append(se)
@@ -1654,9 +1657,10 @@ class SqliteStore:
                             se_r['series_instance_uid'],
                             se_r['modality'],
                             se_r['series_number'])
-                        if se_r['manufacturer'] or se_r['model_name']:
-                            se.equipment = Equipment(
-                                se_r['manufacturer'], se_r['model_name'], se_r['device_serial_number'])
+                        # Same rule as ingest and `load_all` (#290).
+                        se.equipment = Equipment.from_parts(
+                            se_r['manufacturer'], se_r['model_name'],
+                            se_r['device_serial_number'])
                         se_pk = se_r['id']
 
                         # Fetch Instances

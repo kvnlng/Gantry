@@ -66,8 +66,16 @@ class SeriesBuilder:
         self.series = series
 
     def set_equipment(self, man, mod, sn=""):
-        """Sets the Equipment metadata for this Series."""
-        self.series.equipment = Equipment(man, mod, sn)
+        """Sets the Equipment metadata for this Series.
+
+        Routed through `Equipment.from_parts`, so a call with neither a
+        manufacturer nor a model name leaves `series.equipment` as
+        `None` -- the same answer ingest and reload give (#290). Before
+        that this was the one construction site with no predicate, and
+        `.set_equipment("", "", "SN")` built an `Equipment` that
+        `save_all` wrote and no reload could return.
+        """
+        self.series.equipment = Equipment.from_parts(man, mod, sn)
         return self
 
     def add_instance(self, uid, cls, num):

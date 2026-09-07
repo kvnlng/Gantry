@@ -3,11 +3,16 @@
 Pre-1.0 cleanup: duplicate export layouts, duplicate sanitizers, and dead
 parameters are removed rather than deprecated.
 """
+import ast
+import dataclasses
 import inspect
 import os
 
 import pytest
 
+import isocenter
+from isocenter.entities import Equipment
+from isocenter.persistence import SqliteStore
 from isocenter.session import DicomSession
 
 
@@ -496,3 +501,71 @@ def test_neither_public_write_path_reports_total_failure_as_success(tmp_path):
     assert isinstance(caught.value, RuntimeError), (
         "an existing `except RuntimeError` around a full run would stop "
         "catching the export that delivered nothing")
+
+
+# --- #290: one spelling of the equipment predicate ------------------------
+
+
+def _equipment_constructions_outside_entities():
+    """`(module, lineno)` for every `Equipment(...)` call outside `entities.py`.
+
+    Guards the four spellings that existed -- `Equipment(...)` by bare
+    name and `<module>.Equipment(...)` by attribute -- and no more. A
+    `type(eq)(...)`, a `dataclasses.replace(eq, ...)`, or a local alias
+    (`E = Equipment; E(...)`) would slip past it, and that is accepted
+    rather than solved: this test exists because four sites had the
+    same three lines and one of them was missing its predicate, not
+    because every conceivable construction must be routed through
+    `from_parts`.
+    """
+    package_dir = os.path.dirname(isocenter.__file__)
+    hits = []
+    for root, _, files in os.walk(package_dir):
+        for name in sorted(files):
+            if not name.endswith(".py") or name == "entities.py":
+                continue
+            path = os.path.join(root, name)
+            with open(path, encoding="utf-8") as fh:
+                tree = ast.parse(fh.read(), filename=path)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                if ((isinstance(func, ast.Name) and func.id == "Equipment")
+                        or (isinstance(func, ast.Attribute)
+                            and func.attr == "Equipment")):
+                    hits.append((os.path.relpath(path, package_dir),
+                                 node.lineno))
+    return hits
+
+
+def test_equipment_has_one_constructor_outside_entities():
+    """Every `Equipment` outside `entities.py` is built by `Equipment.from_parts` (#290).
+
+    The predicate "a series has equipment iff it has a manufacturer or a
+    model name" was spelled at three sites and omitted at a fourth
+    (`SeriesBuilder.set_equipment`), and the whole suite stayed green
+    with manufacturer and model swapped at both hydration sites. One
+    constructor means one place for the rule to be right or wrong.
+    """
+    hits = _equipment_constructions_outside_entities()
+
+    assert hits == [], (
+        "Equipment(...) is constructed directly outside entities.py at "
+        f"{hits}; route it through Equipment.from_parts so the predicate "
+        "has one spelling")
+
+
+def test_from_parts_is_bound_to_equipment_in_field_order():
+    """`Equipment.from_parts` takes the dataclass's fields, in the dataclass's order (#290).
+
+    The order pin is structural -- derived from `dataclasses.fields`
+    rather than a second hardcoded list -- so a field added to
+    `Equipment` and not to `from_parts` is a red test, not a second
+    place to update.
+    """
+    assert inspect.ismethod(Equipment.from_parts)
+    assert Equipment.from_parts.__self__ is Equipment
+
+    params = list(inspect.signature(Equipment.from_parts).parameters)
+    assert params == [f.name for f in dataclasses.fields(Equipment)]
