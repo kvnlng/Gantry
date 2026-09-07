@@ -2825,6 +2825,31 @@ class SidecarPixelLoader:
             target_size = 1
             for d in target_shape:
                 target_size *= d
+            # A declared geometry of nothing is an integrity failure, not
+            # a shape to pad towards. Without this, `arr.size >= 0` is
+            # always true, `arr[:0]` is empty, and a `(0, 0)` array went
+            # back to the caller with the integrity hash *passing* -- the
+            # hash is over the raw bytes, six lines up. The export worker
+            # then failed with `Compression failed: cannot write empty
+            # image`; a caller who never exports got an empty image that
+            # looked like data. The reachable shape is an instance whose
+            # `pixel_array` was assigned directly, so no Rows/Columns
+            # were ever written (#343). Exactly `target_size == 0` and
+            # nothing wider: `arr.size != target_size` would break every
+            # odd-length source, whose one-byte DICOM pad is what the
+            # fallback below exists for; `rows == 0 or cols == 0` alone
+            # misses `frames == 0` on a multi-frame declaration. Same
+            # prefix as the hash mismatch so it rides the export worker's
+            # `Pixel Loader failed` channel into an ERROR row. Here in
+            # `__call__` and not in a wrapper: this loader pickles into
+            # spawned export workers, and a guard installed on the parent
+            # would not be in the child.
+            if target_size == 0:
+                raise RuntimeError(
+                    f"Integrity Error: {self.sop_instance_uid} declares no "
+                    f"pixel geometry (Rows={rows}, Columns={cols}, "
+                    f"Frames={frames}); a stored frame of {len(raw)} bytes "
+                    f"cannot be reshaped to nothing")
             if arr.size >= target_size:
                 arr = arr[:target_size]
                 arr_reshaped = arr.reshape(target_shape)
