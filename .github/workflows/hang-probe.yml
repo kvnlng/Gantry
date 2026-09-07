@@ -1,0 +1,270 @@
+name: Hang Probe
+
+# Instrumentation for #250, not a fix, and not part of the PR gate.
+#
+# The suite has hung in CI often enough to have an issue and rarely enough
+# that no run has yet produced a stack: occurrences 1-5 were `test (3.12)`
+# on ubuntu under the fork start method, a ~900s stall ending in
+# `sqlite3.OperationalError: database is locked` from a forked child, and
+# three of them were killed as "cancelled" before any diagnostic could
+# fire. #260 pinned spawn at every pool, which should have removed that
+# population -- and nothing since has measured whether it did. This
+# workflow loops the whole suite, on the platform and interpreter the
+# issue was opened on, under both start methods, until one iteration hangs
+# or the budget runs out, and it makes sure a hang leaves a stack.
+#
+# **Dispatched by hand, and only by hand.** It runs for hours, so it is
+# never a gate and never on a pull request, a push to main, or the
+# release path (`tests.yml` is what `publish.yml` reuses; this file must
+# stay out of it). `tests/test_packaging_contract.py::
+# test_the_hang_probe_never_runs_on_the_gate` holds the trigger set to
+# exactly `workflow_dispatch`.
+#
+# **It has to be on the default branch before it can be dispatched.**
+# GitHub's documentation for the workflow_dispatch event: "This event will
+# only trigger a workflow run if the workflow file exists on the default
+# branch." Once it is there, `gh workflow run hang-probe.yml -r <branch>`
+# runs it against any ref.
+#
+# Reading the result: see the decision table in CHANGELOG's entry for
+# this file (the `[Unreleased]` entry naming #250).
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: >
+          Full-suite runs per arm. Hard ceiling 22: 22 x 15 + 25 = 355
+          minutes, under the 360-minute job maximum. Each iteration is
+          ~6 minutes on a healthy runner.
+        type: number
+        required: false
+        default: 10
+      start_method:
+        description: >
+          Which multiprocessing start method the suite's pools use.
+          `fork` re-creates the population #260 removed (see
+          tests/conftest.py); `both` runs the two as parallel jobs.
+        type: choice
+        options:
+          - spawn
+          - fork
+          - both
+        required: false
+        default: both
+      selection:
+        description: >
+          Passed to pytest verbatim after `-v`. `tests` is the whole
+          suite and the default: the issue's own measurement never
+          opened the hang window on a fast subset, and the leaked-thread
+          state the occurrence-four dump shows only accumulates over a
+          full run. `tests -k FORCE_PROCESSES` (24 tests) is the fast
+          re-probe once a hit exists.
+        type: string
+        required: false
+        default: tests
+      per_iteration_minutes:
+        description: >
+          Deadline after which one iteration is declared a HANG. Runner
+          suite time is 5m30-6m; the old 900s stall fits inside 15 as
+          well, and the current busy timeout ends a lock stall in 120s.
+        type: number
+        required: false
+        default: 15
+
+permissions:
+  contents: read
+
+concurrency:
+  # One group per run, so a second dispatch can never cancel a first. A
+  # cancelled probe is exactly the "log naming nothing" this issue is
+  # about, and two probes running at once cost runner minutes, not
+  # correctness -- they share no state.
+  group: hang-probe-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    strategy:
+      # Both arms are independent jobs so the two answers arrive in
+      # parallel, and one arm hanging must not stop the other.
+      fail-fast: false
+      matrix:
+        start_method: ${{ fromJSON(inputs.start_method == 'both' && '["spawn","fork"]' || format('["{0}"]', inputs.start_method)) }}
+    # Backstop only. Same inequality tests.yml carries: this must exceed
+    # the SUM of every step cap below, or some step's own timeout is
+    # unreachable and a hang there dies as 'cancelled' with no failing
+    # step in the log (#243). The loop cap is iterations x minutes + 5,
+    # the five literal step caps sum to 15, and this is + 25, so
+    # 25 > 5 + 15. `test_the_hang_probe_never_runs_on_the_gate` parses
+    # the two constants and checks the inequality.
+    timeout-minutes: ${{ fromJSON(inputs.iterations) * fromJSON(inputs.per_iteration_minutes) + 25 }}
+
+    steps:
+    - uses: actions/checkout@v7
+      timeout-minutes: 3
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v6
+      timeout-minutes: 3
+      with:
+        # The interpreter the issue was opened on. The 2026-09-02/03
+        # sightings are macOS / 3.14.6 and are a different platform,
+        # start method and interpreter; a macOS arm is an extension of
+        # this file, not a default.
+        python-version: "3.12"
+
+    - name: Install tesseract
+      timeout-minutes: 3
+      # Copied from tests.yml, comments included: the probe must run the
+      # same suite the gate runs.
+      #
+      # pytesseract is a wrapper; the OCR itself is a system binary pip
+      # cannot supply. Without it `pixel_analysis.HAS_OCR` is False and
+      # tests/test_discovery_integration.py skips -- which is how that
+      # test went unrun for months while the suite looked healthy (#44).
+      # A skip caused by a missing system package is indistinguishable
+      # from a test that has nothing to say.
+      #
+      # `update` is deliberately allowed to fail. It exits non-zero if
+      # *any* configured source fails, and the runner image ships
+      # third-party repositories we neither use nor control: on
+      # 2026-08-27 packages.microsoft.com returned 403 for two of them
+      # and killed a release rehearsal, because `update && install` under
+      # `bash -e` meant `install` never ran. Tesseract comes from
+      # azure.archive.ubuntu.com, which was fine throughout.
+      #
+      # The install is what must succeed, and the version check is what
+      # proves it: pip cannot supply this binary, so an install that
+      # half-worked would resurface as #44 -- a silent skip that looks
+      # like a passing suite.
+      run: |
+        sudo apt-get update \
+          || echo "::warning::apt-get update had failing sources; continuing"
+        sudo apt-get install -y tesseract-ocr
+        tesseract --version
+
+    - name: Install Dependencies
+      timeout-minutes: 3
+      run: |
+        python -m pip install --upgrade pip
+        # setup.py is the single source of truth for dependencies; there is
+        # deliberately no requirements.txt to drift from it.
+        # `ocr` is installed here but stays an optional extra for users:
+        # the graceful-degradation path is covered by patching HAS_OCR
+        # (tests/test_pixel_analysis.py), not by leaving it uninstalled.
+        pip install -e ".[tests,ocr]"
+
+    - name: Loop the suite until it hangs or the budget runs out
+      id: loop
+      shell: bash
+      # Enough for every iteration to reach its own deadline plus the
+      # kill sequence, and no more: a hang is declared by the script at
+      # `per_iteration_minutes`, so this cap firing means the script
+      # itself is stuck, which is the only thing it cannot classify.
+      timeout-minutes: ${{ fromJSON(inputs.iterations) * fromJSON(inputs.per_iteration_minutes) + 5 }}
+      env:
+        PYTHON_GIL: "1"
+        # Child-side stall diagnostics, as tests.yml sets them: each pool
+        # worker arms faulthandler.dump_traceback_later(240, exit=False),
+        # so a stuck child dumps its own stack long before the parent is
+        # signalled below.
+        ISOCENTER_WORKER_FAULTHANDLER: "1"
+        # Every iteration is a fresh interpreter over the same checkout;
+        # a .pyc from iteration N must not be what iteration N+1 runs
+        # (#174).
+        PYTHONDONTWRITEBYTECODE: "1"
+        # Read by tests/conftest.py only, never by the package: `fork`
+        # rebinds `multiprocessing.get_context` so every pool the suite
+        # builds forks, re-creating the population #260 removed. Any
+        # other value is inert. Test-only on purpose -- a package-level
+        # lever to pick fork would bring that population back for users
+        # -- which is why it has no row in docs/environment.md.
+        ISOCENTER_HANG_PROBE_START_METHOD: ${{ matrix.start_method }}
+        # Free-form input, so it reaches the script through the
+        # environment rather than being interpolated into it.
+        PROBE_SELECTION: ${{ inputs.selection }}
+      run: |
+        set -u
+        mkdir -p probe-logs
+        deadline=$(( ${{ inputs.per_iteration_minutes }} * 60 ))
+        # On the fork arm the two tests that pin spawn are red by
+        # construction -- that is what the arm does -- and are not what
+        # it measures, so they are deselected rather than reported.
+        deselect=""
+        if [ "${{ matrix.start_method }}" = "fork" ]; then
+          deselect="--deselect tests/test_parallel_contract.py::test_the_per_call_process_pool_pins_spawn --deselect tests/test_parallel_contract.py::test_the_shared_session_executor_pins_spawn"
+        fi
+        printf '| iter | outcome | seconds | last item |\n|---|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
+        for i in $(seq 1 ${{ inputs.iterations }}); do
+          log="probe-logs/${{ matrix.start_method }}-iter-$i.log"
+          start=$(date +%s)
+          # `-u -v`, redirected to a file, and never through a pipe: `-q`
+          # buffers and a pipe adds a second buffer, so a killed run's
+          # log ends somewhere before where it actually was, and cannot
+          # be told from a hang at that point. With `-v` the last line
+          # names the last test item that started.
+          #
+          # `setsid` so pytest owns a process group of its own. The
+          # spawned pool children join that group, and the KILL below
+          # is sent to the group -- a KILL to the parent alone leaves
+          # stuck children holding the sidecar and the database, and
+          # the next iteration inherits them.
+          setsid python -u -m pytest -v -p no:cacheprovider $PROBE_SELECTION $deselect > "$log" 2>&1 &
+          pid=$!
+          outcome=""
+          while :; do
+            if ! kill -0 "$pid" 2>/dev/null; then wait "$pid"; rc=$?; break; fi
+            if [ $(( $(date +%s) - start )) -ge "$deadline" ]; then
+              # USR1 to the parent only, not TERM: pytest's faulthandler
+              # registers the fatal signals (SEGV, FPE, ABRT, BUS, ILL)
+              # and nothing else, so a TERM produces no dump at all --
+              # the issue's own retraction measured exactly that.
+              # tests/conftest.py registers SIGUSR1 with faulthandler on
+              # the channel the stall watchdog already owns, so every
+              # thread in the parent dumps into this log. Children get
+              # no USR1 (their default disposition would kill them,
+              # dumping nothing); a stuck child has had its own 240s
+              # watchdog fire long before this point.
+              kill -USR1 "$pid" 2>/dev/null; sleep 45
+              # 45s is the parent's dump plus margin; then the whole
+              # group goes, so nothing survives into the next iteration.
+              kill -KILL -- "-$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+              rc=124; outcome="HANG"; break
+            fi
+            sleep 5
+          done
+          secs=$(( $(date +%s) - start ))
+          last=$(grep -Eo 'tests/[^ ]+::[^ ]+' "$log" | tail -1)
+          if [ -z "$outcome" ]; then
+            if [ "$rc" -eq 0 ]; then outcome="clean"
+            # Occurrence 4/5's recorded signature. Measured against the
+            # four test files that mention the phrase in their source: a
+            # green `-v` log contains it zero times, so this cannot
+            # classify a passing run as LOCKED.
+            elif grep -q "database is locked" "$log"; then outcome="LOCKED"
+            else outcome="failed(rc=$rc)"; fi
+          fi
+          printf '| %s | %s | %s | %s |\n' "$i" "$outcome" "$secs" "$last" >> "$GITHUB_STEP_SUMMARY"
+          echo "iteration $i: $outcome in ${secs}s (last: $last)"
+          # HANG and LOCKED stop the loop: the logs are the deliverable
+          # and further iterations only bury them. LOCKED is the
+          # recorded occurrence signature and, after #260, should be
+          # impossible under spawn -- one under spawn falsifies the
+          # fork hypothesis on its own. A plain failure is recorded and
+          # the loop continues: a named failing test is a result, not a
+          # hang, and a repeat across iterations is its own issue.
+          case "$outcome" in HANG|LOCKED) echo "::error::$outcome on iteration $i"; exit 1;; esac
+        done
+
+    - name: Upload every iteration's log
+      # The logs are the whole point, so they upload whether the loop
+      # found a hang, ran clean, or was killed by its own cap.
+      if: always()
+      uses: actions/upload-artifact@v7
+      timeout-minutes: 3
+      with:
+        name: hang-probe-${{ matrix.start_method }}-${{ github.run_id }}
+        path: probe-logs/
+        if-no-files-found: error

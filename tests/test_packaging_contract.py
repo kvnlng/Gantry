@@ -890,6 +890,115 @@ def test_the_stall_watchdog_fires_inside_the_run_tests_step():
 
 
 # ---------------------------------------------------------------------------
+# The hang probe (#250) -- instrumentation that must stay off the gate
+# ---------------------------------------------------------------------------
+
+PROBE_WORKFLOW = REPO / ".github" / "workflows" / "hang-probe.yml"
+
+
+def _cap_expression_parts(value, where):
+    """Split a `${{ <product> + N }}` cap into its product text and `N`.
+
+    The probe's loop-step and job caps are expressions over the dispatch
+    inputs (`iterations * per_iteration_minutes`) plus a constant; the
+    constant is the only part a test can compare, and only if the product
+    text is the same on both sides. Both are returned so the caller can
+    check that too rather than assuming it.
+    """
+    text = str(value).strip()
+    assert text.startswith("${{"), (
+        f"{where} is {value!r}, not a `${{{{ ... }}}}` expression; the "
+        "probe's caps are derived from its inputs so a longer loop cannot "
+        "silently run into a fixed cap and die as 'cancelled' -- the "
+        "exact shape of #243/#250")
+    match = re.fullmatch(r"\$\{\{\s*(.*?)\s*\+\s*(\d+)\s*\}\}", text)
+    assert match, (
+        f"{where} is {value!r}; expected the form "
+        "`${{ <product> + <constant> }}` so the constant can be compared")
+    return match.group(1), int(match.group(2))
+
+
+def test_the_hang_probe_never_runs_on_the_gate():
+    """The #250 probe is dispatched by hand, and nothing else may start it.
+
+    It loops the suite for hours to catch a hang that shows up in one
+    run out of several. That is the opposite of a PR gate: it must
+    never run on a pull request, a push, or a call from `publish.yml`,
+    and it must never share a file with them -- every edit to tests.yml
+    is an edit to the release path. So the trigger set is exactly
+    `workflow_dispatch`, checked two ways: on the parsed document, and on
+    the raw text, so a second trigger cannot hide behind a YAML alias.
+
+    **PyYAML parses the bare `on` key as the boolean `True`** (YAML 1.1
+    treats `on`/`off`/`yes`/`no` as booleans), so the triggers live at
+    `workflow[True]`, not `workflow["on"]` -- a `KeyError` on the string,
+    and `assert "on" in workflow` would pass vacuously. Do not "fix" the
+    lookup.
+
+    The caps are the same inequality tests.yml carries, with one
+    difference: the loop step's and the job's caps are expressions over
+    the dispatch inputs, so the test parses their `+ N` tails and checks
+    the constants rather than restating the arithmetic -- job constant
+    greater than loop constant plus the sum of every literal step cap,
+    so whatever hangs, the timeout that fires belongs to a step.
+    """
+    import yaml
+
+    assert PROBE_WORKFLOW.exists(), (
+        f"{PROBE_WORKFLOW.relative_to(REPO)} does not exist; the #250 hang "
+        "probe is the only thing that can turn the next CI hang into a "
+        "stack trace on demand")
+    text = PROBE_WORKFLOW.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(text)
+
+    triggers = workflow[True]
+    assert set(triggers) == {"workflow_dispatch"}, (
+        f"hang-probe.yml triggers on {sorted(triggers)}; it must be "
+        "workflow_dispatch and nothing else -- a multi-hour loop on the "
+        "PR gate or the release path is a CI cost decision nobody made")
+    for forbidden in ("pull_request", "push:", "workflow_call", "schedule:"):
+        assert forbidden not in text, (
+            f"{forbidden!r} appears in hang-probe.yml; even as a comment "
+            "it invites the trigger back, and as an alias it is one")
+
+    inputs = triggers["workflow_dispatch"]["inputs"]
+    assert {"iterations", "start_method", "selection",
+            "per_iteration_minutes"} <= set(inputs), (
+        f"the probe's dispatch inputs are {sorted(inputs)}; the loop "
+        "script and the decision table in CHANGELOG assume all four")
+
+    job = workflow["jobs"]["probe"]
+    steps = job["steps"]
+    uncapped = [step.get("name") or step.get("uses") or "<unnamed>"
+                for step in steps if "timeout-minutes" not in step]
+    assert not uncapped, (
+        f"probe steps without their own timeout-minutes: {uncapped}; an "
+        "uncapped step makes the job cap the only thing that can stop a "
+        "hang there, and a job cap reports no failing step")
+
+    loop = next((s for s in steps if s.get("id") == "loop"), None)
+    assert loop is not None, "hang-probe.yml has no step with id `loop`"
+    literal = [s["timeout-minutes"] for s in steps if s is not loop]
+    assert all(isinstance(cap, int) for cap in literal), (
+        f"every step but the loop carries a literal cap; got {literal!r}")
+
+    loop_product, loop_constant = _cap_expression_parts(
+        loop["timeout-minutes"], "the loop step's timeout-minutes")
+    job_product, job_constant = _cap_expression_parts(
+        job.get("timeout-minutes"), "jobs.probe.timeout-minutes")
+    assert loop_product == job_product, (
+        f"the loop cap grows as {loop_product!r} and the job cap as "
+        f"{job_product!r}; the constants are only comparable when both "
+        "grow with the same product")
+    assert job_constant > loop_constant + sum(literal), (
+        f"jobs.probe.timeout-minutes (... + {job_constant}) does not "
+        f"exceed the loop cap (... + {loop_constant}) plus the literal "
+        f"step caps ({sum(literal)}); some step's timeout is unreachable "
+        "and a hang there dies as 'cancelled' with no failing step in "
+        "the log -- the exact shape of #243/#250")
+
+
+# ---------------------------------------------------------------------------
 # Invalid escape sequences (#292)
 # ---------------------------------------------------------------------------
 
