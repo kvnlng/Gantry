@@ -154,24 +154,62 @@ class _Strategy:
         return resolve_worker_initializer(self.disable_gc)
 
 
-def _env_int(name: str) -> Optional[int]:
+def _env_int(name: str, *, minimum: Optional[int]) -> Optional[int]:
     """Reads an integer tuning variable, or None if unset or unusable.
 
     A malformed value is reported rather than dropped. It used to be
     swallowed by a bare `except ValueError: pass`, so a typo in
     `ISOCENTER_MAX_WORKERS` silently reverted to the default and the only
     symptom was a cohort running at the wrong width.
+
+    A value below `minimum` is reported the same way and dropped the
+    same way (#341). The floor lives here and not at the call sites
+    because a floor at a call site is a floor at *one of the places* a
+    variable is read: #335 guarded `ISOCENTER_MAX_WORKERS` where
+    `_resolve_strategy` reads it, and `_redaction_worker_count` in
+    `session.py` went on reading the same variable and clamping `0` to a
+    single worker in silence. `ISOCENTER_CHUNKSIZE` meanwhile kept the
+    `or` both fixed arms had removed. Four reads, one helper, one floor.
+
+    `minimum` is keyword-only and has **no default**, on purpose. A
+    default of `1` would make the floor invisible at the read site and
+    turn a future variable that legitimately accepts `0` into a silent
+    rejection; a default of `None` would let a fifth read site inherit
+    #335's defect by omission. Every read states its floor, or states
+    `minimum=None` and is seen to.
+
+    On rejection this returns `None` and **never `0`**, so a caller's
+    `is not None` is the only test it needs. `or` is the spelling that
+    got this wrong twice (#335, #341): `0` is the one value that must be
+    reported and the one value that is falsey, so `_env_int(...) or
+    default` discards exactly the value it should be shouting about, and
+    passes a negative -- truthy -- straight through to a pool constructor
+    that raises naming no environment variable.
     """
     raw = os.environ.get(name)
     if not raw:
         return None
     try:
-        return int(raw)
+        value = int(raw)
     except ValueError:
         get_logger().warning(
             "%s is set to %r, which is not a whole number. Ignoring it and "
             "using the default.", name, raw)
         return None
+    if minimum is not None and value < minimum:
+        # `0` and every negative in one arm, so there is not one
+        # behaviour for `0` and another for `-1`: neither is a usable
+        # value and an operator who typed either made the same mistake.
+        # The value is quoted as well as the variable -- a message that
+        # does not say what was rejected cannot be matched against what
+        # was typed. The per-variable advice ("set it to 1 for a single
+        # worker") lives in the docs/environment.md rows, not here: two
+        # hand-written tails for one behaviour were two spellings of it.
+        get_logger().warning(
+            "%s is set to %d, which is below the minimum of %d. Ignoring "
+            "it and using the default.", name, value, minimum)
+        return None
+    return value
 
 
 def _env_is(name: str, values) -> bool:
@@ -192,29 +230,16 @@ def _resolve_strategy(max_workers, chunksize, maxtasksperchild, disable_gc,
     # dict to satisfy the argument-count check would hide which settings
     # exist, which is the opposite of the point.
     # pylint: disable=too-many-arguments,too-many-positional-arguments
+    # The three integer variables below share one floor, stated at each
+    # read: `_env_int(..., minimum=1)` reports `0` and every negative and
+    # returns `None`, so the `is not None` fallbacks here see a rejected
+    # value exactly as they see an unset or malformed one (#335, #185,
+    # #341 -- the docstring on `_env_int` has the history, and why the
+    # spelling is never `_env_int(...) or default`).
     if max_workers is None:
-        configured = _env_int("ISOCENTER_MAX_WORKERS")
-        if configured is not None and configured < 1:
-            # `0` and every negative in one arm, so there is not one
-            # behaviour for `0` and another for `-1`: neither is a
-            # worker count, and an operator who typed either made the
-            # same mistake. The value is named as well as the variable,
-            # the way `_env_int`'s own warning does -- a message that
-            # does not quote what was rejected cannot be matched against
-            # what was typed.
-            get_logger().warning(
-                "ISOCENTER_MAX_WORKERS is set to %d, which is not a usable "
-                "worker count. Ignoring it and using the default. Set it to "
-                "1 to run with a single worker.", configured)
-            configured = None
+        configured = _env_int("ISOCENTER_MAX_WORKERS", minimum=1)
         # One worker per CPU, not the 1.5x an earlier version used:
         # predictable beats marginally faster when a run is hours long.
-        #
-        # Not `configured or (...)`: `or` is what discarded a `0` here
-        # in silence, because the one value that must be reported is the
-        # one value that is falsey (#335). A negative was worse -- truthy,
-        # so it travelled to the pool constructor and raised there, in a
-        # message naming no environment variable.
         #
         # Deliberately inside `if max_workers is None`, so an explicit
         # `max_workers=0` argument still reaches the pool and still
@@ -228,39 +253,18 @@ def _resolve_strategy(max_workers, chunksize, maxtasksperchild, disable_gc,
         # Only consulted at the default. An explicit `chunksize=1` is
         # indistinguishable from no argument at all here, so the
         # environment overrides it too.
-        chunksize = _env_int("ISOCENTER_CHUNKSIZE") or 1
+        configured = _env_int("ISOCENTER_CHUNKSIZE", minimum=1)
+        chunksize = configured if configured is not None else 1
 
     if maxtasksperchild is None:
-        configured = _env_int("ISOCENTER_MAX_TASKS_PER_CHILD")
-        if configured is not None and configured < 1:
-            # The exact mirror of the `ISOCENTER_MAX_WORKERS` arm above
-            # (#335), one bunch later (#185). `_env_int` returns `0` --
-            # its `if not raw` guard sees the non-empty string `"0"` --
-            # and `0 is not None`, so a zero turned threads off on every
-            # call site except export and then reached
-            # `multiprocessing.Pool`, which raises `ValueError:
-            # maxtasksperchild must be a positive int or None` naming no
-            # environment variable. `0` and every negative in one arm,
-            # for the same reason that one gives: neither is a recycling
-            # interval and an operator who typed either made the same
-            # mistake.
-            #
-            # Fixed here rather than in `_env_int`, which is shared with
-            # `ISOCENTER_MAX_WORKERS` and `ISOCENTER_CHUNKSIZE`: a
-            # rejection inside it would take the warning above dead and
-            # decide `ISOCENTER_CHUNKSIZE`'s answer as a side effect
-            # (#341 is where that is decided).
-            get_logger().warning(
-                "ISOCENTER_MAX_TASKS_PER_CHILD is set to %d, which is not "
-                "a usable number of tasks per worker. Ignoring it and "
-                "recycling no workers. Set it to 1 or more to recycle.",
-                configured)
-            configured = None
         # Deliberately inside `if maxtasksperchild is None`, so an
         # explicit `maxtasksperchild=0` argument still reaches the pool
         # and still raises: that is a programming error in a line the
-        # caller can see, not a misconfigured deployment.
-        maxtasksperchild = configured
+        # caller can see, not a misconfigured deployment. A rejected
+        # environment value falls back to the documented *Unlimited*,
+        # which is `None` -- the same `None` `_env_int` returns for it.
+        maxtasksperchild = _env_int("ISOCENTER_MAX_TASKS_PER_CHILD",
+                                    minimum=1)
 
     disable_gc = disable_gc or _env_is("ISOCENTER_DISABLE_GC", ("1",))
 

@@ -504,11 +504,18 @@ def _redaction_worker_count() -> int:
     `ISOCENTER_MAX_WORKERS` overrides it. A malformed value used to raise
     inside the handler that swallowed everything, so a typo in a shell
     profile turned redaction into a no-op that reported success; now it
-    warns and falls back to the default.
+    warns and falls back to the default. A value below 1 is reported and
+    replaced by the same default (#341): until then this read clamped
+    `0` and every negative to a single worker with `max(1, override)`
+    and said nothing, while `run_parallel`'s read of the same variable
+    had been warning since #335 -- one variable, two answers. The floor
+    is `_env_int`'s now, so there is no clamp here to read as the guard.
+    The `max(1, ...)` on the default is a different thing and stays:
+    `cpu_count() // 2` is `0` on a one-CPU box.
     """
-    override = _env_int("ISOCENTER_MAX_WORKERS")
+    override = _env_int("ISOCENTER_MAX_WORKERS", minimum=1)
     if override is not None:
-        return max(1, override)
+        return override
     return max(1, min((os.cpu_count() or 1) // 2, 8))
 
 
