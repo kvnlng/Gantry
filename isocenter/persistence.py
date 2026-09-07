@@ -26,11 +26,13 @@ from contextlib import nullcontext
 from pydicom.multival import MultiValue
 
 from .entities import (Patient, Study, Series, Instance, Equipment,
-                       PhiStatus, normalize_study_date)
+                       PhiStatus, normalize_study_date, resolve_item_path)
+from .blob_kind import parse_blob_kind, serialize_blob_kind
 from .sidecar import SidecarManager
 from .logger import get_logger
 from .privacy import PhiFinding, PhiRemediation
-from .io_handlers import SidecarPixelLoader
+from .io_handlers import (NestedPixelRef, SidecarPixelLoader,
+                          nested_item_geometry)
 
 
 
@@ -887,6 +889,62 @@ class SqliteStore:
         # Use instance to populate primitives
         return SidecarPixelLoader(self.sidecar_path, offset, length, alg, instance=instance, pixel_hash=pixel_hash)
 
+    def _wire_nested_pixel_refs(self, instance, rows):
+        """Restore an Instance's nested pixel references (#183).
+
+        Shared by `load_all` and `load_patient`, which hydrate the same rows
+        through two separate loops.
+
+        **Wired unconditionally, without resolving the path against the
+        graph.** A ref whose item is gone is not dropped here, because the
+        export post-pass is the single place that decides carried-or-
+        reported: silently discarding it at hydration would mean no
+        `DATA_LOSS` row for bytes that are in the store and cannot be
+        placed, which is a loss the caller cannot see -- the shape #125 and
+        #169 are both about.
+
+        **And no geometry is captured here.** These are references, not
+        loaders, and the reason is in `io_handlers.NestedPixelRef`: a loader
+        built now would reshape against the geometry the graph has *now*,
+        and the whole point of re-checking at export is that the graph may
+        have moved by then.
+
+        Args:
+            instance (Instance): The hydrated instance.
+            rows: `instance_blobs` rows whose kind matches `pixels:%`, or
+                None when this instance has none.
+        """
+        if not rows:
+            return
+
+        for row in rows:
+            try:
+                _root, path, terminal_tag = parse_blob_kind(row['kind'])
+            except ValueError:
+                # Unreachable while both write doors are gated, and handled
+                # anyway: a row written by an older or hand-edited store is
+                # data, not an instruction, and the reader allow-lists.
+                # Skipping it leaves the bytes in the sidecar, where
+                # compaction still sees them as live.
+                get_logger().warning(
+                    "Ignoring blob row with unreadable kind %r for %s",
+                    row['kind'], instance.sop_instance_uid)
+                continue
+            # The provenance geometry is re-derived from the graph as
+            # loaded rather than stored in a column, and the two are the
+            # same answer: a saved store holds the item exactly as ingest
+            # left it, so this reads what ingest recorded. It costs no
+            # schema change, and a schema change here is the expensive
+            # direction. A ref whose item is already gone gets None, which
+            # disables only the comparison -- the export's own resolve
+            # still files the loss row.
+            item = resolve_item_path(instance, path)
+            instance._nested_pixel_refs[(path, terminal_tag)] = NestedPixelRef(
+                self.sidecar_path, row['offset'], row['length'],
+                row['compress_alg'], row['hash'],
+                nested_item_geometry(item.attributes)
+                if item is not None else None)
+
     def _wire_waveform_loader(self, instance, wref):
         """Attach a lazy waveform loader to a freshly hydrated Instance.
 
@@ -1501,6 +1559,25 @@ class SqliteStore:
                         " FROM instance_blobs WHERE kind = 'waveform'").fetchall()
                 }
 
+                # Nested pixel payloads, the same way and for the same
+                # reason (#183). `LIKE` rather than `GLOB` is sound because
+                # `parse_blob_kind` refuses an uppercase kind at both write
+                # doors, so no `PIXELS:...` row can exist for SQLite's
+                # ASCII-case-insensitive `LIKE` to match. Weaken that gate
+                # and this read has to become `GLOB 'pixels:*'`.
+                #
+                # No index: `idx_blobs_uid_kind` is `(instance_uid, kind)`
+                # and cannot serve a kind-only predicate, so this is a scan
+                # exactly as the waveform pre-fetch above is -- and an index
+                # whose only reader is a once-per-session prefetch is not
+                # worth the write amplification on every blob row.
+                nested_refs = {}
+                for row in cur.execute(
+                        "SELECT instance_uid, kind, offset, length,"
+                        " compress_alg, hash FROM instance_blobs"
+                        " WHERE kind LIKE 'pixels:%'").fetchall():
+                    nested_refs.setdefault(row['instance_uid'], []).append(row)
+
                 # The private tier, in one query for the whole store. Its
                 # rows are the odd-group tags `_split_core_and_private`
                 # kept out of `attributes_json`; nothing read them back
@@ -1570,6 +1647,8 @@ class SqliteStore:
                             r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
 
                     self._wire_waveform_loader(inst, wave_refs.get(r['sop_instance_uid']))
+                    self._wire_nested_pixel_refs(
+                        inst, nested_refs.get(r['sop_instance_uid']))
 
                     if r['series_id_fk'] in se_map:
                         se_map[r['series_id_fk']].instances.append(inst)
@@ -1637,6 +1716,25 @@ class SqliteStore:
                         " FROM instance_blobs WHERE kind = 'waveform'").fetchall()
                 }
 
+                # Nested pixel payloads, the same way and for the same
+                # reason (#183). `LIKE` rather than `GLOB` is sound because
+                # `parse_blob_kind` refuses an uppercase kind at both write
+                # doors, so no `PIXELS:...` row can exist for SQLite's
+                # ASCII-case-insensitive `LIKE` to match. Weaken that gate
+                # and this read has to become `GLOB 'pixels:*'`.
+                #
+                # No index: `idx_blobs_uid_kind` is `(instance_uid, kind)`
+                # and cannot serve a kind-only predicate, so this is a scan
+                # exactly as the waveform pre-fetch above is -- and an index
+                # whose only reader is a once-per-session prefetch is not
+                # worth the write amplification on every blob row.
+                nested_refs = {}
+                for row in cur.execute(
+                        "SELECT instance_uid, kind, offset, length,"
+                        " compress_alg, hash FROM instance_blobs"
+                        " WHERE kind LIKE 'pixels:%'").fetchall():
+                    nested_refs.setdefault(row['instance_uid'], []).append(row)
+
                 # Fetch Studies
                 st_rows = cur.execute(
                     "SELECT * FROM studies WHERE patient_id_fk = ?", (p_pk,)).fetchall()
@@ -1703,6 +1801,9 @@ class SqliteStore:
 
                             self._wire_waveform_loader(
                                 inst, wave_refs.get(r['sop_instance_uid']))
+                            self._wire_nested_pixel_refs(
+                                inst,
+                                nested_refs.get(r['sop_instance_uid']))
 
                             se.instances.append(inst)
                             hydrated_instances.append(inst)
@@ -2200,17 +2301,21 @@ class SqliteStore:
 
         Args:
             instance (Instance): Owning instance.
-            kind (str): 'pixels' or 'waveform'.
+            kind (str): A blob kind -- `'pixels'`, `'waveform'`, or either
+                followed by a sequence path. See `parse_blob_kind`.
             data (bytes | np.ndarray): Payload. Arrays are passed to the
                 sidecar directly to avoid a full copy.
 
         Raises:
-            ValueError: If `kind` is not a recognised blob kind.
+            ValueError: If `kind` does not match the blob-kind grammar. This
+                was a two-literal tuple until #183; the message now carries
+                the grammar, because the failure it most often means is a
+                caller who took the spelling from #183's `pixels:seq:...`
+                sketch rather than from `serialize_blob_kind`.
         """
         import hashlib
 
-        if kind not in ("pixels", "waveform"):
-            raise ValueError("Unknown blob kind: {!r}".format(kind))
+        parse_blob_kind(kind)
 
         if data is None:
             return
@@ -2246,7 +2351,7 @@ class SqliteStore:
 
         Args:
             instance_uid (str): Owning SOP Instance UID.
-            kind (str): 'pixels' or 'waveform'.
+            kind (str): A blob kind -- see `parse_blob_kind`.
             offset (int): Byte offset of the blob within the sidecar.
             length (int): On-disk (post-compression) length in bytes.
             blob_hash (str): SHA-256 of the raw (uncompressed) payload.
@@ -2256,11 +2361,25 @@ class SqliteStore:
                 write joins the caller's transaction.
 
         Raises:
-            ValueError: If exactly one of `offset`/`length` is None. A
-                half-specified reference is never recoverable: it would pair
-                a real offset with a missing or stale length. Callers with
-                nothing to record must skip the call, not pass NULLs.
+            ValueError: If `kind` does not match the blob-kind grammar, or if
+                exactly one of `offset`/`length` is None. A half-specified
+                reference is never recoverable: it would pair a real offset
+                with a missing or stale length. Callers with nothing to
+                record must skip the call, not pass NULLs.
         """
+        # Both doors, one answer (#183 Q8). `persist_blob` validated and this
+        # did not, so an arbitrary string reached the table through the
+        # second door -- and this is the door the *ingest* path uses, because
+        # it writes its own frames through `SidecarManager` and registers the
+        # reference separately. A gate on one of two doors is not a gate.
+        #
+        # It is also what makes the `LIKE 'pixels:%'` hydration prefetch
+        # sound: SQLite's `LIKE` is ASCII case-insensitive, so a `PIXELS:...`
+        # row would match it, and the grammar's lowercase-only rule is the
+        # thing that makes such a row unwritable. Weakening this gate means
+        # changing that read to `GLOB`.
+        parse_blob_kind(kind)
+
         if (offset is None) != (length is None):
             raise ValueError(
                 "Blob reference for {!r}/{!r} must supply both offset and "
@@ -2346,6 +2465,36 @@ class SqliteStore:
             """, (kind,)).fetchall()
 
         return {r["instance_uid"]: (r["offset"], r["length"]) for r in rows}
+
+    def get_nested_pixel_refs(self) -> Dict[Tuple[str, str], Tuple[int, int]]:
+        """Every nested pixel reference, keyed `(instance_uid, kind)` (#183).
+
+        A separate method rather than a prefix flag on `get_blob_refs`,
+        because it answers a different question and returns a different
+        shape. `get_blob_refs` is keyed by UID alone, which is exactly what
+        a nested payload cannot be: one instance carries a bare `pixels`
+        blob *and* one row per icon, and collapsing them onto a UID is how
+        `compact_sidecar`'s uid_map would hand a pixel loader a thumbnail.
+
+        Read for the same reason the waveform refs are: `compact_sidecar`'s
+        uid_map is pixels-only by design, so a nested loader left on a
+        pre-compaction offset reads the wrong bytes or runs off the end of
+        the file.
+
+        Returns:
+            Dict[Tuple[str, str], Tuple[int, int]]: `(uid, kind)` ->
+            `(offset, length)`, for rows that have both.
+        """
+        with self._get_connection() as conn:
+            rows = conn.execute("""
+                SELECT instance_uid, kind, offset, length
+                FROM instance_blobs
+                WHERE kind LIKE 'pixels:%'
+                  AND offset IS NOT NULL AND length IS NOT NULL
+            """).fetchall()
+
+        return {(r["instance_uid"], r["kind"]): (r["offset"], r["length"])
+                for r in rows}
 
     def persist_pixel_data(self, instance: Instance):
         """
@@ -2860,6 +3009,34 @@ class SqliteStore:
                 blob_rows.append((
                     inst.sop_instance_uid, 'pixels', frame.offset,
                     frame.length, frame.hash, frame.alg))
+
+            # Nested payloads join the same batch (#183). Two things about
+            # this loop that a per-blob `persist_blob` would get wrong.
+            #
+            # It re-emits the **row** every save, keyed on the instance's
+            # *current* `sop_instance_uid` -- which is what makes the
+            # reference follow a `regenerate_uid()`. `instance_blobs` is
+            # keyed by UID, redaction changes it, and a row left under the
+            # retired UID is an orphan only `compact()` notices. That went
+            # wrong once already for the top-level blob; see
+            # `tests/test_redaction_identity.py`.
+            #
+            # And it never re-appends the **frame**. Nothing in the pipeline
+            # mutates an icon: remediation edits `attributes`, redaction
+            # touches the top-level array, anonymize touches neither. The
+            # bytes were written once at ingest and the ref still points at
+            # them.
+            #
+            # Batched rather than one `persist_blob` per payload, and the
+            # gap is not marginal: measured at 200 nested blobs of 4 KiB,
+            # `persist_blob` with its own connection each costs 322.8 ms
+            # against 11.9 ms for frames appended in the prepass and rows
+            # written inside the one transaction. Follow `save_all`'s shape.
+            for (path, terminal_tag), ref in inst._nested_pixel_refs.items():
+                blob_rows.append((
+                    inst.sop_instance_uid,
+                    serialize_blob_kind('pixels', path, terminal_tag),
+                    ref.offset, ref.length, ref.blob_hash, ref.alg))
 
         return rows, blob_rows, vertical_rows
 

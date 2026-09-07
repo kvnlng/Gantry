@@ -187,8 +187,14 @@ def test_a_private_binary_tag_inside_a_sequence_is_reported_too(tmp_path):
     assert any("0009,1003" in d for (d,) in rows), rows
 
 
-def _ingest_with(tmp_path, name, mutate):
-    """Write the base file, apply `mutate`, ingest, return DATA_LOSS rows."""
+def _ingest_with(tmp_path, name, mutate, want_blobs=False):
+    """Write the base file, apply `mutate`, ingest, return DATA_LOSS rows.
+
+    `want_blobs` adds the `instance_blobs` kinds to the return, for the
+    tests that have to distinguish "the loss row stopped being filed" from
+    "the bytes went somewhere findable". Those are two different claims and
+    only the second one is #183.
+    """
     import pydicom
 
     src = tmp_path / "src"
@@ -212,6 +218,10 @@ def _ingest_with(tmp_path, name, mutate):
         rows = conn.execute(
             "SELECT details, loss_scope FROM audit_log "
             "WHERE action_type='DATA_LOSS'").fetchall()
+        if want_blobs:
+            blobs = conn.execute(
+                "SELECT kind FROM instance_blobs").fetchall()
+            return attrs, rows, blobs
     return attrs, rows
 
 
@@ -575,20 +585,26 @@ def test_an_encapsulated_instance_keeps_its_pixels_and_reports_nothing(
         "the pixels it indexed must, or the exemption is wrong")
 
 
-def test_pixel_data_inside_a_sequence_item_is_reported(tmp_path):
-    """The same tag, routed at one depth and nowhere at the other (#169).
+def test_pixel_data_inside_a_sequence_item_is_carried(tmp_path):
+    """The bytes are carried now, so the loss row must stop being filed (#183).
 
-    An Icon Image Sequence item carries its own (7fe0,0010). The sidecar
-    holds one pixel blob per instance today, so the nested one is routed
-    nowhere, while the item's eight `0028,xxxx` descriptors reach the
-    graph normally and are exported. The result declares a 2x2 8-bit
-    icon and carries no bytes for it, with Pixel Data Type 1 in the Icon
-    Image Macro (PS3.3 C.7.6.1.1.6). That is #160's shape at a second
-    site. Carrying it is #183.
+    An Icon Image Sequence item carries its own (7fe0,0010). Until #183 the
+    sidecar held one pixel blob per instance, so the nested one was routed
+    nowhere while the item's `0028,xxxx` descriptors reached the graph
+    normally and were exported -- a file declaring a 2x2 8-bit icon and
+    carrying no bytes for it, Pixel Data being Type 1 in the Icon Image
+    Macro (PS3.3 C.7.6.1.1.6). #169 made that drop *audible*; this makes it
+    stop happening.
 
-    The exemption is therefore per-depth, not per-tag: this file has a
-    top-level (7fe0,0010) too, and reporting *that* would file a loss on
-    every image ever ingested.
+    So the assertion inverts, and the inversion is the point rather than a
+    regression: reporting a loss that did not happen is #194's defect, and
+    a `DATA_LOSS` row for bytes that are in the store would make section 3
+    of the compliance report -- "present in the source and not in the
+    exported data" -- false.
+
+    The bytes reach the store under the path-form kind, which is what
+    proves they went somewhere findable rather than merely stopped being
+    reported.
     """
     from pydicom.dataset import Dataset
     from pydicom.sequence import Sequence
@@ -605,21 +621,31 @@ def test_pixel_data_inside_a_sequence_item_is_reported(tmp_path):
         item.add_new(0x7FE00010, 'OW', b'\x01\x02\x03\x04')
         ds.IconImageSequence = Sequence([item])
 
-    _attrs, rows = _ingest_with(tmp_path, "icon", add_icon)
+    _attrs, rows, blobs = _ingest_with(tmp_path, "icon", add_icon,
+                                       want_blobs=True)
 
-    assert len(rows) == 1, rows
-    assert "7fe0,0010" in rows[0][0], rows
-    assert rows[0][1] == LOSS_SCOPE_STANDARD, rows
+    assert not [d for d, _s in rows if "7fe0,0010" in d], rows
+    assert "pixels:0088,0200/0/7fe0,0010" in {k for k, in blobs}, blobs
 
 
-def test_the_top_level_pixel_data_of_that_same_file_is_still_not_reported(
-        tmp_path):
-    """The false positive the depth rule has to avoid.
+def test_an_undecodable_nested_icon_still_files_its_loss_row(tmp_path):
+    """The #194-shape tripwire: routing and reporting come from one place.
 
-    One row, not two: the instance's own pixels went to the sidecar.
-    Widening the group exemption into a blanket one would put a
-    `DATA_LOSS` entry in the record of every image ever ingested, which
-    is how a compliance trail becomes noise.
+    This icon carries only Rows and Columns -- no BitsAllocated, so
+    borrowing the enclosing dataset's `file_meta` and asking pydicom for
+    `.pixel_array` raises `AttributeError: Missing required element:
+    (0028,0100) 'Bits Allocated'`. The bytes are therefore *not* carried,
+    and the loss row is the honest outcome.
+
+    That is why `_is_routed` was deliberately not taught to return True for
+    a nested (7fe0,0010) by depth alone. A static True there would report
+    this icon as routed and its row would vanish -- a silent drop, which is
+    the defect #169 closed. The decision belongs to the code that knows
+    whether the decode worked.
+
+    One row and not two: the instance's own top-level pixels went to the
+    sidecar, and widening the group exemption into a blanket one would put
+    a `DATA_LOSS` entry in the record of every image ever ingested.
     """
     from pydicom.dataset import Dataset
     from pydicom.sequence import Sequence
@@ -630,9 +656,13 @@ def test_the_top_level_pixel_data_of_that_same_file_is_still_not_reported(
         item.add_new(0x7FE00010, 'OW', b'\x01\x02\x03\x04')
         ds.IconImageSequence = Sequence([item])
 
-    _attrs, rows = _ingest_with(tmp_path, "icontop", add_icon)
+    _attrs, rows, blobs = _ingest_with(tmp_path, "icontop", add_icon,
+                                       want_blobs=True)
 
     assert len(rows) == 1, rows
+    assert "7fe0,0010" in rows[0][0], rows
+    assert rows[0][1] == LOSS_SCOPE_STANDARD, rows
+    assert not [k for k, in blobs if k.startswith("pixels:")], blobs
 
 
 def test_float_pixel_data_inside_a_sequence_item_is_reported(tmp_path):
@@ -643,6 +673,15 @@ def test_float_pixel_data_inside_a_sequence_item_is_reported(tmp_path):
     file, and pinned anyway: the exemption's condition is the depth, and
     a rule that only happens to be right at the depth it was tested is
     the shape #169 started from.
+
+    #183's grammar spells this shape perfectly well --
+    `pixels:0040,0555/0/7fe0,0008` -- and the spec deliberately declined to
+    carry it: the float pixel elements are top-level Image Pixel Module
+    members with no macro that nests them, so carriage would be
+    untested-in-anger machinery whose only exercise is this fixture.
+    Proving the grammar *could* spell it is what #183 asked for; carrying
+    it is a different request. This test is the tripwire that catches a
+    developer widening the carriage by depth alone rather than by tag.
     """
     from pydicom.dataset import Dataset
     from pydicom.sequence import Sequence

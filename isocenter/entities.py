@@ -535,6 +535,25 @@ class Instance(DicomItem):
     # Transient: Integrity hash for the raw waveform bytes
     _waveform_hash: Optional[str] = field(default=None, repr=False)
 
+    # Transient: sidecar references for pixel payloads that live inside a
+    # sequence item -- an Icon Image Sequence item's own (7fe0,0010) and the
+    # like -- keyed by `(path, terminal_tag)`, where `path` is the
+    # `iter_item_tree` route to the enclosing item (#183).
+    #
+    # **On the instance, not on `DicomItem`, and that is deliberate.**
+    # `Instance` already holds `_pixel_loader`, `_pixel_hash` and
+    # `_waveform_loader`, so one place answers "what binary does this
+    # instance carry" and the save walk, the compaction rewire and the
+    # export transport all iterate one dict. A field on `DicomItem` would
+    # be a class-shape change that `clone_sequences` and
+    # `_make_lightweight_copy` would both have to learn about -- and the
+    # PHI-scan copies must not carry sidecar references at all.
+    #
+    # References rather than loaders: see `io_handlers.NestedPixelRef` for
+    # why storing the geometry here would disarm the shift guard.
+    _nested_pixel_refs: Dict[tuple, Any] = field(
+        default_factory=dict, repr=False)
+
     # Transient: Track if dates have been shifted in memory
     date_shifted: bool = field(default=False, init=False)
 

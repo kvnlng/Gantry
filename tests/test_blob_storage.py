@@ -683,3 +683,61 @@ def test_record_blob_ref_rejects_a_half_specified_reference(store):
     with pytest.raises(ValueError):
         store.record_blob_ref("half.1", "pixels", None, 10, "h", "zlib")
     assert store.get_blob_ref("half.1", "pixels") is None
+
+
+def test_a_path_form_kind_is_accepted_by_persist_blob(store):
+    """The gate widened from a literal tuple to the grammar (#183).
+
+    `instance_blobs.kind` was always unconstrained `TEXT NOT NULL`; the only
+    thing that made it two literals was one `if kind not in (...)`. Nested
+    pixel data needs a third shape, and it needs one spelling rather than a
+    third invented at a call site, so the tuple became `parse_blob_kind`.
+    """
+    inst = _instance("path.form.1")
+    payload = b"ICON" * 4
+
+    store.persist_blob(inst, "pixels:0088,0200/0/7fe0,0010", payload)
+
+    ref = store.get_blob_ref(inst.sop_instance_uid,
+                             "pixels:0088,0200/0/7fe0,0010")
+    assert ref is not None
+    raw = store.sidecar.read_frame(
+        ref["offset"], ref["length"], ref["compress_alg"])
+    assert raw == payload
+
+
+def test_the_issues_own_seq_sketch_is_still_refused(store):
+    """#183 sketches `pixels:seq:...`; the grammar has no `seq` marker.
+
+    Named as a test rather than left to the grammar suite because a reader
+    who takes the spelling from the issue rather than from the code will hit
+    it here, at the door they were actually calling.
+    """
+    inst = _instance("seq.marker.1")
+    with pytest.raises(ValueError):
+        store.persist_blob(inst, "pixels:seq:0088,0200/0/7fe0,0010", b"X" * 8)
+
+
+def test_record_blob_ref_gates_its_kind_too(store):
+    """Both doors, one answer (#183 Q8).
+
+    `persist_blob` validated and `record_blob_ref` did not, so an arbitrary
+    string reached the table through the second door -- and the ingest path
+    is the one that uses it, because it writes its own frames through
+    `SidecarManager` and registers the reference separately. A gate on one
+    of two doors is not a gate; it is a convention that holds until someone
+    uses the other one.
+    """
+    with pytest.raises(ValueError):
+        store.record_blob_ref("ungated.1", "icons", 0, 4, "h", "zlib")
+    with pytest.raises(ValueError):
+        store.record_blob_ref(
+            "ungated.1", "pixels:seq:0088,0200/0/7fe0,0010",
+            0, 4, "h", "zlib")
+    assert store.get_blob_ref("ungated.1", "icons") is None
+
+    # And the legal spellings still go through the same door they always did.
+    store.record_blob_ref("ungated.1", "pixels:0088,0200/0/7fe0,0010",
+                          0, 4, "h", "zlib")
+    assert store.get_blob_ref(
+        "ungated.1", "pixels:0088,0200/0/7fe0,0010") is not None

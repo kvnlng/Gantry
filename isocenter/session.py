@@ -16,7 +16,7 @@ from tqdm import tqdm
 from .io_handlers import (DicomImporter, DicomExporter, ExportContext,
                           ExportError, ExportSummary, SidecarPixelLoader,
                           SidecarWaveformLoader, export_folder_names,
-                          GRADED_LOSS_SCOPES)
+                          GRADED_LOSS_SCOPES, redaction_in_effect)
 from .store import DicomStore
 from .services import (RedactionService, RedactionOutcome, RedactionError,
                        _report_redaction_failures)
@@ -26,6 +26,7 @@ from .logger import configure_logger, get_logger
 from .reporting import (ComplianceReport, get_renderer, GAP_REMOVED,
                         GAP_RETAINED, GAP_UNRESOLVED)
 from .manifest import Manifest, ManifestItem, generate_manifest_file
+from .blob_kind import serialize_blob_kind
 from .persistence import SqliteStore
 from .crypto import KeyManager
 from .reversibility import ReversibilityService
@@ -1069,20 +1070,29 @@ class DicomSession:
             # end of the file.
             wave_updates = self.store_backend.get_blob_refs('waveform')
 
-            if not updates and not wave_updates:
+            # Nested pixel payloads are in exactly the same position, and
+            # cannot ride `updates` for a sharper version of the same
+            # reason: that map is keyed by UID alone, and one instance can
+            # carry a bare `pixels` blob plus a row per icon. Keyed
+            # `(uid, kind)` instead (#183).
+            nested_updates = self.store_backend.get_nested_pixel_refs()
+
+            if not updates and not wave_updates and not nested_updates:
                 print("Compaction finished (no changes or empty).")
                 return
 
             # 3. Patch In-Memory Instances (Preserve References)
             print(f"Updating {len(updates)} in-memory instances...")
-            count = self._rewire_sidecar_loaders(updates, wave_updates)
+            count = self._rewire_sidecar_loaders(updates, wave_updates,
+                                                 nested_updates)
 
             print(f"Patched {count} active objects.")
 
         else:
             print("Persistence backend does not support compaction.")
 
-    def _rewire_sidecar_loaders(self, updates, wave_updates) -> int:
+    def _rewire_sidecar_loaders(self, updates, wave_updates,
+                                nested_updates=None) -> int:
         """Point every in-memory sidecar loader at its post-compaction bytes.
 
         Args:
@@ -1090,6 +1100,10 @@ class DicomSession:
                 as `compact_sidecar()` returns it.
             wave_updates: the same for waveforms, read from the blob
                 table because `compact_sidecar`'s map is pixels-only.
+            nested_updates: `{(uid, kind): (offset, length)}` for nested
+                pixel payloads (#183). Keyed by `(uid, kind)` because one
+                instance can carry several, which is the same reason
+                `compact_sidecar`'s UID-keyed map cannot carry them.
 
         Returns:
             int: how many loaders were rebound.
@@ -1144,7 +1158,23 @@ class DicomSession:
                             and isinstance(inst._waveform_loader,
                                            SidecarWaveformLoader))
 
-                        if not pixel_due and not wave_due:
+                        # Rebound under the same lock as the other two,
+                        # for the same reason: `offset` and `length` are
+                        # two assignments and a reader landing between them
+                        # gets the wrong bytes or runs off the end of the
+                        # sidecar.
+                        nested_due = []
+                        if nested_updates:
+                            for key, ref in inst._nested_pixel_refs.items():
+                                path, terminal_tag = key
+                                moved = nested_updates.get((
+                                    inst.sop_instance_uid,
+                                    serialize_blob_kind(
+                                        'pixels', path, terminal_tag)))
+                                if moved is not None:
+                                    nested_due.append((ref, moved))
+
+                        if not pixel_due and not wave_due and not nested_due:
                             continue
 
                         with swap_lock:
@@ -1163,6 +1193,9 @@ class DicomSession:
                             if wave_due:
                                 inst._waveform_loader.offset = wave_ref[0]
                                 inst._waveform_loader.length = wave_ref[1]
+                                count += 1
+                            for ref, moved in nested_due:
+                                ref.offset, ref.length = moved
                                 count += 1
 
         return count
@@ -3562,6 +3595,21 @@ class DicomSession:
         tasks = []
         patient_count = 0
 
+        # One boolean for the whole run, computed before the walk (#183).
+        # Store-wide and not per instance, because an icon under Referenced
+        # Image Sequence is a thumbnail of a *different* SOP instance and
+        # redaction's `regenerate_uid()` makes following the reference fail
+        # open. Over `self.store.patients` rather than `target_ids`,
+        # deliberately: a subset that excludes the redacted instances must
+        # not turn the gate off for the ones it keeps.
+        drop_icons = redaction_in_effect(
+            (instance
+             for patient in self.store.patients
+             for study in patient.studies
+             for series in study.series
+             for instance in series.instances),
+            rules=self.configuration.rules)
+
         for patient in self.store.patients:
             if patient.patient_id not in target_ids:
                 continue
@@ -3597,6 +3645,7 @@ class DicomSession:
                             compression=('j2k' if options.use_compression
                                          else None),
                             redaction_zones=zones,
+                            drop_nested_icons=drop_icons,
                             verify_readback=options.verify_readback))
 
         return tasks, patient_count

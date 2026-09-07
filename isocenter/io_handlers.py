@@ -153,7 +153,8 @@ from pydicom.filebase import DicomBytesIO
 from pydicom.filereader import read_sequence
 from pydicom.filewriter import write_sequence
 
-from .entities import Patient, Study, Series, Instance, Equipment, DicomItem
+from .entities import (Patient, Study, Series, Instance, Equipment, DicomItem,
+                       resolve_item_path)
 from .logger import get_logger
 from .pixel_geometry import (
     FLOAT_DTYPE_BY_ELEMENT,
@@ -165,6 +166,7 @@ from .pixel_geometry import (
     resolve_photometric_interpretation,
     resolve_pixel_geometry,
 )
+from .blob_kind import serialize_blob_kind
 from .parallel import run_parallel
 from .validation import IODValidator
 from .sidecar import SidecarManager
@@ -238,16 +240,139 @@ _ROOT_ONLY_ROUTED_TAGS = frozenset({
 #: answer, and it is the same answer `has_pixel_data` gave before the
 #: bytes moved.
 #:
-#: **#183's second half is still open**: pixel data nested inside an
-#: Icon Image Sequence is not carried, because `instance_blobs` is
-#: UNIQUE(instance_uid, kind) and a second pixel blob per instance needs
-#: a `kind` naming the sequence item -- which two literal
-#: `WHERE kind = 'pixels'` reads in `persistence.py` would have to learn
-#: about, and which is also a decision #150 has an interest in.
+#: #183's second half now carries nested (7fe0,0010) -- see
+#: `_NESTED_PIXEL_DATA_TAG` and `serialize_blob_kind`. The nested *float*
+#: pair is deliberately still not carried: the grammar spells it
+#: (`pixels:0040,0555/0/7fe0,0008`) and the shape is unreachable from a
+#: conformant file, the float elements being top-level Image Pixel Module
+#: members with no macro that nests them. So `_is_routed` keeps its answer
+#: for them and `test_float_pixel_data_inside_a_sequence_item_is_reported`
+#: keeps its row. Do not widen the carriage by depth alone; the carriage is
+#: keyed on the tag.
 _FLOAT_PIXEL_TAGS = frozenset({
     Tag(0x7fe0, 0x0008),   # Float Pixel Data
     Tag(0x7fe0, 0x0009),   # Double Float Pixel Data
 })
+
+#: The one nested element whose bytes are carried (#183). Named rather than
+#: written inline because three places have to agree about it: the
+#: collector in `populate_attrs`, the decode in `ingest_worker`, and the
+#: terminal tag of the blob kind those two produce.
+_NESTED_PIXEL_DATA_TAG = Tag(0x7fe0, 0x0010)
+
+#: The transfer syntaxes a nested icon may be decoded from (#183 Q6).
+#:
+#: **An allow-list, not a list of the lossy ones, and that direction is the
+#: whole point.** A deny-list has to be complete to be safe, and it is
+#: wrong the moment the standard adds a syntax -- silently, in the
+#: direction that ships pixels. This list is wrong in the direction that
+#: files a `DATA_LOSS` row, which is a reported non-carriage rather than a
+#: mis-declared image. It is the same discipline `FLOAT_DTYPE_NAMES`
+#: applies to the dtype carrier: allow-list, never interpret.
+#:
+#: Why lossy is excluded at all: a lossy-JPEG icon decodes to RGB from a
+#: declared `YBR_FULL_422`, so the exported item's Photometric
+#: Interpretation would have to be rewritten to match the bytes. That is a
+#: correctness claim with no measurement behind it -- no encoder plugin
+#: exists in this environment to build a lossy fixture and observe the
+#: result (`pylibjpeg`, `openjpeg`, `libjpeg`, `gdcm` and `pyjpegls` are
+#: all absent). Refusing keeps today's honest loss row instead of shipping
+#: a guess. The top level may well have the same problem -- `ingest_worker`
+#: never mentions Photometric Interpretation -- and that is a separate
+#: issue about the top level, not a reason to guess here.
+#:
+#: Written as UID strings rather than `pydicom.uid` names on purpose: the
+#: names are not stable across pydicom versions, and a draft of #183's spec
+#: cited `JPEGLossyCompressedPixelTransferSyntaxes`, which does not exist.
+#: `tests/test_private_binary_ingest.py` checks each string against
+#: pydicom's own constant where a name for it exists.
+_CARRIABLE_TRANSFER_SYNTAXES = frozenset({
+    "1.2.840.10008.1.2",        # Implicit VR Little Endian (native)
+    "1.2.840.10008.1.2.1",      # Explicit VR Little Endian (native)
+    "1.2.840.10008.1.2.1.99",   # Deflated Explicit VR Little Endian
+    "1.2.840.10008.1.2.2",      # Explicit VR Big Endian (native)
+    "1.2.840.10008.1.2.5",      # RLE Lossless
+    "1.2.840.10008.1.2.4.57",   # JPEG Lossless, Non-Hierarchical
+    "1.2.840.10008.1.2.4.70",   # JPEG Lossless, First-Order Prediction
+    "1.2.840.10008.1.2.4.80",   # JPEG-LS Lossless
+    "1.2.840.10008.1.2.4.90",   # JPEG 2000 Image Compression (Lossless Only)
+    "1.2.840.10008.1.2.4.201",  # HTJ2K Lossless
+    "1.2.840.10008.1.2.4.202",  # HTJ2K Lossless RPCL
+})
+
+
+#: The descriptors a nested payload is reshaped from, in a fixed order, with
+#: the defaults `SidecarPixelLoader` applies. One tuple, read by one
+#: function, so the provenance captured at ingest and the destination read
+#: at export cannot be assembled differently.
+_NESTED_GEOMETRY_TAGS = (
+    ("0028,0010", 0),   # Rows
+    ("0028,0011", 0),   # Columns
+    ("0028,0002", 1),   # SamplesPerPixel
+    ("0028,0008", 0),   # NumberOfFrames
+    ("0028,0100", 8),   # BitsAllocated
+    ("0028,0103", 0),   # PixelRepresentation
+)
+
+
+def nested_item_geometry(attributes) -> tuple:
+    """The reshape descriptors of one sequence item, from its attributes.
+
+    Args:
+        attributes: A `DicomItem.attributes`-shaped mapping.
+
+    Returns:
+        tuple: `(rows, cols, samples, frames, bits, pixel_representation)`.
+    """
+    return tuple(int(attributes.get(tag, default) or default)
+                 for tag, default in _NESTED_GEOMETRY_TAGS)
+
+
+@dataclass
+class NestedPixelRef:
+    """Where one nested payload's bytes live in the sidecar (#183).
+
+    A *reference*, deliberately not a `SidecarPixelLoader`. A loader carries
+    the geometry it will reshape against, and geometry captured when the ref
+    was wired is the wrong geometry to reshape against later: the path is
+    recorded at ingest and resolved at export, and everything in between --
+    hydration, audit, remediation, redaction -- can change the sequence's
+    contents. A loader built at ingest would reshape a shifted icon against
+    the numbers it was born with and succeed, writing the wrong bytes into
+    the wrong item, silently.
+
+    So the loader is built at the point of use, from the item resolved
+    *then*, and the reshape it already performs is the shift guard. One
+    construction site, one check, and no stored geometry to disagree with
+    the graph. See `_write_back_nested_pixels`.
+
+    Mutable because `_rewire_sidecar_loaders` repoints `offset`/`length`
+    after a compaction, exactly as it does for the top-level loader.
+
+    `geometry` is the one thing it does carry about shape, and it is
+    **provenance, not a reshape target**: the descriptors the enclosing item
+    declared when these bytes were wired to it. The export compares it
+    against the descriptors of the item the path resolves to *then*, and a
+    mismatch means an index shifted under us -- the path still resolves, to
+    the wrong item, and writing there would be silent wrong bytes.
+
+    That comparison is not belt-and-braces over the loader's reshape;
+    **the loader does not raise on a mismatch.** Measured: given more
+    elements than the target shape needs, `SidecarPixelLoader.__call__`
+    takes its padding fallback -- `if arr.size >= target_size: arr =
+    arr[:target_size]` -- and silently *truncates*; given fewer, it returns
+    a 1-D array. That fallback exists for the one-byte DICOM pad on an
+    odd-length frame and must not be tightened, because the top-level path
+    depends on it. So the guard has to be here, and it compares descriptors
+    rather than byte counts: the obvious `BitsAllocated // 8` formula is 0
+    for a 1-bit icon and would refuse every one of them as a shift.
+    """
+    sidecar_path: str
+    offset: int
+    length: int
+    alg: str
+    blob_hash: Optional[str] = None
+    geometry: Optional[tuple] = None
 
 #: Indices into the encapsulated Pixel Data fragment stream. Not data,
 #: and so not a loss -- a different question from `_is_routed`'s, which
@@ -736,7 +861,8 @@ def _sequence_from_un_bytes(raw: bytes, tag, encoding) -> Optional[Sequence]:
 
 
 def populate_attrs(ds: Any, item: "DicomItem", dropped: list = None,
-                   is_root: bool = True, unscanned: list = None):
+                   is_root: bool = True, unscanned: list = None,
+                   nested: list = None, path: tuple = ()):
     """
     Standalone function to populate attributes for pickle-compatibility in workers.
 
@@ -803,6 +929,32 @@ def populate_attrs(ds: Any, item: "DicomItem", dropped: list = None,
             value the PHI scan could not open (#167). Distinct from
             `dropped`: nothing was lost -- the bytes stay in
             `attributes` and are exported.
+        nested (list, optional): Collects `(path, tag, vr, enclosing_ds)`
+            for every nested (7fe0,0010) -- an Icon Image Sequence item's
+            own Pixel Data and the like -- so `ingest_worker` can decode it
+            into the sidecar (#183). **When it is not None, such an element
+            is routed here INSTEAD of into `dropped`**, and the caller
+            appends the ones it could not decode. That is the shape rather
+            than appending to both and reconciling by count, because
+            reconciling two lists works only while one icon's `(tag, vr)`
+            entry is indistinguishable from another's -- correct today, and
+            fragile in a way a reader cannot see.
+
+            The alternative shape -- teaching `_is_routed` to return True
+            for a nested (7fe0,0010) -- is the trap, and it is #194's at a
+            third site: an icon that *fails* to decode would then be
+            reported as routed and its loss row would vanish, which is the
+            silent drop #169 closed. Routing and reporting come from one
+            place, and that place is the code that knows whether the bytes
+            were carried. `_is_routed` does not change.
+
+            Left None -- the default, and what every direct caller in the
+            tests passes -- behaviour is exactly what it was.
+        path (tuple): The `iter_item_tree` route from the instance to
+            `ds`: a tuple of `(sequence_tag, index)` steps, empty at the
+            root. Only `nested` reads it; it is what becomes the blob
+            kind's path segment, and it is the same shape
+            `PhiFinding.entity_path` and `resolve_item_path` already use.
     """
 
     # The wire VRs whose values are bulk bytes. Since #151 membership
@@ -848,6 +1000,22 @@ def populate_attrs(ds: Any, item: "DicomItem", dropped: list = None,
             # about reporting. What moves is that the skip is now
             # recorded unless the bytes are carried elsewhere, or are an
             # index into bytes that are (#169, #194).
+            if (nested is not None and not is_root
+                    and elem.tag == _NESTED_PIXEL_DATA_TAG):
+                # Carried, or reported by the caller -- never both, and
+                # never neither (#183). The enclosing `ds` travels rather
+                # than the element because pydicom cannot decode a sequence
+                # item's pixel data without the file's Transfer Syntax UID:
+                # `icon.pixel_array` raises `AttributeError: Unable to
+                # decode the pixel data as the dataset's 'file_meta' has no
+                # (0002,0010) 'Transfer Syntax UID'`. The decode borrows it
+                # from the enclosing dataset, microseconds later, in this
+                # same worker -- so nothing pydicom-shaped crosses a
+                # process boundary.
+                nested.append(
+                    (path, f"{elem.tag.group:04x},{elem.tag.element:04x}",
+                     elem.VR, ds))
+                continue
             if (dropped is not None
                     and elem.tag not in _DERIVED_PIXEL_INDEX_TAGS
                     and not _is_routed(elem.tag, is_root, has_pixel_data)):
@@ -925,7 +1093,8 @@ def populate_attrs(ds: Any, item: "DicomItem", dropped: list = None,
             if raw.startswith(_ITEM_TAG_LE):
                 parsed = _sequence_from_un_bytes(raw, elem.tag, encoding)
                 if parsed is not None:
-                    process_sequence(tag, parsed, item, dropped, unscanned)
+                    process_sequence(tag, parsed, item, dropped, unscanned,
+                                     nested=nested, path=path)
                     continue
                 if (unscanned is not None
                         and len(raw) <= BINARY_RETENTION_MAX_BYTES):
@@ -958,7 +1127,8 @@ def populate_attrs(ds: Any, item: "DicomItem", dropped: list = None,
             continue
 
         if elem.VR == 'SQ':
-            process_sequence(tag, elem, item, dropped, unscanned)
+            process_sequence(tag, elem, item, dropped, unscanned,
+                             nested=nested, path=path)
         elif elem.VR == 'PN':
             # Sanitize PersonName for pickle safety
             item.set_attr(tag, str(elem.value))
@@ -1004,7 +1174,8 @@ def _record_private_vr(item, tag: str, elem) -> None:
 
 
 def process_sequence(tag, elem, parent_item, dropped: list = None,
-                     unscanned: list = None):
+                     unscanned: list = None, nested: list = None,
+                     path: tuple = ()):
     """Recursively parses Sequence (SQ) items.
 
     Everything below the instance is `is_root=False`, at every depth: an
@@ -1017,12 +1188,129 @@ def process_sequence(tag, elem, parent_item, dropped: list = None,
     ordinary rules, so a binary-VR child inside one is reported like any
     other, and an unverifiable candidate one level further down still
     earns its row (#167).
+
+    `nested` and `path` are forwarded the same way, and this loop is the one
+    place the path grows: each item extends it by its own `(tag, index)`
+    step, exactly as `iter_item_tree` does. **`index` is a position, and a
+    position is the only identity a sequence item has** -- a blob keyed on
+    one is only as good as the graph holding still between ingest and
+    export, which is why the export re-checks geometry before it writes
+    (see `_write_back_nested_pixels`).
+
+    A sequence recovered from `UN` bytes gets a path too. It is a real
+    sequence in the graph by the time anything resolves the path against
+    it, so leaving it out would carry the bytes and then fail to find their
+    home (#167).
     """
-    for ds_item in elem:
+    for index, ds_item in enumerate(elem):
         seq_item = DicomItem()
         populate_attrs(ds_item, seq_item, dropped, is_root=False,
-                       unscanned=unscanned)
+                       unscanned=unscanned, nested=nested,
+                       path=path + ((tag, index),))
         parent_item.add_sequence_item(tag, seq_item)
+
+
+def _decode_nested_pixels(ds, candidates, dropped, instance) -> list:
+    """Decode every nested (7fe0,0010) `populate_attrs` collected (#183).
+
+    Runs in `ingest_worker`, immediately after the walk that produced
+    `candidates` and in the same process, because decoding needs the
+    enclosing pydicom `Dataset` and nothing pydicom-shaped may cross a
+    process boundary.
+
+    **This function owns the carried/reported decision for its candidates,
+    and that is the whole reason it exists.** `populate_attrs` routed them
+    here *instead of* into `dropped`; whatever cannot be carried is appended
+    to `dropped` below. The tidier-looking alternative -- teaching
+    `_is_routed` to answer True for a nested (7fe0,0010) -- would report a
+    failed decode as routed and its loss row would vanish, which is the
+    silent drop #169 closed and #194 re-opened at a second tag. One
+    decision, made by the code that knows the answer.
+
+    Two things it will not do:
+
+    - **Carry encapsulated fragments verbatim.** Measured on an
+      RLE-encapsulated source: the nested icon's element value is 90 bytes
+      of fragments, while the export writes Implicit VR Little Endian with
+      raw bytes (16-byte top-level payload from a 104-byte encapsulated
+      source). Writing fragments into that file produces an icon no reader
+      can decode, under a transfer syntax that says there are no fragments.
+      So it decodes here and stores raw, which is exactly what the
+      top-level path does -- one rule for both depths.
+    - **Decode a lossy source.** See `_CARRIABLE_TRANSFER_SYNTAXES`.
+
+    Args:
+        ds (pydicom.Dataset): The enclosing dataset, for its `file_meta`.
+        candidates (list): `(path, tag, vr, enclosing_ds)` tuples.
+        dropped (list): Appended to for every candidate NOT carried, so the
+            parent files the `DATA_LOSS` row it always filed.
+        instance (Instance): The graph this walk just built, so a carried
+            icon's PlanarConfiguration can be corrected on its own item.
+
+    Returns:
+        list: `(path, terminal_tag, vr, raw_bytes, sha256)` per carried
+        payload. The VR travels because `import_files` may still have to
+        report the element -- there is no sidecar on the two callers that
+        pass a bare `DicomStore` -- and a loss row that guesses the VR is a
+        row the reader cannot check against the file.
+    """
+    if not candidates:
+        return []
+
+    carried = []
+    transfer_syntax = str(
+        getattr(getattr(ds, "file_meta", None), "TransferSyntaxUID", "") or "")
+
+    for path, tag_str, vr, item_ds in candidates:
+        if transfer_syntax not in _CARRIABLE_TRANSFER_SYNTAXES:
+            dropped.append((tag_str, vr))
+            continue
+
+        try:
+            # pydicom cannot decode a sequence item's pixel data on its own
+            # -- `icon.pixel_array` raises `AttributeError: Unable to decode
+            # the pixel data as the dataset's 'file_meta' has no (0002,0010)
+            # 'Transfer Syntax UID'`. An icon shares the file's transfer
+            # syntax by construction, so borrowing the enclosing dataset's
+            # `file_meta` is not an approximation; it is the right answer.
+            # Measured to decode correctly through RLE encapsulation too.
+            item_ds.file_meta = ds.file_meta
+            arr = np.ascontiguousarray(item_ds.pixel_array)
+        except Exception:  # pylint: disable=broad-except
+            # Every reason a decode can fail takes the same route, and it is
+            # the route this element already took: a loss row. Not the
+            # `return ... "Decompression Failed"` the top-level arm takes --
+            # an icon that will not decode is not a reason to refuse the
+            # file, and the instance behaves in every respect as it did
+            # before #183. `test_an_undecodable_nested_icon_still_files_its
+            # _loss_row` is the tripwire; its fixture declares no
+            # BitsAllocated, so pydicom raises `Missing required element`.
+            dropped.append((tag_str, vr))
+            continue
+        finally:
+            # The borrow is for the decode only. `ds` is walked again below
+            # for waveforms, and a sequence item left carrying a `file_meta`
+            # is a shape nothing else in this codebase expects.
+            if "file_meta" in item_ds.__dict__:
+                del item_ds.__dict__["file_meta"]
+
+        raw = arr.tobytes()
+        carried.append(
+            (path, tag_str, vr, raw, hashlib.sha256(raw).hexdigest()))
+
+        # The same correction the top-level arm makes just below, for the
+        # same reason: pydicom de-planarises on read, so the bytes are
+        # interleaved whatever the source declared. Leaving a nested
+        # PlanarConfiguration of 1 in place would export interleaved bytes
+        # under a planar declaration -- a colour icon read as garbage by a
+        # conformant reader, which is a worse outcome than the drop this
+        # change replaces. Isocenter holds and stores pixels interleaved,
+        # always; see `SidecarPixelLoader.__call__`.
+        target = resolve_item_path(instance, path)
+        if target is not None and target.attributes.get("0028,0006") == 1:
+            target.set_attr("0028,0006", 0)
+
+    return carried
 
 
 def ingest_worker(fp: str) -> Tuple:
@@ -1082,7 +1370,14 @@ def ingest_worker(fp: str) -> Tuple:
         # export side of the same constraint).
         dropped = []
         unscanned = []
-        populate_attrs(ds, inst, dropped, unscanned=unscanned)
+        nested = []
+        populate_attrs(ds, inst, dropped, unscanned=unscanned, nested=nested)
+        # Between the walk and `meta['dropped_private_binary']`, so the
+        # candidates that failed to decode land in `dropped` before it is
+        # handed over. `_decode_nested_pixels` appends them itself: it is
+        # the code that knows (#183, #194).
+        meta['nested_pixels'] = _decode_nested_pixels(ds, nested, dropped,
+                                                      inst)
         meta['dropped_private_binary'] = dropped
         # Rides `meta` for the same reason as `dropped_private_binary`
         # above: this worker may be in a subprocess with no store
@@ -1550,6 +1845,53 @@ class DicomImporter:
                                 details=detail,
                                 loss_scope=LOSS_SCOPE_STANDARD)
 
+                    # Persist nested pixel payloads to the sidecar (#183).
+                    #
+                    # Same shape as the waveform block below, and its
+                    # comment about calling `record_blob_ref` without
+                    # `conn=` applies unchanged: this loop runs outside any
+                    # open SqliteStore transaction.
+                    #
+                    # Written here, once, at ingest. Nothing in the pipeline
+                    # mutates an icon -- remediation edits `attributes`,
+                    # redaction touches the top-level array, anonymize
+                    # touches neither -- so `save_all` re-emits the *row*
+                    # (which is what makes the reference follow a
+                    # `regenerate_uid()`) and never re-appends the frame.
+                    for n_path, n_tag, n_vr, n_raw, n_hash in meta.get(
+                            'nested_pixels', ()):
+                        if not sidecar_manager:
+                            # No sidecar to write to, so the bytes are not
+                            # carried after all and the loss row is owed.
+                            # Above the reporting loop below, deliberately:
+                            # that loop is what files it, and this is the
+                            # last point at which the answer can still
+                            # change. Reached by the callers that pass a
+                            # bare DicomStore and no sidecar.
+                            meta.setdefault(
+                                'dropped_private_binary', []).append(
+                                    (n_tag, n_vr))
+                            continue
+                        n_off, n_len = sidecar_manager.write_frame(
+                            n_raw, 'zlib')
+                        kind = serialize_blob_kind('pixels', n_path, n_tag)
+                        # The provenance geometry, captured from the item
+                        # these bytes came out of. `_write_back_nested_
+                        # pixels` compares it against whatever sits at this
+                        # path when the export resolves it; see
+                        # `NestedPixelRef`.
+                        n_item = resolve_item_path(inst, n_path)
+                        inst._nested_pixel_refs[(n_path, n_tag)] = \
+                            NestedPixelRef(
+                                sidecar_manager.filepath, n_off, n_len,
+                                'zlib', n_hash,
+                                nested_item_geometry(n_item.attributes)
+                                if n_item is not None else None)
+                        if store_backend is not None:
+                            store_backend.record_blob_ref(
+                                inst.sop_instance_uid, kind, n_off, n_len,
+                                n_hash, 'zlib')
+
                     # Private binary elements never reached the graph, so
                     # `remove_private_tags=False` could not have kept
                     # them. Same reasoning as the block above: a loss the
@@ -1739,6 +2081,14 @@ class ExportContext:
     pixel_length: Optional[int] = None
     pixel_alg: Optional[str] = None
     redaction_zones: List[Tuple] = field(default_factory=list)
+    #: Drop every nested icon in this export, whoever carries it (#183).
+    #: Computed ONCE per export run, store-wide, by `redaction_in_effect`
+    #: -- not per instance, because an icon under Referenced Image Sequence
+    #: is a thumbnail of a *different* SOP instance and a per-instance
+    #: condition is blind to that. See `redaction_in_effect` for why the
+    #: narrower gate fails open. Both context builders set it; a builder
+    #: that forgets ships thumbnails of redacted frames.
+    drop_nested_icons: bool = False
     #: Re-read the written file and compare its descriptors before
     #: delivering it (#209). Off by default: it costs a second parse
     #: per instance. Carried here because the check runs in the worker
@@ -2008,6 +2358,266 @@ def _verify_readback(path: str, ds) -> None:
             "Readback verification failed: " + "; ".join(mismatches))
 
 
+#: The attestation `RedactionService` writes on every path that actually
+#: modified pixels. Named here because the export gate reads it and
+#: `services.py` writes it, and a string spelled twice is a string that can
+#: be spelled differently once.
+REDACTION_HASH_ATTR = "_ISOCENTER_REDACTION_HASH"
+
+
+def redaction_in_effect(instances: Iterable["Instance"], rules=None) -> bool:
+    """Does anything in this export's world redact pixels? (#183 Q2/Q10)
+
+    **Store-wide on purpose, and narrowing it is a de-identification
+    regression.** An Icon Image Sequence item is a downsampled copy of a
+    frame, and nothing in this pipeline scans or redacts one: every pixel
+    consumer reads `instance.get_pixel_data()`, which is the top-level frame
+    and only that -- the burned-in identifier scan, both redaction paths and
+    the export alike. So carrying icon bytes out of a session that redacted
+    re-exports a thumbnail of exactly what redaction zeroed, with no scan
+    and no zones applied.
+
+    The obvious narrower gate -- "was *this* instance redacted" -- is blind
+    to the shape this feature's own headline spelling has. An icon under
+    Referenced Image Sequence (0008,1140) is a thumbnail of the SOP instance
+    being *referenced* (PS3.3 C.7.6.16), not of the one carrying it, so a
+    redacted image and the untouched instance that thumbnails it can be
+    different files. And it cannot be resolved by following the reference:
+    redaction calls `regenerate_uid()`, so `ReferencedSOPInstanceUID` names
+    a UID that is no longer in the store and the lookup returns nothing for
+    precisely the instances that were redacted. **It fails open**, which is
+    the worst available answer.
+
+    Two conditions, because either alone has a hole:
+
+    - The **attestation** is the load-bearing half. `_redaction_zones_for`
+      looks zones up at *export* time from the *current* configuration,
+      keyed on the series' device serial number, while `RedactionService`
+      redacts whatever `rois` its caller passed. So the zones list is empty
+      at export while the pixels are redacted whenever the rule was edited,
+      the serial changed, the service was driven directly, or the series has
+      no equipment at all.
+    - The **rules** are the belt, for a redaction that is configured but has
+      not run yet in this session.
+
+    Args:
+        instances: Every instance this export can see. The session path
+            passes the whole store; `write_tree` passes the tree it is
+            about to write.
+        rules: Configuration rules, or None. **None is not "no rules" -- it
+            is "this caller has no configuration to consult"**, which is
+            `write_tree`'s situation structurally: it is the serializer,
+            with no session behind it. The attestation half still applies
+            there, because dropping an icon out of a redacted graph is a
+            property of carrying icon bytes at all rather than a pipeline
+            step the serializer skips.
+
+    Returns:
+        bool: True when every nested icon in this export must be dropped.
+    """
+    for inst in instances:
+        if REDACTION_HASH_ATTR in inst.attributes:
+            return True
+    return any((rule or {}).get("redaction_zones") for rule in (rules or ()))
+
+
+def _instances_in(patient, studies) -> Iterable["Instance"]:
+    """Every instance under `studies`, for the store-wide redaction gate."""
+    for study in studies or getattr(patient, "studies", ()):
+        for series in study.series:
+            yield from series.instances
+
+
+def _resolve_ds_item(ds, path):
+    """Follow an `iter_item_tree` path into a pydicom Dataset.
+
+    The `ds`-side twin of `entities.resolve_item_path`, and it inherits that
+    function's rule verbatim: **None means "this item is gone", never "use
+    the root instead"**. Writing an icon's pixels onto the instance would
+    fabricate a top-level element that was never in the file, which is #57's
+    defect exactly.
+
+    Returns:
+        Optional[tuple]: `(item, parent_ds, seq_tag)` -- the resolved item,
+        the dataset holding the sequence it sits in, and that sequence's
+        pydicom `Tag`. The last two are what lets the caller *remove* the
+        item, which is the conformant outcome when its bytes cannot be
+        written. None if any step does not resolve.
+    """
+    cur, parent, seq_tag = ds, None, None
+    for tag_str, index in path:
+        group, element = (int(x, 16) for x in tag_str.split(','))
+        tag = Tag(group, element)
+        if tag not in cur:
+            return None
+        sequence = cur[tag].value
+        if index >= len(sequence):
+            return None
+        parent, seq_tag, cur = cur, tag, sequence[index]
+    if parent is None:
+        return None
+    return cur, parent, seq_tag
+
+
+def _write_back_nested_pixels(ds, inst, ctx, losses) -> None:
+    """Put each carried nested payload back into its sequence item (#183).
+
+    A post-pass over the dataset `_merge_sequences` has already built,
+    rather than a change to `_merge_sequences` itself. Two reasons, and the
+    second is the one that matters: the merge walks `{tag: DicomSequence}`
+    and has no notion of a path, and this worker is on **both** export paths
+    by construction -- `write_tree` and `DicomSession.export()` dispatch the
+    same `_export_instance_worker` -- so a post-pass here cannot land on one
+    path only. `tests/test_api_coherence.py` compares trees rather than
+    contents, so a one-path writeback would slip past it.
+
+    **The single rule this adds to the exporter: never descriptors without
+    data.** Wherever the bytes cannot be written -- the redaction gate, an
+    item that is gone, a geometry that no longer fits -- the conformant
+    output is *no sequence item at all* plus a `DATA_LOSS` row. Leaving the
+    descriptors behind is the Type 1 violation of the Icon Image Macro
+    (PS3.3 C.7.6.1.1.6) that this whole change exists to fix, and #160
+    settled the identical question for discarded multiplex groups the same
+    way.
+
+    Every path is resolved and every outcome decided **before** anything is
+    removed, and that ordering is load-bearing. Two icons under one parent
+    sequence: remove item 0 first and item 1 slides into index 0, so its
+    path resolves to a live item that is no longer its own -- and a loop
+    interleaving the two would file a "gone" row for it while leaving it in
+    the file. Removal is then by object identity rather than by the index
+    that was recorded, because two identical icon `Dataset`s compare equal.
+    """
+    refs = getattr(inst, "_nested_pixel_refs", None)
+    if not refs:
+        return
+
+    removals, writes = [], []
+    for (path, terminal_tag), ref in refs.items():
+        resolved = _resolve_ds_item(ds, path)
+        # The graph item, for its descriptors. `ds`'s sequences were built
+        # from `inst.sequences` by `_merge_sequences` a few lines above, so
+        # the two cannot disagree about what sits at this path -- and
+        # reading the geometry from the graph is what lets ONE function
+        # assemble it, here and at the ingest that recorded the provenance.
+        graph_item = resolve_item_path(inst, path)
+        if resolved is None or graph_item is None:
+            # The item was removed between ingest and export. Nothing to
+            # take out of the file and nothing to write; just say so.
+            losses.append((LOSS_SCOPE_STANDARD, (
+                f"Standard tag {terminal_tag} was carried in the store but "
+                f"the sequence item it belongs to is no longer in the "
+                f"object graph, so it is not in the exported file.")))
+            continue
+
+        item, parent, seq_tag = resolved
+
+        if ctx.drop_nested_icons:
+            removals.append((parent, seq_tag, item))
+            losses.append((LOSS_SCOPE_STANDARD, (
+                f"Standard tag {terminal_tag} inside {seq_tag} was dropped "
+                f"with its sequence item because this export redacts pixel "
+                f"data. An icon is a downsampled copy of a frame and "
+                f"nothing scans or redacts one, so exporting it would ship "
+                f"a thumbnail of what redaction removed.")))
+            continue
+
+        # The shifted-index guard. Position is the only identity a sequence
+        # item has, and the path was recorded at ingest: remove an earlier
+        # sibling in between and this path still resolves, to a *neighbour*.
+        # Comparing the descriptors the bytes were taken from against the
+        # ones the destination declares is what tells the two apart.
+        #
+        # It has to be here, explicitly, because the loader does not raise:
+        # its padding fallback truncates a too-long frame into the target
+        # shape and returns a 1-D array for a too-short one. See
+        # `NestedPixelRef`. Descriptors rather than byte counts because
+        # `BitsAllocated // 8` is 0 for a 1-bit icon.
+        #
+        # Not a proof of identity -- two icons of equal geometry are
+        # indistinguishable by it -- but it converts the detectable half of
+        # the failure from silent wrong bytes into a reported loss.
+        geometry = nested_item_geometry(graph_item.attributes)
+        if ref.geometry is not None and geometry != ref.geometry:
+            removals.append((parent, seq_tag, item))
+            losses.append((LOSS_SCOPE_STANDARD, (
+                f"Standard tag {terminal_tag} inside {seq_tag} was not "
+                f"restored: the sequence item at its recorded position now "
+                f"declares {geometry} where the stored bytes were taken "
+                f"from {ref.geometry}, so an item was removed or reordered "
+                f"after ingest. Its item was dropped rather than filled "
+                f"with another item's pixels.")))
+            continue
+
+        try:
+            decoded = SidecarPixelLoader(
+                ref.sidecar_path, ref.offset, ref.length, ref.alg,
+                metadata=_nested_loader_metadata(geometry, ref, inst))()
+        except Exception as exc:  # pylint: disable=broad-except
+            removals.append((parent, seq_tag, item))
+            losses.append((LOSS_SCOPE_STANDARD, (
+                f"Standard tag {terminal_tag} inside {seq_tag} could not be "
+                f"restored from the sidecar ({exc}); its sequence item was "
+                f"dropped rather than exported with descriptors and no "
+                f"pixel data.")))
+            continue
+
+        writes.append((item, terminal_tag, decoded, geometry[4]))
+
+    for item, terminal_tag, decoded, bits in writes:
+        group, element = (int(x, 16) for x in terminal_tag.split(','))
+        # PS3.5: `OW` above 8 bits allocated, `OB` at or below. Derived from
+        # the item's own BitsAllocated rather than carried on the blob,
+        # because the export writes Implicit VR Little Endian and no VR
+        # reaches the file at all -- pydicom just needs one to encode with,
+        # and one rule beats a stored value that can disagree with the
+        # descriptor beside it.
+        vr = 'OW' if bits > 8 else 'OB'
+        # Unconditionally raw, and it does not consult `ctx.compression`.
+        # `use_compression=True` J2K-compresses the top-level frame only;
+        # "the icon wasn't compressed too" will read as an oversight, so:
+        # it is deliberate. An icon is a thumbnail, the saving is nil, and
+        # a second encoder call per instance is not.
+        item.add_new(Tag(group, element), vr, decoded.tobytes())
+
+    for parent, seq_tag, item in removals:
+        sequence = parent[seq_tag].value
+        for index in range(len(sequence) - 1, -1, -1):
+            if sequence[index] is item:
+                del sequence[index]
+                break
+        if not len(sequence):
+            # An empty sequence is not the same thing as an absent one, and
+            # Icon Image Sequence is Type 3 wherever the macro is included
+            # -- so absent is conformant and a zero-item sequence is just an
+            # assertion about nothing.
+            del parent[seq_tag]
+
+
+def _nested_loader_metadata(geometry, ref, inst) -> dict:
+    """The reshape metadata for one nested payload's loader.
+
+    Built from the geometry of the item resolved at export, never from
+    anything stored with the blob -- the bytes are about to be written into
+    *that* item, so that is the shape they have to take.
+
+    No `pixel_dtype`: the nested float pair is deliberately not carried
+    (#183 Q5), so a nested payload is always integer and there is nothing
+    for the float branch to read.
+    """
+    rows, cols, samples, frames, bits, pixel_representation = geometry
+    return {
+        "sop_instance_uid": getattr(inst, "sop_instance_uid", "Unknown"),
+        "rows": rows,
+        "cols": cols,
+        "samples": samples,
+        "frames": frames,
+        "bits": bits,
+        "pixel_representation": pixel_representation,
+        "pixel_hash": ref.blob_hash,
+    }
+
+
 def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
     """
     Worker function to export a single instance.
@@ -2033,6 +2643,13 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
         DicomExporter._merge(ds, inst.attributes, losses,
                              vrs=getattr(inst, 'attribute_vrs', None))
         DicomExporter._merge_sequences(ds, inst.sequences, losses)
+
+        # 0b. Nested sidecar payloads, back into the items they came out
+        # of (#183). After the merge, because it needs the sequence items
+        # the merge just built; here rather than inside `_merge_sequences`
+        # so it cannot be reached by an `export_batch` caller separately,
+        # and so both export paths get it from the one worker they share.
+        _write_back_nested_pixels(ds, inst, ctx, losses)
 
         # 1. Patient Level
         DicomExporter._merge(ds, ctx.patient_attributes, losses)
@@ -3089,7 +3706,8 @@ class DicomExporter:
             patient: Patient,
             studies: List[Study],
             out_dir: str,
-            compression: str = None) -> List[ExportContext]:
+            compression: str = None,
+            drop_nested_icons: bool = False) -> List[ExportContext]:
         """
         Generates ExportContext objects for the given studies.
 
@@ -3101,6 +3719,12 @@ class DicomExporter:
             studies (List[Study]): List of studies to export.
             out_dir (str): Output directory.
             compression (str, optional): Compression format (e.g. 'j2k').
+            drop_nested_icons (bool): Copied onto every context (#183).
+                Passed in rather than computed here because it is a
+                **store-wide** answer and this method sees one patient: a
+                per-patient computation would carry icons for the patients
+                that happen not to have been redacted, which is exactly the
+                narrowing `redaction_in_effect` documents as failing open.
 
         Returns:
             List[ExportContext]: List of prepared export contexts.
@@ -3206,7 +3830,8 @@ class DicomExporter:
                         sidecar_path=sc_path,
                         pixel_offset=sc_offset,
                         pixel_length=sc_length,
-                        pixel_alg=sc_alg
+                        pixel_alg=sc_alg,
+                        drop_nested_icons=drop_nested_icons,
                     )
                     contexts.append(ctx)
         return contexts
@@ -3362,8 +3987,21 @@ class DicomExporter:
         logger = get_logger()
 
         # Planning Phase: Generate Contexts
+        #
+        # The nested-icon gate is computed here, once, over the whole tree
+        # about to be written -- not inside `_generate_export_contexts`,
+        # which sees one patient at a time (#183). `rules=None` because
+        # there is no session and so no configuration to consult: this is
+        # the serializer, and the configuration half of the condition is
+        # structurally unavailable to it. The attestation half is not, and
+        # applies -- dropping an icon out of a graph that carries a
+        # redaction attestation is a property of carrying icon bytes at
+        # all, not one of the pipeline gates `write_tree` deliberately
+        # skips.
+        drop_icons = redaction_in_effect(_instances_in(patient, studies))
         export_tasks = DicomExporter._generate_export_contexts(
-            patient, studies, out_dir, compression)
+            patient, studies, out_dir, compression,
+            drop_nested_icons=drop_icons)
 
         # Execution Phase
         if not export_tasks:
