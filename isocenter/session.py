@@ -983,24 +983,57 @@ class DicomSession:
         the rest is still convention, and the difference matters when
         you are reading this to decide whether your caller is safe.
 
-        **Enforced.** No save may be outstanding when this is entered:
-        after the synchronous save below, `has_pending_saves()` is
-        consulted and a `RuntimeError` is raised if anything is queued
-        or in flight. The check sits after `save(sync=True)` and before
-        `compact_sidecar()` on purpose -- refusing after the rewrite
-        would leave the file compacted and every in-memory loader on a
-        pre-compaction offset, which is worse than not checking. And the
-        rewiring below rebinds each loader under
+        **Enforced, and narrower than it reads (#320).** What is refused
+        is a save **queued on the persistence manager** -- after the
+        synchronous save below, `has_pending_saves()` is consulted and a
+        `RuntimeError` is raised if anything is in that manager's queue
+        or in-flight set. That is the whole of what it sees. It does
+        **not** see a `Session.save(sync=True)` running on another
+        thread, which executes `save_all` on its *caller's* thread and
+        enters neither structure, and it does not see a redaction's
+        `store.persist_pixel_data(...)`, which is not a save at all.
+        Measured: `has_pending_saves()` reads `False` in all five
+        corrupting orderings, including one where an entire concurrent
+        `save(sync=True)` runs start to finish inside the window
+        (`tests/test_compaction_races_a_concurrent_write.py`). So the
+        refusal cannot fire for the population that actually reaches the
+        window; read it as "nothing is queued behind me", not as "no one
+        else is writing". The check sits after `save(sync=True)` and
+        before `compact_sidecar()` on purpose -- refusing after the
+        rewrite would leave the file compacted and every in-memory
+        loader on a pre-compaction offset, which is worse than not
+        checking. And the rewiring below rebinds each loader under
         `SqliteStore._pixel_swap_lock`, so no reader can land between
         the offset and the length assignments (#295).
 
-        **Still convention.** A save queued *after* that check runs
+        **Still convention.** A write that starts *after* that check runs
         concurrently with the rewrite, and the per-instance lock does
         not make that safe: it removes the torn rebind, not the
         possibility of frames being appended during the rewrite.
-        Closing that needs a coarse save-wide lock ordered above the
-        documented `_audit_write_lock` -> `_memory_lock` pair, which is
-        a larger design than this call.
+
+        **What closing it would take, corrected (#368).** Not "a coarse
+        save-wide lock", which is how #320 prices it: `save_all` is one
+        of **five** places in production code that write a sidecar frame
+        and commit its row separately, and four of the five reproduced
+        orderings reach this window through `persist_pixel_data` rather
+        than through `save_all`. It takes a *sidecar-generation* lock
+        held by all five, and by this method across `compact_sidecar()`
+        **plus** `_rewire_sidecar_loaders`, with an open question about
+        the two ingest sites, which may run in a spawned subprocess a
+        `threading.Lock` cannot reach. Filed as #368, post-1.0.
+
+        **The residual is accepted, and what makes that defensible is
+        that it is loud.** The window is `live_bytes / throughput`
+        (0.024 s at 200 MB, 0.221 s at 2 GB measured); one instance's
+        newly written pixels are lost per overlapping write, plus an
+        orphaned frame the next compaction reclaims; and every read of
+        that instance then raises `RuntimeError: Integrity Error`
+        (`ValueError: Waveform integrity check failed` on the waveform
+        path) rather than returning plausible wrong bytes, because the
+        frame's hash is written beside it and `_apply_new_offsets`
+        rewrites only `offset` and `length`. **The honest cost is the
+        distance**: the error arrives at export or verify time and this
+        call reports success, with nothing tying the two together.
         """
         if hasattr(self, 'store_backend'):
             print("Beginning Sidecar Compaction (this may take a while)...")
@@ -1009,7 +1042,12 @@ class DicomSession:
             self.save(sync=True)
 
             # The refusal, between the save and the rewrite. See the
-            # docstring for why this placement is the load-bearing part.
+            # docstring for why this placement is the load-bearing part
+            # -- and for what this does NOT cover: `has_pending_saves()`
+            # reads the persistence manager's queue and in-flight set,
+            # so a `save(sync=True)` on another thread and a redaction's
+            # `persist_pixel_data` are both invisible to it, measured
+            # `False` in every corrupting ordering (#320).
             if (hasattr(self, 'persistence_manager')
                     and self.persistence_manager.has_pending_saves()):
                 raise RuntimeError(
