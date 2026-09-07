@@ -3594,15 +3594,12 @@ class DicomSession:
         has no process to recycle, and the cost is pickling an
         `ExportContext` -- attributes, sequences, and a numpy array per
         task where pixels are resident -- across a pipe. Reversing it
-        means revisiting eight test files and `tests/profile_memory.py`,
-        which assume this subprocess boundary;
-        `test_export_runs_in_processes_by_decision` names them.
-        `tests/profile_memory.py` is the weakest of the nine and is
-        named anyway: pytest does not collect it (the filename matches
-        neither default pattern) and it cannot import (`psutil` is in no
-        extra), so its own `maxtasksperchild` assertion has drifted to
-        `10` unnoticed -- #347. It still records the assumption; it just
-        does not currently defend it.
+        means revisiting eight test files which assume this subprocess
+        boundary; `test_export_runs_in_processes_by_decision` names them
+        and pins the `25` below, and every one of the eight runs on
+        every push. (An uncollected ninth, `tests/profile_memory.py`,
+        was named here until #347 deleted it: it asserted `10` against
+        this `25` and nothing ever ran it.)
 
         `store_backend` is passed explicitly because this is a static
         method and the workers may be in subprocesses: the handle cannot

@@ -719,20 +719,19 @@ def test_export_runs_in_processes_by_decision(monkeypatch, caplog):
 
     What it holds still: the `25`. If it ever becomes `None`, the export
     path takes threads on a free-threaded build, and eight test files
-    plus `tests/profile_memory.py` assume a subprocess boundary and must
-    be revisited before that lands --
+    assume a subprocess boundary and must be revisited before that
+    lands --
     `tests/test_private_tag_vr_roundtrip.py`,
     `tests/test_redaction_failure_is_reported.py`,
     `tests/test_float_pixel_data_export.py`,
     `tests/test_export_worker_graph_purity.py`,
     `tests/test_redaction_identity.py`,
     `tests/test_redaction_attestation.py`,
-    `tests/test_redaction_multizone.py` and this file.
-
-    `tests/profile_memory.py` is listed for its assumption, not for its
-    protection: it is neither collected nor importable, and its own
-    assertion drifted to `10` against the shipped `25` without anything
-    noticing (#347). The other eight run on every push.
+    `tests/test_redaction_multizone.py` and this file. All eight run on
+    every push. (A ninth, `tests/profile_memory.py`, was listed here for
+    its assumption rather than its protection until #347 deleted it: it
+    was neither collected nor importable, and its own assertion had
+    drifted to `10` against the shipped `25` with nothing noticing.)
     """
     from types import SimpleNamespace
 
@@ -756,10 +755,11 @@ def test_export_runs_in_processes_by_decision(monkeypatch, caplog):
 
     # The warning `_use_threads` emits repeats this number as a literal
     # sentence -- "session.export() always sets maxtasksperchild=25" --
-    # and nothing reads it from here, so it can drift exactly the way
-    # tests/profile_memory.py's `10` drifted from this same `25` (#347).
-    # Tying the two together is the whole point of capturing the kwarg:
-    # the shipped log line must quote what the shipped call passes.
+    # and nothing reads it from here, so it can drift exactly the way an
+    # uncollected `tests/profile_memory.py`, deleted in #347, had drifted
+    # to `10` from this same `25`. Tying the two together is the whole
+    # point of capturing the kwarg: the shipped log line must quote what
+    # the shipped call passes.
     monkeypatch.delenv("ISOCENTER_FORCE_THREADS", raising=False)
     with caplog.at_level(logging.WARNING):
         parallel._use_threads(True, captured["maxtasksperchild"])

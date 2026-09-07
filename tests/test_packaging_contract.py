@@ -11,6 +11,7 @@ unguarded, so CI passed (it installed both files) and a real install
 would have failed at import. There is now one dependency list.
 """
 import ast
+import fnmatch
 import importlib.util
 import json
 import pathlib
@@ -542,6 +543,111 @@ def test_the_sdist_ships_a_test_suite_that_can_run(built):
         f"the sdist ships {len(test_modules)} test modules but omits "
         f"{missing}, so pytest cannot collect them. Add them to MANIFEST.in "
         "or stop shipping tests.")
+
+
+# pytest's own defaults for `python_files`. Spelled here rather than read
+# from pytest because the test below asserts that `pytest.ini` does not
+# override them -- these two patterns are the premise of "collected".
+_DEFAULT_TEST_FILE_PATTERNS = ("test_*.py", "*_test.py")
+
+
+def _tracked_top_level_test_modules():
+    """Top-level `tests/*.py` that git tracks, or None (#324's shape).
+
+    Same contract as `_tracked_paths_in_package()` above: `None` means
+    "git could not answer", never "nothing is tracked", and the caller
+    falls back to the bare glob rather than intersecting against
+    nothing and passing while checking nothing.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "tests"],
+            cwd=REPO, capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    tracked = {
+        line for line in proc.stdout.splitlines()
+        if line.endswith(".py") and line.count("/") == 1}
+    return tracked or None
+
+
+def test_every_top_level_tests_module_is_one_pytest_collects():
+    """A module under tests/ that pytest never collects reads as coverage
+    and is not (#347).
+
+    `tests/profile_memory.py` asserted `maxtasksperchild == 10` against a
+    `25` that had shipped for releases. It could not go red: `pytest.ini`
+    names `testpaths = tests` and no `python_files`, so pytest's default
+    `test_*.py` / `*_test.py` patterns applied and the name matched
+    neither -- and shipped prose cited it as one of the files defending
+    the export subprocess boundary. Two siblings (`detect_memory_leak.py`,
+    `profile_export_memory.py`) had the same shape. All three were
+    deleted, and this is what stops a fourth. Red on those three when
+    written; green on the tree it landed in.
+
+    The same argument as the sdist test above: half a test suite is
+    worse than none, and a file that looks like a test and is never run
+    is the half that is missing.
+
+    **What is swept, and why.** The top-level `tests/*.py` glob,
+    intersected with what git tracks when git can answer (the shape
+    `_data_files_in_package()` uses, for #324's reason: a contributor's
+    untracked scratch module must not turn CI red, and a file added but
+    not yet tracked is invisible, which is correct because CI starts
+    from a clean tree). Top level only: `tests/benchmarks/` holds
+    `python -m` entry points that are not tests by design, and
+    `tests/fixtures/` holds data. That is a statement about *this
+    directory's* contents, not about location -- a
+    `tests/benchmarks/test_foo.py` *would* be collected, because
+    `testpaths` recurses -- so the sweep does not claim benchmarks are
+    uncollectable; it claims that at the top level, where the real
+    suite lives, every module is one the suite runs.
+
+    **The `pytest.ini` assertion is the premise, not decoration.** The
+    default patterns are what makes "collected" mean what this test
+    says it means. A `python_files` line would silently redefine it --
+    widening it to `*.py` makes every offender collectable and turns
+    this test green while changing what the suite runs. Matched on a
+    non-comment line (`^\\s*python_files\\s*=`), so a commented-out
+    `# python_files = ...` neither satisfies nor trips it; the naive
+    `"python_files" not in text` would go red on the comment that
+    explains the absence.
+    """
+    ini = (REPO / "pytest.ini").read_text(encoding="utf-8")
+    assert not re.search(r"^\s*python_files\s*=", ini, re.M), (
+        "pytest.ini now sets python_files, so pytest's default test-file "
+        "patterns no longer decide what is collected and this test's "
+        "premise is gone; if that is deliberate, teach this test the new "
+        "patterns rather than deleting it (#347)")
+
+    walked = {f"tests/{path.name}" for path in (REPO / "tests").glob("*.py")}
+    tracked = _tracked_top_level_test_modules()
+    modules = walked if tracked is None else walked & tracked
+
+    collected = {
+        name for name in modules
+        if any(fnmatch.fnmatch(pathlib.PurePosixPath(name).name, pattern)
+               for pattern in _DEFAULT_TEST_FILE_PATTERNS)}
+    # A green result is only meaningful if the sweep actually saw the
+    # suite. 195 top-level test modules match a default pattern on the
+    # tree this landed in -- a measurement, not a pin: the floor below
+    # is deliberately far under it, because every branch that adds a
+    # test file moves the count and a pin would make that a conflict.
+    assert len(collected) >= 150, (
+        f"only {len(collected)} collectable modules found under tests/; "
+        "the sweep is broken and this test would otherwise pass "
+        "vacuously (#347)")
+
+    offenders = sorted(modules - collected - {"tests/conftest.py"})
+    assert not offenders, (
+        "a module under tests/ that pytest never collects reads as "
+        "coverage and is not (#347). These match neither of pytest's "
+        f"default patterns {_DEFAULT_TEST_FILE_PATTERNS} and are not "
+        "conftest.py, so nothing runs them: rename them to test_*.py so "
+        "they run, move them to tests/benchmarks/ if they are entry "
+        "points, or delete them:\n    " + "\n    ".join(offenders))
 
 
 def test_the_build_backend_is_declared_exactly_once():
