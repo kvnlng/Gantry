@@ -783,8 +783,12 @@ gains.
 ### 7.1 Where the loaders live
 
 **Recommendation: a dict on `Instance`, not a field on `DicomItem`.**
-The dict is right; ~~its values are not~~ — **amended, see §16.2: the
-values are `NestedPixelRef` provenance records, not built loaders.**
+
+**Amended, see §16.2.** The dict is right and is what shipped. The
+declaration below is not: the values are `NestedPixelRef` provenance
+records, not built `SidecarPixelLoader`s, and the field is named
+`_nested_pixel_refs`. (A code block cannot be struck through in
+Markdown, so this is the marker for it.)
 
 ```python
 # Transient: nested sidecar payloads, keyed by their parsed blob kind.
