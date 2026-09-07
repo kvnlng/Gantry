@@ -127,15 +127,20 @@ def test_a_synchronously_saved_session_reaches_close_with_clean_instances(
 
 
 def test_an_exported_session_reaches_close_with_clean_instances(tmp_path):
-    """Measurement: `_export_dicom`'s save is asynchronous.
+    """Measurement: an exported session has nothing left to save.
 
-    `export()` calls `self.save()` -- not `save(sync=True)` -- and
-    nothing after it mutates the graph, so on the documented order the
-    instances *should* be clean at `close()`. That is a timing property
-    of the persistence manager's drain and of `shutdown()`'s
-    reconciliation, not something the source states, so it is measured
-    here. The warning is emitted after `shutdown()` precisely so this
-    holds.
+    `export()` calls `self.save(sync=True)` -- synchronous since #343,
+    so the save has returned before the export walks -- and nothing
+    after it mutates the graph, so the instances *should* be clean at
+    `close()`. When this was written the save was asynchronous and the
+    property was a timing one, of the persistence manager's drain and of
+    `shutdown()`'s reconciliation. It is kept now that the save is
+    synchronous because clean-at-close is still a property of two other
+    things and not of the call site: the save walk's `mark_persisted()`
+    on every instance it writes, and `shutdown()`'s reconciliation of a
+    save its worker never finished (#314). Either can regress without
+    `_export_dicom` changing, and this is the test that says so. The
+    warning is emitted after `shutdown()` precisely so this holds.
     """
     session = _session(tmp_path, name="exported")
     try:

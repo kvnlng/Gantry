@@ -3169,8 +3169,28 @@ class DicomSession:
         # Flush before the walk: a large export loads pixels back in, and
         # holding both the pending edits and the frames being written has
         # been enough to run a redaction session out of memory.
+        #
+        # `sync=True`, and it is the whole fix for #343. A plain `save()`
+        # enqueues on the persistence worker and returns, so this did
+        # not flush before the walk, it flushed *concurrently with* it:
+        # `release_memory()` frees an instance only once the background
+        # save has attached its `_pixel_loader`, so which instances were
+        # swept depended on which thread got there first. Idle, the
+        # sweep won and the resident arrays reached the workers; under
+        # load the save won for some subset and those were reloaded
+        # through the loader instead -- correct for an ingested
+        # instance, and an empty image for one whose `pixel_array` was
+        # assigned directly with no Rows/Columns (measured 0/200 idle,
+        # 2/300 under two concurrent suites). CHANGELOG's #183 entry is
+        # the first sighting ("once the save won that race"); it fixed
+        # the dtype the reload came back with and left the ordering.
+        # `audit()` and `redact()` already drain on entry; export was
+        # the third verb and did not. The price is `save()`'s documented
+        # one: a wedged worker now wedges the export instead of racing
+        # it. `tests/test_export_flushes_before_it_sweeps.py` holds the
+        # order.
         print("Saving pending changes to free memory...")
-        self.save()
+        self.save(sync=True)
         self.release_memory()
 
         tasks, patient_count = self._build_export_plan(

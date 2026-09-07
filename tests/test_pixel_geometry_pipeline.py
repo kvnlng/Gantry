@@ -939,3 +939,104 @@ def test_export_corrects_a_stale_number_of_frames(tmp_path):
         "the file claims more frames than its Pixel Data carries")
     assert len(ds.PixelData) == 8 * 8
     assert np.array_equal(ds.pixel_array, arr)
+
+
+# ---------------------------------------------------------------------------
+# #343: a stored frame whose declared geometry is zero
+# ---------------------------------------------------------------------------
+#
+# `SidecarPixelLoader.__call__` reshapes the raw frame to the geometry the
+# instance declares, and when the reshape fails it falls back to a
+# truncate-then-reshape meant for the one-byte DICOM pad. With no
+# Rows/Columns on the instance -- `pixel_array` assigned directly, no
+# `set_pixel_data()` -- the declared geometry is `(0, 0)`, `target_size`
+# is 0, `arr.size >= 0` is always true, `arr[:0]` is empty, and a `(0, 0)`
+# array came back with the integrity hash passing, because the hash is
+# over the raw bytes. The export worker then failed with `Compression
+# failed: cannot write empty image`; a caller who never exports got a
+# healthy-looking empty image. Whether the loader was consulted at all
+# depended on a thread race in `_export_dicom` (see
+# `tests/test_export_flushes_before_it_sweeps.py`), which is how the
+# fallback stayed unnoticed.
+
+
+def _one_frame_loader(tmp_path, raw, attributes):
+    """A loader over one raw frame, for an instance declaring `attributes`."""
+    from isocenter.io_handlers import SidecarPixelLoader
+    from isocenter.sidecar import SidecarManager
+
+    sidecar = tmp_path / "s.bin"
+    offset, length = SidecarManager(str(sidecar)).write_frame(raw, "raw")
+    inst = Instance("1.2.3.zero", "1.2.840.10008.5.1.4.1.1.7", 1)
+    for tag, value in attributes.items():
+        inst.set_attr(tag, value)
+    return SidecarPixelLoader(str(sidecar), offset, length, "raw",
+                              instance=inst)
+
+
+def test_a_stored_frame_whose_geometry_is_zero_refuses_to_load(tmp_path):
+    """Zero declared geometry is an integrity error, not an empty image.
+
+    Same exception family and `Integrity Error` prefix as the hash
+    mismatch above it in `__call__`, so the export worker's existing
+    `Pixel Loader failed for ...` handling files an `ERROR` row and the
+    run grades `REVIEW_REQUIRED` -- rather than the worker shipping an
+    empty image, or, for a caller who never exports, `get_pixel_data()`
+    returning a `(0, 0)` array that looks like data.
+
+    A `None` return was rejected: `get_pixel_data()` would fall through
+    to `file_path` (absent here) and return `None`, and the export
+    worker's `arr is None` arm would export a non-image modality with
+    no pixels, silently. A raise is the only spelling the worker cannot
+    misread.
+
+    **Red before the guard:** the loader returned an array of shape
+    `(0, 0)`, dtype uint8, from a one-byte frame.
+    """
+    loader = _one_frame_loader(tmp_path, b"\x07", {})
+
+    with pytest.raises(RuntimeError, match="declares no pixel geometry") as exc:
+        loader()
+
+    message = str(exc.value)
+    assert "1.2.3.zero" in message, "the error does not name the instance"
+    assert "Rows=0" in message, (
+        "the error does not say which descriptor is missing")
+
+
+def test_a_zero_byte_frame_with_zero_geometry_is_refused_too(tmp_path):
+    """The guard runs before the reshape, or this case slips past it.
+
+    `np.frombuffer(b"").reshape((0, 0))` succeeds, so a guard inside the
+    reshape's `except ValueError` is never reached for an empty frame and
+    the `(0, 0)` array comes back exactly as before the fix. Found in
+    review of #343; the guard sits ahead of the reshape because of this
+    case alone, and this is the test that goes red if it moves back.
+    """
+    loader = _one_frame_loader(tmp_path, b"", {})
+
+    with pytest.raises(RuntimeError, match="declares no pixel geometry") as exc:
+        loader()
+
+    assert "0 bytes" in str(exc.value)
+
+
+def test_a_frame_with_one_byte_of_dicom_padding_still_reshapes(tmp_path):
+    """The one-byte pad is kept, so the guard cannot widen to any surplus.
+
+    DICOM pads odd-length Pixel Data to even, so a 2x2 8-bit frame
+    arrives as 5 bytes and the reshape's `ValueError` is the ordinary
+    path for every odd-length source. The fallback that drops the pad is
+    what the zero-geometry guard sits in front of; a guard written as
+    `arr.size != target_size` would break every one of those sources,
+    and this test is the one that goes red if it does. Green on both
+    sides of #343.
+    """
+    loader = _one_frame_loader(tmp_path, bytes(range(5)), {
+        "0028,0010": 2, "0028,0011": 2, "0028,0002": 1, "0028,0100": 8,
+    })
+
+    arr = loader()
+
+    assert arr.shape == (2, 2)
+    assert arr.tolist() == [[0, 1], [2, 3]], "the pad byte was not the one dropped"

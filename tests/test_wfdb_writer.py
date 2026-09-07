@@ -142,7 +142,19 @@ def test_wfdb_records_are_colocated_with_the_dicom_export_tree(tmp_path):
     })
     # Only needed so the DICOM export worker's pixel-data check is
     # satisfied; unrelated to the WFDB path, which reads waveform_array.
-    instance.pixel_array = np.zeros((1, 1), dtype=np.uint8)
+    #
+    # `set_pixel_data()`, not a direct `pixel_array =` assignment. The
+    # DICOM export saves and then sweeps (`_export_dicom`: `save(sync=True)`
+    # then `release_memory()`), so an instance has to be self-describing
+    # -- Rows/Columns written -- to survive its own export: the sweep
+    # nulls the resident array and the worker reloads it through
+    # `SidecarPixelLoader`, which reshapes to the declared geometry. A
+    # direct assignment writes no descriptors, the declared geometry is
+    # `(0, 0)`, and the reload is refused as an integrity error. Before
+    # the save was synchronous that refusal was load-dependent -- the
+    # sweep only reached this instance when the background save won a
+    # race, 4 runs in 15 under two concurrent suites -- which is #343.
+    instance.set_pixel_data(np.zeros((1, 1), dtype=np.uint8))
 
     wf_item = DicomItem()
     populate_attrs(ds.WaveformSequence[0], wf_item)
@@ -155,27 +167,38 @@ def test_wfdb_records_are_colocated_with_the_dicom_export_tree(tmp_path):
     study.series.append(series)
     patient.studies.append(study)
 
-    sess = DicomSession(":memory:")
-    sess.store.patients.append(patient)
-
     out_dir = tmp_path / "colocation"
 
-    # Mirrors tests/test_structured_export.py's known-good pattern for
-    # exercising a real export without parallel-worker / IOD-validation
-    # noise unrelated to folder placement. `session.export(folder)` (the
-    # "dicom" format, default) is the actual production path: it goes
-    # through `DicomSession._export_dicom`, not the legacy
-    # `DicomExporter.write_tree` API.
-    with patch('isocenter.io_handlers.run_parallel',
-              side_effect=lambda func, items, *a, **k: [func(i) for i in items]), \
-         patch.object(IODValidator, "validate", lambda ds: []):
-        sess.export(str(out_dir), format="dicom")
+    # `with`, so the session's executor and its two threads are released
+    # at the end of the test rather than at interpreter exit. Measured
+    # for #343: closing the session does not change the race this test
+    # used to lose (the race is inside one `export()` call); an unclosed
+    # session is a leak regardless.
+    with DicomSession(":memory:") as sess:
+        sess.store.patients.append(patient)
 
-    dcm_files = list(out_dir.rglob("*.dcm"))
-    assert len(dcm_files) == 1
-    dcm_dir = os.path.dirname(str(dcm_files[0]))
+        # Mirrors tests/test_structured_export.py's known-good pattern
+        # for exercising a real export without parallel-worker /
+        # IOD-validation noise unrelated to folder placement.
+        # `session.export(folder)` (the "dicom" format, default) is the
+        # actual production path: it goes through
+        # `DicomSession._export_dicom`, not the legacy
+        # `DicomExporter.write_tree` API.
+        with patch('isocenter.io_handlers.run_parallel',
+                   side_effect=lambda func, items, *a, **k: [func(i) for i in items]), \
+             patch.object(IODValidator, "validate", lambda ds: []):
+            sess.export(str(out_dir), format="dicom")
 
-    hea_paths = sess.export(str(out_dir), format="wfdb")
+        dcm_files = list(out_dir.rglob("*.dcm"))
+        assert len(dcm_files) == 1
+        dcm_dir = os.path.dirname(str(dcm_files[0]))
+
+        hea_paths = sess.export(str(out_dir), format="wfdb")
+
+    # One record because the WFDB exporter read the resident
+    # `waveform_array` through `get_waveform_data()` -- not because it
+    # tolerated an empty one: the no-samples case is a skip plus a
+    # DATA_LOSS row, pinned further down this file.
     assert len(hea_paths) == 1
     hea_dir = os.path.dirname(hea_paths[0])
 
@@ -340,31 +363,37 @@ def test_one_failing_instance_does_not_abort_the_whole_export(tmp_path, monkeypa
         patient.studies.append(study)
         return patient
 
-    sess = DicomSession(":memory:")
-    # BAD01 sorts/iterates first -- if the loop aborts on it, GOOD01 is
-    # never reached, proving containment (not just exception timing).
-    sess.store.patients.append(_make_patient("BAD01"))
-    sess.store.patients.append(_make_patient("GOOD01"))
+    with DicomSession(":memory:") as sess:
+        # BAD01 sorts/iterates first -- if the loop aborts on it, GOOD01
+        # is never reached, proving containment (not just exception
+        # timing).
+        sess.store.patients.append(_make_patient("BAD01"))
+        sess.store.patients.append(_make_patient("GOOD01"))
 
-    original_write_instance = WfdbExporter._write_instance
+        original_write_instance = WfdbExporter._write_instance
 
-    # Mirrors `_write_instance`'s real signature including `store_backend`
-    # (#159). A wrapper that is one parameter short does not fail loudly
-    # here: `export()`'s per-instance `except` swallows the TypeError, so
-    # BOTH patients get skipped and the containment assertion below reads
-    # 0 records as "the loop aborted". Keep this in step with the method.
-    def _write_instance_maybe_boom(self, folder, patient, study, series, instance,
-                                   logger, used_names, include_annotation_text=False,
-                                   store_backend=None):
-        if patient.patient_id == "BAD01":
-            raise RuntimeError("simulated malformed instance from a non-conformant cart")
-        return original_write_instance(self, folder, patient, study, series,
+        # Mirrors `_write_instance`'s real signature including
+        # `store_backend` (#159). A wrapper that is one parameter short
+        # does not fail loudly here: `export()`'s per-instance `except`
+        # swallows the TypeError, so BOTH patients get skipped and the
+        # containment assertion below reads 0 records as "the loop
+        # aborted". Keep this in step with the method.
+        def _write_instance_maybe_boom(self, folder, patient, study, series,
                                        instance, logger, used_names,
-                                       include_annotation_text, store_backend)
+                                       include_annotation_text=False,
+                                       store_backend=None):
+            if patient.patient_id == "BAD01":
+                raise RuntimeError(
+                    "simulated malformed instance from a non-conformant cart")
+            return original_write_instance(self, folder, patient, study,
+                                           series, instance, logger,
+                                           used_names, include_annotation_text,
+                                           store_backend)
 
-    monkeypatch.setattr(WfdbExporter, "_write_instance", _write_instance_maybe_boom)
+        monkeypatch.setattr(WfdbExporter, "_write_instance",
+                            _write_instance_maybe_boom)
 
-    paths = sess.export(str(tmp_path / "out"), format="wfdb")
+        paths = sess.export(str(tmp_path / "out"), format="wfdb")
 
     assert len(paths) == 1, (
         f"expected exactly GOOD01's record despite BAD01 failing, got {paths!r}")
