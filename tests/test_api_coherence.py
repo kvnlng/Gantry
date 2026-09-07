@@ -569,3 +569,26 @@ def test_from_parts_is_bound_to_equipment_in_field_order():
 
     params = list(inspect.signature(Equipment.from_parts).parameters)
     assert params == [f.name for f in dataclasses.fields(Equipment)]
+
+
+# --- #142: the published shape of the store's streaming reader -----------
+
+
+def test_get_flattened_instances_is_published_store_api():
+    """`SqliteStore.get_flattened_instances` has the shape the docs publish (#142).
+
+    Reachable as `session.store_backend.get_flattened_instances(...)`,
+    rendered on the docs site by an unfiltered `::: isocenter.persistence`,
+    and named by the 0.9.1 CHANGELOG as the migration path for callers
+    of the deleted `export_to_parquet`. #142 weighed deleting it and
+    kept it; this is the surface #26 will freeze. A characterization
+    pin, green today, same class as
+    `test_the_page_size_default_is_not_a_public_knob`: a renamed or
+    reordered parameter is an API change and goes through a red test.
+    Whether `page_size` belongs on the public surface is #26's call,
+    not a quiet edit here.
+    """
+    params = list(inspect.signature(
+        SqliteStore.get_flattened_instances).parameters)
+
+    assert params == ["self", "patient_ids", "instance_uids", "page_size"]

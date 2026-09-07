@@ -3135,8 +3135,14 @@ class SqliteStore:
           join happened to produce.
 
         Args:
-            patient_ids (List[str], optional): Filter by list of Patient IDs.
-            instance_uids (List[str], optional): Filter by list of SOP Instance UIDs.
+            patient_ids (List[str], optional): Restrict the rows to these
+                Patient IDs. ``None`` means every patient in the store.
+                An empty list matches nobody -- it is a filter that
+                selected nothing, not an absent filter.
+            instance_uids (List[str], optional): Restrict the rows to
+                these SOP Instance UIDs. Same rule: ``None`` is no
+                filter, an empty list matches nobody. Both filters
+                together intersect.
             page_size (int, optional): Rows per page, defaulting to 500.
                 Trades resident memory against the number of queries.
                 Must be an `int` >= 1 -- `LIMIT 0` returns an empty page,
@@ -3209,12 +3215,30 @@ class SqliteStore:
         filters = []
         filter_params = []
 
-        if patient_ids:
+        # `is not None` rather than a truth test: `[]` must exclude
+        # everyone (#142). A caller computing a cohort that came back
+        # empty would otherwise walk the whole store -- silent
+        # over-export, from the DB reader the changelog points migrating
+        # `export_to_parquet` callers at. Same rule, same comment, as
+        # `get_cohort_report` and `_export_dicom` in `session.py`; the
+        # truth test here was the one reader of three that got it wrong.
+        #
+        # The empty list renders `p.patient_id IN ()`, and no
+        # short-circuit is added for it because SQLite accepts it as
+        # legal and false. That is a dialect extension, not SQL:
+        # sqlite.org/lang_expr.html -- "SQLite allows the parenthesized
+        # list of scalar values on the right-hand side of an IN or NOT
+        # IN operator to be an empty list but most other SQL database
+        # engines and the SQL92 standard require the list to contain at
+        # least one element." A port to another engine needs a
+        # short-circuit here; on SQLite one would be a second mechanism
+        # for one rule.
+        if patient_ids is not None:
             placeholders = ",".join("?" for _ in patient_ids)
             filters.append(f"p.patient_id IN ({placeholders})")
             filter_params.extend(patient_ids)
 
-        if instance_uids:
+        if instance_uids is not None:
             placeholders = ",".join("?" for _ in instance_uids)
             filters.append(f"i.sop_instance_uid IN ({placeholders})")
             filter_params.extend(instance_uids)

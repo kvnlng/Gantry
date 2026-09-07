@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`get_flattened_instances([])` walked the whole store (#142).** `SqliteStore._iter_flattened_instances` gated its two filters with truth tests -- `if patient_ids:` and `if instance_uids:` -- so an empty list read as "no filter" and returned every row in the store. Both gates are now `is not None`.
+
+  **What a previously-working call now does.** `store.get_flattened_instances(patient_ids=[])` and `store.get_flattened_instances(instance_uids=[])` return no rows, where they returned every row. `None` still means every patient. Nothing else changes: a non-empty list filters exactly as before, and both filters together intersect (a test now pins that too -- each alone was covered, the conjunction was not).
+
+  **Why the old behaviour was wrong.** The in-memory readers already said the opposite, in code and in a test: `get_cohort_report` uses `patient_ids is not None and p.patient_id not in patient_ids` with the comment "`[]` must exclude everyone. A caller computing a cohort that came back empty would otherwise export the whole dataset"; `_export_dicom` is the same `is not None`; `tests/test_dataframe_export.py::test_an_empty_patient_id_list_selects_nobody` states the rule. Three readers, two spellings of "empty", and the one that got it wrong was the DB reader the 0.9.1 CHANGELOG names as the migration path for callers of the deleted `export_to_parquet` -- so a caller who followed that advice, computed a cohort, and got an empty one back would have streamed the entire index. That is a silent over-export in exactly the shape the sibling's comment warns about.
+
+  **Why there is no short-circuit.** The empty list renders `p.patient_id IN ()`, which SQLite accepts as legal and false -- a dialect extension, not SQL. From sqlite.org/lang_expr.html: "SQLite allows the parenthesized list of scalar values on the right-hand side of an IN or NOT IN operator to be an empty list but most other SQL database engines and the SQL92 standard require the list to contain at least one element." An explicit `return` for `[]` would be a second mechanism for one rule; the comment at the gate quotes the sentence so a port to another engine knows it needs one. The two empty-list tests drain through `list(...)` on a `:memory:` store and are the proof the gate's SQLite accepts the construct, on both interpreters the PR gate runs.
+
+  **#142 itself is closed as keep.** The method is public API -- `docs/api/persistence.md` renders `isocenter.persistence` unfiltered, and the 0.9.1 CHANGELOG names it -- with no in-tree caller by decision (#55 chose the in-memory graph for `export_dataframe`). Its coverage is anchored on the method itself, which has been lost twice to deletions elsewhere (`generate_export_from_db`, then `export_to_parquet`); the holding-action test is promoted to `test_get_flattened_instances_is_public_api_covered_on_itself` with its three assertions intact, and its signature -- `(self, patient_ids, instance_uids, page_size)` -- is pinned in `tests/test_api_coherence.py` as the surface #26 will freeze. The `:memory:` deadlock the issue's comment describes was fixed in 0.9.1 (#164), which also gave `instance_uids` its coverage; there was nothing left to design there, and the walk is untouched.
+
 ### Changed
 
 - **Relicensed from AGPL-3.0-or-later to Apache-2.0 (#348).** `LICENSE` now carries the Apache License 2.0 text and a `NOTICE` file carries the copyright line; `setup.py` declares `license="Apache-2.0"` with the matching classifier; `.zenodo.json` and `CITATION.cff` name the same license, and `tests/test_packaging_contract.py` and `tests/test_version_contract.py` hold all of them together.
