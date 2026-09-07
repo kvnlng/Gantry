@@ -439,6 +439,23 @@ def _value_fits_vr(value, vr: str) -> bool:
     Returns:
         bool: True when the pairing is safe to write.
     """
+    if value is None:
+        # Documentation, not behaviour: `None` already reached the
+        # closing `return False` by matching no `isinstance` arm. It is
+        # spelled out because a reader who finds the `v is None` branch
+        # in `_merge` will come here to "clean it up" by widening this
+        # function, and this is where the reason not to lives. Widening
+        # it makes `_value_fits_vr([None, 'B'], 'LO')` true through the
+        # list arm below, `add_new` accepts the list, and `filewriter`
+        # raises past `_merge`'s try -- the whole file rather than the
+        # element (#344).
+        #
+        # Deleting this line, or flipping it to `True`, leaves every
+        # test green, because the `None` branch in `_merge` runs first
+        # and nothing else reaches here with a `None`. It is an
+        # equivalent mutant on purpose; do not write a test around it.
+        return False
+
     if isinstance(value, tuple):
         # A `tuple` is the one sequence shape `add_new` does not convert
         # to the element's multi-value form: it reaches `struct.pack` as
@@ -3590,7 +3607,33 @@ class DicomExporter:
                 # would otherwise reintroduce one layer up. When it does
                 # not fit, the fallback runs exactly as before (#154).
                 recorded = (vrs or {}).get(t)
-                if recorded is not None and _value_fits_vr(v, recorded):
+                if v is None:
+                    # A zero-length element: the source asserted the
+                    # tag's presence and gave it no value, and DICOM has
+                    # an encoding for exactly that. Dropping it is a
+                    # claim about the source too, and a different one
+                    # from what the source made -- #60 forbade inventing
+                    # a value *and* discarding one, and this arm is the
+                    # second half (#344). The recorded VR is the
+                    # source's own answer; `UN` is what an element whose
+                    # VR was never known is (PS3.5 6.2.2), which is
+                    # every private element of an Implicit VR source,
+                    # because `_record_private_vr` refuses to record
+                    # `UN`.
+                    #
+                    # Handled HERE and not by widening `_value_fits_vr`,
+                    # deliberately. That function recurses over a list,
+                    # so admitting `None` would make `[None, 'B']` "fit"
+                    # LO -- `add_new` accepts it and `filewriter` then
+                    # raises `TypeError: sequence item 0: expected a
+                    # bytes-like object, NoneType found` past `_merge`'s
+                    # try, failing the whole file rather than the
+                    # element. That is the second failure class
+                    # `_value_fits_vr`'s own docstring exists to
+                    # prevent. See
+                    # `test_a_none_among_siblings_is_the_same_loud_loss_on_both_paths`.
+                    vr = recorded if recorded is not None else 'UN'
+                elif recorded is not None and _value_fits_vr(v, recorded):
                     vr = recorded
                 else:
                     encoded = DicomExporter._fallback_encoding(v)

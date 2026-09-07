@@ -1,4 +1,8 @@
-"""A zero-length private element must not reload as the word "None" (#339).
+"""A zero-length private element survives the store and reaches the file.
+
+Two issues, one file. #339 is the store half: a `None` must not reload as
+the word "None". #344 is the export half: the element the source said was
+present-and-empty must be *written*, not dropped.
 
 `save_vertical_attributes` renders every atom with `str()`, so a `None`
 value -- which is what pydicom hands back for a zero-length element under
@@ -11,9 +15,16 @@ reloaded export wrote it into the file as though the source had said it.
 not reproduce: `pydicom.config.use_none_as_empty_text_VR_value` is
 `False`, so a zero-length `LO`/`SH`/`UT` reads back as `''` and a `PN`
 as `PersonName('')`, and those round-trip correctly today and after.
-What reproduces is `DS`, `IS`, `US`, `UL`, `SS`, `FL`, `FD`, `AT` -- and
-`UN`, whose zero-length value is `None` rather than `b''` and so misses
-the binary arm that would have retained it as empty bytes.
+What reproduces is **eleven** VRs whose zero-length value pydicom reads
+back as `None` -- `DS`, `IS`, `US`, `SS`, `UL`, `SL`, `UV`, `SV`, `FL`,
+`FD`, `AT` -- plus `UN`, whose zero-length value is `None` rather than
+`b''` and so misses the binary arm that would have retained it as empty
+bytes. `SL`, `SV` and `UV` are named by neither #339 nor #344 and were
+missing from this file's own list until #344 measured the population
+instead of listing it: they are not in `BINARY_VRS`, are not `SQ`, `PN`
+or `UN`, so they take `populate_attrs`' final `else` arm with
+`elem.value is None`, and `_record_private_vr` records them because the
+value is `None` rather than `bytes`.
 
 **Fresh and reloaded disagreed in the audit trail as well as in the
 file**, which is what picks the fix. Exported from the session that
@@ -28,10 +39,21 @@ if the export encoder is ever taught to write a zero-length element,
 both paths gain it at once, where a skip destroys the information for
 good. The export writer already keeps a zero-length element rather
 than dropping it, for the same reason:
-`value = b""` at io_handlers.py line 867.
+`value = b""` at io_handlers.py line 884.
 
-The file itself still omits the tag on both paths, which is #60's
-ruling: absent beats fabricated.
+**The file now carries the tag on both paths (#344)**, as a zero-length
+element under the VR the source recorded for it -- or under `UN` where no
+VR was ever recorded, which is every private element of an Implicit VR
+source. That is not fabrication: the source asserted the tag's presence
+and gave it no value, and a zero-length element is the one encoding DICOM
+has for saying exactly that. #60's rule against inventing a value the
+source never gave is untouched -- and its second clause, "not one we
+invent **and not one we discard**", is the half this repo had been
+failing since #118. No `DATA_LOSS` row is filed for the population any
+more, because nothing is lost.
+
+The VR half of that is observable only under an explicit-VR transfer
+syntax; see `_write_src`.
 """
 import glob
 import os
@@ -47,9 +69,14 @@ from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 from isocenter.persistence import SqliteStore
 from isocenter.session import DicomSession
 
-#: The VRs whose zero-length value pydicom reads back as `None`. Every
-#: one of them reached `str(None)` on the way into `value_text`.
-EMPTY_NUMERIC = [
+#: The eleven VRs whose zero-length value pydicom reads back as `None`
+#: **and** for which `_record_private_vr` keeps the source's answer. Every
+#: one of them reached `str(None)` on the way into `value_text` (#339),
+#: and every one of them is now written back out under the VR named here
+#: (#344). `SL`, `SV` and `UV` joined the list in #344: they behave
+#: exactly like the other eight and were missing from #339's test and
+#: from #344's own text.
+EMPTY_RECORDED_VR = [
     (0x1005, 'DS'),
     (0x1006, 'US'),
     (0x1007, 'UL'),
@@ -58,8 +85,22 @@ EMPTY_NUMERIC = [
     (0x100a, 'IS'),
     (0x100b, 'SS'),
     (0x100c, 'FD'),
-    (0x100d, 'UN'),
+    (0x100e, 'SL'),
+    (0x100f, 'SV'),
+    (0x1010, 'UV'),
 ]
+
+#: The twelfth case, and the one with a different mechanism.
+#: `_record_private_vr` refuses to record `UN` by design -- it is the
+#: absence of an answer, not an answer -- so nothing is in `attribute_vrs`
+#: for this tag and the export has to supply `UN` itself. This is also the
+#: arm *every* private element of an Implicit VR Little Endian source
+#: takes, so it is kept apart from the eleven rather than folded in.
+EMPTY_NO_RECORDED_VR = (0x100d, 'UN')
+
+#: The whole zero-length-`None` population, which is what the fixture
+#: writes and what the loss accounting is measured over.
+EMPTY_NUMERIC = EMPTY_RECORDED_VR + [EMPTY_NO_RECORDED_VR]
 
 #: The VRs whose zero-length value pydicom reads back as `''` (or as an
 #: empty `PersonName`). These were never affected; see the module
@@ -250,45 +291,116 @@ def test_a_none_atom_inside_a_list_keeps_its_place():
         "rather than becoming the text 'None'")
 
 
-@pytest.mark.parametrize("element, vr", EMPTY_NUMERIC)
-def test_a_reloaded_export_does_not_invent_a_value_for_an_empty_element(
-        reloaded_export, element, vr):
-    """The end-to-end red: a fabricated `LO 'None'` in the exported file.
+def _assert_zero_length_under(exported, element, expected_vr, path):
+    """The element is present, empty, and wearing `expected_vr`.
 
-    The fresh export of the same source omits the tag. This asserts the
-    reloaded one does too -- absent, which is #60's ruling, rather than
-    present and wrong.
+    All three halves matter and each fails differently. *Present* is the
+    #344 fix. *Empty* is the part that keeps it from being fabrication --
+    `is_empty` is one predicate over both readback shapes, `None` for a
+    numeric VR and `''` for a text one. *The VR* is the half the owner
+    decided: the source's own answer where it gave one, `UN` where it did
+    not.
+    """
+    tag = Tag(0x0009, element)
+    assert tag in exported, (
+        "(0009,%04x) was a zero-length %s in the source and the %s export "
+        "dropped it; the source asserted the tag was present and DICOM has "
+        "an encoding for a present element with no value (#344)"
+        % (element, expected_vr, path))
+    written = exported[tag]
+    assert written.is_empty, (
+        "(0009,%04x) was zero-length in the source and the %s export wrote "
+        "%r into it; a value was invented where the source gave none (#60)"
+        % (element, path, written.value))
+    assert written.VR == expected_vr, (
+        "(0009,%04x) came out of the %s export as %s where the source said "
+        "%s; a private element's VR is a fact the source file gave us and "
+        "the fallback's LO throws it away (#154, #344)"
+        % (element, path, written.VR, expected_vr))
+
+
+@pytest.mark.parametrize("element, vr", EMPTY_RECORDED_VR)
+def test_a_reloaded_export_writes_the_empty_element_under_its_recorded_vr(
+        reloaded_export, element, vr):
+    """The end-to-end green #344 buys, on the reloaded path.
+
+    This change has no persistence half: #339 already preserved the
+    `None` and the recorded VR through the store, on the explicit
+    argument that "if the export encoder is ever taught to emit a
+    zero-length element, both paths gain it at once". This is that, and
+    it is asserted here rather than assumed -- the VR read off the file,
+    not the tag's presence alone.
     """
     exported, _losses = reloaded_export
-    assert Tag(0x0009, element) not in exported, (
-        "(0009,%04x) was zero-length %s in the source and the reloaded "
-        "export wrote %r for it; the fresh export omits it (#339)"
-        % (element, vr, exported[Tag(0x0009, element)].value))
+    _assert_zero_length_under(exported, element, vr, "reloaded")
 
 
-def test_the_fresh_and_reloaded_exports_report_the_same_loss(
-        fresh_export, reloaded_export):
-    """The audit half, and the reason the fix preserves rather than skips.
+@pytest.mark.parametrize("element, vr", EMPTY_RECORDED_VR)
+def test_a_fresh_export_writes_the_empty_element_under_its_recorded_vr(
+        fresh_export, element, vr):
+    """The same assertion on the path that never touched the store.
 
-    A skip at `_split_core_and_private` would make the two files agree
-    and leave this red: the reloaded path would have no value to fail on
-    and would drop the element in silence, where the fresh path drops it
-    with a `DATA_LOSS` row and a REVIEW_REQUIRED grade. Preserving the
-    `None` is what makes the same element fail the same way on both
-    paths.
+    Nothing asserted the *fresh* path wrote the element before #344 --
+    the two paths were compared only through their loss counts, which
+    would stay equal if both regressed together and would name no
+    element if only one did.
     """
-    _fresh_ds, fresh_losses = fresh_export
-    _reloaded_ds, reloaded_losses = reloaded_export
+    exported, _losses = fresh_export
+    _assert_zero_length_under(exported, element, vr, "fresh")
 
-    assert fresh_losses == sorted(
-        f"0009,{element:04x}" for element, _vr in EMPTY_NUMERIC), (
-        "the fresh export's losses are not the zero-length numeric block; "
-        "the two-path comparison below would then be comparing the wrong "
-        "thing")
+
+@pytest.mark.parametrize("path", ["fresh", "reloaded"])
+def test_the_element_with_no_recorded_vr_is_written_as_un(
+        fresh_export, reloaded_export, path):
+    """The twelfth case, kept apart because its mechanism is different.
+
+    `_record_private_vr` refuses `UN` -- it is the absence of an answer,
+    not an answer -- so `attribute_vrs` holds nothing for this tag and
+    `_merge` has to supply the VR itself. `UN` is what PS3.5 6.2.2 says
+    an element of unknown VR is, and writing a zero-length `LO` there
+    would assert the element is text, which is a claim the source never
+    made. This is also the arm *every* private element of an Implicit VR
+    Little Endian source takes, so it is the common case in the field
+    even though it is one row here.
+    """
+    element, vr = EMPTY_NO_RECORDED_VR
+    exported, _losses = fresh_export if path == "fresh" else reloaded_export
+    _assert_zero_length_under(exported, element, vr, path)
+
+
+def test_neither_export_reports_a_loss_for_the_empty_block(
+        fresh_export, reloaded_export):
+    """The audit half: nothing is lost, so nothing is reported.
+
+    Both halves are asserted in one place on purpose. The rows that stop
+    being filed are exactly the elements that stop being dropped -- so a
+    reviewer comparing two runs across #344 can tell an export that got
+    better from a report that got quieter. Twelve rows before, zero
+    after, and twelve elements in the file where there were none.
+
+    The equality is #339's and is kept rather than spent: a skip at
+    `_split_core_and_private` would have made the two files agree and
+    left the *reports* divergent, and that is still the property being
+    held here, now at zero instead of at twelve.
+    """
+    fresh_ds, fresh_losses = fresh_export
+    reloaded_ds, reloaded_losses = reloaded_export
+
+    assert fresh_losses == [], (
+        "the fresh export still reports %r as data loss; nothing is lost "
+        "-- the elements are in the file (#344)" % (fresh_losses,))
     assert reloaded_losses == fresh_losses, (
         "the reloaded export reported %r and the fresh one %r for the "
         "same source file: an element dropped loudly on one path and "
         "silently on the other (#339)" % (reloaded_losses, fresh_losses))
+
+    for exported, path in ((fresh_ds, "fresh"), (reloaded_ds, "reloaded")):
+        for element, _vr in EMPTY_NUMERIC:
+            assert Tag(0x0009, element) in exported, (
+                "the %s export files no DATA_LOSS row for (0009,%04x) and "
+                "does not write it either: a quieter report over the same "
+                "loss is the one outcome this change must not have"
+                % (path, element))
 
 
 @pytest.mark.parametrize("element, vr", EMPTY_TEXT)
@@ -313,16 +425,30 @@ def test_a_text_vr_private_element_was_never_affected(
             "as %r" % (element, vr, element_out.value))
 
 
-def test_a_none_written_by_hand_onto_a_text_vr_private_tag_is_not_invented(
+def test_a_none_written_by_hand_onto_a_text_vr_private_tag_takes_that_vr(
         tmp_path):
-    """The one route left by which `'None'` could still be fabricated.
+    """A hand-set `None` follows the same rule, and that is deliberate.
 
-    `_value_fits_vr('None', 'LO')` is `True`, so a text-VR private tag
-    whose value was set to `None` in the graph -- by a `set_attr`, an
-    anonymisation or a remediation rather than by the source file --
-    would have reloaded under its own recorded VR carrying the word.
-    The store no longer produces the string, so it takes the same
-    fallback the fresh path takes and is reported instead.
+    This test asserted the opposite direction until #344, and its name
+    said so. The reversal is worth stating rather than editing away.
+
+    The `None` here came from a caller, not from a source file -- and not
+    from anywhere inside `isocenter/` either: the removal arms *delete*
+    the key (`del entity.attributes[proposal.target_attr]`,
+    `inst.attributes.pop(tag, None)`) and none of them writes a `None`
+    value, so this shape is reachable only from user code. It is still
+    not fabrication. `LO ''` says "this tag is present and has no value",
+    which is what the graph says; the recorded VR is a fact about the
+    *source element*, which was present, and `set_attr` does not clear
+    `attribute_vrs`.
+
+    Following the rule uniformly is also what keeps the implementation
+    one branch rather than two: telling a file-borne `None` from a
+    hand-set one needs a provenance flag the graph does not carry.
+
+    What is *not* reachable this way is the old fabrication: the store no
+    longer renders `None` as the four-character string, so nothing writes
+    the word (#339).
     """
     src = tmp_path / "src"
     src.mkdir()
@@ -349,9 +475,9 @@ def test_a_none_written_by_hand_onto_a_text_vr_private_tag_is_not_invented(
         session.close()
 
     exported = _read_only_written(out)
-    assert Tag(0x0009, 0x1020) not in exported, (
-        "a hand-set None on a text-VR private tag came back as %r"
-        % (exported[Tag(0x0009, 0x1020)].value,))
+    _assert_zero_length_under(exported, 0x1020, 'LO', "hand-set")
+    assert exported[Tag(0x0009, 0x1020)].value != 'None', (
+        "the word 'None' was written for a hand-set None value (#339)")
 
 
 def _loss_details(db_path):
@@ -371,6 +497,21 @@ def test_a_none_among_siblings_is_the_same_loud_loss_on_both_paths(tmp_path):
     that rule at all: before, the `None` came back as the text `'None'`,
     every atom encoded, and the element was written as a two-value
     string with a word the source never said in it.
+
+    **Since #344 this is also the test that catches the wrong mechanism
+    for writing a zero-length element.** #344 intercepts a scalar `None`
+    in `_merge` rather than widening `_value_fits_vr` to admit `None`,
+    and the widen is the obvious alternative. It would make
+    `_value_fits_vr([None, 'B'], 'LO')` return `True` through the
+    recursive list arm; `add_new(tag, 'LO', [None, 'B'])` then
+    *succeeds*, and `filewriter` raises `TypeError: sequence item 0:
+    expected a bytes-like object, NoneType found` **past** `_merge`'s
+    `try` -- failing the whole file rather than the element. That is the
+    second failure class `_value_fits_vr`'s own docstring exists to
+    prevent. Under the narrow route the two populations cannot overlap: a
+    scalar `None` is intercepted one level above `_value_fits_vr`, and a
+    `None` inside a list never reaches the interception because
+    `[None, 'B'] is not None`.
     """
     tag = "0009,1050"
     src = tmp_path / "src"
