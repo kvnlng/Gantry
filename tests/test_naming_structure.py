@@ -56,11 +56,24 @@ def test_folder_naming_structure():
 
     # Ingest
     db_path = os.path.join(TEST_DIR, "isocenter.db")
-    session = DicomSession(db_path)
-    session.ingest(TEST_DIR)
+    # `with`, not a bare constructor: `close()` releases a
+    # ProcessPoolExecutor and two threads holding sqlite handles on
+    # `db_path`, which lives inside TEST_DIR. Left open, those threads
+    # outlive the test and `teardown_module`'s `rmtree` races them --
+    # SQLite creates and removes -wal/-shm files without asking, so
+    # `exists()` said yes and `rmtree` then raised `FileNotFoundError`
+    # on a path that had gone. That surfaced as `1542 passed, 1 error`
+    # on 3.12, twice, on commits that had nothing to do with this file
+    # (#371). The teardown noise was the symptom; the leak is the
+    # defect, because a pool and two sqlite threads outliving their
+    # test make every later test in the run less deterministic, and
+    # this suite has been bitten by load-dependent races repeatedly
+    # (#250, #343, #274, #297).
+    with DicomSession(db_path) as session:
+        session.ingest(TEST_DIR)
 
-    # Export
-    session.export(EXPORT_DIR)
+        # Export
+        session.export(EXPORT_DIR)
 
     # Verify Structure
     # Should be: Subject_PAT001 / Study_2025-01-01_Brain_Scan_XXXXX / Series_1_MR_Axial_T1_XXXXX

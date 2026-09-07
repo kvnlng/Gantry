@@ -129,6 +129,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`tests/test_naming_structure.py` left a session open, leaking five threads and five subprocesses into the rest of the run, and its teardown raced them (#371).** One `with` block. No package code changes.
+
+  **The symptom was cosmetic and the defect was not.** Twice on `test (3.12)` — run 34060523498 on `e193ea7`, a docs commit, and run 34125623192 on an unrelated PR branch — the whole job went red as `1542 passed, 1 error`, the error being `FileNotFoundError: [Errno 2] No such file or directory: 'tests_data_naming'` from `shutil.rmtree` in `teardown_module`. Every test had passed; only the cleanup failed, and it failed on a file nothing in either commit touched. That is the worst shape a red can have: it costs whoever is holding a PR the time to prove the failure is not theirs, which is exactly what it cost here before this was filed.
+
+  **What was actually wrong.** `test_folder_naming_structure` built its session with a bare `DicomSession(db_path)` and never closed it. Measured on this tree, with a probe that counts before and after a single ingest-and-export:
+
+  | | Threads leaked | Child processes leaked |
+  | --- | --- | --- |
+  | bare constructor | **5** | **5** |
+  | `with` block | 0 | 0 |
+
+  The five threads are `AuditWorker`, `PersistenceWorker`, `QueueFeederThread`, `Thread-1` and `tqdm_monitor`. The first two hold sqlite handles on `tests_data_naming/isocenter.db`, which lives *inside* the directory the teardown then removes — and SQLite creates and drops `-wal`/`-shm` files without asking, so `os.path.exists(TEST_DIR)` said yes and `rmtree` raised on a path that had gone by the time it walked there. The log immediately above the error shows `Saving 1 patients to tests_data_naming/isocenter.db (Incremental)` twice, after the test body had returned, which is the background save still running during the teardown.
+
+  **The leak is the reason to fix it, not the noise.** `close()` releases a `ProcessPoolExecutor` plus those two sqlite threads; skipping it leaves them for the remainder of the pytest process. A suite that has been bitten by load-dependent races as often as this one (#250, #343, #274, #297) cannot afford tests that leave five subprocesses running behind them — every later test in the run becomes slightly less deterministic, and the failures that produces land somewhere else entirely. `shutil.rmtree(..., ignore_errors=True)` was rejected for exactly that reason: it would have made the red go away and left the leak.
+
+  Green five times in a row after the change, where the flake was intermittent before.
+
+  **The population is 29 files, and 28 of them are untouched here.** A sweep of top-level `tests/*.py` finds 29 modules that construct a `DicomSession` with neither a `with` block nor a `close()`. Only this one has been observed reddening CI, and only this one is fixed, deliberately: a 29-file change is not a bug fix, and the earlier draft on the same theme (12 test files leaking `:memory:` sessions, filed rather than fixed in an earlier bunch) is the file-backed cousin of the same question. Whether to retire the class is its own decision and is not taken here.
+
+
 - **#250 is closed: the intermittent 3.12/ubuntu hang was the `fork` start method, and #260 fixed it in 0.9.1. The release runbook now dispatches the probe before each tag (#250).** No package code changes here. `.agent/workflows/release_process.md` gains step 1a; the evidence is below, because an issue closed on a measurement should carry the measurement.
 
   **What was run.** `.github/workflows/hang-probe.yml`, twice, both on `e484bee` so the iterations combine: run `34073209412` (`start_method=both`) and run `34113535260` (`spawn` only). Each iteration is the whole suite on ubuntu / 3.12 -- the platform and interpreter #250 was opened on.
