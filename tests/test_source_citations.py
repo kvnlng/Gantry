@@ -33,14 +33,35 @@ Because skipping is the design, the test also asserts that a healthy
 number of citations were actually *graded* -- a broken resolver would
 otherwise skip everything and report a clean pass, which is the
 "a silent skip reads as a pass" failure written down twice already in
-this tree (#162, `tests/test_doc_anchors.py`'s fourth deferral).
+this tree (#162, `tests/test_doc_anchors.py`'s fourth deferral). The
+whitespace between the path, the word "line" and the number may contain
+a line break, and a `#` comment continuation after it (#346, below).
 
 **Rule 2 -- the content pin.** Grammar: `` `<CODE>` at path.py line N ``
 (a backticked code span, then the word "at", then the file -- bare or in
-its own balanced backtick pair, #325 -- then the word "line"). The cited line, stripped, must equal `<CODE>` exactly. This is
-what #310 actually asks for: an in-range check alone still passes after
-someone inserts a line above 201 and every one of the five citations
-starts pointing one line high.
+its own balanced backtick pair, #325 -- then the word "line"). The cited
+line, stripped, must equal `<CODE>` exactly. This is what #310 actually
+asks for: an in-range check alone still passes after someone inserts a
+line above 201 and every one of the five citations starts pointing one
+line high. As with Rule 1, any of the gaps between the tokens may hold a
+line break and a `#` continuation; the code span itself may not wrap.
+
+**Wrapped citations are graded, and reported on the line they start
+(#346).** Both scanners used to read one line at a time while both
+grammars joined their tokens with `\\s+`, which crosses a newline, so a
+citation written across a line break matched the regex and was never
+handed to it. A wrap between "at" and the path was range-checked but
+never content-checked -- reported in `graded`, looking pinned; a wrap
+between the path and "line" was seen by neither rule; and a wrap inside
+a `#` comment put a `#` between the tokens that no whitespace class
+crosses, so joining the text was not enough on its own. Both scanners
+now match the whole file and derive the line from the match offset, the
+shape `tests/test_documented_env_vars.py`'s `_names_read` already uses,
+and the inter-token gap admits a comment continuation. One known
+widening, measured at zero in the tree: a bare path ending one line
+followed by "line N" starting the next now reads as a citation even
+across a sentence boundary. If that ever fires on prose that is right,
+reword the prose -- a sentence shaped like a citation deserves to be one.
 
 The grammar is deliberately narrow, and the boundary was checked against
 the prose that already exists. `tests/test_redaction_attestation.py`
@@ -142,15 +163,33 @@ _EXCLUDED_PREFIXES = ("docs/superpowers/",)
 # rather than fixed.
 _CITED_PATH = r"(?P<tick>`)?(?P<path>[A-Za-z0-9_][A-Za-z0-9_./-]*\.py)(?(tick)`)"
 
+# The whitespace between a citation's tokens, and the one thing a wrap
+# inside a `#` comment puts there that `\s+` will not cross (#346). Six
+# of the tree's Rule 1 citations sit on comment lines, and a citation
+# wrapped in one reads `` `code` at\n# path.py line N `` once joined: a
+# newline, a `#`, a space. Measured before this was written: scanning
+# the joined text alone grades every wrap *except* that one, which is
+# an unmarked opt-out left in a guard whose issue is unmarked opt-outs.
+# The `#` is optional and may only follow whitespace, so a stray `#`
+# mid-line between two tokens (`` `x` # at path.py line N ``) matches
+# too -- harmless in Markdown, and measured against the live tree the
+# widening added no match to any prose that existed before it.
+# The code span itself stays `[^`\n]+`: a code span cannot wrap.
+# (The examples in this comment spell the number as `N` so that they
+# are not themselves citations; see the module docstring's own trick.)
+_GAP = r"\s+(?:#[ \t]*)?"
+
 # Rule 1: `path.py:N`, `path.py line N`, either optionally ending `-M`.
 _FILE_CITATION = re.compile(
-    _CITED_PATH + r"(?::|\s+line\s+)(?P<start>\d+)(?:-(?P<end>\d+))?")
+    _CITED_PATH + r"(?::|" + _GAP + r"line" + _GAP + r")"
+    r"(?P<start>\d+)(?:-(?P<end>\d+))?")
 
 # Rule 2: `<code>` at path.py line N. The word "line" is what separates
 # this from the `:N` spelling used for symbol references; see the module
 # docstring's boundary note.
 _CONTENT_CITATION = re.compile(
-    r"`(?P<code>[^`\n]+)`\s+at\s+" + _CITED_PATH + r"\s+line\s+(?P<number>\d+)")
+    r"`(?P<code>[^`\n]+)`" + _GAP + r"at" + _GAP + _CITED_PATH
+    + _GAP + r"line" + _GAP + r"(?P<number>\d+)")
 
 MARK_MODIFIED = "entity.mark_modified()"
 
@@ -256,7 +295,30 @@ def _resolve(root, index, cited):
 
 
 def _lines(path):
+    """The *target* side of every check: `lines[number - 1]` and the
+    Rule 1 total both come from here. `splitlines()`, not a count of
+    `\\n` -- a file without a trailing newline would otherwise be one
+    line short."""
     return path.read_text(encoding="utf-8").splitlines()
+
+
+def _citations(path, pattern):
+    """Every match of `pattern` in `path`, with the line it starts on.
+
+    Matched over the file's whole text rather than line by line (#346).
+    Both grammars join their tokens with whitespace that crosses a
+    newline, so a citation written across a line break matched the
+    regex and was never handed to it: the per-line sweep could not see
+    a citation that no single line contained. That is the same trap
+    `tests/test_documented_env_vars.py`'s `_names_read` closes for read
+    calls, in the same words -- invisible is the one answer a guard must
+    never give -- and this is the same shape: whole text, line number
+    derived from the match offset, reported as the line the citation
+    *starts* on.
+    """
+    text = path.read_text(encoding="utf-8")
+    for match in pattern.finditer(text):
+        yield text.count("\n", 0, match.start()) + 1, match
 
 
 def check_file_citations(root=None):
@@ -267,33 +329,32 @@ def check_file_citations(root=None):
     graded = 0
     for path in _prose_files(root):
         where = path.relative_to(root).as_posix()
-        for lineno, text in enumerate(_lines(path), 1):
-            for match in _FILE_CITATION.finditer(text):
-                target = _resolve(root, index, match.group("path"))
-                if target is None:
-                    # Third-party, or a file that no longer exists.
-                    # Deliberately not graded; see the module docstring.
+        for lineno, match in _citations(path, _FILE_CITATION):
+            target = _resolve(root, index, match.group("path"))
+            if target is None:
+                # Third-party, or a file that no longer exists.
+                # Deliberately not graded; see the module docstring.
+                continue
+            if isinstance(target, list):
+                if len(target) > 1:
+                    offenders.append(
+                        f"{where}:{lineno}: {match.group(0)!r} is "
+                        "ambiguous -- "
+                        + ", ".join(
+                            str(p.relative_to(root)) for p in target)
+                        + " all match. Cite it with its directory.")
                     continue
-                if isinstance(target, list):
-                    if len(target) > 1:
-                        offenders.append(
-                            f"{where}:{lineno}: {match.group(0)!r} is "
-                            "ambiguous -- "
-                            + ", ".join(
-                                str(p.relative_to(root)) for p in target)
-                            + " all match. Cite it with its directory.")
-                        continue
-                    target = target[0]
-                graded += 1
-                total = len(_lines(target))
-                cited_name = target.relative_to(root).as_posix()
-                for number in (match.group("start"), match.group("end")):
-                    if number is None:
-                        continue
-                    if not 1 <= int(number) <= total:
-                        offenders.append(
-                            f"{where}:{lineno}: cites {match.group(0)!r} "
-                            f"but {cited_name} is {total} lines long")
+                target = target[0]
+            graded += 1
+            total = len(_lines(target))
+            cited_name = target.relative_to(root).as_posix()
+            for number in (match.group("start"), match.group("end")):
+                if number is None:
+                    continue
+                if not 1 <= int(number) <= total:
+                    offenders.append(
+                        f"{where}:{lineno}: cites {match.group(0)!r} "
+                        f"but {cited_name} is {total} lines long")
     return offenders, graded
 
 
@@ -305,29 +366,28 @@ def check_content_citations(root=None):
     checked = []
     for path in _prose_files(root):
         where = path.relative_to(root).as_posix()
-        for lineno, text in enumerate(_lines(path), 1):
-            for match in _CONTENT_CITATION.finditer(text):
-                code = match.group("code")
-                cited = match.group("path")
-                number = match.group("number")
-                target = _resolve(root, index, cited)
-                if target is None:
+        for lineno, match in _citations(path, _CONTENT_CITATION):
+            code = match.group("code")
+            cited = match.group("path")
+            number = match.group("number")
+            target = _resolve(root, index, cited)
+            if target is None:
+                continue
+            if isinstance(target, list):
+                if len(target) != 1:
                     continue
-                if isinstance(target, list):
-                    if len(target) != 1:
-                        continue
-                    target = target[0]
-                lines = _lines(target)
-                number = int(number)
-                cited_name = target.relative_to(root).as_posix()
-                checked.append((where, lineno, code, cited_name, number))
-                actual = lines[number - 1].strip() if (
-                    1 <= number <= len(lines)) else None
-                if actual != code:
-                    offenders.append(
-                        f"{where}:{lineno}: says {code!r} is at "
-                        f"{cited_name} line {number}, but that line "
-                        f"holds {actual!r}")
+                target = target[0]
+            lines = _lines(target)
+            number = int(number)
+            cited_name = target.relative_to(root).as_posix()
+            checked.append((where, lineno, code, cited_name, number))
+            actual = lines[number - 1].strip() if (
+                1 <= number <= len(lines)) else None
+            if actual != code:
+                offenders.append(
+                    f"{where}:{lineno}: says {code!r} is at "
+                    f"{cited_name} line {number}, but that line "
+                    f"holds {actual!r}")
     return offenders, checked
 
 
@@ -667,3 +727,105 @@ def test_an_in_range_citation_of_the_wrong_line_is_not_caught(tmp_path):
     assert offenders == [], (
         "Rule 1 has started grading content; if that is deliberate, the "
         "module docstring's stated deferral is now wrong")
+
+
+# --- Citations written across a line break (#346) -------------------------
+#
+# Every prose file below starts with an `Intro.` line so that the wrapped
+# citation *starts* on line 2 and *ends* on line 3. That is what
+# separates a line number derived from `match.start()` (reports 2) from
+# one derived from `match.end()` (3) and from a dropped `+ 1` (1); a
+# line-1 citation would pass under the last of those by coincidence.
+
+
+def test_a_content_citation_wrapped_after_at_is_still_content_pinned(
+        tmp_path):
+    """`` `code` at\\npath.py line N `` is graded by Rule 2 (#346).
+
+    The regex joins its tokens with `\\s+`, which crosses a newline, and
+    the scanner handed it one line at a time, so a citation wrapped
+    anywhere inside matched the grammar and was never given the chance
+    to. Rule 1 still saw this shape -- the path and `line N` sit
+    together on the second line -- so it was reported in `graded`,
+    looked pinned, and only the content check was missing. Red first:
+    `checked == []`.
+    """
+    _tree(
+        tmp_path,
+        ["def f():", "    first()", "    second()"],
+        "Intro.\n"
+        "Wrapped: `second()` at\n"
+        "zzz_fixture_mod.py line 2.\n")
+
+    offenders, checked = check_content_citations(tmp_path)
+
+    assert len(checked) == 1, (
+        "a content citation wrapped after `at` was not graded by Rule 2; "
+        f"checked {checked}")
+    assert len(offenders) == 1, offenders
+    assert "'second()'" in offenders[0]
+    assert offenders[0].startswith("notes.md:2:"), (
+        "the reported line must be the one the citation starts on: "
+        f"{offenders[0]}")
+
+
+def test_a_citation_wrapped_before_line_is_graded_by_both_rules(tmp_path):
+    """`` path.py\\nline N `` was invisible to Rule 1 *and* Rule 2 (#346).
+
+    Worse than the shape above: with the break between the path and
+    the word `line`, neither rule's per-line scan could see a citation
+    at all -- not red, not graded, not counted. Red first: Rule 2
+    checks 0 and Rule 1 grades 0.
+    """
+    _tree(
+        tmp_path,
+        ["def f():", "    first()", "    second()"],
+        "Intro.\n"
+        "`second()` at zzz_fixture_mod.py\n"
+        "line 2.\n"
+        "See zzz_fixture_mod.py\n"
+        "line 99.\n")
+
+    content_offenders, checked = check_content_citations(tmp_path)
+    file_offenders, graded = check_file_citations(tmp_path)
+
+    assert len(checked) == 1, (
+        f"Rule 2 did not see the wrapped citation; checked {checked}")
+    assert len(content_offenders) == 1, content_offenders
+    assert content_offenders[0].startswith("notes.md:2:"), content_offenders
+    assert graded == 2, (
+        f"Rule 1 did not see the two wrapped citations; graded {graded}")
+    assert len(file_offenders) == 1, file_offenders
+    assert "is 3 lines long" in file_offenders[0]
+
+
+def test_a_citation_wrapped_inside_a_comment_is_graded(tmp_path):
+    """A wrap inside a `#` comment puts a `#` between the tokens (#346).
+
+    Six of the tree's forty-eight Rule 1 citations sit on comment lines.
+    A citation wrapped there reads `` `code` at\\n# path.py line N ``:
+    joined, the text between `at` and the path is a newline, a `#` and
+    a space, and `\\s+` does not cross the `#`. So scanning the joined
+    text is not enough on its own -- this test is red after that fix
+    too, and is what earns the comment-continuation gap its place in
+    both grammars.
+
+    Written as `notes.py` rather than through `_tree`, because the wrap
+    is a Python comment. `_source_index` will also index it as a source
+    file; the basename is unique, so that is harmless.
+    """
+    (tmp_path / "zzz_fixture_mod.py").write_text(
+        "def f():\n    first()\n    second()\n", encoding="utf-8")
+    (tmp_path / "notes.py").write_text(
+        "# Intro.\n"
+        "# Wrapped: `second()` at\n"
+        "# zzz_fixture_mod.py line 2.\n", encoding="utf-8")
+
+    offenders, checked = check_content_citations(tmp_path)
+
+    assert len(checked) == 1, (
+        "a content citation wrapped across a comment continuation was "
+        f"not graded; checked {checked}")
+    assert len(offenders) == 1, offenders
+    assert "'second()'" in offenders[0]
+    assert offenders[0].startswith("notes.py:2:"), offenders[0]
