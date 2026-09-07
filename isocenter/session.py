@@ -1123,10 +1123,11 @@ class DicomSession:
         is fully in hand before the loop starts, so the critical section
         is two attribute assignments and never spans a sqlite read.
 
-        The lock is a **leaf** here: nothing is acquired inside it, so
-        the documented `_pixel_swap_lock` -> `sidecar._lock` order is
-        preserved trivially and it is never co-held with `_memory_lock`
-        or `_audit_write_lock`.
+        The lock is a **leaf** here: nothing is acquired inside it, and
+        it is never co-held with `_memory_lock` or `_audit_write_lock`.
+        (This claimed to preserve a `_pixel_swap_lock` ->
+        `sidecar._lock` order. That order named a lock nothing ever
+        acquired, and it is gone -- #366.)
         """
         count = 0
         swap_lock = self.store_backend._pixel_swap_lock
