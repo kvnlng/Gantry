@@ -65,6 +65,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **#250 is closed: the intermittent 3.12/ubuntu hang was the `fork` start method, and #260 fixed it in 0.9.1. The release runbook now dispatches the probe before each tag (#250).** No package code changes here. `.agent/workflows/release_process.md` gains step 1a; the evidence is below, because an issue closed on a measurement should carry the measurement.
+
+  **What was run.** `.github/workflows/hang-probe.yml`, twice, both on `e484bee` so the iterations combine: run `34073209412` (`start_method=both`) and run `34113535260` (`spawn` only). Each iteration is the whole suite on ubuntu / 3.12 -- the platform and interpreter #250 was opened on.
+
+  | Arm | Iterations | Result |
+  | --- | --- | --- |
+  | `fork` | 1 | **HANG at 945s**, killed by the probe's own deadline |
+  | `spawn` | 10 + 10 | **20/20 clean**, 576-756s each |
+
+  That is the pre-registered decision table's first row -- "spawn >= 20 clean and fork `HANG`/`LOCKED` within 10: #250 closes as fixed by #260" -- and it is the row the run landed on.
+
+  **The `fork` hang is not a live defect, and reading it as one is the mistake this entry exists to prevent.** All four pool sites pin `multiprocessing.get_context("spawn")` and have since #260: `parallel.py` at the `ProcessPoolExecutor` and the recycling `Pool`, and `session.py` at `_executor` and its OOM restart. The probe's `fork` arm re-creates the removed population deliberately, by rebinding `multiprocessing.get_context` in `tests/conftest.py`. So the arm reproduces the *pre-#260* library, and what it establishes is that the fork hypothesis behind #250 was correct and that #260 answered it -- not that anything shipped today deadlocks.
+
+  **What the dump shows, and what it does not.** The parent stack is `audit()` -> `run_parallel` -> `_run_on_new_executor` -> `result()`, blocked, with `AuditWorker` and `PersistenceWorker` threads resident and four `ForkProcess` children alive. It hung in `tests/test_analysis.py::test_phi_report_analysis`, **not** the test #250 names, which is what makes it start-method-specific rather than test-specific. The dump is **parent-only** -- the four children were never dumped -- so *which* lock they inherited held is inferred, not measured. Stated as inference on purpose: the tree has been bitten before by a plausible mechanism written down as a fact.
+
+  **Which historical occurrences it matches.** Zero `database is locked` and zero `OperationalError` in the hanging iteration's log, so this reproduces occurrences 1-3 (the silent ~900s stall) and not 4-5 (the sqlite error from a forked child). Whether those two share this mechanism is not established here.
+
+  **The cadence, because a probe nobody dispatches is a probe that does not exist.** Before each release, `spawn` arm, ten iterations, run by whoever cuts the release and read before tagging; ten clean is the pass and a `HANG` reopens #250. Not scheduled: a multi-hour job on a timer is a CI cost decision, and not on the PR gate for the same reason.
+
+  **It is written in two places on purpose.** The operational step is `.agent/workflows/release_process.md` step 1a -- but that directory is **gitignored**, so it exists only on the release-cutter's machine. A commitment recorded only in an untracked file is one the next contributor cannot read, and this entry would otherwise be asserting a process nothing in the repository carries. So the cadence, the pass condition and the reason the arm is `spawn` rather than `both` are also in `.github/workflows/hang-probe.yml`'s header, which ships. (`both` doubles the runtime to re-prove a settled negative and turns the run red on the arm that is *supposed* to fail.)
+
+
 - **The hang probe could not be dispatched at all: its two computed `timeout-minutes` made the workflow unparseable (#250).** `.github/workflows/hang-probe.yml`'s job cap and loop-step cap are now the literals `356` and `340`; `tests/test_packaging_contract.py::test_the_hang_probe_never_runs_on_the_gate` gains the assertion that would have caught it.
 
   **What happened.** The probe merged with its caps written as a product of the dispatch inputs plus a constant -- `iterations * per_iteration_minutes + 25` for the job, `+ 5` for the loop step -- and the first dispatch attempt answered:

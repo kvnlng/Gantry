@@ -28,6 +28,30 @@ name: Hang Probe
 #
 # Reading the result: see the decision table in CHANGELOG's entry for
 # this file (the `[Unreleased]` entry naming #250).
+#
+# **The cadence: before each release, `spawn` arm, ten iterations.**
+#
+#     gh workflow run hang-probe.yml -r main -f start_method=spawn \
+#       -f iterations=10
+#
+# Ten clean iterations is the pass; a `HANG` or `LOCKED` row blocks the
+# release and reopens #250. Whoever cuts the release dispatches it and
+# reads the summary table before tagging. The operational step lives in
+# `.agent/workflows/release_process.md` (step 1a) -- which is
+# **gitignored**, so it is on the release-cutter's machine and not in
+# this repository. That is why the cadence is also written here, in a
+# file that ships: a commitment recorded only in an untracked directory
+# is a commitment the next contributor cannot read.
+#
+# **Use `spawn`, not `both`.** `spawn` is what the package does -- all
+# four pool sites pin `multiprocessing.get_context("spawn")` (#260). The
+# `fork` arm exists only to re-create the population #260 removed (see
+# `tests/conftest.py`) and is *expected* to hang: it did so on iteration
+# 1 of run 34073209412, while spawn went 20/20 clean across two runs on
+# the same commit. Dispatching `both` before a release doubles the
+# runtime to re-prove that, and turns the run red on the arm that is
+# supposed to fail. Reach for `both` only when reopening the fork
+# question itself.
 
 on:
   workflow_dispatch:
