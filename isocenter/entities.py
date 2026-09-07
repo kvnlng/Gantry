@@ -399,7 +399,7 @@ class Equipment:
         stood, kept deliberately by #290 rather than widened inside a
         behaviour-preserving refactor. The consequence is real: the
         store keeps `device_serial_number` for such a series and every
-        reload discards it, while `Session._match_machine_rule` and the
+        reload discards it, while `_match_machine_rule` in `session.py` and the
         redaction walk key on the serial. Widening the predicate is
         filed separately; it is now one line in one place.
 

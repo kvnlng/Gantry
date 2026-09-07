@@ -529,13 +529,18 @@ def test_flattened_instances_applies_both_filters_together():
 
     Each filter alone was covered; together they were not. The join is a
     string -- `" AND ".join(conditions)` -- which the mutation probe
-    cannot see and a hand-run can. Measured with `" OR "`: the walk does
-    not return wrong rows, it never returns, because the keyset
-    condition `i.id > ?` is joined by the same operator and the filter
-    keeps matching rows below `after_id` on every page. The drains are
-    therefore bounded with `islice` -- the store holds four rows, the
-    cap is ten -- so that mutant fails the assertion in milliseconds
-    rather than stalling the run until the CI step timeout.
+    cannot see and a hand-run can. Measured with `" OR "` on this
+    four-row store: at the default `page_size` (500, what this test
+    uses) the first page matches every row through `i.id > 0`, four
+    rows is a short page, the walk returns, and the first assertion
+    fails on four rows where one was expected. At a `page_size` no
+    larger than the rows the filters alone match (three here) the same
+    mutant loops forever, because the keyset condition shares the join
+    operator -- `" AND ".join(filters + ["i.id > ?"])` -- and the
+    filters keep matching rows below `after_id` on every page (measured:
+    `page_size=4` returns 7 rows and stops; 3, 2 and 1 never stop). The
+    drains are bounded with `islice` anyway, so a future small-page
+    variant of this test fails its assertion rather than stalling CI.
     """
     from itertools import islice
     from isocenter.persistence import SqliteStore
