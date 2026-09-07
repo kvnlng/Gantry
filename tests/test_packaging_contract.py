@@ -978,6 +978,18 @@ def test_the_hang_probe_never_runs_on_the_gate():
 
     loop = next((s for s in steps if s.get("id") == "loop"), None)
     assert loop is not None, "hang-probe.yml has no step with id `loop`"
+    # GitHub runs a `shell: bash` step as `bash --noprofile --norc -eo
+    # pipefail {0}`. With `-e` live, the loop's `wait "$pid"; rc=$?` exits
+    # the script on the first non-zero pytest, so a failing, locked or
+    # hanging iteration leaves no summary row and no `::error::` -- the
+    # probe reports nothing about exactly the runs it exists to report.
+    # Measured with a fake pytest under those flags. Nothing but this
+    # assertion can see the shell's flags, and a future reader will
+    # "clean up" a `set +e` that looks unmotivated.
+    assert re.search(r"^\s*set \+e\b", loop["run"], re.MULTILINE), (
+        "the loop step no longer starts with `set +e`; under GitHub's "
+        "default `-eo pipefail` for `shell: bash` the first failing "
+        "iteration exits the script before its row is written (#250)")
     literal = [s["timeout-minutes"] for s in steps if s is not loop]
     assert all(isinstance(cap, int) for cap in literal), (
         f"every step but the loop carries a literal cap; got {literal!r}")

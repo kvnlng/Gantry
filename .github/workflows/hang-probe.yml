@@ -186,7 +186,20 @@ jobs:
         # environment rather than being interpolated into it.
         PROBE_SELECTION: ${{ inputs.selection }}
       run: |
-        set -u
+        # `set +e`, explicitly, and it is load-bearing: GitHub runs a
+        # `shell: bash` step as `bash --noprofile --norc -eo pipefail
+        # {0}`, so `-e` is live before the first line of this script
+        # and `set -u` alone leaves it on. Under `-e` the `wait "$pid";
+        # rc=$?` below exits the script on the first non-zero pytest --
+        # a plain failing test, a LOCKED run and a killed HANG all end
+        # with no summary row and no `::error::`, and the pipefail'd
+        # `grep | tail` for the last item exits it on a log with no test
+        # items. Measured with a fake pytest under those exact flags.
+        # Every exit status this script cares about is read explicitly
+        # into `rc` and classified; nothing here may exit on its own.
+        # `test_the_hang_probe_never_runs_on_the_gate` asserts this line
+        # is present, because nothing else can see the shell's flags.
+        set +e -u
         mkdir -p probe-logs
         deadline=$(( ${{ inputs.per_iteration_minutes }} * 60 ))
         # On the fork arm the two tests that pin spawn are red by
@@ -267,4 +280,8 @@ jobs:
       with:
         name: hang-probe-${{ matrix.start_method }}-${{ github.run_id }}
         path: probe-logs/
-        if-no-files-found: error
+        # `warn`, not `error`: if a setup step failed before the loop
+        # ran there are no logs, and that step is already the red.
+        # Turning the upload red as well would be a second failure for
+        # one cause.
+        if-no-files-found: warn
