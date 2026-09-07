@@ -146,6 +146,7 @@ TARGETS = {
                                   "tests/test_murmur_annotations.py",
                                   "tests/test_naming_structure.py",
                                   "tests/test_nested_phi_audit.py",
+                                  "tests/test_nested_pixel_carriage.py",
                                   "tests/test_pixel_geometry_pipeline.py",
                                   "tests/test_planar_configuration_roundtrip.py",
                                   "tests/test_private_binary_ingest.py",

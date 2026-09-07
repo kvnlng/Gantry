@@ -24,7 +24,7 @@ than interprets.
 
 import pytest
 
-from isocenter.persistence import parse_blob_kind, serialize_blob_kind
+from isocenter.blob_kind import parse_blob_kind, serialize_blob_kind
 
 
 # The six spellings §4 of the spec enumerates -- every consumer the column
