@@ -138,6 +138,7 @@ try:
 except ImportError:
     Image = None
 from pydicom.dataset import FileDataset, FileMetaDataset
+from pydicom.pixels import get_decoder
 from pydicom.uid import ImplicitVRLittleEndian, JPEG2000Lossless
 from pydicom.tag import Tag
 from pydicom.datadict import dictionary_VR
@@ -1211,6 +1212,36 @@ def process_sequence(tag, elem, parent_item, dropped: list = None,
         parent_item.add_sequence_item(tag, seq_item)
 
 
+def _decode_pixels(ds) -> Tuple[np.ndarray, str]:
+    """The array `Dataset.pixel_array` returns, and the colour space it is in.
+
+    `pixel_array` calls exactly this -- `get_decoder(ts).as_array(ds)`
+    on the `pydicom.pixels` backend, which is the one `Dataset` uses
+    unless `use_pdh` is set and nothing in this package sets it -- and
+    then discards the meta (pydicom 3.0.2 `pixels/utils.py`, `arr, _ =
+    decoder.as_array(...)`). That meta is the one place pydicom states
+    what colour space the returned array is in, and it is not the
+    declared `PhotometricInterpretation`: with the default `as_rgb=True`
+    every 8-bit YBR family comes back RGB, under any transfer syntax,
+    and the dataset's own label is left as it was (#372). A caller that
+    stores the array has to store this answer with it.
+
+    The transfer syntax is read as an attribute, deliberately, rather
+    than with a `.get()` default. A dataset read with `force=True` and
+    no file meta (#281's population) has an empty `file_meta`;
+    `pixel_array` raises `AttributeError` for it and so does this, into
+    the same `except` and the same `Decompression Failed` row. A default
+    would turn that into a decode under Explicit VR LE -- a file
+    ingested with garbage geometry and no row at all.
+
+    All frames (`index=None`), the same as `pixel_array`; a helper that
+    decoded frame 0 would carry a multi-frame source as one frame.
+    """
+    ts = ds.file_meta.TransferSyntaxUID
+    arr, meta = get_decoder(ts).as_array(ds)
+    return np.ascontiguousarray(arr), meta["photometric_interpretation"]
+
+
 def _decode_nested_pixels(ds, candidates, dropped, instance) -> list:
     """Decode every nested (7fe0,0010) `populate_attrs` collected (#183).
 
@@ -1238,7 +1269,8 @@ def _decode_nested_pixels(ds, candidates, dropped, instance) -> list:
       can decode, under a transfer syntax that says there are no fragments.
       So it decodes here and stores raw, which is exactly what the
       top-level path does -- one rule for both depths.
-    - **Decode a lossy source.** See `_CARRIABLE_TRANSFER_SYNTAXES`.
+    - **Decode a source whose transfer syntax is not allow-listed.** See
+      `_CARRIABLE_TRANSFER_SYNTAXES` for which are, and why the rest wait.
 
     Args:
         ds (pydicom.Dataset): The enclosing dataset, for its `file_meta`.
@@ -1276,7 +1308,7 @@ def _decode_nested_pixels(ds, candidates, dropped, instance) -> list:
             # `file_meta` is not an approximation; it is the right answer.
             # Measured to decode correctly through RLE encapsulation too.
             item_ds.file_meta = ds.file_meta
-            arr = np.ascontiguousarray(item_ds.pixel_array)
+            arr, decoded_pi = _decode_pixels(item_ds)
         except Exception:  # pylint: disable=broad-except
             # Every reason a decode can fail takes the same route, and it is
             # the route this element already took: a loss row. Not the
@@ -1310,6 +1342,13 @@ def _decode_nested_pixels(ds, candidates, dropped, instance) -> list:
         target = resolve_item_path(instance, path)
         if target is not None and target.attributes.get("0028,0006") == 1:
             target.set_attr("0028,0006", 0)
+        # And the colour space, for the same reason the top-level arm
+        # corrects it (#372): the bytes above are whatever pydicom
+        # decoded to, and the item's declared label is not consulted by
+        # that decode. Only on difference, so a monochrome or RGB icon
+        # bumps no revision.
+        if target is not None and target.attributes.get("0028,0004") != decoded_pi:
+            target.set_attr("0028,0004", decoded_pi)
 
     return carried
 
@@ -1399,9 +1438,29 @@ def ingest_worker(fp: str) -> Tuple:
             try:
                 # Always decompress to raw bytes to ensure sidecar has consistent format (SidecarPixelLoader expects raw)
                 # This handles RLE/JPEG/J2K by decoding them now.
-                arr = np.ascontiguousarray(ds.pixel_array)
+                arr, decoded_pi = _decode_pixels(ds)
                 p_bytes = arr.tobytes()
                 p_alg = 'zlib'  # Always compress the raw bytes
+                # The label has to say what the bytes are, and the bytes
+                # are whatever pydicom decoded to -- for every 8-bit YBR
+                # family that is RGB, under any transfer syntax, native
+                # included; `pixel_array` converts and never touches
+                # `PhotometricInterpretation`. `populate_attrs` copied the
+                # declared label above, so without this a YBR source
+                # exported `YBR_FULL` over RGB bytes and a conformant
+                # reader showed `(169, 255, 65)` for `(220, 40, 90)`, or
+                # refused a `YBR_FULL_422` file outright (#372). AFTER the
+                # decode, unlike the PlanarConfiguration write above,
+                # which reads nothing from the array and must stay
+                # before it. Written only on difference, the same shape
+                # as `_write_str_if_changed`: an RGB, monochrome or
+                # palette source has meta equal to its label and bumps
+                # no revision. Not derived from the array's shape -- a
+                # 3-sample array is equally RGB or YBR_FULL, which is why
+                # #186 removed the `samples >= 3` relabel; the decoder's
+                # meta is the one place the colour space is stated.
+                if inst.attributes.get("0028,0004") != decoded_pi:
+                    inst.set_attr("0028,0004", decoded_pi)
             except Exception as e:
                 # If decompression fails (missing codec), we cannot ingest safely for sidecar usage.
                 # The path rides the meta slot, as in the blanket except
