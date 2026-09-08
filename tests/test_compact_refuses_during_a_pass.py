@@ -36,25 +36,31 @@ on the *live* instances under threads (the worker is handed
 attribute). While the refusal sat *after* `compact()`'s leading save,
 that difference reached the store: under threads the save wrote the
 three live instances under their regenerated UIDs and retired the
-pre-redaction rows, so test 1's "every row present before the park is
-present after" was red on 3.14.7t and had to be narrowed (spec §15
-item 8). The review of PR #385 then showed the save was the defect,
+pre-redaction rows, so the refusal test's "every row present before the
+park is present after" was red on 3.14.7t and had to be narrowed (spec
+§15 item 8). The review of PR #385 then showed the save was the defect,
 not a side effect: a pass that opened and closed *inside* it was
-admitted (§15 item 9, and the fourth test below). With the refusal
-before the save, a refused `compact()` does nothing, and test 1 pins
-the whole pre-park row set and the sidecar's inode again, on both
+admitted (§15 item 9, and
+`test_a_pass_that_opens_and_closes_inside_the_leading_save_is_kept_out`
+below). With the refusal before the save, a refused `compact()` does
+nothing, and `test_compact_during_redact_raises_and_reclaims_nothing`
+pins the whole pre-park row set and the sidecar's inode again, on both
 paths.
 
-**Seams.** Test 1 parks `_apply_redaction_outcomes` after materialising
-its outcomes (a `staticmethod`, so the patch is installed as one). Test
-2 parks the compaction inside `_rewrite_live_frames` and counts
-dispatches on the *parent's* `run_parallel` -- under processes the child
-unpickles the unpatched class, so a counter on the worker would read
-zero for the wrong reason. Test 3 parks the ingest loop at the first
-`Equipment.from_parts`, which runs after the result's frames are
-appended (outside the gate, inside the pass) and before its `instances`
-row can exist -- the exact window in which 0.9.3's compaction reclaimed
-a freshly ingested frame.
+**Seams.** `test_compact_during_redact_raises_and_reclaims_nothing` parks
+`_apply_redaction_outcomes` after materialising its outcomes (a
+`staticmethod`, so the patch is installed as one).
+`test_a_pass_that_opens_and_closes_inside_the_leading_save_is_kept_out`
+parks `SqliteStore.save_all` after the real call returns, on the compact
+thread's first call only. `test_redact_during_compact_waits_then_proceeds`
+parks the compaction inside `_rewrite_live_frames` and counts dispatches
+on the *parent's* `run_parallel` -- under processes the child unpickles
+the unpatched class, so a counter on the worker would read zero for the
+wrong reason. `test_compact_during_ingest_raises` parks the ingest loop
+at the first `Equipment.from_parts`, which runs after the result's
+frames are appended (outside the gate, inside the pass) and before its
+`instances` row can exist -- the exact window in which 0.9.3's
+compaction reclaimed a freshly ingested frame.
 """
 import os
 import sqlite3
