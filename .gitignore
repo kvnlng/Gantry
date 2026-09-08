@@ -85,6 +85,10 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 *.bin
+# Sidecar gate and pass-lock files (`<name>_pixels.bin.lock`,
+# `<name>_pixels.bin.pass.lock`). Tests write beside the sidecar in the
+# repo root, so this pattern lands before any code creates one (#376).
+*.lock
 *.db
 *.db-shm
 *.db-wal
