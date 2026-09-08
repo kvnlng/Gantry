@@ -1,3 +1,13 @@
+# Module scope, deliberately. `fcntl` is POSIX-only and `setup.py`
+# says `Operating System :: POSIX` because of it (#376). At module
+# scope a Windows install fails at `import isocenter` -- `sidecar` is
+# imported by `persistence`, which is imported by `session` -- where the
+# packaging claim is checked; inside `write_frame`, where this used to
+# be, the same install succeeded and failed at the first sidecar write.
+# `tests/test_packaging_contract.py` walks the AST for this import at
+# module scope, and a `try:` guard would make the classifier true and
+# that walk's answer false.
+import fcntl
 import os
 import zlib
 from typing import Tuple
@@ -42,10 +52,16 @@ class SidecarManager:
 
         length = len(blob)
 
-        # Process-Safe Locking using fcntl (POSIX)
-        import fcntl
-
-        # We assume strict append mode
+        # Process-Safe Locking using fcntl (POSIX). This flock is on the
+        # sidecar's own inode and is a leaf: it serialises appends
+        # against each other and nothing else. It does NOT serialise
+        # writers against `compact_sidecar`, whose `os.replace` gives
+        # the path a new inode -- a writer blocked here wakes and
+        # appends into the unlinked one. That is the gate's job
+        # (`SqliteStore._hold_sidecar_gate`, on a stable path beside
+        # the sidecar), which is held by every caller of this method
+        # and never taken inside it (#368).
+        #
         # We assume strict append mode
         # Use r+b and explicit seek to ensure tell() is accurate and writes are
         # contiguous, avoiding 'ab' mode ambiguity in some environments.
