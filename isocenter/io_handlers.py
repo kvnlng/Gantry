@@ -1226,8 +1226,9 @@ def _decode_pixels(ds) -> Tuple[np.ndarray, str]:
     `pixel_array` calls exactly this -- `as_array` on `get_decoder(ts)`,
     the `pydicom.pixels` backend, which is the one `Dataset` uses
     unless `use_pdh` is set and nothing in this package sets it -- and
-    then discards the meta (pydicom 3.0.2 `pixels/utils.py`: `arr, _ =`
-    the `as_array` pair). That meta is the one place pydicom states
+    then discards the meta (pydicom 3.0.2 `pixels/utils.py:1430`, the
+    `Dataset` branch: `[0]` of the `as_array` pair; the path/file branch
+    at `:1465` spells it `arr, _ =`). That meta is the one place pydicom states
     what colour space the returned array is in, and it is not the
     declared `PhotometricInterpretation`: with the default `as_rgb=True`
     every 8-bit YBR family comes back RGB, under any transfer syntax,

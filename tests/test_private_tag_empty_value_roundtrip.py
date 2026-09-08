@@ -392,7 +392,7 @@ def _assert_zero_length_under(exported, element, expected_vr, path):
     assert written.VR == expected_vr, (
         "(0009,%04x) came out of the %s export as %s where the source said "
         "%s; a private element's VR is a fact the source file gave us and "
-        "the fallback's LO throws it away (#154, #344)"
+        "the fallback (UN since #367, LO before) throws it away (#154, #344)"
         % (element, path, written.VR, expected_vr))
 
 

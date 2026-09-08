@@ -1039,3 +1039,24 @@ determinations in §0–§3 stand; these are where the *mechanism* or a
    `git checkout 283bf04 -- isocenter/resources/research_tags.json`
    (staged, so `_tracked_paths_in_package` sees it) and `git rm` to
    revert -- an untracked copy is invisible to the test by design.
+7. **§1.3's "nothing else moves" was wrong by one line: the store.**
+   Review of #391 found `save_vertical_attributes`' container check
+   (`persistence.py`, `isinstance(val, (list, MultiValue))`) sent a `()`
+   down the scalar arm, storing the text `'()'`, so the three empty
+   spellings were one element on the wire on the fresh path only: after
+   save/reload a `()` exported as `UT '()'` / `UN b'()'` (no recorded
+   VR) or `LO '()'` (recorded `DS`). The check is widened to
+   `(list, tuple, MultiValue)` -- the tuple `_merge` names -- and the
+   `()` test in §5.1 runs on both paths; the reloaded row is red on
+   `is_empty` without the widening. B1 covers the pre-fix stores.
+8. **§7 item 7's "a resource named only in an f-string is still named"
+   is false as §2.3's walk is built, and the falsity is in the safe
+   direction.** The f-string's literal parts are `ast.Constant` nodes,
+   but each holds its segment (`"/redaction_rules.json"`), and the test
+   checks exact basename membership. Review of #391 measured it:
+   `f"{RESOURCES_DIR}/redaction_rules.json"` at `session.py:152` turns
+   `test_every_shipped_resource_is_named_by_the_package` red. The
+   claim was deleted from the helper's docstring and the CHANGELOG
+   parenthetical rather than the walk being taught f-strings: a loader
+   that builds the name from parts *should* have to teach the test, as
+   the test's own docstring already said.

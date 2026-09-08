@@ -497,10 +497,16 @@ def _string_literals_in_package():
     """Every `str` constant in `isocenter/**/*.py`, by AST walk.
 
     An AST walk rather than a regex over source text, so a commented-out
-    reference does not count as a reader. `ast.Constant` covers plain
-    literals and the constant parts of an f-string (`ast.JoinedStr`
-    holds `Constant` nodes for its literal segments), so a resource
-    named as `f"{dir}/phi_tags.json"` is still named.
+    reference does not count as a reader. An f-string's literal parts
+    are `ast.Constant` nodes too, but each holds its *segment* -- for
+    `f"{RESOURCES_DIR}/redaction_rules.json"` that is
+    `"/redaction_rules.json"`, which is not the basename the caller
+    checks for. Measured by review of #391: that rewrite of
+    `session.py:152` turns `test_every_shipped_resource_is_named_by_the_
+    package` red. That is the safe direction (a resource the walk cannot
+    see reads as unnamed, never as named), and it is the same rule the
+    test's docstring states: a loader that built the name from parts
+    would need this test taught the new spelling.
     """
     literals = set()
     for path in PACKAGE.rglob("*.py"):
