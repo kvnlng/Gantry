@@ -272,21 +272,27 @@ _NESTED_PIXEL_DATA_TAG = Tag(0x7fe0, 0x0010)
 #: mis-declared image. It is the same discipline `FLOAT_DTYPE_NAMES`
 #: applies to the dtype carrier: allow-list, never interpret.
 #:
-#: Why lossy is excluded at all: a lossy-JPEG icon decodes to RGB from a
-#: declared `YBR_FULL_422`, so the exported item's Photometric
-#: Interpretation would have to be rewritten to match the bytes. That is a
-#: correctness claim with no measurement behind it -- no encoder plugin
-#: exists in this environment to build a lossy fixture and observe the
-#: result (`pylibjpeg`, `openjpeg`, `libjpeg`, `gdcm` and `pyjpegls` are
-#: all absent). Refusing keeps today's honest loss row instead of shipping
-#: a guess. The top level may well have the same problem -- `ingest_worker`
-#: never mentions Photometric Interpretation -- and that is a separate
-#: issue about the top level, not a reason to guess here.
+#: Why the lossy syntaxes were excluded, and why two of them are now in:
+#: a lossy-JPEG icon decodes to RGB from a declared `YBR_FULL_422`, so the
+#: exported item's Photometric Interpretation has to be rewritten to
+#: match the bytes. When #183 wrote this list that was "a correctness
+#: claim with no measurement behind it"; #372 measured it (a `YBR_FULL_422`
+#: item under JPEG Baseline, and `YBR_ICT`/`YBR_RCT` under JPEG 2000, each
+#: decoded through the borrowed `file_meta` -- RGB bytes, decoder meta
+#: `RGB`, identical with Pillow alone and with the pylibjpeg plugins), and
+#: `_decode_nested_pixels` now takes the colour space from the decoder's
+#: meta through the same `_decode_pixels` the top level uses. The top
+#: level had the same problem for every 8-bit YBR source, native ones
+#: included; it is fixed in the same change. So JPEG Baseline (`.4.50`)
+#: and JPEG 2000 (`.4.91`) are in. JPEG Extended (`.4.51`), JPEG-LS
+#: Near-Lossless (`.4.81`) and HTJ2K (`.4.203`) stay out because they are
+#: unmeasured, not because they are unsafe -- an allow-list's whole point
+#: is that its unmeasured side is the refusing side.
 #:
 #: Written as UID strings rather than `pydicom.uid` names on purpose: the
 #: names are not stable across pydicom versions, and a draft of #183's spec
 #: cited `JPEGLossyCompressedPixelTransferSyntaxes`, which does not exist.
-#: `tests/test_private_binary_ingest.py` checks each string against
+#: `tests/test_nested_pixel_carriage.py` checks each string against
 #: pydicom's own constant where a name for it exists.
 _CARRIABLE_TRANSFER_SYNTAXES = frozenset({
     "1.2.840.10008.1.2",        # Implicit VR Little Endian (native)
@@ -294,10 +300,12 @@ _CARRIABLE_TRANSFER_SYNTAXES = frozenset({
     "1.2.840.10008.1.2.1.99",   # Deflated Explicit VR Little Endian
     "1.2.840.10008.1.2.2",      # Explicit VR Big Endian (native)
     "1.2.840.10008.1.2.5",      # RLE Lossless
+    "1.2.840.10008.1.2.4.50",   # JPEG Baseline (Process 1), measured (#372)
     "1.2.840.10008.1.2.4.57",   # JPEG Lossless, Non-Hierarchical
     "1.2.840.10008.1.2.4.70",   # JPEG Lossless, First-Order Prediction
     "1.2.840.10008.1.2.4.80",   # JPEG-LS Lossless
     "1.2.840.10008.1.2.4.90",   # JPEG 2000 Image Compression (Lossless Only)
+    "1.2.840.10008.1.2.4.91",   # JPEG 2000 Image Compression, measured (#372)
     "1.2.840.10008.1.2.4.201",  # HTJ2K Lossless
     "1.2.840.10008.1.2.4.202",  # HTJ2K Lossless RPCL
 })

@@ -65,12 +65,17 @@ REF_IMAGE_SEQ = "0008,1140"
 
 
 def _icon_item(payload=ICON_BYTES, rows=2, cols=2, samples=1,
-               photometric="MONOCHROME2", planar=None, bits=8):
+               photometric="MONOCHROME2", planar=None, bits=8,
+               encapsulated=False):
     """One Icon Image Sequence item, complete enough to decode.
 
     "Complete enough" is the whole difference between this and the
     bare-descriptor icon in `tests/test_private_binary_ingest.py`, whose
     missing BitsAllocated makes it undecodable and so keeps its loss row.
+
+    `encapsulated=True` marks the element undefined-length, which is how
+    an encapsulated (fragmented) payload is written under a compressed
+    transfer syntax; the payload is then the output of `encapsulate`.
     """
     item = Dataset()
     item.Rows, item.Columns = rows, cols
@@ -82,7 +87,36 @@ def _icon_item(payload=ICON_BYTES, rows=2, cols=2, samples=1,
     if planar is not None:
         item.PlanarConfiguration = planar
     item.add_new(0x7FE00010, 'OW' if bits > 8 else 'OB', payload)
+    if encapsulated:
+        item["PixelData"].is_undefined_length = True
     return item
+
+
+#: The lossy icon's flat colour, chosen so YBR and RGB triples are far
+#: apart: `(220, 40, 90)` read as YBR_FULL shows `(169, 255, 65)`.
+LOSSY_ICON_RGB = (220, 40, 90)
+LOSSY_ICON_SIZE = 8
+
+
+def _jpeg_icon_item():
+    """A real JPEG Baseline icon declared `YBR_FULL_422`, via Pillow.
+
+    Pillow's `subsampling=1` is 4:2:2, which is what the declared label
+    says. Built here rather than skipped: Pillow is an `install_requires`,
+    so no plugin is needed to encode or to decode it (#372 corrected the
+    #183 spec's "no lossy fixture can be built in this venv").
+    """
+    from io import BytesIO
+    from PIL import Image
+    from pydicom.encaps import encapsulate
+
+    buf = BytesIO()
+    Image.fromarray(np.full((LOSSY_ICON_SIZE, LOSSY_ICON_SIZE, 3),
+                            LOSSY_ICON_RGB, dtype=np.uint8), "RGB").save(
+        buf, format="JPEG", subsampling=1, quality=95)
+    return _icon_item(payload=encapsulate([buf.getvalue()]),
+                      rows=LOSSY_ICON_SIZE, cols=LOSSY_ICON_SIZE, samples=3,
+                      photometric="YBR_FULL_422", planar=0, encapsulated=True)
 
 
 def _write_src(folder, icons=(), referenced_icons=(), serial="SN-1",
@@ -93,10 +127,11 @@ def _write_src(folder, icons=(), referenced_icons=(), serial="SN-1",
     under Referenced Image Sequence items -- the depth-2 shape, and the one
     whose thumbnail is of a *different* SOP instance.
 
-    `top_level_pixels=False` is for the lossy-transfer-syntax fixture: no
-    encoder plugin exists in this environment, so a lossy file with
-    top-level Pixel Data would fail the *whole* ingest at the top-level
-    decode and never reach the nested candidate at all.
+    `top_level_pixels=False` is for the lossy-transfer-syntax fixture:
+    under JPEG Baseline the top level would need a real encoded frame of
+    its own, and a raw one would fail the *whole* ingest at the top-level
+    decode and never reach the nested candidate at all. Keeping the top
+    level pixel-free makes the nested decode the only one under test.
     """
     meta = FileMetaDataset()
     meta.MediaStorageSOPClassUID = CT_IMAGE
@@ -671,33 +706,52 @@ def test_an_rle_encapsulated_icon_is_decoded_and_written_raw(tmp_path):
     assert exported.IconImageSequence[0].PixelData == ICON_BYTES
 
 
-def test_a_lossy_source_keeps_its_loss_row_and_carries_nothing(tmp_path):
-    """Refused at ingest, because the decode changes what the file declares.
+def test_a_lossy_icon_is_carried_and_relabelled(tmp_path):
+    """A JPEG Baseline icon declared `YBR_FULL_422` is carried, as RGB.
 
-    A lossy-JPEG icon decodes to RGB from a declared `YBR_FULL_422`, so
-    carrying it means rewriting the exported item's Photometric
-    Interpretation to match the bytes -- a correctness claim with no
-    measurement behind it, since no encoder plugin exists here to build such
-    a fixture and observe the result. The refusal is by allow-list rather
-    than by a list of the lossy syntaxes: a deny-list is wrong the moment
-    the standard adds one, and it is wrong in the direction that ships
-    pixels.
+    This test was `test_a_lossy_source_keeps_its_loss_row_and_carries_
+    nothing` until #372, and its reason for refusing was "a correctness
+    claim with no measurement behind it": a lossy-JPEG icon decodes to
+    RGB from a declared `YBR_FULL_422`, so carrying it means rewriting
+    the item's Photometric Interpretation to match the bytes. That is
+    now measured, and the rewrite is what `_decode_nested_pixels` does
+    from the decoder's own meta -- the same helper the top level uses.
+    JPEG Baseline and JPEG 2000 are the two lossy syntaxes measured
+    through a nested item and the two added to the allow-list; the rest
+    stay out as unmeasured, not as unsafe.
 
-    The fixture carries no top-level Pixel Data on purpose. With one, the
-    missing decoder would fail the whole ingest at the top level and the
-    nested candidate would never be reached.
+    Killed by deleting the nested conditional write (the item exports
+    `YBR_FULL_422` over RGB bytes) and by removing JPEG Baseline from
+    `_CARRIABLE_TRANSFER_SYNTAXES` (the loss row returns).
+
+    The fixture carries no top-level Pixel Data on purpose; see
+    `_write_src`.
     """
-    db, _src = _ingest(tmp_path, "lossy", icons=[_icon_item()],
+    db, _src = _ingest(tmp_path, "lossy", icons=[_jpeg_icon_item()],
                        transfer_syntax=JPEGBaseline8Bit,
                        top_level_pixels=False)
 
-    assert not [k for k in _blob_kinds(db) if k.startswith("pixels:")]
-    assert [d for d, _s in _data_loss_rows(db) if "7fe0,0010" in d], \
+    assert [k for k in _blob_kinds(db) if k.startswith("pixels:")], \
+        _blob_kinds(db)
+    assert not [d for d, _s in _data_loss_rows(db) if "7fe0,0010" in d], \
         _data_loss_rows(db)
 
     out = tmp_path / "out"
     _export(db, out)
-    assert "PixelData" not in _exported(out).IconImageSequence[0]
+    exported = _exported(out)
+    icon = exported.IconImageSequence[0]
+    assert icon.PhotometricInterpretation == "RGB", (
+        "the icon exports declaring %r over the RGB bytes pydicom decoded "
+        "it to (#372)" % icon.PhotometricInterpretation)
+    raw = icon.PixelData
+    assert len(raw) == LOSSY_ICON_SIZE * LOSSY_ICON_SIZE * 3, len(raw)
+    assert all(abs(a - e) <= 4 for a, e in zip(raw[:3], LOSSY_ICON_RGB)), (
+        "the icon's first triple is %r, not %r" % (tuple(raw[:3]), LOSSY_ICON_RGB))
+    # And as a reader would see it, borrowing the file's transfer syntax
+    # the way the ingest decode does.
+    icon.file_meta = exported.file_meta
+    px = icon.pixel_array[0, 0]
+    assert all(abs(int(a) - e) <= 4 for a, e in zip(px, LOSSY_ICON_RGB)), tuple(px)
 
 
 def test_the_carriable_transfer_syntaxes_are_the_uids_pydicom_names(tmp_path):
@@ -708,6 +762,13 @@ def test_the_carriable_transfer_syntaxes_are_the_uids_pydicom_names(tmp_path):
     `JPEGLossyCompressedPixelTransferSyntaxes`, which does not exist in
     pydicom 3.0.2 -- but a typo in a UID would silently refuse every file of
     that syntax, which reads exactly like "this codec is not supported".
+
+    The list is no longer lossless-only. JPEG Baseline and JPEG 2000 are
+    in it since #372, because their colour-space behaviour through a
+    nested item was measured and the label is corrected from the
+    decoder's meta. JPEG Extended, JPEG-LS Near-Lossless and HTJ2K stay
+    out until measured the same way -- an allow-list's unmeasured side
+    is its refusing side.
     """
     from pydicom import uid
 
@@ -715,11 +776,10 @@ def test_the_carriable_transfer_syntaxes_are_the_uids_pydicom_names(tmp_path):
                  "DeflatedExplicitVRLittleEndian", "ExplicitVRBigEndian",
                  "RLELossless", "JPEGLossless", "JPEGLosslessSV1",
                  "JPEGLSLossless", "JPEG2000Lossless", "HTJ2KLossless",
-                 "HTJ2KLosslessRPCL"):
+                 "HTJ2KLosslessRPCL", "JPEGBaseline8Bit", "JPEG2000"):
         assert str(getattr(uid, name)) in _CARRIABLE_TRANSFER_SYNTAXES, name
 
-    for name in ("JPEGBaseline8Bit", "JPEGExtended12Bit",
-                 "JPEGLSNearLossless", "JPEG2000", "HTJ2K"):
+    for name in ("JPEGExtended12Bit", "JPEGLSNearLossless", "HTJ2K"):
         assert str(getattr(uid, name)) not in _CARRIABLE_TRANSFER_SYNTAXES, \
             name
 
