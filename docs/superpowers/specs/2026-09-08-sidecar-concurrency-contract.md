@@ -1217,5 +1217,5 @@ owner's decision.
    interpreters at the first of them, all three tests. Also observed
    while measuring:
    `redact()` prints `Executing using N workers (Process Isolation)...`
-   unconditionally, including on the threads path; filed, not fixed
-   here.
+   unconditionally, including on the threads path; filed as #384, not
+   fixed here.
