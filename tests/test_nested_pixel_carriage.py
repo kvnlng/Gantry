@@ -45,7 +45,7 @@ import pytest
 from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
 from pydicom.sequence import Sequence
 from pydicom.uid import (ExplicitVRLittleEndian, JPEGBaseline8Bit,
-                         RLELossless, generate_uid)
+                         JPEGExtended12Bit, RLELossless, generate_uid)
 
 from isocenter.io_handlers import (DicomExporter, LOSS_SCOPE_STANDARD,
                                    _CARRIABLE_TRANSFER_SYNTAXES)
@@ -752,6 +752,50 @@ def test_a_lossy_icon_is_carried_and_relabelled(tmp_path):
     icon.file_meta = exported.file_meta
     px = icon.pixel_array[0, 0]
     assert all(abs(int(a) - e) <= 4 for a, e in zip(px, LOSSY_ICON_RGB)), tuple(px)
+
+
+def test_an_unmeasured_lossy_icon_keeps_its_loss_row_and_carries_nothing(
+        tmp_path):
+    """The allow-list gate refuses a syntax it does not name, in behaviour.
+
+    Added by review of #391. Until then nothing witnessed the gate at
+    `_decode_nested_pixels` -- deleting its three lines (`if
+    transfer_syntax not in _CARRIABLE_TRANSFER_SYNTAXES: dropped.append(
+    ...); continue`) left this file and `test_private_binary_ingest.py`
+    at 40 passed. The reason is which fixtures can *witness* a refusal:
+    an icon under JPEG-LS Near-Lossless or HTJ2K fails to decode in this
+    venv and lands in `dropped` from the `except` arm, gate or no gate,
+    and main's `.4.50` test was a raw `MONOCHROME2` icon that failed the
+    same way (spec §10 item 2). So the only refusal the gate ever made
+    on its own was for a syntax whose bytes the decoder *would* have
+    taken -- and the one such syntax pydicom's Pillow plugin decodes
+    under a declaration the list excludes is JPEG Extended (.4.51),
+    over a baseline codestream. That is this fixture: `_jpeg_icon_item`
+    unchanged, the file declaring `.4.51`. Without the gate it is
+    carried and relabelled `RGB`; with it, the loss row files and the
+    exported item has no Pixel Data at all -- refused, never half-done
+    (property 3 of the module docstring).
+
+    Killed by deleting the gate: `pixels:` appears in the blob kinds and
+    the `7fe0,0010` row is gone.
+    """
+    db, _src = _ingest(tmp_path, "unmeasured", icons=[_jpeg_icon_item()],
+                       transfer_syntax=JPEGExtended12Bit,
+                       top_level_pixels=False)
+
+    kinds = _blob_kinds(db)
+    assert not [k for k in kinds if k.startswith("pixels:")], (
+        "an icon under JPEG Extended (.4.51), which is not in "
+        "`_CARRIABLE_TRANSFER_SYNTAXES`, was carried: %r" % kinds)
+    rows = _data_loss_rows(db)
+    assert [d for d, _s in rows if "7fe0,0010" in d], (
+        "the refused icon filed no DATA_LOSS row for (7fe0,0010): %r" % rows)
+
+    out = tmp_path / "out"
+    _export(db, out)
+    icon = _exported(out).IconImageSequence[0]
+    assert "PixelData" not in icon, (
+        "the exported icon item carries Pixel Data the store refused")
 
 
 def test_the_carriable_transfer_syntaxes_are_the_uids_pydicom_names(tmp_path):
