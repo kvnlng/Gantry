@@ -3413,6 +3413,22 @@ class SidecarPixelLoader:
             if self.pixel_representation == 1:
                 dt = np.int16 if self.bits > 8 else np.int8
 
+        # Before `np.frombuffer`, which raises a bare `ValueError: buffer
+        # size must be a multiple of element size` for a byte count that
+        # is not whole samples. That is the right refusal in the wrong
+        # channel: only `RuntimeError("Integrity Error: ...")` rides the
+        # export worker's `Pixel Loader failed` path into an ERROR row,
+        # and `entities.get_pixel_data` wraps it as `Pixel Loader failed
+        # for <uid>`. A 16-bit frame's byte length is even by
+        # construction, so an odd one is not a DICOM pad; it is the wrong
+        # bytes (#373).
+        itemsize = np.dtype(dt).itemsize
+        if len(raw) % itemsize:
+            raise RuntimeError(
+                f"Integrity Error: frame for {self.sop_instance_uid} holds "
+                f"{len(raw)} bytes, which is not a whole number of "
+                f"{itemsize}-byte samples (dtype {np.dtype(dt).name})")
+
         arr = np.frombuffer(raw, dtype=dt)
 
         rows = self.rows
@@ -3452,39 +3468,32 @@ class SidecarPixelLoader:
         else:
             target_shape = (rows, cols)
 
-        # The element count the padding fallback compares `arr.size`
-        # against. Computed here, ahead of the reshape, because the guard
-        # below has to run before the reshape and not inside its `except`.
+        # The element count the bound below compares `arr.size` against.
         target_size = 1
         for d in target_shape:
             target_size *= d
 
         # A declared geometry of nothing is an integrity failure, not a
         # shape to reshape or pad towards. Without this, a one-byte frame
-        # took the padding fallback -- `arr.size >= 0` is always true,
-        # `arr[:0]` is empty -- and a `(0, 0)` array went back to the
-        # caller with the integrity hash *passing*, because the hash is
-        # over the raw bytes. The export worker then failed with
+        # took the old padding fallback -- `arr.size >= 0` is always
+        # true, `arr[:0]` is empty -- and a `(0, 0)` array went back to
+        # the caller with the integrity hash *passing*, because the hash
+        # is over the raw bytes. The export worker then failed with
         # `Compression failed: cannot write empty image`; a caller who
         # never exports got an empty image that looked like data. The
         # reachable shape is an instance whose `pixel_array` was assigned
         # directly, so no Rows/Columns were ever written (#343).
         #
-        # Ahead of the reshape, not inside its `except`: an *empty* frame
-        # reshapes to `(0, 0)` without raising (`np.frombuffer(b"")
-        # .reshape((0, 0))` succeeds), so a guard in the fallback never
-        # saw it and the empty array came back exactly as before.
-        #
-        # `target_size == 0` and nothing wider. It is the quantity the
-        # fallback compares against, so it names exactly the case the
-        # fallback mishandles; `frames` enters the shape only when > 1
-        # and `samples` is normalised to at least 1, so it is zero
-        # exactly when Rows or Columns is (Rows=2, Columns=2, Frames=0
-        # loads as `(2, 2)`). `arr.size != target_size` would break every
-        # odd-length source, whose one-byte DICOM pad is what the
-        # fallback exists for. Same prefix as the hash mismatch so it
-        # rides the export worker's `Pixel Loader failed` channel into an
-        # ERROR row. Here in `__call__` and not in a wrapper: this loader
+        # Kept ahead of the bound rather than folded into it: an *empty*
+        # frame satisfies `0 <= 0 <= 1`, and `np.frombuffer(b"")
+        # .reshape((0, 0))` succeeds, so without this the empty array
+        # comes back exactly as before. `target_size == 0` names exactly
+        # that case: `frames` enters the shape only when > 1 and
+        # `samples` is normalised to at least 1, so it is zero exactly
+        # when Rows or Columns is (Rows=2, Columns=2, Frames=0 loads as
+        # `(2, 2)`). Same prefix as the hash mismatch so it rides the
+        # export worker's `Pixel Loader failed` channel into an ERROR
+        # row. Here in `__call__` and not in a wrapper: this loader
         # pickles into spawned export workers, and a guard installed on
         # the parent would not be in the child.
         if target_size == 0:
@@ -3494,17 +3503,36 @@ class SidecarPixelLoader:
                 f"Frames={frames}); a stored frame of {len(raw)} bytes "
                 f"cannot be reshaped to nothing")
 
-        try:
-            arr_reshaped = arr.reshape(target_shape)
-        except ValueError:
-            # Handle padding
-            if arr.size >= target_size:
-                arr = arr[:target_size]
-                arr_reshaped = arr.reshape(target_shape)
-            else:
-                return arr  # Fallback to 1D
+        # The tolerance is one trailing sample, in elements, and nothing
+        # wider in either direction (#373). Why one: DICOM pads an
+        # odd-length OB value to even, which for 8-bit data with an odd
+        # sample count is exactly one byte, and that is the *only*
+        # surplus with a DICOM reason -- ingest itself never writes a
+        # pad (`np.ascontiguousarray(ds.pixel_array).tobytes()`). Why
+        # elements and not bytes: the byte check above has already
+        # refused a partial sample, so here every unit is a whole one.
+        #
+        # This replaced `try: reshape / except ValueError: truncate or
+        # return 1-D`. That fallback took *any* surplus (`arr.size >=
+        # target_size`) and silently truncated -- a 16-byte frame loaded
+        # as a 2x2 image -- and returned a short frame as a 1-D array
+        # that every caller then treated as an image. Both are the right
+        # bytes with the wrong geometry: the hash passes and the reshape
+        # is what lies, which is why this is independent of #368's
+        # hash-beside-the-frame and cannot be produced by any ordering
+        # the sidecar gate closes. The message names the UID, both
+        # sizes and the shape so that an export failing on one frame in
+        # ten thousand is diagnosed from that line alone.
+        if not target_size <= arr.size <= target_size + 1:
+            raise RuntimeError(
+                f"Integrity Error: frame for {self.sop_instance_uid} holds "
+                f"{arr.size} samples; geometry {target_shape} needs "
+                f"{target_size} (one trailing pad byte is tolerated, "
+                f"nothing else)")
 
-        return arr_reshaped
+        # Cannot fail after the bound: the slice is exactly `target_size`
+        # elements, which is the product of `target_shape`.
+        return arr[:target_size].reshape(target_shape)
 
 
 class SidecarWaveformLoader:

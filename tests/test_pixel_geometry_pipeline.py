@@ -1040,3 +1040,83 @@ def test_a_frame_with_one_byte_of_dicom_padding_still_reshapes(tmp_path):
 
     assert arr.shape == (2, 2)
     assert arr.tolist() == [[0, 1], [2, 3]], "the pad byte was not the one dropped"
+
+
+# ---------------------------------------------------------------------------
+# #373: the loader's tolerance is one pad byte, in both directions
+# ---------------------------------------------------------------------------
+#
+# The fallback that dropped the pad was `if arr.size >= target_size:
+# arr[:target_size]` -- any surplus at all was truncated silently -- and a
+# short frame came back as a 1-D array. Measured on 0.9.3: a 2x2 8-bit
+# geometry loaded a 16-byte frame as `(2, 2)`, and a 3-byte frame as
+# `(3,)`, with the integrity hash passing in both, because the hash is
+# over the raw bytes and the reshape is what lied. Ingest never produces
+# a pad (`np.ascontiguousarray(ds.pixel_array).tobytes()`), so the only
+# surplus with a DICOM reason is the OB even-length pad on an 8-bit frame
+# with an odd sample count: exactly one byte. That population stays
+# (`test_a_frame_with_one_byte_of_dicom_padding_still_reshapes` above);
+# everything else is an integrity error naming the UID, both sizes and
+# the shape, so an export failing on one frame in ten thousand can be
+# diagnosed from that line alone.
+
+
+def test_a_frame_with_two_surplus_samples_is_an_integrity_error(tmp_path):
+    """Six bytes for a 2x2 8-bit geometry: truncation is refused (#373).
+
+    **Red before the bound:** the loader returned `[[0, 1], [2, 3]]`
+    from a six-byte frame, silently dropping two samples.
+    """
+    loader = _one_frame_loader(tmp_path, bytes(range(6)), {
+        "0028,0010": 2, "0028,0011": 2, "0028,0002": 1, "0028,0100": 8,
+    })
+
+    with pytest.raises(RuntimeError, match="Integrity Error") as exc:
+        loader()
+
+    message = str(exc.value)
+    assert "1.2.3.zero" in message, "the error does not name the instance"
+    assert "6 samples" in message and "needs 4" in message, (
+        "the error does not name both sizes: %s" % message)
+    assert "(2, 2)" in message, "the error does not name the geometry"
+
+
+def test_a_short_frame_is_an_integrity_error_not_a_1d_array(tmp_path):
+    """Three bytes for a 2x2 8-bit geometry: no 1-D fallback (#373).
+
+    **Red before the bound:** the loader returned a `(3,)` array, which
+    every caller then treated as an image.
+    """
+    loader = _one_frame_loader(tmp_path, bytes(range(3)), {
+        "0028,0010": 2, "0028,0011": 2, "0028,0002": 1, "0028,0100": 8,
+    })
+
+    with pytest.raises(RuntimeError, match="Integrity Error") as exc:
+        loader()
+
+    message = str(exc.value)
+    assert "3 samples" in message and "needs 4" in message, (
+        "the error does not name both sizes: %s" % message)
+
+
+def test_a_16_bit_frame_with_an_odd_byte_length_is_an_integrity_error(
+        tmp_path):
+    """Nine bytes of 16-bit samples: refused before `np.frombuffer` (#373).
+
+    A 16-bit frame's byte length is already even, so a one-byte pad is
+    not a population DICOM can produce; on 0.9.3 this raised a bare
+    `ValueError: buffer size must be a multiple of element size` out of
+    `np.frombuffer`, which is the right refusal in the wrong channel --
+    only `RuntimeError("Integrity Error: ...")` rides the export
+    worker's `Pixel Loader failed` path into an ERROR row.
+    """
+    loader = _one_frame_loader(tmp_path, bytes(range(9)), {
+        "0028,0010": 2, "0028,0011": 2, "0028,0002": 1, "0028,0100": 16,
+    })
+
+    with pytest.raises(RuntimeError, match="Integrity Error") as exc:
+        loader()
+
+    message = str(exc.value)
+    assert "9 bytes" in message, "the error does not name the byte count"
+    assert "2-byte" in message, "the error does not name the sample size"
