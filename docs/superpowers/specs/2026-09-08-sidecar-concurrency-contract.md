@@ -1219,3 +1219,37 @@ owner's decision.
    `redact()` prints `Executing using N workers (Process Isolation)...`
    unconditionally, including on the threads path; filed as #384, not
    fixed here.
+9. **§4.4's placement of the refusal is wrong, and item 8 measured its
+   symptom rather than its cause.** The review of PR #385 reproduced,
+   on 3.12.13 and 3.14.7t under both executors, a pass that opens and
+   closes *inside* `compact()`'s leading `save(sync=True)`: park
+   `save_all` after the real call returns on `compact()`'s first call,
+   run a full `redact()` during the park. The `LOCK_EX|LOCK_NB` attempt
+   after the save refuses only a pass still open at that instant;
+   `redact()` does not save at its end, so the pass is admitted with
+   `instances` rows on the old UIDs, blob rows on the regenerated ones
+   and the graph on the new ones; `_read_blob_index`'s EXISTS predicate
+   reclaims every worker frame (sidecar 84 → 84, all three readbacks
+   `Integrity Error`), the next save re-emits the stale loader offsets
+   as durable rows at 84/121/158 into an 84-byte file, and the next
+   compaction erases the originals. That falsifies §4.4's state-scope
+   chain within one session -- "no pass open ⇒ every mutation applied"
+   is true at the instant of the check and false about the save that
+   preceded it -- and §8's reading of the order. Fix: the EX attempt is
+   taken **before** the leading save, holding nothing, and held through
+   the rewrite and the rewire; the gate is still taken after the save,
+   inside it. Lock order stays acyclic: `pass-lock EX (NB, holding
+   nothing) → gate` in `compact()`, SH holding nothing in the passes,
+   and nothing takes the pass-lock under the gate any more -- so §1.3's
+   third arm is reversed, not removed. Consequences: §9.4's "under the
+   gate" test is rewritten to assert the EX attempt precedes
+   `save_all_enter` with nothing held; item 8's narrowed test pins the
+   whole pre-park row set again, because a refused `compact()` now
+   saves nothing; the reviewer's ordering is a repo test
+   (`test_a_pass_that_opens_and_closes_inside_the_leading_save_is_kept_out`),
+   red at its readback on both interpreters with the refusal moved back
+   under the gate; the pass-wait message reads "a compaction is saving
+   or rewriting the sidecar". Item 8's finding stands as measured (the
+   leading save *did* retire those rows); what it should have said is
+   that a refused `compact()` having saved at all was the defect, not a
+   side effect to document.

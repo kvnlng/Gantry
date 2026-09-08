@@ -993,19 +993,19 @@ class DicomSession:
            compaction's orphan predicate would reclaim exactly those
            rows. Measured on 0.9.3 through this very method: it
            returned success and deleted every redacted frame. The
-           refusal sits after the leading save and before the rewrite,
-           for the same reason the #295 check does: refusing after the
-           rewrite is worse than not checking. A refused call has
-           therefore **already run its leading save**. On the threads
-           path (free-threaded builds, `ISOCENTER_FORCE_THREADS`) a
-           redaction worker mutates the live instance, so that save
-           writes the pass's in-progress state -- regenerated UIDs
-           written, pre-redaction rows retired -- exactly as any
-           concurrent `save()` would and as the pass's own next save
-           will; measured on 3.14t, nothing the refusal protects is
-           touched by it.
+           refusal is the **first** thing this method does, before its
+           leading save, so a refused call has done nothing at all. It
+           sat between the save and the rewrite until the review of PR
+           #385 showed the window that leaves: a pass that opens after
+           the save's rows are written and closes before the rewrite
+           (`redact()` does not save at its end) is admitted with its
+           `instances` rows on the old UIDs and its blob rows on the
+           regenerated ones, and the rewrite reclaims every worker
+           frame -- reproduced on 3.12 and 3.14t, all readbacks raising
+           afterwards. Taken first, such a pass waits at its `LOCK_SH`
+           and lands after the rewire.
         2. A `redact()` or `ingest()` that starts while this method is
-           rewriting **waits**, bounded by `_SIDECAR_GATE_TIMEOUT_S`
+           saving or rewriting **waits**, bounded by `_SIDECAR_GATE_TIMEOUT_S`
            (180 s), and then proceeds.
 
         Underneath both is the sidecar gate, `<sidecar>.lock`: held by
@@ -1050,45 +1050,53 @@ class DicomSession:
         if hasattr(self, 'store_backend'):
             print("Beginning Sidecar Compaction (this may take a while)...")
 
-            # 1. Sync DB so compaction knows true state
-            self.save(sync=True)
+            # The refusal (#368) comes FIRST, before the leading save,
+            # holding nothing, and is held through the rewire. It sat
+            # between the save and the rewrite until the review of PR
+            # #385 showed the window that leaves: a pass that opens
+            # after the save's rows are written and closes before the
+            # rewrite is admitted with its `instances` rows on the old
+            # UIDs and its blob rows on the regenerated ones (`redact()`
+            # does not save at its end), and `_read_blob_index`'s
+            # EXISTS predicate reclaims every worker frame. Taken here,
+            # a pass opening at any point of this method waits at its
+            # own SH until the rewire is done. `LOCK_NB` still: the
+            # refusal is an answer, not a wait (owner's A1). Lock order
+            # stays acyclic -- EX holding nothing, then the gate via
+            # site 6 and below; passes take SH holding nothing; nothing
+            # takes the pass-lock under the gate any more.
+            with self.store_backend._refuse_while_pass_open():
+                # 1. Sync DB so compaction knows true state
+                self.save(sync=True)
 
-            # The refusal, between the save and the rewrite. See the
-            # docstring for why this placement is the load-bearing part
-            # -- and for what this does NOT cover: `has_pending_saves()`
-            # reads the persistence manager's queue and in-flight set,
-            # so a `save(sync=True)` on another thread and a redaction's
-            # `persist_pixel_data` are both invisible to it, measured
-            # `False` in every corrupting ordering (#320).
-            if (hasattr(self, 'persistence_manager')
-                    and self.persistence_manager.has_pending_saves()):
-                raise RuntimeError(
-                    "compact() requires that no pending save be "
-                    "outstanding: a background save writing pixel state "
-                    "while the sidecar is rewritten leaves loaders on "
-                    "offsets that no longer exist. Flush the persistence "
-                    "manager and stop other writers first (#295).")
+                # The #295 check, between the save and the rewrite. What
+                # it does NOT cover: `has_pending_saves()` reads the
+                # persistence manager's queue and in-flight set, so a
+                # `save(sync=True)` on another thread and a redaction's
+                # `persist_pixel_data` are both invisible to it, measured
+                # `False` in every corrupting ordering (#320). The gate
+                # and the pass-lock are what stop that population.
+                if (hasattr(self, 'persistence_manager')
+                        and self.persistence_manager.has_pending_saves()):
+                    raise RuntimeError(
+                        "compact() requires that no pending save be "
+                        "outstanding: a background save writing pixel "
+                        "state while the sidecar is rewritten leaves "
+                        "loaders on offsets that no longer exist. Flush "
+                        "the persistence manager and stop other writers "
+                        "first (#295).")
 
-            # The gate (#368), taken AFTER the leading save above -- that
-            # save runs site 6 on this thread and would deadlock against
-            # a gate already held -- and released only after the rewire
-            # below: release it at the end of `compact_sidecar()` and a
-            # writer slipping in before `_rewire_sidecar_loaders` has a
-            # correct loader overwritten from a map computed before its
-            # write existed. `compact_sidecar()` itself is not gated, so
-            # this method is the only place the hold and the rewire are
-            # tied together.
-            with self.store_backend._hold_sidecar_gate():
-                # The refusal (#368), between the save and the rewrite
-                # like the #295 one above, for the same reason: refusing
-                # after the rewrite is worse than not checking. Under
-                # the gate so no writer can slip between the two, and
-                # `LOCK_NB` only -- a blocking EX here would deadlock
-                # against a pass whose workers are queued on the gate
-                # this thread now holds. Held through the rewire, so a
-                # pass that starts mid-compaction waits at its own SH
-                # instead of dispatching into the rewrite.
-                with self.store_backend._refuse_while_pass_open():
+                # The gate (#368), taken AFTER the leading save above --
+                # that save runs site 6 on this thread and would deadlock
+                # against a gate already held -- and released only after
+                # the rewire below: release it at the end of
+                # `compact_sidecar()` and a writer slipping in before
+                # `_rewire_sidecar_loaders` has a correct loader
+                # overwritten from a map computed before its write
+                # existed. `compact_sidecar()` itself is not gated, so
+                # this method is the only place the hold and the rewire
+                # are tied together.
+                with self.store_backend._hold_sidecar_gate():
                     self._compact_under_gate()
 
         else:
@@ -1393,14 +1401,16 @@ class DicomSession:
         Raises:
             RuntimeError: If the ingest cannot start within
                 `_SIDECAR_GATE_TIMEOUT_S` (180 s) because a `compact()`
-                is still rewriting the sidecar (#368).
+                is still saving or rewriting the sidecar (#368).
 
         **Concurrency (#368).** An ingest holds the sidecar pass-lock,
         shared, for the whole import. While it is held, `compact()` on
         any thread of this session **raises**: ingest appends each
         result's frames before the `instances` row that references them
         exists, and a compaction in that window reclaimed them as
-        orphans. While a `compact()` is rewriting, this call **waits**
+        orphans. While a `compact()` is saving or rewriting -- it holds
+        the pass-lock exclusive from before its leading save until its
+        loaders are rewired -- this call **waits**
         (bounded as above) and then proceeds. Each frame is appended
         under the sidecar gate; a result whose write cannot get the gate
         in time is rejected like any other failed file, with an ERROR
@@ -2735,16 +2745,19 @@ class DicomSession:
                 which left a half-redacted session looking like a finished one.
             RuntimeError: If the pass cannot start within
                 `_SIDECAR_GATE_TIMEOUT_S` (180 s) because a `compact()` is
-                still rewriting the sidecar. Raised before any worker is
-                dispatched and before any UID is regenerated, so there is
-                nothing to undo (#368).
+                still saving or rewriting the sidecar. Raised before any
+                worker is dispatched and before any UID is regenerated,
+                so there is nothing to undo (#368).
 
         **Concurrency (#368).** A pass holds the sidecar pass-lock,
         shared, from before the first worker runs until every outcome
         has been applied. While it is held, `compact()` on any thread
         of this session **raises** rather than reclaiming the frames
         the workers have committed under UIDs the store does not yet
-        carry; while a `compact()` is rewriting, this call **waits**
+        carry; while a `compact()` is saving or rewriting -- it holds
+        the pass-lock exclusive from before its leading save until its
+        loaders are rewired, so a pass cannot open and close inside
+        that save unseen -- this call **waits**
         (bounded as above) and then proceeds. Each worker's sidecar
         write also takes the sidecar gate, so a worker that cannot get
         it in time comes back as a failed redaction with an ERROR audit

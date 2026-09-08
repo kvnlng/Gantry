@@ -921,7 +921,8 @@ class SqliteStore:
         the pass has told the store, not to teach the predicate a
         second answer to "what is live". Kernel-released on any death.
         Waits, bounded by `_SIDECAR_GATE_TIMEOUT_S`, behind a running
-        compaction's EX and then proceeds.
+        compaction's EX -- which now spans its leading save as well as
+        the rewrite -- and then proceeds.
         """
         deadline = time.monotonic() + _SIDECAR_GATE_TIMEOUT_S
         path = self._pass_lock_path()
@@ -929,7 +930,7 @@ class SqliteStore:
         def describe():
             return (f"Pass-lock {path} not acquired within "
                     f"_SIDECAR_GATE_TIMEOUT_S={_SIDECAR_GATE_TIMEOUT_S:g} s; "
-                    "a compaction is rewriting the sidecar")
+                    "a compaction is saving or rewriting the sidecar")
 
         with _flock_within(path, fcntl.LOCK_SH, deadline, describe):
             yield
@@ -938,12 +939,16 @@ class SqliteStore:
     def _refuse_while_pass_open(self):
         """Hold the pass-lock exclusive for a compaction, or refuse (#368).
 
-        `LOCK_EX|LOCK_NB` on `_pass_lock_path()`, held through the block
-        so a pass starting mid-compaction waits at its `LOCK_SH`. Never
-        blocking, by construction: this is called with the gate held,
-        and a pass whose workers are queued on that gate would never
-        release its SH -- a blocking EX here is a deadlock, not a wait.
-        Refusal is `RuntimeError` before any rewrite has happened.
+        `LOCK_EX|LOCK_NB` on `_pass_lock_path()`, taken holding nothing
+        and held through the block, so a pass starting anywhere inside
+        `compact()` -- during its leading save, its rewrite or its
+        rewire -- waits at its `LOCK_SH`. Taken before the leading save
+        rather than under the gate since the review of PR #385: a pass
+        that opened and closed inside that save was admitted with its
+        rows unnamed. `LOCK_NB` because the refusal is an answer, not a
+        wait (a pass holds SH for its whole length, and "wait for it to
+        return" is the caller's call to make). Refusal is `RuntimeError`
+        before anything -- save included -- has happened.
         """
         path = self._pass_lock_path()
         fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)

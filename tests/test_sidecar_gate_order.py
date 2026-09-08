@@ -7,18 +7,21 @@ codebase deliberately held across a sqlite write, and it sits *above*
 private and lives in implementation files (2026-09-08 spec §3) -- so it
 is pinned here by recording wrappers rather than frozen in the API:
 
+    pass-lock EX|NB (holding nothing)  ->  _sidecar_gate   (compact, first)
     _sidecar_gate  ->  _pixel_swap_lock          (compact's rewire; sites 5, 6)
     _sidecar_gate  ->  sqlite                    (every site's row commit)
-    _sidecar_gate  ->  pass-lock, LOCK_NB only   (compact's refusal)
 
-Reversing the first arm is the cycle the 2026-09-07 spec measured:
+Reversing the second arm is the cycle the 2026-09-07 spec measured:
 `_persist_pixels` calls `write_frame` under `_pixel_swap_lock`, and
 `_rewire_sidecar_loaders` takes `_pixel_swap_lock` under the gate -- a
 gate taken inside `write_frame` deadlocks against the rewire. Taking the
 gate before `compact()`'s leading `save(sync=True)` deadlocks site 6
-against itself. And a *blocking* EX on the pass-lock under the gate
-deadlocks against a pass whose workers are waiting on the gate this
-thread holds, which is why that attempt is `LOCK_NB` and nothing else.
+against itself. The pass-lock is taken exclusive *before* that save,
+holding nothing (the review of PR #385 found that an attempt made after
+the save admits a pass that opened and closed inside it), and shared
+holding nothing by `redact()`/`ingest()`; nothing takes it under the
+gate. The EX attempt is `LOCK_NB` because the refusal is an answer and
+not a wait.
 
 **What is recorded.** `_sidecar_gate` and `_pixel_swap_lock` on the
 store are replaced with proxies that log every acquire and release with
@@ -333,26 +336,48 @@ def test_every_write_frame_call_happens_with_the_gate_held(recorded):
         "(pixel, nested icon, waveform)" % len(from_ingest))
 
 
-def test_compact_tries_the_pass_lock_under_the_gate_and_never_blocks(recorded):
-    """`_sidecar_gate -> pass-lock`, `LOCK_EX|LOCK_NB` only (#368).
+def test_compact_takes_the_pass_lock_before_its_leading_save_holding_nothing(
+        recorded):
+    """pass-lock `LOCK_EX|LOCK_NB`, holding nothing -> `save_all` -> gate (#368).
 
-    A blocking EX here deadlocks against a pass whose workers are waiting
-    on the gate this thread holds; the refusal is a non-blocking attempt
-    or it is a hang.
+    The EX attempt is the first thing `compact()` does, before its
+    leading `save(sync=True)`: a pass that opens after that save's rows
+    are written and closes before the rewrite would otherwise be
+    admitted with its `instances` rows on the old UIDs and its blob rows
+    on the new ones, and the rewrite reclaims every worker frame (the
+    window the review of PR #385 reproduced). Holding nothing, so the
+    order stays acyclic -- `redact()`/`ingest()` take their SH holding
+    nothing, and no site takes the pass-lock under the gate any more.
+    `LOCK_NB` still: the refusal is an answer, not a wait.
     """
-    attempts = [e for e in recorded.log
+    log = recorded.log
+    attempts = [i for i, e in enumerate(log)
                 if e["event"] == "flock"
                 and e.get("inode") == recorded.pass_lock_inode
                 and e["flags"] & fcntl.LOCK_EX]
     assert attempts, "compact() never attempted the pass-lock"
-    for attempt in attempts:
-        assert "gate" in attempt["held"], (
-            "the pass-lock EX attempt was made without the gate held; the "
-            "refusal must sit inside the gate so no writer can slip "
-            "between the two (#368)")
+    for i in attempts:
+        attempt = log[i]
+        assert not attempt["held"], (
+            "the pass-lock EX attempt was made holding %s; compact() must "
+            "take it before its leading save, holding nothing (#368)"
+            % (sorted(attempt["held"]),))
         assert attempt["flags"] & fcntl.LOCK_NB, (
-            "the pass-lock EX attempt is blocking; it must be LOCK_NB or "
-            "compact() deadlocks against a pass waiting on the gate (#368)")
+            "the pass-lock EX attempt is blocking; it must be LOCK_NB, the "
+            "refusal is an answer and not a wait (#368)")
+        after = log[i + 1:]
+        save_enter = next((j for j, e in enumerate(after)
+                           if e["event"] == "save_all_enter"), None)
+        gate_take = next((j for j, e in enumerate(after)
+                          if e["event"] == "acquire" and e["lock"] == "gate"),
+                         None)
+        assert save_enter is not None and gate_take is not None, (
+            "after the pass-lock EX attempt compact() must run its leading "
+            "save and then take the gate; saw save_all_enter=%r, gate=%r"
+            % (save_enter, gate_take))
+        assert save_enter < gate_take, (
+            "compact() took the gate before its leading save_all; the EX "
+            "attempt precedes the save, and the gate follows it (#368)")
     shared = [e for e in recorded.log
               if e["event"] == "flock"
               and e.get("inode") == recorded.pass_lock_inode

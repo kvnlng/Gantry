@@ -2,14 +2,16 @@
 
 The pass-lock, `<sidecar>.pass.lock`: `Session.redact()` and
 `Session.ingest()` hold it `LOCK_SH` for the whole pass, and
-`Session.compact()` takes `LOCK_EX|LOCK_NB` under the gate and refuses
-while any pass holds it. Two observable behaviours of frozen public
-methods, which #379 records as contract:
+`Session.compact()` takes `LOCK_EX|LOCK_NB` first -- before its leading
+save, holding nothing -- and refuses while any pass holds it, holding it
+through the rewrite and the rewire otherwise. Two observable behaviours
+of frozen public methods, which #379 records as contract:
 
 1. `compact()` raises `RuntimeError` while a `redact()` or `ingest()`
-   pass is open on the same store, from any thread of this session.
+   pass is open on the same store, from any thread of this session, and
+   has done nothing -- no save, no rewrite -- when it does.
 2. `redact()` and `ingest()` block, bounded by `_SIDECAR_GATE_TIMEOUT_S`,
-   while a `compact()` is rewriting, and then proceed.
+   while a `compact()` is saving or rewriting, and then proceed.
 
 **Why a refusal and not a smarter predicate.** Reproduced on 0.9.3
 through the front door (2026-09-08 spec §4.1): with every worker's
@@ -25,32 +27,23 @@ lock closes the loader-offset span (§7.2: a row moved to 8214 under a
 loader the parent later bound at 12321) and the ingest variant, where
 blob rows are written before the `instances` row exists.
 
-**Executor-independent, with one measured difference.** The refusal is
-a kernel fact about two fds on one file, so these tests run the same on
+**Executor-independent, and how that was learned.** The refusal is a
+kernel fact about two fds on one file, so these tests run the same on
 the processes path (3.12) and the threads path (3.14t). What differs is
 where the pass's mutations sit while parked: on copies under processes,
 on the *live* instances under threads (the worker is handed
 `task['instance']` itself, and its `regenerate_uid()` moves the live
-attribute). That difference reaches the store through `compact()`'s
-leading `save(sync=True)`, which the spec's §4.4 puts *before* the
-refusal: under threads it writes the three live instances under their
-regenerated UIDs and `_delete_removed_instances` retires the
-pre-redaction rows -- the same retirement the pass's own next save
-performs -- so "every blob row present before the park is present
-after" is **false** there (measured on 3.14.7t with the GIL off: rows
-`I_PASS_0..2` gone, refusal raised, redacted frames intact). Test 1
-therefore pins what the orphan predicate would have reclaimed -- the
-rows the workers wrote under UIDs no `instances` row named -- and that
-the sidecar was not rewritten (same inode, same size), rather than the
-whole pre-park row set. Measured with the refusal removed *and* the
-three refusal assertions made vacuous, the remaining assertions still
-see the mutant, differently per path: under processes the leading save
-has nothing to write, the predicate deletes all three worker rows, and
-the *reclaimed* assertion is red (§4.1's corruption); under threads the
-leading save has already named those rows, the mutant keeps them and
-rewrites the sidecar under a live pass anyway, and the *moved* and
-inode assertions are red (§7.2's span). With the refusal assertions in
-place the mutant is red on both paths at the first of them.
+attribute). While the refusal sat *after* `compact()`'s leading save,
+that difference reached the store: under threads the save wrote the
+three live instances under their regenerated UIDs and retired the
+pre-redaction rows, so test 1's "every row present before the park is
+present after" was red on 3.14.7t and had to be narrowed (spec §15
+item 8). The review of PR #385 then showed the save was the defect,
+not a side effect: a pass that opened and closed *inside* it was
+admitted (§15 item 9, and the fourth test below). With the refusal
+before the save, a refused `compact()` does nothing, and test 1 pins
+the whole pre-park row set and the sidecar's inode again, on both
+paths.
 
 **Seams.** Test 1 parks `_apply_redaction_outcomes` after materialising
 its outcomes (a `staticmethod`, so the patch is installed as one). Test
@@ -193,29 +186,21 @@ def test_compact_during_redact_raises_and_reclaims_nothing(
         "the refusal does not name the pass-lock file: %s" % helper.error)
     assert "compact() refused" in str(helper.error)
 
-    # The rows the workers wrote under regenerated UIDs, which no
-    # `instances` row named while the pass was parked: exactly the rows
-    # 0.9.3's compaction reclaimed. The pre-redaction rows (`uids_before`)
-    # are deliberately not asserted on -- under threads the leading save
-    # has already retired them, legitimately, and under processes it has
-    # not; the module docstring says why.
+    # Non-vacuity: the workers had written one row per instance under a
+    # regenerated UID before the park -- the rows 0.9.3 reclaimed.
     worker_rows = {r for r in seen["rows_before"] if r[0] not in uids_before}
     assert len(worker_rows) == len(instances), (
         "expected one worker-written blob row per instance while parked, "
         "saw %s" % (sorted(worker_rows),))
+    # The whole pre-park row set, every key. A refused compact() refuses
+    # before its leading save, so it writes nothing at all: no row is
+    # reclaimed, none moved, none retired. (The narrower form this held
+    # while the refusal sat after the save is spec §15 item 8.)
     rows_after = _blob_rows(store)
-    # Identity by (uid, kind) first: a row the predicate deleted is gone
-    # under every key, a row a rewrite merely moved keeps its identity
-    # and changes its offset. The two are different failures and the
-    # message must not call the second one the first.
-    reclaimed = {r[:2] for r in worker_rows} - {r[:2] for r in rows_after}
-    assert not reclaimed, (
-        "a refused compact() reclaimed rows the workers wrote during the "
-        "pass: %s (#368)" % (sorted(reclaimed),))
-    assert worker_rows <= rows_after, (
-        "a refused compact() moved the workers' rows to new offsets, so "
-        "the sidecar was rewritten after all: %s (#368)"
-        % (sorted(worker_rows - rows_after),))
+    assert rows_after == seen["rows_before"], (
+        "a refused compact() changed the blob rows: gone %s, new %s (#368)"
+        % (sorted(seen["rows_before"] - rows_after),
+           sorted(rows_after - seen["rows_before"])))
     assert _sidecar_identity(store) == seen["sidecar_before"], (
         "a refused compact() rewrote the sidecar anyway (inode or size "
         "changed); the refusal must sit before compact_sidecar() (#368)")
@@ -230,6 +215,101 @@ def test_compact_during_redact_raises_and_reclaims_nothing(
         assert arr is not None and arr[0, 0] == 0, (
             "a redacted instance does not read back its redacted frame "
             "after a refused compaction (#368)")
+
+
+def test_a_pass_that_opens_and_closes_inside_the_leading_save_is_kept_out(
+        redactable, monkeypatch):
+    """The window the review of PR #385 found (#368).
+
+    `compact()` leads with `save(sync=True)`. With the refusal *after*
+    that save, a pass that opens once `save_all` has returned and
+    closes before the `LOCK_EX|LOCK_NB` attempt is admitted: `redact()`
+    does not save at its end, so at that instant the `instances` rows
+    are on the old UIDs, the blob rows on the regenerated ones, and the
+    graph on the new ones. `_read_blob_index`'s EXISTS predicate then
+    reclaims every worker frame; the next save re-emits the stale loader
+    offsets as durable rows past the end of the file, and the next
+    compaction erases the originals. Reproduced by the reviewer on
+    3.12.13 and 3.14.7t: compact success, sidecar 84 -> 84, all three
+    readbacks raising Integrity Error, the next save writing rows at
+    84/121/158 into an 84-byte file.
+
+    The park is *after* `save_all` returns, on `compact()`'s own call
+    only (the redaction thread's saves pass straight through), and the
+    whole `redact()` runs during the park. With the pass-lock taken
+    before the leading save the pass waits at its `LOCK_SH` until the
+    rewire is done, then appends its frames to the compacted file.
+    With the refusal back under the gate, `redact()` completes inside
+    the park and the readback assertion is what goes red.
+    """
+    session, instances = redactable
+    store = session.store_backend
+    parked, released = threading.Event(), threading.Event()
+    compact_thread = threading.current_thread()
+    real_save_all = SqliteStore.save_all
+    parked_once = []
+
+    def parking_save_all(self, *args, **kwargs):
+        result = real_save_all(self, *args, **kwargs)
+        if threading.current_thread() is compact_thread and not parked_once:
+            parked_once.append(True)
+            parked.set()
+            assert released.wait(_WAIT), "the test never released the save"
+        return result
+
+    monkeypatch.setattr(SqliteStore, "save_all", parking_save_all)
+
+    redaction, timing = {}, {}
+
+    def redact_work():
+        try:
+            redaction["applied"] = session.redact(show_progress=False)
+        except Exception as exc:      # pylint: disable=broad-except
+            redaction["error"] = exc
+
+    redact_thread = threading.Thread(target=redact_work, daemon=True)
+
+    def run_the_pass_inside_the_park():
+        if not parked.wait(_WAIT):
+            timing["error"] = "compact()'s leading save never parked"
+            released.set()
+            return
+        redact_thread.start()
+        # Long enough for an admitted redact() to finish three tiny
+        # redactions inside the park; a kept-out one is still waiting
+        # at its LOCK_SH when this expires.
+        redact_thread.join(timeout=1.0)
+        timing["finished_inside_the_park"] = not redact_thread.is_alive()
+        released.set()
+
+    driver = threading.Thread(target=run_the_pass_inside_the_park, daemon=True)
+    driver.start()
+    size_before = os.path.getsize(store.sidecar_path)
+    session.compact()
+    driver.join(timeout=_WAIT)
+    redact_thread.join(timeout=_WAIT)
+    assert "error" not in timing, timing.get("error")
+    assert not redact_thread.is_alive(), "redact() never returned"
+    assert "error" not in redaction, redaction.get("error")
+    assert redaction["applied"] == len(instances)
+
+    for inst in instances:
+        inst.discard_pixel_data()
+        try:
+            arr = inst.get_pixel_data()
+        except RuntimeError as exc:
+            pytest.fail(
+                "a redacted instance does not read back after a compaction "
+                "admitted a pass that opened and closed inside its leading "
+                "save: %s (#368)" % exc)
+        assert arr is not None and arr[0, 0] == 0
+    assert not timing["finished_inside_the_park"], (
+        "redact() ran to completion inside compact()'s leading save; the "
+        "pass-lock must be taken before that save, or a pass that opens "
+        "and closes inside it is admitted with its rows unnamed (#368)")
+    assert os.path.getsize(store.sidecar_path) > size_before, (
+        "the redacted frames did not land after the compaction; the pass "
+        "was not kept waiting (#368)")
 
 
 def test_redact_during_compact_waits_then_proceeds(redactable, monkeypatch):
