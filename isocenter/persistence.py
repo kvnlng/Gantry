@@ -2219,8 +2219,11 @@ class SqliteStore:
             # a bare `isinstance(val, list)` sent it down the scalar arm and
             # stored "['a', 'b', 'c']" in one row -- a string that reloads
             # looking like a list. `IsocenterJSONEncoder` unwraps MultiValue
-            # for the other tier for the same reason.
-            if isinstance(val, (list, MultiValue)):
+            # for the other tier for the same reason. `tuple` is here
+            # because `_merge` names it: a `()` that took the scalar arm
+            # was stored as the text `'()'` and reloaded as a value the
+            # source never had (found by review of #391, #367).
+            if isinstance(val, (list, tuple, MultiValue)):
                 if not val:
                     # The placeholder row for an empty container (#328).
                     # There is no atom, so `value_text` is NULL and the

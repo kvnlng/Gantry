@@ -696,16 +696,28 @@ def test_an_empty_list_with_no_recorded_vr_is_un(
                               path)
 
 
-def test_an_empty_tuple_is_the_same_element(tmp_path):
+@pytest.mark.parametrize("path", ["fresh", "reloaded"])
+def test_an_empty_tuple_is_the_same_element(tmp_path, path):
     """`()` under a recorded `DS` is a zero-length `DS` with no loss row.
 
-    The one test that kills the `v = None` normalisation in `_merge`'s
-    arm. pydicom's three empty spellings are not interchangeable:
-    `add_new(tag, 'DS', ())` raises `TypeError` and `PN` raises
-    `AttributeError`, while `None` writes a zero-length element under
-    every VR tried (eleven, measured). Without the normalisation the
-    `TypeError` lands in `_merge`'s `except` and files a `DATA_LOSS` row
-    for an element that was never lost.
+    On the fresh path this is the one test that kills the `v = None`
+    normalisation in `_merge`'s arm. pydicom's three empty spellings are
+    not interchangeable: `add_new(tag, 'DS', ())` raises `TypeError` and
+    `PN` raises `AttributeError`, while `None` writes a zero-length
+    element under every VR tried (eleven, measured). Without the
+    normalisation the `TypeError` lands in `_merge`'s `except` and files
+    a `DATA_LOSS` row for an element that was never lost.
+
+    The reloaded row was added by review of #391 and is the store half.
+    `save_vertical_attributes`' container check was
+    `isinstance(val, (list, MultiValue))`, so a `()` took the scalar arm
+    and was stored as the *text* `'()'`: the fresh graph exported a
+    zero-length `DS` while the same tag after save/reload exported
+    `UT '()'` (explicit VR) or `UN b'()'` (implicit). `_merge`'s widened
+    predicate names `tuple`, so the store's has to, or "the three empty
+    spellings are one element on the wire" is true of one path only.
+    Killed by reverting the store check to `(list, MultiValue)`: this
+    row fails on `is_empty` with the value shown as `'()'`.
     """
     tag = f"0009,{EMPTY_TUPLE_TAG:04x}"
 
@@ -713,9 +725,10 @@ def test_an_empty_tuple_is_the_same_element(tmp_path):
         for instance in _every_instance(session):
             instance.set_attr(tag, ())
 
-    exported, _losses = _export_fresh(tmp_path, plant=plant)
-    _assert_zero_length_under(exported, EMPTY_TUPLE_TAG, 'DS', "tuple")
-    losses = [d for d in _loss_details(str(tmp_path / "fresh.db"))
+    export = _export_fresh if path == "fresh" else _export_reloaded
+    exported, _losses = export(tmp_path, plant=plant)
+    _assert_zero_length_under(exported, EMPTY_TUPLE_TAG, 'DS', path)
+    losses = [d for d in _loss_details(str(tmp_path / f"{path}.db"))
               if tag in d]
     assert losses == [], (
         "a `()` value filed a DATA_LOSS row for %s where `None` and `[]` "
