@@ -1,9 +1,10 @@
 # Serializing Sidecar Writers Against Compaction: One Question, Not Two
 
 **Date:** 2026-09-07
-**Status:** Decision OPEN. This spec costs one design, tries hard to break
+**Status:** ~~Decision OPEN.~~ **Decided 2026-09-07 (build; see the Superseded line below).** This spec costs one design, tries hard to break
 it, and ends with a recommendation (§11) for the owner to accept or
 reject. **Nothing here is approved and no production code was changed.**
+**Superseded in part:** #368, by `2026-09-08-sidecar-concurrency-contract.md`. The Status line and §11's "Do not build the gate until Q1 and Q2 are answered" were overtaken the same day by the owner's ruling that concurrent `redact()`/`compact()` must be safe in 1.0 (built, with a second primitive the 2026-09-08 spec calls the pass-lock). §12.3's "The scaffolding does not change" is **false, measured**: under a gate the #320 test's parked compaction and its intruder deadlock. §13's "Reasoned, not reproduced" for §7.2 is now reproduced. Each clause is marked in place; nothing else here was found wrong.
 **Tracking:** #366 and #368, treated as one question at the owner's
 instruction. Rests on #320, #295, #294, #287, #274, #250, #183, #220,
 PR #317. Weighed against #26 (the v1.0.0 API freeze).
@@ -959,9 +960,9 @@ a premise nobody re-checked" that #368 filed itself post-1.0 to avoid.
 
 *A recommendation, for the owner to accept or reject.*
 
-**Land #366 now as two deletions and three rewritten comments. Do not
+**Land #366 now as two deletions and three rewritten comments.** ~~**Do not
 build the gate until Q1 and Q2 are answered; answer Q2 first, because it
-changes what the gate is worth.**
+changes what the gate is worth.**~~ **Superseded the same day:** the owner answered Q1 (safe in 1.0, build) and the 2026-09-08 spec answers Q2/Q5 (§2 there); the gate is built together with a pass-lock, per that spec's §8.
 
 The three sentences with the numbers behind them:
 
@@ -1144,7 +1145,11 @@ failed`).
 
 * `tests/test_compaction_races_a_concurrent_write.py` — all five phases
   plus the waveform variant flip from the characterization column to the
-  Arm B column of #320's spec §9 table. The scaffolding does not change.
+  Arm B column of #320's spec §9 table. ~~The scaffolding does not change.~~
+  **Falsified, measured (2026-09-08 spec §9.1, §10):** `_park_phase` parks with
+  the gate held and the `_Intruder` blocks on that gate at its write, so
+  `released` (set in the intruder's `finally`) is never set — every phase
+  deadlocks. The test is rewritten with a timer-released park.
   Phase D flips **only** if the gate spans `_read_blob_index`; phase E
   **only** if it spans `_rewire_sidecar_loaders` (§6.6).
 * `tests/test_save_redact_race.py:241`
@@ -1176,7 +1181,9 @@ failed`).
   version.
 * **§7.2** — the loader-offset span between the child's commit and the
   parent's `_apply_redaction_outcomes`, which survives both the gate and
-  a fixed orphan predicate. Reasoned, not reproduced. File it with §7 or
+  a fixed orphan predicate. ~~Reasoned, not reproduced.~~ **Reproduced
+  2026-09-08** (row moved 12321 → 8214 under a loader the parent then bound;
+  the read raised) — see that spec's §5.1. File it with §7 or
   beside it; do not let it be read as part of §7, because the fix is
   different.
 * **§7 point 3** — the same shape on the ingest path, by the same
