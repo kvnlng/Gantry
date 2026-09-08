@@ -4310,7 +4310,8 @@ class DicomExporter:
                 # would otherwise reintroduce one layer up. When it does
                 # not fit, the fallback runs exactly as before (#154).
                 recorded = (vrs or {}).get(t)
-                if v is None:
+                if v is None or (isinstance(v, (list, tuple, MultiValue))
+                                 and len(v) == 0):
                     # A zero-length element: the source asserted the
                     # tag's presence and gave it no value, and DICOM has
                     # an encoding for exactly that. Dropping it is a
@@ -4324,6 +4325,20 @@ class DicomExporter:
                     # because `_record_private_vr` refuses to record
                     # `UN`.
                     #
+                    # An empty container is the same assertion as `None`
+                    # -- present, no value; PS3.5 7.4 makes no
+                    # distinction on the wire -- and until #367 it was
+                    # not treated as one: `_value_fits_vr([], vr)` is
+                    # False under every VR (it recurses over the
+                    # elements, and an empty list has none to check), so
+                    # `[]` fell through to the fallback and exported as
+                    # `LO` whatever the source recorded. The value is
+                    # normalised to `None` because pydicom's three empty
+                    # spellings are not interchangeable: `add_new(tag,
+                    # 'DS', ())` raises `TypeError` and `PN` raises
+                    # `AttributeError`, while `None` writes a zero-length
+                    # element under every VR tried (eleven, measured).
+                    #
                     # Handled HERE and not by widening `_value_fits_vr`,
                     # deliberately. That function recurses over a list,
                     # so admitting `None` would make `[None, 'B']` "fit"
@@ -4336,6 +4351,7 @@ class DicomExporter:
                     # prevent. See
                     # `test_a_none_among_siblings_is_the_same_loud_loss_on_both_paths`.
                     vr = recorded if recorded is not None else 'UN'
+                    v = None
                 elif recorded is not None and _value_fits_vr(v, recorded):
                     vr = recorded
                 else:
@@ -4551,7 +4567,17 @@ class DicomExporter:
             atoms.append(text)
 
         if not atoms:
-            return 'LO', []
+            # `_merge` never reaches this with an empty container: it
+            # decides before calling (the recorded VR, or `UN`, #367).
+            # This is the answer a *direct* caller gets, and it is PS3.5
+            # 6.2.2's -- a zero-length element whose VR was never known
+            # is `UN`, not `LO`. `None` rather than `[]` because `None`
+            # is the one empty spelling `add_new` accepts under every
+            # VR. Stated rather than deleted: with this arm gone the
+            # join below returns `('LO', [])` for an empty list anyway
+            # (`all(...)` over nothing is True), so the function needs
+            # an answer of its own and it has to agree with `_merge`'s.
+            return 'UN', None
 
         # An atom containing `\` cannot be a value of any 1-n VR: the
         # backslash *is* the multiplicity on the wire (PS3.5 6.2), so a
