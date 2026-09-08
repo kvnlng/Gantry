@@ -871,9 +871,9 @@ class SqliteStore:
         rewrite. Held at the six `write_frame` sites across the append
         **and** the row commit, and by `Session.compact()` across
         `compact_sidecar()` **and** `_rewire_sidecar_loaders()`. Thread
-        lock first, then `fcntl.flock(LOCK_EX)` on `_gate_path()` --
-        the stable path beside the sidecar, because `flock` binds to
-        an inode and compaction's `os.replace` gives the sidecar a new
+        lock first, then an exclusive `flock` on `_gate_path()` -- the
+        stable path beside the sidecar, because a flock binds to an
+        inode and compaction's `os.replace` gives the sidecar a new
         one. Bounded by `_SIDECAR_GATE_TIMEOUT_S` as one budget across
         both halves; expiry raises `RuntimeError` naming the lock file
         and the constant. Where that lands: a redaction worker returns
@@ -3419,7 +3419,13 @@ class SqliteStore:
         # `sidecar._lock` order until #366 established that
         # `sidecar._lock` was never acquired by anything. `write_frame`
         # takes an `fcntl.flock` on the file, which is cross-process and
-        # not part of any Python lock hierarchy.)
+        # a leaf.) The caller -- `save_all`, site 6 -- holds the sidecar
+        # gate around the whole prepass and transaction, so the order at
+        # this `write_frame` is gate -> `_pixel_swap_lock` -> the leaf
+        # flock. Do not take the gate in here: it would be taken under
+        # the swap lock, which is the reverse of the order the rewire
+        # needs and is what `tests/test_sidecar_gate_order.py` pins
+        # (#368).
         #
         # The lock must open *before* the first read of `pixel_array`,
         # not after it. `Instance.unload_pixel_data()` nulls that field
@@ -3928,8 +3934,14 @@ class SqliteStore:
             # does nothing reads as though it were re-pointing a writer at
             # the compacted file, which is a guarantee this code does not
             # make and cannot make -- a concurrent writer holds whatever
-            # manager it already read. That is #368, and no assignment here
-            # closes it.
+            # manager it already read. What does close that is the sidecar
+            # gate (#368), which `Session.compact()` holds across this
+            # method AND the loader rewire after it; this method takes no
+            # lock of its own, deliberately, so the hold and the rewire
+            # cannot be split. A direct caller of this method gets the
+            # predicate and nothing else --
+            # `tests/test_compaction_reclaims_a_row_instances_does_not_carry.py`
+            # is the record of what that means.
             self._log_compaction_result(start_time, original_size, written_bytes)
             return uid_map
 

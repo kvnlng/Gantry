@@ -1130,3 +1130,55 @@ them.
   **1603 passed in 411.38 s**, exit 0, 0 failed.
 - Under the throwaway #373 bound, same invocation: 1603 passed in
   407.17 s, exit 0 (§7.3).
+
+## 15. Amendments (during implementation, 2026-09-08)
+
+Corrections made while building §12, recorded here rather than by
+editing the sections above. None changes a §0 determination or an
+owner's decision.
+
+1. **§9.1's second mutation is not killable where §9.1 puts it.** "A
+   blocking `LOCK_EX` instead of the bounded loop → the intruder never
+   raises → red" assumed the flock is the only wait. Under §1.2's own
+   design the gate is a `threading.Lock` *then* the flock, and the
+   deadline test's intruder and compaction are two threads of one
+   process, so the thread lock's `acquire(timeout=)` expires first and
+   the flock is never reached: measured, the mutation **survived** the
+   deadline test (1 passed in 0.61 s). It is observable only when the
+   holder is another process, so it is killed by §9.6's test instead,
+   reworked to run the parent's write on a helper thread with a bounded
+   join (red in 10.1 s under the mutation, as a failure rather than a
+   stall). The deadline test's docstring says which half it pins.
+2. **§9.5 keys sites on `(file, enclosing function)` as a multiset, not
+   `(file, line)`.** Line numbers rot on every unrelated edit above a
+   site; function names stay green through refactors and go red on a
+   seventh call wherever it lands. Strictly stronger, not a determination
+   change.
+3. **Site 5's `write_frame` now sits in `SqliteStore._swap_pixels_under_gate`**,
+   the body of `persist_pixel_data`, which takes the gate and calls it.
+   §1.1's table names `persist_pixel_data`; the public method and its
+   behaviour are unchanged, the split is what keeps the gate outside the
+   existing `try` without re-indenting seventy lines. §9.5's set names
+   the helper.
+4. **§12 Step 6's `_hold_pass()` lives on the store, not the session.**
+   The flock primitives -- `_hold_pass_lock` (SH, polled) and
+   `_refuse_while_pass_open` (EX|NB, held through the block) -- are
+   `SqliteStore` methods beside `_hold_sidecar_gate`, because they need
+   `sidecar_path` and the constant and share `_flock_within` with the
+   gate. `Session.redact()`, `Session.ingest()` and `Session.compact()`
+   are the only callers, so §4.4's "the pass is a `Session` concept"
+   still holds: `compact_sidecar()` and `RedactionService` take neither.
+5. **§9.2's third test parks at the first `Equipment.from_parts`**,
+   inside the first result's iteration -- after its frames are appended
+   (gate released) and before its `instances` row can exist -- rather
+   than "after its first result". Between iterations every frame is
+   already linked into the graph and `compact()`'s leading save would
+   write its row, so there is no unreferenced frame to measure; at
+   `from_parts` there is, and on 0.9.3 the compaction there dropped it.
+6. **§9.10's test file** is `tests/test_memory_store_unlinks_its_temp_files.py`,
+   new rather than in `test_persistence.py`.
+7. **§2.4's table, one row sharpened.** The gate error reaches
+   `persist_pixel_data`'s existing `except: log; raise`, so a redaction
+   worker's expiry is logged as `Failed to persist pixel swap for <uid>:
+   Sidecar gate ...` before it becomes the `RedactionOutcome(ok=False)`
+   the row describes.
