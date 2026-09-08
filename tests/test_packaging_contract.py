@@ -338,7 +338,7 @@ def _tracked_paths_in_package():
 
     None means "git could not answer", not "nothing is tracked". An
     empty tracked set is never a valid answer for a package that must
-    ship four JSON resources, so an empty result is treated the same as
+    ship three JSON resources, so an empty result is treated the same as
     a failed call: the caller falls back to the bare walk rather than
     computing an intersection against nothing and passing while checking
     nothing. A guard that goes green because git is missing is the exact
@@ -491,6 +491,70 @@ def test_the_sdist_ships_every_resource_the_package_reads(built):
         "would inherit the omission. Every name here is a git-tracked "
         "source file, so declaring it in setup.py's package_data is the "
         "fix (#234).")
+
+
+def _string_literals_in_package():
+    """Every `str` constant in `isocenter/**/*.py`, by AST walk.
+
+    An AST walk rather than a regex over source text, so a commented-out
+    reference does not count as a reader. An f-string's literal parts
+    are `ast.Constant` nodes too, but each holds its *segment* -- for
+    `f"{RESOURCES_DIR}/redaction_rules.json"` that is
+    `"/redaction_rules.json"`, which is not the basename the caller
+    checks for. Measured by review of #391: that rewrite of
+    `session.py:152` turns `test_every_shipped_resource_is_named_by_the_
+    package` red. That is the safe direction (a resource the walk cannot
+    see reads as unnamed, never as named), and it is the same rule the
+    test's docstring states: a loader that built the name from parts
+    would need this test taught the new spelling.
+    """
+    literals = set()
+    for path in PACKAGE.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                literals.add(node.value)
+    return literals
+
+
+def test_every_shipped_resource_is_named_by_the_package():
+    """A file under `isocenter/resources/` is a promise that code reads it.
+
+    `research_tags.json` shipped from 0.7.0 to 0.9.3 and no Python file
+    ever named it (#357): its content was `session.py`'s
+    `_default_action_for_tag` written out a second time, and the
+    scaffold is what runs. The 0.7.0 entry that introduced "four JSON
+    resource files" made the promise; this test is what keeps a fifth
+    from being made the same way.
+
+    The direction is **resource -> code**, not the reverse:
+    `ctp_rules.yaml` is named by `session.py` and deliberately does not
+    ship, so "every literal names a file" would be red on purpose. And
+    it is a *basename* match against a string literal, because that is
+    how every loader here spells its path (`os.path.join(RESOURCES_DIR,
+    "phi_tags.json")`); a loader that built the name from parts would
+    need this test taught the new spelling, which is the right cost.
+
+    Mutations that kill it: restore the file (red: no literal names it);
+    misspell the `"redaction_rules.json"` literal in `session.py` (red --
+    and that mutant is also a silent-degrade class of its own, since
+    `_load_redaction_knowledge_base` returns `[]` when the path is
+    missing rather than raising).
+    """
+    tracked = _tracked_paths_in_package()
+    if tracked is None:
+        pytest.skip("git could not list the package; see _tracked_paths_in_package")
+    resources = sorted(
+        name[len("isocenter/resources/"):]
+        for name in tracked if name.startswith("isocenter/resources/"))
+    assert resources, "no tracked resources found under isocenter/resources/"
+
+    literals = _string_literals_in_package()
+    unnamed = [name for name in resources if name not in literals]
+    assert not unnamed, (
+        f"shipped under isocenter/resources/ and named by no string literal "
+        f"in the package: {unnamed}. A resource nothing reads is a promise "
+        "nothing keeps (#357); either add the reader or delete the file.")
 
 
 def test_the_wheel_installs_nothing_but_the_library(built):

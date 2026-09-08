@@ -11,12 +11,14 @@ For the one-element case the harm stops at the graph: `['SIEMENS']` and
 `'SIEMENS'` serialize to byte-identical DICOM (verified -- both written
 to a file and the bytes compared, equal), because pydicom accepts either
 and writes the same element. So its test is a graph-level assertion, and
-it is honest about that. The **empty list** is file-observable:
-`_fallback_multivalue([])` returns `('LO', [])`, which pydicom writes as
-a present, zero-length element, while the reloaded path wrote no rows at
-all and the tag vanished with no `DATA_LOSS` row to say so. That second
-red is the capability the container length buys over a boolean "was a
-sequence" flag, which is why the column stores the length.
+it is honest about that. The **empty list** is file-observable: the
+fresh export writes a present, zero-length element for `[]` (at the time
+of #328 through `_fallback_multivalue([])`'s `('LO', [])`; since #367
+through `_merge`'s zero-length arm, under the recorded VR or `UN`),
+while the reloaded path wrote no rows at all and the tag vanished with
+no `DATA_LOSS` row to say so. That second red is the capability the
+container length buys over a boolean "was a sequence" flag, which is why
+the column stores the length.
 
 **Neither shape arises from ingesting a conformant file.** pydicom
 returns a scalar for VM 1 and `''` for a zero-length text element, so
@@ -167,11 +169,13 @@ def test_an_empty_private_list_survives_a_reload_into_the_exported_file(
     An empty container has no atom to hang a count on, so it needs a
     placeholder row -- which is only worth writing if the column can say
     "zero values" rather than merely "this was a sequence". The fresh
-    export writes a present, zero-length `LO` element for `[]`
-    (`_fallback_multivalue`'s `if not atoms: return 'LO', []` arm, whose
-    own comment calls it "a legal element saying the tag was present
-    with no value"). The reloaded export wrote nothing, and no
-    `DATA_LOSS` row either -- the tag simply was not there any more.
+    export writes a present, zero-length element for `[]` -- `LO` from
+    `_fallback_multivalue`'s `if not atoms` arm when this was written,
+    and since #367 the recorded VR from `_merge`'s zero-length arm, which
+    for this tag is `UN` because `_write_src` records no VR for it. The
+    reloaded export wrote nothing, and no `DATA_LOSS` row either -- the
+    tag simply was not there any more. The VR equality at the end is
+    what pins the two paths to one answer whichever arm supplies it.
     """
     src = tmp_path / "src"
     src.mkdir()

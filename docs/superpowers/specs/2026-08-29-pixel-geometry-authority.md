@@ -7,6 +7,17 @@ the original §3.11 was wrong and dropped redacted pixels; §7 never asked
 for a test on the line §4.3 calls "the single most important"; and §4.3
 left `BitsAllocated` read from `attributes`, contradicting §3.10 and
 shipping a silently wrong image.
+**Superseded in part:** #372 (spec `2026-09-08-export-fidelity-bunch-2.md`
+§3). §1.1's "New finding" paragraph, §3.8's `# YBR_FULL, YBR_ICT, RGB,
+MONOCHROME1 all survive` comment, the Rank-3 table row "PI stays
+`YBR_FULL`" and §7 test 5 all take a YBR_FULL source keeping its label
+through export as the *correct* outcome. Measured wrong: pydicom 3's
+`pixel_array` converts every 8-bit YBR family to RGB at ingest without
+touching the label, so the bytes under that label were RGB before and
+after this spec, and keeping the label kept a false one. §3.8's *rule*
+(correct only a contradiction, at export) is right and stands; the
+correction belongs at ingest, from the decoder's own meta. Each clause is
+struck in place below.
 **Superseded in part:** #217. §6's compatibility table promises
 `RedactionService.apply_redaction_to_array` a "new keyword argument,
 defaulted; old behaviour when omitted". #217 deleted that default:
@@ -71,14 +82,21 @@ attributes, correctly. `get_pixel_data()` then calls `set_pixel_data(arr)`
 the very attributes the reshape just used. The only thing it can do is
 disagree.
 
-**New finding, broader than the filed trigger.** The same line relabels
+~~**New finding, broader than the filed trigger.** The same line relabels
 colour spaces. A single-frame 8×8 `YBR_FULL` instance — no unusual
 dimensions at all — comes back from `get_pixel_data()` with
 `PhotometricInterpretation` rewritten `YBR_FULL → RGB`, and exports that
 way. Every non-RGB colour instance is affected, not only the 3-or-4-column
 ones. It is the same line (`if samples >= 3: set_attr("0028,0004", "RGB")`)
 and the same rule fixes it, so it is in scope here rather than filed
-separately.
+separately.~~
+**Superseded by #372 (2026-09-08):** the relabelling was not a defect in
+the label — the sidecar bytes *were* RGB, because pydicom's `pixel_array`
+converted them at ingest. The line was wrong about its authority
+(`samples >= 3` is not evidence of colour space) and right about the
+answer for every ingested YBR source. Removing it left a false
+`YBR_FULL` over RGB bytes; the correction now lives at ingest, from the
+decoder's meta.
 
 ### 1.2 The corruption is durable
 
@@ -461,6 +479,9 @@ elif samples == 1 and pi not in _MONOCHROME_PI:
     write "MONOCHROME2"  # a colour PI beside 1 sample is nonconformant
 else:
     leave it alone       # YBR_FULL, YBR_ICT, RGB, MONOCHROME1 all survive
+                         # (#372: the *label* survives here, correctly --
+                         # but a YBR label reaching this rule from ingest
+                         # sits over RGB bytes; ingest now corrects it)
 ```
 
 `PALETTE COLOR` is in the monochrome set deliberately: it is
@@ -833,7 +854,7 @@ The implementation must produce exactly these. Each row is a test case.
 | shape | declared | arm | evidence | result |
 | --- | --- | --- | --- | --- |
 | (4,4,3) | SPP=3, R=4, C=4 | B | DECLARED | f=1 r=4 c=4 s=3 |
-| (8,8,3) | SPP=3, PI=YBR_FULL | B | DECLARED | PI stays `YBR_FULL` |
+| (8,8,3) | SPP=3, PI=YBR_FULL | B | DECLARED | ~~PI stays `YBR_FULL`~~ (#372: at this rule, yes; from ingest the label is RGB, because the bytes are) |
 | (8,8,4) | SPP=4 | B | DECLARED | s=4 (non-conformant, but declared) |
 | (100,200,3) | *nothing* | B | **GUESSED** | warn; PI←RGB, PC←0 |
 | (10,10,3) | PI=MONOCHROME2 only | B | **GUESSED** | warn; PI corrected to RGB (§3.8) |
@@ -992,9 +1013,12 @@ those are not repeated here.
    `SamplesPerPixel=1, NumberOfFrames=2, Rows=8, Columns=4` writes
    `Rows=8, Columns=4, NumberOfFrames=2, SamplesPerPixel=1` and the
    pixels round-trip. (§1.4's exact fixture.)
-5. A single-frame 8×8 `YBR_FULL` instance keeps
+5. ~~A single-frame 8×8 `YBR_FULL` instance keeps
    `PhotometricInterpretation=YBR_FULL` through
-   `get_pixel_data()` and through export.
+   `get_pixel_data()` and through export.~~ **Superseded by #372:** the
+   test this became (`test_ybr_full_survives_load_and_export`) was green
+   over RGB bytes and never checked one; it now asserts `RGB` and the
+   reader's colours.
 6. `RedactionService.redact_machine_instances` on a 2-frame 8×4
    grayscale instance zeroes the requested rows of *every frame*, not
    the first two frames entirely. Assert on the array's contents, not

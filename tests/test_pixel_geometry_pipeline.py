@@ -250,14 +250,34 @@ def test_write_tree_writes_the_declared_geometry(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Test 5 -- the colour space is not relabelled (#186, new finding)
+# Test 5 -- the colour space is what the bytes are (#186, corrected by #372)
 # ---------------------------------------------------------------------------
 
-def test_ybr_full_survives_load_and_export(tmp_path):
-    """§7.5: a plain single-frame 8x8 YBR_FULL instance stays YBR_FULL.
+def _ybr_full_to_rgb(ybr):
+    """PS3.3 C.7.6.3.1.2, inverted: the RGB pydicom decodes a YBR_FULL triple to."""
+    y, cb, cr = (float(v) for v in ybr)
+    r = y + 1.402 * (cr - 128)
+    g = y - 0.344136 * (cb - 128) - 0.714136 * (cr - 128)
+    b = y + 1.772 * (cb - 128)
+    return tuple(int(round(min(255, max(0, v)))) for v in (r, g, b))
 
-    Far broader than the 3-or-4-columns trigger: `if samples >= 3: "RGB"`
-    relabels *every* non-RGB colour space, whatever its dimensions.
+
+def test_a_ybr_full_source_exports_as_rgb_over_rgb_bytes(tmp_path):
+    """A plain single-frame 8x8 YBR_FULL instance exports as RGB, because
+    the bytes are RGB.
+
+    This was `test_ybr_full_survives_load_and_export` from #186, which
+    asserted the label survived and never checked a byte -- and it was
+    green over RGB bytes since 0.9.1. pydicom 3's `pixel_array` converts
+    an 8-bit YBR_FULL frame to RGB at ingest without touching the label,
+    so the `samples >= 3: "RGB"` line #186 removed was right about the
+    colour space and wrong about its authority; removing it kept a
+    false `YBR_FULL` over RGB bytes, and a conformant reader showed the
+    wrong colours. The label is now corrected at ingest from the
+    decoder's own meta (#372). The byte check is the half the original
+    never had: the source writes YBR triple `[10, 20, 30]` at `[3, 3]`,
+    so the exported file's `pixel_array[3, 3]` must be that triple's
+    RGB, within rounding.
     """
     src = tmp_path / "in"
     src.mkdir()
@@ -274,7 +294,7 @@ def test_ybr_full_survives_load_and_export(tmp_path):
         session.release_memory()
 
         inst.get_pixel_data()
-        assert inst.attributes.get("0028,0004") == "YBR_FULL"
+        assert inst.attributes.get("0028,0004") == "RGB"
 
         session.export(str(out), use_compression=False)
 
@@ -283,10 +303,15 @@ def test_ybr_full_survives_load_and_export(tmp_path):
                if f.endswith(".dcm")]
     assert len(written) == 1
     ds = pydicom.dcmread(written[0])
-    assert ds.PhotometricInterpretation == "YBR_FULL"
+    assert ds.PhotometricInterpretation == "RGB"
     assert ds.SamplesPerPixel == 3
     assert ds.Rows == 8
     assert ds.Columns == 8
+    expected = _ybr_full_to_rgb((10, 20, 30))
+    actual = tuple(int(v) for v in ds.pixel_array[3, 3])
+    assert all(abs(a - e) <= 2 for a, e in zip(actual, expected)), (
+        "pixel [3, 3] read back as %r; the YBR triple (10, 20, 30) decodes "
+        "to RGB %r and that is what the sidecar holds" % (actual, expected))
 
 
 # ---------------------------------------------------------------------------

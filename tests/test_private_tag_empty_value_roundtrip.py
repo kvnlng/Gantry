@@ -39,7 +39,7 @@ if the export encoder is ever taught to write a zero-length element,
 both paths gain it at once, where a skip destroys the information for
 good. The export writer already keeps a zero-length element rather
 than dropping it, for the same reason:
-`value = b""` at io_handlers.py line 1053.
+`value = b""` at io_handlers.py line 1062.
 
 **The file now carries the tag on both paths (#344)**, as a zero-length
 element under the VR the source recorded for it -- or under `UN` where no
@@ -111,8 +111,39 @@ EMPTY_TEXT = [
     (0x1022, 'PN'),
 ]
 
+#: The #367 population: a private element the source wrote *with a value*
+#: under each VR (so `_record_private_vr` records it), whose graph value
+#: is then replaced with `[]` before export. `None` on the same tag took
+#: #344's arm and exported under the recorded VR; `[]` fell through
+#: `_value_fits_vr` -- `False` for an empty list under every VR, by
+#: design, since it recurses over the elements -- into
+#: `_fallback_multivalue`, whose `if not atoms: return 'LO', []` wrote a
+#: zero-length `LO` for a tag the source had written as `DS`. Two answers
+#: to one question. The third column is the value the source writes.
+EMPTY_LIST_RECORDED_VR = [
+    (0x1030, 'DS', "1.5"),
+    (0x1031, 'IS', "7"),
+    (0x1032, 'US', 7),
+    (0x1033, 'LO', "ACME"),
+    (0x1034, 'PN', "DOE^JOHN"),
+    (0x1035, 'UT', "a long text"),
+    (0x1036, 'AT', 0x00100010),
+]
 
-def _write_src(folder):
+#: A private tag that exists only in the graph -- no source element, so
+#: no recorded VR -- and is set to `[]`. `UN` is PS3.5 6.2.2's answer for
+#: an element whose VR was never known, and the one `_merge` gives for a
+#: `None` on the same kind of tag (#344).
+EMPTY_LIST_NO_RECORDED_VR = 0x1037
+
+#: The tag the `()` spelling is planted on: recorded `DS`, and the one
+#: spelling of "empty" that pydicom's `add_new` refuses under `DS`
+#: (`TypeError`) and `PN` (`AttributeError`) where `None` and `[]` are
+#: silent everywhere -- which is why `_merge` normalises to `None`.
+EMPTY_TUPLE_TAG = 0x1030
+
+
+def _write_src(folder, valued=False):
     """One instance whose private block is entirely zero-length.
 
     Explicit VR on purpose: it is what puts a real VR on each private
@@ -141,6 +172,11 @@ def _write_src(folder):
     ds.add_new(0x00090010, 'LO', 'ACME_HEADER')     # Private Creator
     for element, vr in EMPTY_NUMERIC + EMPTY_TEXT:
         ds.add_new(Tag(0x0009, element), vr, None)
+    if valued:
+        # The #367 block: written *with* a value, so the source records a
+        # VR for each; the tests replace the value with `[]` in the graph.
+        for element, vr, value in EMPTY_LIST_RECORDED_VR:
+            ds.add_new(Tag(0x0009, element), vr, value)
 
     ds.Rows = ds.Columns = 4
     ds.BitsAllocated = ds.BitsStored = 8
@@ -174,17 +210,38 @@ def _read_only_written(out):
     return pydicom.dcmread(written[0])
 
 
-def _export_fresh(tmp_path):
-    """Export from the session that ingested, with no store round trip."""
+def _every_instance(session):
+    for patient in session.store.patients:
+        for study in patient.studies:
+            for series in study.series:
+                yield from series.instances
+
+
+def _plant_empty_lists(session):
+    """`[]` onto every recorded-VR tag of the #367 block, plus the graph-only one."""
+    for instance in _every_instance(session):
+        for element, _vr, _value in EMPTY_LIST_RECORDED_VR:
+            instance.set_attr(f"0009,{element:04x}", [])
+        instance.set_attr(f"0009,{EMPTY_LIST_NO_RECORDED_VR:04x}", [])
+
+
+def _export_fresh(tmp_path, plant=None):
+    """Export from the session that ingested, with no store round trip.
+
+    `plant`, when given, runs against the live graph between ingest and
+    export; the source is then written with the valued #367 block.
+    """
     src = tmp_path / "src"
     src.mkdir(exist_ok=True)
-    _write_src(str(src))
+    _write_src(str(src), valued=plant is not None)
     out = tmp_path / "out"
     db = str(tmp_path / "fresh.db")
 
     session = DicomSession(persistence_file=db)
     try:
         session.ingest(str(src))
+        if plant is not None:
+            plant(session)
         session.export(str(out), format="dicom", show_progress=False)
     finally:
         session.close()
@@ -192,17 +249,23 @@ def _export_fresh(tmp_path):
     return _read_only_written(out), _data_loss_tags(db)
 
 
-def _export_reloaded(tmp_path):
-    """Export from a session that opened an existing database."""
+def _export_reloaded(tmp_path, plant=None):
+    """Export from a session that opened an existing database.
+
+    `plant` runs before the save, so what the reloaded session exports is
+    what the store carried -- for `[]`, #328's placeholder row.
+    """
     src = tmp_path / "src"
     src.mkdir(exist_ok=True)
-    _write_src(str(src))
+    _write_src(str(src), valued=plant is not None)
     db = str(tmp_path / "reloaded.db")
     out = tmp_path / "out"
 
     session = DicomSession(persistence_file=db)
     try:
         session.ingest(str(src))
+        if plant is not None:
+            plant(session)
         session.save()
     finally:
         session.close()
@@ -224,6 +287,20 @@ def fresh_export(tmp_path_factory):
 @pytest.fixture(scope="module")
 def reloaded_export(tmp_path_factory):
     return _export_reloaded(tmp_path_factory.mktemp("reloaded339"))
+
+
+@pytest.fixture(scope="module")
+def fresh_list_export(tmp_path_factory):
+    """The #367 block, `[]` planted, exported without a store round trip."""
+    return _export_fresh(tmp_path_factory.mktemp("fresh367"),
+                         plant=_plant_empty_lists)
+
+
+@pytest.fixture(scope="module")
+def reloaded_list_export(tmp_path_factory):
+    """The #367 block, `[]` planted, saved, reopened, exported."""
+    return _export_reloaded(tmp_path_factory.mktemp("reloaded367"),
+                            plant=_plant_empty_lists)
 
 
 def test_a_zero_length_private_element_is_not_reloaded_as_the_word_none():
@@ -315,7 +392,7 @@ def _assert_zero_length_under(exported, element, expected_vr, path):
     assert written.VR == expected_vr, (
         "(0009,%04x) came out of the %s export as %s where the source said "
         "%s; a private element's VR is a fact the source file gave us and "
-        "the fallback's LO throws it away (#154, #344)"
+        "the fallback (UN since #367, LO before) throws it away (#154, #344)"
         % (element, path, written.VR, expected_vr))
 
 
@@ -566,3 +643,94 @@ def test_a_none_among_siblings_is_the_same_loud_loss_on_both_paths(tmp_path):
     assert fresh_losses == reloaded_losses, (
         "the two paths report the element differently: %r vs %r"
         % (fresh_losses, reloaded_losses))
+
+
+# --- #367: an empty *list* takes the recorded VR, the same as None ------
+
+@pytest.mark.parametrize("element, vr, _value", EMPTY_LIST_RECORDED_VR)
+def test_an_empty_list_takes_the_recorded_vr_on_the_fresh_path(
+        fresh_list_export, element, vr, _value):
+    """`set_attr(tag, [])` on a recorded-`DS` tag exported `LO` (#367).
+
+    `[]` took `_merge`'s third clause because `_value_fits_vr([], vr)`
+    is `False` under every VR -- it recurses over the elements and an
+    empty list has nothing to check -- and `_fallback_multivalue([])`
+    answered `('LO', [])`. `None` on the same tag took #344's arm and
+    got `DS`. The predicate on that arm now covers an empty
+    `list`/`tuple`/`MultiValue`, so both spellings of "present, no
+    value" get the source's own answer.
+    """
+    exported, _losses = fresh_list_export
+    _assert_zero_length_under(exported, element, vr, "fresh")
+
+
+@pytest.mark.parametrize("element, vr, _value", EMPTY_LIST_RECORDED_VR)
+def test_an_empty_list_takes_the_recorded_vr_on_the_reloaded_path(
+        reloaded_list_export, element, vr, _value):
+    """The same through the store: #328's placeholder row carries the VR.
+
+    An empty container has no atom to hang a row on, so
+    `save_vertical_attributes` writes one placeholder row with
+    `value_count = 0` and the recorded VR in `value_rep`; the reload
+    hands `_merge` the length-0 container and the VR it came with.
+    Dropping the placeholder row makes the tag vanish -- #328's own red
+    -- which is the second mutation this kills.
+    """
+    exported, _losses = reloaded_list_export
+    _assert_zero_length_under(exported, element, vr, "reloaded")
+
+
+@pytest.mark.parametrize("path", ["fresh", "reloaded"])
+def test_an_empty_list_with_no_recorded_vr_is_un(
+        fresh_list_export, reloaded_list_export, path):
+    """A graph-only tag set to `[]` is a zero-length `UN`, not `LO`.
+
+    No source element, so nothing in `attribute_vrs`; the arm's own
+    default applies, and it is `UN` -- PS3.5 6.2.2's element of unknown
+    VR, the answer #344 already gives a `None` on such a tag. Writing
+    `LO` would assert the element is text, a claim nothing ever made.
+    """
+    exported, _losses = (fresh_list_export if path == "fresh"
+                         else reloaded_list_export)
+    _assert_zero_length_under(exported, EMPTY_LIST_NO_RECORDED_VR, 'UN',
+                              path)
+
+
+@pytest.mark.parametrize("path", ["fresh", "reloaded"])
+def test_an_empty_tuple_is_the_same_element(tmp_path, path):
+    """`()` under a recorded `DS` is a zero-length `DS` with no loss row.
+
+    On the fresh path this is the one test that kills the `v = None`
+    normalisation in `_merge`'s arm. pydicom's three empty spellings are
+    not interchangeable: `add_new(tag, 'DS', ())` raises `TypeError` and
+    `PN` raises `AttributeError`, while `None` writes a zero-length
+    element under every VR tried (eleven, measured). Without the
+    normalisation the `TypeError` lands in `_merge`'s `except` and files
+    a `DATA_LOSS` row for an element that was never lost.
+
+    The reloaded row was added by review of #391 and is the store half.
+    `save_vertical_attributes`' container check was
+    `isinstance(val, (list, MultiValue))`, so a `()` took the scalar arm
+    and was stored as the *text* `'()'`: the fresh graph exported a
+    zero-length `DS` while the same tag after save/reload exported
+    `UT '()'` (explicit VR) or `UN b'()'` (implicit). `_merge`'s widened
+    predicate names `tuple`, so the store's has to, or "the three empty
+    spellings are one element on the wire" is true of one path only.
+    Killed by reverting the store check to `(list, MultiValue)`: this
+    row fails on `is_empty` with the value shown as `'()'`.
+    """
+    tag = f"0009,{EMPTY_TUPLE_TAG:04x}"
+
+    def plant(session):
+        for instance in _every_instance(session):
+            instance.set_attr(tag, ())
+
+    export = _export_fresh if path == "fresh" else _export_reloaded
+    exported, _losses = export(tmp_path, plant=plant)
+    _assert_zero_length_under(exported, EMPTY_TUPLE_TAG, 'DS', path)
+    losses = [d for d in _loss_details(str(tmp_path / f"{path}.db"))
+              if tag in d]
+    assert losses == [], (
+        "a `()` value filed a DATA_LOSS row for %s where `None` and `[]` "
+        "on the same tag file none; the three empty spellings must be one "
+        "element on the wire (#367): %r" % (tag, losses))

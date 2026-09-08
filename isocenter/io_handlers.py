@@ -138,6 +138,7 @@ try:
 except ImportError:
     Image = None
 from pydicom.dataset import FileDataset, FileMetaDataset
+from pydicom.pixels import get_decoder
 from pydicom.uid import ImplicitVRLittleEndian, JPEG2000Lossless
 from pydicom.tag import Tag
 from pydicom.datadict import dictionary_VR
@@ -271,21 +272,27 @@ _NESTED_PIXEL_DATA_TAG = Tag(0x7fe0, 0x0010)
 #: mis-declared image. It is the same discipline `FLOAT_DTYPE_NAMES`
 #: applies to the dtype carrier: allow-list, never interpret.
 #:
-#: Why lossy is excluded at all: a lossy-JPEG icon decodes to RGB from a
-#: declared `YBR_FULL_422`, so the exported item's Photometric
-#: Interpretation would have to be rewritten to match the bytes. That is a
-#: correctness claim with no measurement behind it -- no encoder plugin
-#: exists in this environment to build a lossy fixture and observe the
-#: result (`pylibjpeg`, `openjpeg`, `libjpeg`, `gdcm` and `pyjpegls` are
-#: all absent). Refusing keeps today's honest loss row instead of shipping
-#: a guess. The top level may well have the same problem -- `ingest_worker`
-#: never mentions Photometric Interpretation -- and that is a separate
-#: issue about the top level, not a reason to guess here.
+#: Why the lossy syntaxes were excluded, and why two of them are now in:
+#: a lossy-JPEG icon decodes to RGB from a declared `YBR_FULL_422`, so the
+#: exported item's Photometric Interpretation has to be rewritten to
+#: match the bytes. When #183 wrote this list that was "a correctness
+#: claim with no measurement behind it"; #372 measured it (a `YBR_FULL_422`
+#: item under JPEG Baseline, and `YBR_ICT`/`YBR_RCT` under JPEG 2000, each
+#: decoded through the borrowed `file_meta` -- RGB bytes, decoder meta
+#: `RGB`, identical with Pillow alone and with the pylibjpeg plugins), and
+#: `_decode_nested_pixels` now takes the colour space from the decoder's
+#: meta through the same `_decode_pixels` the top level uses. The top
+#: level had the same problem for every 8-bit YBR source, native ones
+#: included; it is fixed in the same change. So JPEG Baseline (`.4.50`)
+#: and JPEG 2000 (`.4.91`) are in. JPEG Extended (`.4.51`), JPEG-LS
+#: Near-Lossless (`.4.81`) and HTJ2K (`.4.203`) stay out because they are
+#: unmeasured, not because they are unsafe -- an allow-list's whole point
+#: is that its unmeasured side is the refusing side.
 #:
 #: Written as UID strings rather than `pydicom.uid` names on purpose: the
 #: names are not stable across pydicom versions, and a draft of #183's spec
 #: cited `JPEGLossyCompressedPixelTransferSyntaxes`, which does not exist.
-#: `tests/test_private_binary_ingest.py` checks each string against
+#: `tests/test_nested_pixel_carriage.py` checks each string against
 #: pydicom's own constant where a name for it exists.
 _CARRIABLE_TRANSFER_SYNTAXES = frozenset({
     "1.2.840.10008.1.2",        # Implicit VR Little Endian (native)
@@ -293,10 +300,12 @@ _CARRIABLE_TRANSFER_SYNTAXES = frozenset({
     "1.2.840.10008.1.2.1.99",   # Deflated Explicit VR Little Endian
     "1.2.840.10008.1.2.2",      # Explicit VR Big Endian (native)
     "1.2.840.10008.1.2.5",      # RLE Lossless
+    "1.2.840.10008.1.2.4.50",   # JPEG Baseline (Process 1), measured (#372)
     "1.2.840.10008.1.2.4.57",   # JPEG Lossless, Non-Hierarchical
     "1.2.840.10008.1.2.4.70",   # JPEG Lossless, First-Order Prediction
     "1.2.840.10008.1.2.4.80",   # JPEG-LS Lossless
     "1.2.840.10008.1.2.4.90",   # JPEG 2000 Image Compression (Lossless Only)
+    "1.2.840.10008.1.2.4.91",   # JPEG 2000 Image Compression, measured (#372)
     "1.2.840.10008.1.2.4.201",  # HTJ2K Lossless
     "1.2.840.10008.1.2.4.202",  # HTJ2K Lossless RPCL
 })
@@ -1211,6 +1220,37 @@ def process_sequence(tag, elem, parent_item, dropped: list = None,
         parent_item.add_sequence_item(tag, seq_item)
 
 
+def _decode_pixels(ds) -> Tuple[np.ndarray, str]:
+    """The array `Dataset.pixel_array` returns, and the colour space it is in.
+
+    `pixel_array` calls exactly this -- `as_array` on `get_decoder(ts)`,
+    the `pydicom.pixels` backend, which is the one `Dataset` uses
+    unless `use_pdh` is set and nothing in this package sets it -- and
+    then discards the meta (pydicom 3.0.2 `pixels/utils.py:1430`, the
+    `Dataset` branch: `[0]` of the `as_array` pair; the path/file branch
+    at `:1465` spells it `arr, _ =`). That meta is the one place pydicom states
+    what colour space the returned array is in, and it is not the
+    declared `PhotometricInterpretation`: with the default `as_rgb=True`
+    every 8-bit YBR family comes back RGB, under any transfer syntax,
+    and the dataset's own label is left as it was (#372). A caller that
+    stores the array has to store this answer with it.
+
+    The transfer syntax is read as an attribute, deliberately, rather
+    than with a `.get()` default. A dataset read with `force=True` and
+    no file meta (#281's population) has an empty `file_meta`;
+    `pixel_array` raises `AttributeError` for it and so does this, into
+    the same `except` and the same `Decompression Failed` row. A default
+    would turn that into a decode under Explicit VR LE -- a file
+    ingested with garbage geometry and no row at all.
+
+    All frames (`index=None`), the same as `pixel_array`; a helper that
+    decoded frame 0 would carry a multi-frame source as one frame.
+    """
+    ts = ds.file_meta.TransferSyntaxUID
+    arr, meta = get_decoder(ts).as_array(ds)
+    return np.ascontiguousarray(arr), meta["photometric_interpretation"]
+
+
 def _decode_nested_pixels(ds, candidates, dropped, instance) -> list:
     """Decode every nested (7fe0,0010) `populate_attrs` collected (#183).
 
@@ -1238,7 +1278,8 @@ def _decode_nested_pixels(ds, candidates, dropped, instance) -> list:
       can decode, under a transfer syntax that says there are no fragments.
       So it decodes here and stores raw, which is exactly what the
       top-level path does -- one rule for both depths.
-    - **Decode a lossy source.** See `_CARRIABLE_TRANSFER_SYNTAXES`.
+    - **Decode a source whose transfer syntax is not allow-listed.** See
+      `_CARRIABLE_TRANSFER_SYNTAXES` for which are, and why the rest wait.
 
     Args:
         ds (pydicom.Dataset): The enclosing dataset, for its `file_meta`.
@@ -1276,7 +1317,7 @@ def _decode_nested_pixels(ds, candidates, dropped, instance) -> list:
             # `file_meta` is not an approximation; it is the right answer.
             # Measured to decode correctly through RLE encapsulation too.
             item_ds.file_meta = ds.file_meta
-            arr = np.ascontiguousarray(item_ds.pixel_array)
+            arr, decoded_pi = _decode_pixels(item_ds)
         except Exception:  # pylint: disable=broad-except
             # Every reason a decode can fail takes the same route, and it is
             # the route this element already took: a loss row. Not the
@@ -1310,6 +1351,13 @@ def _decode_nested_pixels(ds, candidates, dropped, instance) -> list:
         target = resolve_item_path(instance, path)
         if target is not None and target.attributes.get("0028,0006") == 1:
             target.set_attr("0028,0006", 0)
+        # And the colour space, for the same reason the top-level arm
+        # corrects it (#372): the bytes above are whatever pydicom
+        # decoded to, and the item's declared label is not consulted by
+        # that decode. Only on difference, so a monochrome or RGB icon
+        # bumps no revision.
+        if target is not None and target.attributes.get("0028,0004") != decoded_pi:
+            target.set_attr("0028,0004", decoded_pi)
 
     return carried
 
@@ -1399,9 +1447,29 @@ def ingest_worker(fp: str) -> Tuple:
             try:
                 # Always decompress to raw bytes to ensure sidecar has consistent format (SidecarPixelLoader expects raw)
                 # This handles RLE/JPEG/J2K by decoding them now.
-                arr = np.ascontiguousarray(ds.pixel_array)
+                arr, decoded_pi = _decode_pixels(ds)
                 p_bytes = arr.tobytes()
                 p_alg = 'zlib'  # Always compress the raw bytes
+                # The label has to say what the bytes are, and the bytes
+                # are whatever pydicom decoded to -- for every 8-bit YBR
+                # family that is RGB, under any transfer syntax, native
+                # included; `pixel_array` converts and never touches
+                # `PhotometricInterpretation`. `populate_attrs` copied the
+                # declared label above, so without this a YBR source
+                # exported `YBR_FULL` over RGB bytes and a conformant
+                # reader showed `(169, 255, 65)` for `(220, 40, 90)`, or
+                # refused a `YBR_FULL_422` file outright (#372). AFTER the
+                # decode, unlike the PlanarConfiguration write above,
+                # which reads nothing from the array and must stay
+                # before it. Written only on difference, the same shape
+                # as `_write_str_if_changed`: an RGB, monochrome or
+                # palette source has meta equal to its label and bumps
+                # no revision. Not derived from the array's shape -- a
+                # 3-sample array is equally RGB or YBR_FULL, which is why
+                # #186 removed the `samples >= 3` relabel; the decoder's
+                # meta is the one place the colour space is stated.
+                if inst.attributes.get("0028,0004") != decoded_pi:
+                    inst.set_attr("0028,0004", decoded_pi)
             except Exception as e:
                 # If decompression fails (missing codec), we cannot ingest safely for sidecar usage.
                 # The path rides the meta slot, as in the blanket except
@@ -4310,7 +4378,8 @@ class DicomExporter:
                 # would otherwise reintroduce one layer up. When it does
                 # not fit, the fallback runs exactly as before (#154).
                 recorded = (vrs or {}).get(t)
-                if v is None:
+                if v is None or (isinstance(v, (list, tuple, MultiValue))
+                                 and len(v) == 0):
                     # A zero-length element: the source asserted the
                     # tag's presence and gave it no value, and DICOM has
                     # an encoding for exactly that. Dropping it is a
@@ -4324,6 +4393,20 @@ class DicomExporter:
                     # because `_record_private_vr` refuses to record
                     # `UN`.
                     #
+                    # An empty container is the same assertion as `None`
+                    # -- present, no value; PS3.5 7.4 makes no
+                    # distinction on the wire -- and until #367 it was
+                    # not treated as one: `_value_fits_vr([], vr)` is
+                    # False under every VR (it recurses over the
+                    # elements, and an empty list has none to check), so
+                    # `[]` fell through to the fallback and exported as
+                    # `LO` whatever the source recorded. The value is
+                    # normalised to `None` because pydicom's three empty
+                    # spellings are not interchangeable: `add_new(tag,
+                    # 'DS', ())` raises `TypeError` and `PN` raises
+                    # `AttributeError`, while `None` writes a zero-length
+                    # element under every VR tried (eleven, measured).
+                    #
                     # Handled HERE and not by widening `_value_fits_vr`,
                     # deliberately. That function recurses over a list,
                     # so admitting `None` would make `[None, 'B']` "fit"
@@ -4336,6 +4419,7 @@ class DicomExporter:
                     # prevent. See
                     # `test_a_none_among_siblings_is_the_same_loud_loss_on_both_paths`.
                     vr = recorded if recorded is not None else 'UN'
+                    v = None
                 elif recorded is not None and _value_fits_vr(v, recorded):
                     vr = recorded
                 else:
@@ -4551,7 +4635,17 @@ class DicomExporter:
             atoms.append(text)
 
         if not atoms:
-            return 'LO', []
+            # `_merge` never reaches this with an empty container: it
+            # decides before calling (the recorded VR, or `UN`, #367).
+            # This is the answer a *direct* caller gets, and it is PS3.5
+            # 6.2.2's -- a zero-length element whose VR was never known
+            # is `UN`, not `LO`. `None` rather than `[]` because `None`
+            # is the one empty spelling `add_new` accepts under every
+            # VR. Stated rather than deleted: with this arm gone the
+            # join below returns `('LO', [])` for an empty list anyway
+            # (`all(...)` over nothing is True), so the function needs
+            # an answer of its own and it has to agree with `_merge`'s.
+            return 'UN', None
 
         # An atom containing `\` cannot be a value of any 1-n VR: the
         # backslash *is* the multiplicity on the wire (PS3.5 6.2), so a

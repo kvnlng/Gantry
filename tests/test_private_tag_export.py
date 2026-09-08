@@ -380,10 +380,22 @@ def test_an_empty_multi_valued_private_tag_is_a_zero_length_element():
 
     Behaviour change beyond the headline of #165, so it is stated rather
     than absorbed: `[]` used to reach the "no VR fits" arm and be
-    reported as loss. A zero-length `LO` says "this tag was here and had
-    no value", which is what the graph held.
+    reported as loss. Until #367 this returned `('LO', [])`, and the
+    docstring said a zero-length `LO` "is what the graph held" -- it said
+    `LO`, which is what the graph did *not* hold when the source recorded
+    `DS`. `_merge` now decides an empty container before this is reached
+    (the recorded VR, or `UN`), so this is the answer a *direct* caller
+    gets, and it is PS3.5 6.2.2's: a zero-length element whose VR was
+    never known is `UN`, not `LO`. The value is `None` rather than `[]`
+    because `None` is the one empty spelling `add_new` accepts under
+    every VR.
+
+    Deleting the `if not atoms` arm outright was measured to return
+    `('LO', [])` too -- the join below it takes `all(...)` over an empty
+    list as `True` -- so this assertion kills the deletion as well as
+    the old constant.
     """
-    assert DicomExporter._fallback_encoding([]) == ('LO', [])
+    assert DicomExporter._fallback_encoding([]) == ('UN', None)
 
 
 def test_a_multi_valued_value_the_encoder_cannot_take_is_still_a_loss():
