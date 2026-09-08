@@ -995,7 +995,15 @@ class DicomSession:
            returned success and deleted every redacted frame. The
            refusal sits after the leading save and before the rewrite,
            for the same reason the #295 check does: refusing after the
-           rewrite is worse than not checking.
+           rewrite is worse than not checking. A refused call has
+           therefore **already run its leading save**. On the threads
+           path (free-threaded builds, `ISOCENTER_FORCE_THREADS`) a
+           redaction worker mutates the live instance, so that save
+           writes the pass's in-progress state -- regenerated UIDs
+           written, pre-redaction rows retired -- exactly as any
+           concurrent `save()` would and as the pass's own next save
+           will; measured on 3.14t, nothing the refusal protects is
+           touched by it.
         2. A `redact()` or `ingest()` that starts while this method is
            rewriting **waits**, bounded by `_SIDECAR_GATE_TIMEOUT_S`
            (180 s), and then proceeds.

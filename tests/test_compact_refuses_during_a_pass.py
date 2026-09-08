@@ -25,11 +25,32 @@ lock closes the loader-offset span (§7.2: a row moved to 8214 under a
 loader the parent later bound at 12321) and the ingest variant, where
 blob rows are written before the `instances` row exists.
 
-**Executor-independent.** The refusal is a kernel fact about two fds on
-one file, so these tests run the same on the processes path (3.12) and
-the threads path (3.14t). What differs is only where the pass's
-mutations sit while parked -- on copies or on the live objects -- and
-neither changes what `compact()` may do.
+**Executor-independent, with one measured difference.** The refusal is
+a kernel fact about two fds on one file, so these tests run the same on
+the processes path (3.12) and the threads path (3.14t). What differs is
+where the pass's mutations sit while parked: on copies under processes,
+on the *live* instances under threads (the worker is handed
+`task['instance']` itself, and its `regenerate_uid()` moves the live
+attribute). That difference reaches the store through `compact()`'s
+leading `save(sync=True)`, which the spec's §4.4 puts *before* the
+refusal: under threads it writes the three live instances under their
+regenerated UIDs and `_delete_removed_instances` retires the
+pre-redaction rows -- the same retirement the pass's own next save
+performs -- so "every blob row present before the park is present
+after" is **false** there (measured on 3.14.7t with the GIL off: rows
+`I_PASS_0..2` gone, refusal raised, redacted frames intact). Test 1
+therefore pins what the orphan predicate would have reclaimed -- the
+rows the workers wrote under UIDs no `instances` row named -- and that
+the sidecar was not rewritten (same inode, same size), rather than the
+whole pre-park row set. Measured with the refusal removed *and* the
+three refusal assertions made vacuous, the remaining assertions still
+see the mutant, differently per path: under processes the leading save
+has nothing to write, the predicate deletes all three worker rows, and
+the *reclaimed* assertion is red (§4.1's corruption); under threads the
+leading save has already named those rows, the mutant keeps them and
+rewrites the sidecar under a live pass anyway, and the *moved* and
+inode assertions are red (§7.2's span). With the refusal assertions in
+place the mutant is red on both paths at the first of them.
 
 **Seams.** Test 1 parks `_apply_redaction_outcomes` after materialising
 its outcomes (a `staticmethod`, so the patch is installed as one). Test
@@ -84,6 +105,12 @@ def _blob_rows(store):
         return set(conn.execute(
             "SELECT instance_uid, kind, offset, length FROM instance_blobs"
         ).fetchall())
+
+
+def _sidecar_identity(store):
+    """(inode, size): compaction's `os.replace` changes the first."""
+    st = os.stat(store.sidecar_path)
+    return st.st_ino, st.st_size
 
 
 @pytest.fixture
@@ -146,6 +173,7 @@ def test_compact_during_redact_raises_and_reclaims_nothing(
 
     def work():
         seen["rows_before"] = _blob_rows(store)
+        seen["sidecar_before"] = _sidecar_identity(store)
         session.compact()
 
     helper = _Helper(parked, released, work)
@@ -165,11 +193,32 @@ def test_compact_during_redact_raises_and_reclaims_nothing(
         "the refusal does not name the pass-lock file: %s" % helper.error)
     assert "compact() refused" in str(helper.error)
 
+    # The rows the workers wrote under regenerated UIDs, which no
+    # `instances` row named while the pass was parked: exactly the rows
+    # 0.9.3's compaction reclaimed. The pre-redaction rows (`uids_before`)
+    # are deliberately not asserted on -- under threads the leading save
+    # has already retired them, legitimately, and under processes it has
+    # not; the module docstring says why.
+    worker_rows = {r for r in seen["rows_before"] if r[0] not in uids_before}
+    assert len(worker_rows) == len(instances), (
+        "expected one worker-written blob row per instance while parked, "
+        "saw %s" % (sorted(worker_rows),))
     rows_after = _blob_rows(store)
-    missing = seen["rows_before"] - rows_after
-    assert not missing, (
-        "compact() reclaimed rows that existed while the pass was open: "
-        "%s (#368)" % (sorted(missing),))
+    # Identity by (uid, kind) first: a row the predicate deleted is gone
+    # under every key, a row a rewrite merely moved keeps its identity
+    # and changes its offset. The two are different failures and the
+    # message must not call the second one the first.
+    reclaimed = {r[:2] for r in worker_rows} - {r[:2] for r in rows_after}
+    assert not reclaimed, (
+        "a refused compact() reclaimed rows the workers wrote during the "
+        "pass: %s (#368)" % (sorted(reclaimed),))
+    assert worker_rows <= rows_after, (
+        "a refused compact() moved the workers' rows to new offsets, so "
+        "the sidecar was rewritten after all: %s (#368)"
+        % (sorted(worker_rows - rows_after),))
+    assert _sidecar_identity(store) == seen["sidecar_before"], (
+        "a refused compact() rewrote the sidecar anyway (inode or size "
+        "changed); the refusal must sit before compact_sidecar() (#368)")
 
     assert applied == len(instances)
     for inst, before in zip(instances, uids_before):

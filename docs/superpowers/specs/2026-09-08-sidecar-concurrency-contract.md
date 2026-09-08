@@ -1182,3 +1182,40 @@ owner's decision.
    worker's expiry is logged as `Failed to persist pixel swap for <uid>:
    Sidecar gate ...` before it becomes the `RedactionOutcome(ok=False)`
    the row describes.
+8. **§9.2's first test is not executor-independent as written; the
+   refusal is.** "Assert every blob row present before the park is
+   present after" was green on 3.12 and red on 3.14.7t (GIL off,
+   `run_parallel` in threads), three runs in three, with the refusal
+   itself raised every time. Cause: §4.4 puts the refusal *after*
+   `compact()`'s leading `save(sync=True)`, and under threads the
+   redaction worker is handed the live `Instance` (`task['instance']`)
+   and `regenerate_uid()` moves the live attribute, so with the parent
+   parked in `_apply_redaction_outcomes` the graph already carries the
+   regenerated UIDs; the leading save writes them and
+   `_delete_removed_instances` retires the three pre-redaction rows
+   (`I_PASS_0..2`, blob rows included) -- the retirement the pass's own
+   next save performs, not a reclamation by the orphan predicate, which
+   never ran. Under processes the parent's instances are untouched
+   while parked, the save writes nothing, and the same assertion holds.
+   §4.4's order is kept (the authoritative check must be under the gate,
+   after the save, or a pass opening during the save is missed); the
+   side effect -- a refused `compact()` has already saved -- is stated
+   in `compact()`'s docstring. The test now pins what the predicate
+   would have reclaimed: the rows the workers wrote under UIDs no
+   `instances` row named (exactly one per instance, asserted non-empty)
+   survive under their `(uid, kind)` identity *and* at their offsets,
+   and the sidecar keeps its inode and size. Measured with the refusal
+   removed and the three refusal assertions made vacuous, so the
+   remaining assertions are graded alone: on 3.12 the *reclaimed*
+   assertion is red (the predicate deleted all three worker rows --
+   §4.1's corruption); on 3.14t the leading save had already named
+   those rows, the mutant kept them and rewrote the sidecar under a
+   live pass anyway, and the *moved* assertion is red (§7.2's span).
+   That is the honest measure: §4.1's reclamation was processes-only,
+   the rewrite under a live pass was not, and the refusal closes both.
+   With the refusal assertions in place the mutant is red on both
+   interpreters at the first of them, all three tests. Also observed
+   while measuring:
+   `redact()` prints `Executing using N workers (Process Isolation)...`
+   unconditionally, including on the threads path; filed, not fixed
+   here.
