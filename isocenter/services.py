@@ -413,13 +413,12 @@ class RedactionService:
         rois = task["rois"]
         config_hash = task["config_hash"]
         force = task.get("force", False)
-        failed = False
-        # Bound before the `try`, not inside it. Two early returns and the
-        # exception path all reach the `finally`, which reads this; an
+        # Nothing in the `finally` reads a name bound inside the `try`
+        # any more. It used to read `modified` and `failed` to decide a
+        # second persist, and both had to be pre-bound because an
         # `UnboundLocalError` raised *in* a `finally` replaces the return
-        # value, so an unbound name here would turn every legitimate skip
-        # into a worker failure.
-        modified = False
+        # value. That persist is gone (#368); if a `finally` ever reads
+        # a `try`-bound name again, pre-bind it here for that reason.
 
         try:
             # Optimized: Skip if already redacted with same config.
@@ -466,11 +465,24 @@ class RedactionService:
 
             # CRITICAL: Persist modified pixel data to sidecar (generate new Loader).
             #
-            # This call cannot move into the `finally` alongside the other
-            # one, however redundant the pair looks: the mutation dict
-            # below reads `inst._pixel_loader`, and it is *this* call that
+            # This is the only persist on this path, and it has to be
+            # here rather than in the `finally`: the mutation dict below
+            # reads `inst._pixel_loader`, and it is *this* call that
             # re-points it at the redacted frame. Drop it and the parent
             # is handed a loader for the pre-redaction pixels.
+            #
+            # There used to be a second call in the `finally`, guarded by
+            # `modified and not failed`. On every path where that guard
+            # is true this call has already run (had it raised, `failed`
+            # would be True), so the second was a double append: measured
+            # on 0.9.3, one task wrote two frames, `[(28, 36), (64, 36)]`,
+            # and the mutation's loader pointed at the first while the
+            # committed `instance_blobs` row pointed at the second -- two
+            # answers to where the redacted frame lives, until the next
+            # save's dedup re-emitted it. Deleted in #368;
+            # `tests/test_services.py` counts the calls. The serial arm
+            # (`redact_machine_instances`) keeps its `finally` persist,
+            # which is that path's only one.
             if self.store_backend and hasattr(self.store_backend, 'persist_pixel_data'):
                 self.store_backend.persist_pixel_data(inst)
             else:
@@ -530,7 +542,6 @@ class RedactionService:
             # room for the programming error would drop real failed
             # redactions and re-open #213. Do not add traceback-frame
             # inspection to tell the two apart (#217).
-            failed = True
             traceback.print_exc()
             # `original_uid`, not the live attribute: this line names the
             # identity the parent's failure row carries, and a sibling
@@ -539,18 +550,19 @@ class RedactionService:
             return RedactionOutcome(ok=False, sop_instance_uid=original_uid,
                                     error=f"{type(e).__name__}: {e}")
         finally:
-            # Persistence & Memory Cleanup
-            #
-            # Not persisted on a failure, and that gate is the whole of
-            # #213's "a failed instance is left as it was found".
-            # `apply_redaction_to_array` raises *mid-loop*, so zones 1..k-1
-            # are already zeroed when zone k fails; persisting made that
-            # partial mutation durable on the threads path (3.14t's default)
-            # while the processes path (3.12's) mutated a copy and left the
-            # instance untouched -- the same failed redaction leaving two
-            # different sidecars depending on the interpreter. Without the
-            # persist, the unconditional `discard_pixel_data()` below drops
-            # the mutated array and the next `get_pixel_data()` reloads the
+            # Memory cleanup only. No persist lives here any more: the
+            # one in the `try` body is the only append this path makes
+            # (#368), and a failed redaction must not be persisted at all
+            # -- that gate is the whole of #213's "a failed instance is
+            # left as it was found". `apply_redaction_to_array` raises
+            # *mid-loop*, so zones 1..k-1 are already zeroed when zone k
+            # fails; persisting made that partial mutation durable on the
+            # threads path (3.14t's default) while the processes path
+            # (3.12's) mutated a copy and left the instance untouched --
+            # the same failed redaction leaving two different sidecars
+            # depending on the interpreter. Without a persist, the
+            # unconditional `discard_pixel_data()` below drops the
+            # mutated array and the next `get_pixel_data()` reloads the
             # original through the loader.
             #
             # The one instance this cannot reach is one with neither a
@@ -563,21 +575,6 @@ class RedactionService:
             # carries no hash, so the next run retries it. Do not "fix" it
             # with a pre-image copy of every array -- that is exactly the
             # resident-memory cost the lazy-pixel design exists to avoid.
-            #
-            # `modified` narrows #213's condition; it does not replace it.
-            # `persist_pixel_data` has no deduplication -- it hashes,
-            # writes a frame and re-points the loader every time it is
-            # called with a resident array -- so persisting a swap that
-            # never happened appended a frame nothing referenced, and only
-            # `compact()` ever noticed. That is the same "attested without
-            # being earned" defect as the null attributes, in the sidecar
-            # instead of in the graph (#235).
-            if (modified and not failed and self.store_backend
-                    and hasattr(self.store_backend, 'persist_pixel_data')):
-                try:
-                    self.store_backend.persist_pixel_data(inst)
-                except Exception as pe:
-                    self.logger.error(f"Failed to persist swap for {inst.sop_instance_uid}: {pe}")
 
             # `discard_pixel_data`, not `unload_pixel_data`: dropping the
             # resident array is the INTENT here, not an optimisation. On a

@@ -41,7 +41,16 @@ setup(
         "Intended Audience :: Healthcare Industry",
         "Intended Audience :: Science/Research",
         "License :: OSI Approved :: Apache Software License",
-        "Operating System :: OS Independent",
+        # POSIX, not "OS Independent": every sidecar write takes
+        # `fcntl.flock`, and the gate (`<sidecar>.lock`) and pass-lock
+        # (`<sidecar>.pass.lock`) beside it are flock files too (#368).
+        # `fcntl` does not exist on Windows, so the old classifier
+        # promised a platform on which `pip install` succeeded and the
+        # first sidecar write raised `ModuleNotFoundError` (#376).
+        # `tests/test_packaging_contract.py` checks this line against
+        # the module-scope `import fcntl` in `isocenter/sidecar.py`, in
+        # both directions.
+        "Operating System :: POSIX",
         # Only versions CI actually runs. Advertising more is the same
         # unbacked promise the old python_requires=">=3.9" was.
         #

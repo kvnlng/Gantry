@@ -213,8 +213,11 @@ Routing them to the sidecar instead means giving private tags an
 offset/length representation the EAV table does not have, plus a lazy
 loader and an export re-merge path. `session.compact()` rewrites the
 sidecar and rewires every offset it knows about, so a class of offset it
-does not know about is silent corruption after the first compaction. That
-is design work, not a flag.
+does not know about is silent corruption after the first compaction. (It
+also holds the sidecar gate for the whole rewrite, so any writer of such
+an offset would have to take that gate too, and it refuses outright while
+a `redact()` or `ingest()` pass is open -- see `compact()`'s API entry.)
+That is design work, not a flag.
 
 !!! warning "Standard binary elements are dropped too"
 

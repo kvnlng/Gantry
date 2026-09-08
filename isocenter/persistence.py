@@ -6,6 +6,7 @@ of DICOM entities (Patients, Studies, Series, Instances) using a SQLite database
 It also handles sidecar storage for pixel data to keep the database lightweight.
 """
 
+import fcntl
 import sqlite3
 import contextlib
 import os
@@ -173,6 +174,66 @@ def _delete_patient_subtrees(cur, patient_pks) -> None:
 #: No environment variable on purpose (one spelling per behaviour);
 #: tests monkeypatch the constant.
 _SQLITE_BUSY_TIMEOUT_S = 120.0
+
+#: How long a sidecar writer, a redact()/ingest() pass, or `compact()`
+#: waits for the sidecar gate or the pass-lock before raising (#368).
+#: Its place in the timeout family, with what each bound protects:
+#:
+#:     _SQLITE_BUSY_TIMEOUT_S = 120  <  this = 180
+#:         <  _WORKER_FAULTHANDLER_TIMEOUT_S = 240  <  faulthandler_timeout = 300
+#:
+#: Above 120 s plus a frame write: the gate is the one lock deliberately
+#: held across a sqlite write, so a waiter behind a holder that is
+#: itself waiting out the busy timeout must not give up first -- it
+#: would raise a gate error that misnames the fault (the database is
+#: what is stuck) and, on the save path, leave the instances dirty when
+#: the holder was seconds from succeeding. Below 240 and 300 s: a stuck
+#: gate must error inside both faulthandler windows so the dump shows a
+#: thread *waiting at the gate* with a stack, and the error, not the job
+#: cap, ends the test (#280, #250). `tests/test_packaging_contract.py`
+#: pins the inequality and, by `inspect.getsource`, that
+#: `_hold_sidecar_gate` still READS this name. No environment variable
+#: on purpose (one spelling per behaviour); tests monkeypatch the
+#: constant. The value tolerates a compaction of ~800 MB live on
+#: 100 MB/s storage behind a stuck sqlite writer; a healthy compaction
+#: holds the gate for 0.217 s/GB on local SSD (2026-09-08 spec §2.3).
+_SIDECAR_GATE_TIMEOUT_S = 180.0
+
+#: The poll interval for the two bounded flock loops. `flock` has no
+#: timeout and `signal.alarm` does not reach non-main threads, so the
+#: bound is a `LOCK_NB` attempt every 10 ms. The uncontended path takes
+#: the lock on the first attempt (11.6 us measured); a contended one
+#: pays at most one interval on top of the hold it waited for.
+_LOCK_POLL_INTERVAL_S = 0.01
+
+
+@contextlib.contextmanager
+def _flock_within(path, flags, deadline, describe):
+    """Hold `flags` on `path` for the block, polling `LOCK_NB` until `deadline`.
+
+    One fd per acquisition, opened here and closed on every exit
+    including exception: a leaked fd holds the flock for the life of
+    the process, and `flock` is per open file description, so a second
+    fd on the same path from the same thread would deadlock against the
+    first (the self-deadlock the 2026-09-07 spec measured). `describe`
+    is called only on expiry, to build the error.
+    """
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, flags | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(describe()) from None
+                time.sleep(_LOCK_POLL_INTERVAL_S)
+        try:
+            yield fd
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 @dataclass
@@ -635,6 +696,13 @@ class SqliteStore:
             tf = tempfile.NamedTemporaryFile(suffix="_pixels.bin", delete=False)
             self.sidecar_path = tf.name
             tf.close()
+            # This store created the temp file, so `stop()` unlinks it
+            # (and the two lock files beside it). Ownership is a flag
+            # rather than a re-derivation from `db_path` because a
+            # pickled clone -- a spawned worker's copy -- shares the
+            # *same* sidecar path and must not unlink it: `__getstate__`
+            # drops the flag and `__setstate__` sets it False (#376).
+            self._owns_temp_sidecar = True
             # Shared memory connection for :memory: database to persist across transactions
             self._memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
             self._memory_conn.row_factory = sqlite3.Row
@@ -643,6 +711,9 @@ class SqliteStore:
             self.sidecar_path = os.path.splitext(db_path)[0] + "_pixels.bin"
             self._memory_conn = None
             self._memory_lock = None
+            # A file-backed sidecar is data; its lock files are stable
+            # paths other processes of this session may be polling.
+            self._owns_temp_sidecar = False
 
         self.sidecar = SidecarManager(self.sidecar_path)
         self._init_db()
@@ -678,10 +749,32 @@ class SqliteStore:
         # it was constructed and never acquired, here or anywhere (#366).
         # Writers serialise on `fcntl.flock` inside `write_frame`, which
         # is a different mechanism with different reach -- it is
-        # cross-process, and `read_frame` does not take it at all. What
-        # is genuinely unserialised is writers against `compact_sidecar`,
-        # which is #368 and is not a lock-ordering question.
+        # cross-process, and `read_frame` does not take it at all.
+        # Writers against `compact_sidecar` are serialised by the gate
+        # below, which sits ABOVE this lock (#368).
         self._pixel_swap_lock = threading.Lock()
+        # The sidecar gate's in-process half (#368). Mutual exclusion
+        # between every frame writer and the compaction rewrite; the
+        # cross-process half is `fcntl.flock` on `_gate_path()`, taken
+        # inside `_hold_sidecar_gate` only after this lock is held, so
+        # two threads of one process never hold two fds on the lock
+        # file at once. Lock order, an internal invariant pinned by
+        # `tests/test_sidecar_gate_order.py`:
+        #
+        #     _sidecar_gate -> _pixel_swap_lock          (rewire; sites 5, 6)
+        #     _sidecar_gate -> sqlite                    (every site's commit)
+        #     _sidecar_gate -> pass-lock, LOCK_NB only   (compact's refusal)
+        #
+        # The gate is the one lock deliberately held across a sqlite
+        # write: the hazard it closes is a frame appended before
+        # `_read_blob_index` whose row commits after `_apply_new_offsets`,
+        # and only a hold spanning append AND commit closes that. It is
+        # never taken inside `write_frame` (`SidecarManager` is stateless
+        # and called directly by fixture generators) and never taken by
+        # a thread holding `_pixel_swap_lock` (`_persist_pixels` calls
+        # `write_frame` under the swap lock; `_rewire_sidecar_loaders`
+        # takes the swap lock under the gate -- a cycle).
+        self._sidecar_gate = threading.Lock()
         self._audit_thread = threading.Thread(
             target=_audit_worker_loop,
             args=(weakref.ref(self), self._stop_event, self._audit_wakeup,
@@ -704,7 +797,16 @@ class SqliteStore:
             '_audit_wakeup',
             '_audit_drop_lock',
             '_pixel_swap_lock',
-            '_audit_thread']
+            # The gate's thread lock. The clone recreates its own and
+            # opens its own fd on the same lock path per acquisition;
+            # the flock, not this lock, is what reaches across (#368).
+            '_sidecar_gate',
+            '_audit_thread',
+            # Not a threading primitive, but dropped for the same
+            # reason a clone gets fresh locks: a clone that inherited
+            # `True` would unlink the parent's sidecar on its own
+            # `stop()` (#376). `__setstate__` sets it False.
+            '_owns_temp_sidecar']
         for k in keys_to_remove:
             state.pop(k, None)
         return state
@@ -720,6 +822,10 @@ class SqliteStore:
         else:
             self._memory_lock = None
             self._memory_conn = None
+        # A clone never owns the temp sidecar, whatever the parent did:
+        # `tests/test_save_redact_race.py` calls `clone.stop()` on
+        # pickled clones while the parent is still reading (#376).
+        self._owns_temp_sidecar = False
 
         self.audit_queue = queue.Queue()
         self._stop_event = threading.Event()
@@ -728,12 +834,137 @@ class SqliteStore:
         self._audit_wakeup = threading.Event()
         self._audit_drop_lock = threading.Lock()
         self._pixel_swap_lock = threading.Lock()
+        self._sidecar_gate = threading.Lock()
         self._audit_thread = threading.Thread(
             target=_audit_worker_loop,
             args=(weakref.ref(self), self._stop_event, self._audit_wakeup,
                   self.audit_queue),
             daemon=True, name="AuditWorker")
         self._audit_thread.start()
+
+    def _gate_path(self) -> str:
+        """The sidecar gate's lock file: `<sidecar>.lock`.
+
+        A stable path *beside* the sidecar, never the sidecar itself.
+        `flock` binds to an inode, and `compact_sidecar` swaps the
+        sidecar in with `os.replace`, which gives the path a new inode:
+        a writer blocked on the old one wakes after the swap and appends
+        into the unlinked file (#368). This path is never replaced.
+        """
+        return self.sidecar_path + ".lock"
+
+    def _pass_lock_path(self) -> str:
+        """The pass-lock's file: `<sidecar>.pass.lock` (#368)."""
+        return self.sidecar_path + ".pass.lock"
+
+    def _gate_timeout_message(self) -> str:
+        """One class, one spelling: every channel carries this text."""
+        return (f"Sidecar gate {self._gate_path()} not acquired within "
+                f"_SIDECAR_GATE_TIMEOUT_S={_SIDECAR_GATE_TIMEOUT_S:g} s; a "
+                "compaction or another writer is holding it")
+
+    @contextlib.contextmanager
+    def _hold_sidecar_gate(self):
+        """Hold the sidecar gate for the block (#368).
+
+        Mutual exclusion between every frame writer and the compaction
+        rewrite. Held at the six `write_frame` sites across the append
+        **and** the row commit, and by `Session.compact()` across
+        `compact_sidecar()` **and** `_rewire_sidecar_loaders()`. Thread
+        lock first, then an exclusive `flock` on `_gate_path()` -- the
+        stable path beside the sidecar, because a flock binds to an
+        inode and compaction's `os.replace` gives the sidecar a new
+        one. Bounded by `_SIDECAR_GATE_TIMEOUT_S` as one budget across
+        both halves; expiry raises `RuntimeError` naming the lock file
+        and the constant. Where that lands: a redaction worker returns
+        it as `RedactionOutcome(ok=False)` and the parent raises
+        `RedactionError` with an ERROR audit row; ingest files an ERROR
+        audit row per result; a background save logs `Background save
+        failed` and leaves its instances dirty for the next save
+        (owner's decision C1, no audit row); `save(sync=True)` and
+        `compact()` raise to the caller.
+
+        The known liveness cost, stated rather than hidden: a `close()`
+        whose persistence worker is queued behind a compaction longer
+        than `_SHUTDOWN_JOIN_TIMEOUT_S` (30 s -- about 3 GB live on
+        local SSD, ~300 MB on 100 MB/s network storage) will have
+        #314's wedged-worker machinery misfire on a healthy compaction.
+        The same ordering used to corrupt the save instead. Loud and
+        late beats silent and wrong; the structural fix is a two-phase
+        compaction that holds the gate only for the O(delta) tail, and
+        that is a filed follow-up, not this.
+        """
+        deadline = time.monotonic() + _SIDECAR_GATE_TIMEOUT_S
+        if not self._sidecar_gate.acquire(timeout=_SIDECAR_GATE_TIMEOUT_S):
+            raise RuntimeError(self._gate_timeout_message())
+        try:
+            with _flock_within(self._gate_path(), fcntl.LOCK_EX, deadline,
+                               self._gate_timeout_message):
+                yield
+        finally:
+            self._sidecar_gate.release()
+
+    @contextlib.contextmanager
+    def _hold_pass_lock(self):
+        """Hold the pass-lock shared for a `redact()`/`ingest()` pass (#368).
+
+        `LOCK_SH` on `_pass_lock_path()`, taken holding nothing, for
+        the whole pass: from before the first worker can call
+        `regenerate_uid()` until after `_apply_redaction_outcomes` has
+        bound every loader. While any pass holds it, `compact()`'s
+        `LOCK_EX|LOCK_NB` attempt is refused. Why a lock and not a
+        predicate change: during a pass the graph carries references
+        the store has not been told about yet -- a worker commits its
+        blob row under a regenerated UID before any `instances` row
+        names it -- and compaction's orphan predicate is *correct* to
+        reclaim such a row; the fix is to keep compaction out until
+        the pass has told the store, not to teach the predicate a
+        second answer to "what is live". Kernel-released on any death.
+        Waits, bounded by `_SIDECAR_GATE_TIMEOUT_S`, behind a running
+        compaction's EX -- which now spans its leading save as well as
+        the rewrite -- and then proceeds.
+        """
+        deadline = time.monotonic() + _SIDECAR_GATE_TIMEOUT_S
+        path = self._pass_lock_path()
+
+        def describe():
+            return (f"Pass-lock {path} not acquired within "
+                    f"_SIDECAR_GATE_TIMEOUT_S={_SIDECAR_GATE_TIMEOUT_S:g} s; "
+                    "a compaction is saving or rewriting the sidecar")
+
+        with _flock_within(path, fcntl.LOCK_SH, deadline, describe):
+            yield
+
+    @contextlib.contextmanager
+    def _refuse_while_pass_open(self):
+        """Hold the pass-lock exclusive for a compaction, or refuse (#368).
+
+        `LOCK_EX|LOCK_NB` on `_pass_lock_path()`, taken holding nothing
+        and held through the block, so a pass starting anywhere inside
+        `compact()` -- during its leading save, its rewrite or its
+        rewire -- waits at its `LOCK_SH`. Taken before the leading save
+        rather than under the gate since the review of PR #385: a pass
+        that opened and closed inside that save was admitted with its
+        rows unnamed. `LOCK_NB` because the refusal is an answer, not a
+        wait (a pass holds SH for its whole length, and "wait for it to
+        return" is the caller's call to make). Refusal is `RuntimeError`
+        before anything -- save included -- has happened.
+        """
+        path = self._pass_lock_path()
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RuntimeError(
+                    f"compact() refused: a redact() or ingest() pass is "
+                    f"open on {path}; wait for it to return") from None
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
     @contextlib.contextmanager
     def _get_connection(self):
@@ -1105,6 +1336,22 @@ class SqliteStore:
         # A timed-out join no longer loses rows: this waits out any
         # in-flight write on the lock and drains the rest itself.
         self.flush_audit_queue()
+
+        # Only the store that created a `:memory:` temp sidecar removes
+        # it -- never a pickled clone (flag dropped on pickle) and never
+        # a file-backed store (its sidecar is data, and its lock files
+        # are stable paths other processes may be polling). Measured
+        # before #376: the temp sidecar survived `close()` every time,
+        # and with the gate and pass-lock that would be three leaked
+        # files per session. `FileNotFoundError` is expected for a lock
+        # file no acquisition ever created.
+        if self._owns_temp_sidecar:
+            for path in (self.sidecar_path, self._gate_path(),
+                         self._pass_lock_path()):
+                try:
+                    os.remove(path)
+                except FileNotFoundError:
+                    pass
 
     def flush_audit_queue(self):
         """Settle the audit log.
@@ -2332,10 +2579,14 @@ class SqliteStore:
         digest = hashlib.sha256(raw).hexdigest()
 
         c_alg = 'zlib'
-        offset, length = self.sidecar.write_frame(data, c_alg)
-
-        self.record_blob_ref(
-            instance.sop_instance_uid, kind, offset, length, digest, c_alg)
+        # Site 4 of six. The gate spans the append AND the row commit:
+        # a row committed outside it can land after `_apply_new_offsets`
+        # for a frame appended before `_read_blob_index`, pointing into
+        # the pre-compaction layout of a smaller file (#368).
+        with self._hold_sidecar_gate():
+            offset, length = self.sidecar.write_frame(data, c_alg)
+            self.record_blob_ref(
+                instance.sop_instance_uid, kind, offset, length, digest, c_alg)
 
         instance.mark_modified()
 
@@ -2516,82 +2767,94 @@ class SqliteStore:
             instance (Instance): The instance containing the pixel data to persist.
         """
         try:
-            # The read -> sidecar write -> loader/hash rebind must be one
-            # critical section against `_persist_pixels`: a background
-            # save that reads the bytes before this redaction swap zeroes
-            # them, and rebinds after it, leaves the instance reading
-            # back its pre-redaction pixels under a redaction attestation
-            # (#274). Released before `record_blob_ref` below -- never
-            # hold a thread lock across a sqlite write that can wait out
-            # the busy timeout.
-            with self._pixel_swap_lock:
-                # 1. Write to Sidecar
-                # Pass array directly to avoid .tobytes() Memory spike
-                # (Zero-Copy 500MB save)
-                # One read, inside the lock, and every branch below asks
-                # this local. The None check used to sit above the `try`,
-                # outside the lock, while the read that feeds the hash sat
-                # here -- so an `unload_pixel_data()` landing between them
-                # left `b_data` None, `hasattr(None, 'tobytes')` False, and
-                # `hashlib.sha256(None)` raising `TypeError: object
-                # supporting the buffer API required` into the redaction
-                # swap (#288). Returning here skips `record_blob_ref` and
-                # `mark_modified` exactly as the old early return did.
-                b_data = instance.pixel_array
-                if b_data is None:
-                    return
-
-                # Hash Update (CRITICAL for Integrity Checks)
-                # Calculate Hash BEFORE writing/compression to ensure we
-                # capture the state exactly as it goes into the pipe.
-                import hashlib
-                # Ensure we are hashing the contiguous bytes
-                if hasattr(b_data, 'tobytes'):
-                    p_hash = hashlib.sha256(b_data.tobytes()).hexdigest()
-                else:
-                    p_hash = hashlib.sha256(b_data).hexdigest()
-
-                instance._pixel_hash = p_hash
-
-                # Determine suitable compression? Defaulting to zlib for
-                # swap. Ideally we respect original or config, but for
-                # swap zlib is safe/fast enough.
-                c_alg = 'zlib'
-
-                offset, length = self.sidecar.write_frame(b_data, c_alg)
-
-                # 2. Update Instance Loader
-                # This allows instance.unload_pixel_data() to work safely
-                # Note: instance attributes ARE populated here (it's a
-                # live object), so passing instance=instance works.
-                instance._pixel_loader = self._create_pixel_loader(
-                    offset, length, c_alg, instance, pixel_hash=p_hash)
-                # The loader now points at the bytes that are resident, so
-                # the array is recoverable and freeable again (#293).
-                instance._pixel_array_unwritten = False
-
-            # 3. Optional: Persist the linkage to DB immediately?
-            # It's safer if we do, so if we crash, we know where the pixels are.
-            # However, if we don't save the attributes/UID changes, the DB is out of sync anyway.
-            # But the primary goal here is MEMORY MANAGEMENT.
-            # So updating the object state in memory (step 2) is sufficient for unload_pixel_data() to return True.
-            # The final session.save() will record the new offset/length into the DB
-            # instances table.
-
-            # Mirror the reference into the kind-keyed blob table so
-            # compaction and waveform storage share one index.
-            self.record_blob_ref(
-                instance.sop_instance_uid, 'pixels', offset, length, p_hash, c_alg)
-
-            # The instance must be marked modified so save_all writes the
-            # new loader and hash. Without this an otherwise-unchanged
-            # instance is skipped, leaving the database pointing at the
-            # original data while memory points at the new sidecar frame.
-            instance.mark_modified()
-
+            # Site 5 of six. The gate is taken OUTSIDE `_pixel_swap_lock`
+            # (order: gate -> swap lock, the order `_rewire_sidecar_loaders`
+            # needs) and spans the append below AND the `record_blob_ref`
+            # after the swap lock is released (#368). Inside this `try`
+            # so a gate expiry gets the same log line as any other swap
+            # failure before it becomes a `RedactionOutcome(ok=False)`.
+            with self._hold_sidecar_gate():
+                self._swap_pixels_under_gate(instance)
         except Exception as e:
             self.logger.error(f"Failed to persist pixel swap for {instance.sop_instance_uid}: {e}")
             raise
+
+    def _swap_pixels_under_gate(self, instance: Instance):
+        """`persist_pixel_data`'s body; the caller holds the sidecar gate."""
+        # The read -> sidecar write -> loader/hash rebind must be one
+        # critical section against `_persist_pixels`: a background
+        # save that reads the bytes before this redaction swap zeroes
+        # them, and rebinds after it, leaves the instance reading
+        # back its pre-redaction pixels under a redaction attestation
+        # (#274). Released before `record_blob_ref` below -- never
+        # hold a thread lock across a sqlite write that can wait out
+        # the busy timeout. (The gate, held by the caller, is the
+        # one deliberate exception to that rule, and the reason is
+        # at site 4.)
+        with self._pixel_swap_lock:
+            # 1. Write to Sidecar
+            # Pass array directly to avoid .tobytes() Memory spike
+            # (Zero-Copy 500MB save)
+            # One read, inside the lock, and every branch below asks
+            # this local. The None check used to sit above the `try`,
+            # outside the lock, while the read that feeds the hash sat
+            # here -- so an `unload_pixel_data()` landing between them
+            # left `b_data` None, `hasattr(None, 'tobytes')` False, and
+            # `hashlib.sha256(None)` raising `TypeError: object
+            # supporting the buffer API required` into the redaction
+            # swap (#288). Returning here skips `record_blob_ref` and
+            # `mark_modified` exactly as the old early return did.
+            b_data = instance.pixel_array
+            if b_data is None:
+                return
+
+            # Hash Update (CRITICAL for Integrity Checks)
+            # Calculate Hash BEFORE writing/compression to ensure we
+            # capture the state exactly as it goes into the pipe.
+            import hashlib
+            # Ensure we are hashing the contiguous bytes
+            if hasattr(b_data, 'tobytes'):
+                p_hash = hashlib.sha256(b_data.tobytes()).hexdigest()
+            else:
+                p_hash = hashlib.sha256(b_data).hexdigest()
+
+            instance._pixel_hash = p_hash
+
+            # Determine suitable compression? Defaulting to zlib for
+            # swap. Ideally we respect original or config, but for
+            # swap zlib is safe/fast enough.
+            c_alg = 'zlib'
+
+            offset, length = self.sidecar.write_frame(b_data, c_alg)
+
+            # 2. Update Instance Loader
+            # This allows instance.unload_pixel_data() to work safely
+            # Note: instance attributes ARE populated here (it's a
+            # live object), so passing instance=instance works.
+            instance._pixel_loader = self._create_pixel_loader(
+                offset, length, c_alg, instance, pixel_hash=p_hash)
+            # The loader now points at the bytes that are resident, so
+            # the array is recoverable and freeable again (#293).
+            instance._pixel_array_unwritten = False
+
+        # 3. Optional: Persist the linkage to DB immediately?
+        # It's safer if we do, so if we crash, we know where the pixels are.
+        # However, if we don't save the attributes/UID changes, the DB is out of sync anyway.
+        # But the primary goal here is MEMORY MANAGEMENT.
+        # So updating the object state in memory (step 2) is sufficient for unload_pixel_data() to return True.
+        # The final session.save() will record the new offset/length into the DB
+        # instances table.
+
+        # Mirror the reference into the kind-keyed blob table so
+        # compaction and waveform storage share one index.
+        self.record_blob_ref(
+            instance.sop_instance_uid, 'pixels', offset, length, p_hash, c_alg)
+
+        # The instance must be marked modified so save_all writes the
+        # new loader and hash. Without this an otherwise-unchanged
+        # instance is skipped, leaving the database pointing at the
+        # original data while memory points at the new sidecar frame.
+        instance.mark_modified()
 
     def save_all(self, patients: List[Patient],
                  prune_absent_patients: bool = False):
@@ -2625,46 +2888,60 @@ class SqliteStore:
         # are already resident, so holding them costs a pointer each.
         saved_instances = []
 
-        # Every sidecar frame this save will need is appended HERE, before
-        # any connection exists. It used to happen inside the walk below,
-        # which meant the SQLite write lock was held for as long as the
-        # save's whole dirty resident pixel payload took to compress and
-        # write -- so a slow-storage save could outlast
-        # `_SQLITE_BUSY_TIMEOUT_S` and surface in a healthy concurrent
-        # writer as `database is locked` (#287). The transaction below now
-        # contains row upserts and nothing else.
-        prepared = self._prepare_pixel_frames(patients, tally)
+        # Site 6 of six. The gate spans `_prepare_pixel_frames` AND the
+        # transaction's commit -- the whole of what follows up to the
+        # `mark_persisted` loop. Phase E of
+        # `tests/test_compaction_races_a_concurrent_write.py` is a row
+        # committed after `_apply_new_offsets` from a frame appended
+        # before `_read_blob_index`; a gate released between the prepass
+        # and the commit reopens it exactly (#368). The prepass takes
+        # `_pixel_swap_lock` per instance under this gate, which is the
+        # order the rewire needs. `compact()` takes this same gate only
+        # after its leading `save(sync=True)` has returned, or it would
+        # deadlock here against itself.
+        with self._hold_sidecar_gate():
+            # Every sidecar frame this save will need is appended HERE,
+            # before any connection exists. It used to happen inside the
+            # walk below, which meant the SQLite write lock was held for
+            # as long as the save's whole dirty resident pixel payload
+            # took to compress and write -- so a slow-storage save could
+            # outlast `_SQLITE_BUSY_TIMEOUT_S` and surface in a healthy
+            # concurrent writer as `database is locked` (#287). The
+            # transaction below now contains row upserts and nothing else.
+            prepared = self._prepare_pixel_frames(patients, tally)
 
-        try:
-            with self._get_connection() as conn:
-                cur = conn.cursor()
-                pending_deletions = []
-                for patient in patients:
-                    saved_instances.extend(
-                        self._save_patient(conn, cur, patient, tally,
-                                           pending_deletions, prepared))
+            try:
+                with self._get_connection() as conn:
+                    cur = conn.cursor()
+                    pending_deletions = []
+                    for patient in patients:
+                        saved_instances.extend(
+                            self._save_patient(conn, cur, patient, tally,
+                                               pending_deletions, prepared))
 
-                # Every upsert in the whole save has now run, so a child
-                # that moved to a different parent already points at it and
-                # a scoped delete will not mistake it for a removal (#77).
-                for delete, parent, parent_pk in pending_deletions:
-                    delete(cur, parent, parent_pk)
+                    # Every upsert in the whole save has now run, so a
+                    # child that moved to a different parent already
+                    # points at it and a scoped delete will not mistake
+                    # it for a removal (#77).
+                    for delete, parent, parent_pk in pending_deletions:
+                        delete(cur, parent, parent_pk)
 
-                if prune_absent_patients:
-                    self._delete_absent_patients(cur, patients)
+                    if prune_absent_patients:
+                        self._delete_absent_patients(cur, patients)
 
-                conn.commit()
-        except Exception:
-            # No rollback here: `_get_connection` owns the transaction and
-            # has already rolled it back and closed the connection by the
-            # time this runs. Calling `conn.rollback()` on the closed
-            # handle raised `ProgrammingError: Cannot operate on a closed
-            # database`, which then replaced the real exception -- every
-            # distinct save failure surfaced under one misleading name.
-            self.logger.error(
-                "Save failed; the transaction was rolled back and nothing was "
-                "marked clean", exc_info=True)
-            raise
+                    conn.commit()
+            except Exception:
+                # No rollback here: `_get_connection` owns the transaction
+                # and has already rolled it back and closed the connection
+                # by the time this runs. Calling `conn.rollback()` on the
+                # closed handle raised `ProgrammingError: Cannot operate
+                # on a closed database`, which then replaced the real
+                # exception -- every distinct save failure surfaced under
+                # one misleading name.
+                self.logger.error(
+                    "Save failed; the transaction was rolled back and "
+                    "nothing was marked clean", exc_info=True)
+                raise
 
         for instance, revision in saved_instances:
             instance.mark_persisted(revision)
@@ -3147,7 +3424,13 @@ class SqliteStore:
         # `sidecar._lock` order until #366 established that
         # `sidecar._lock` was never acquired by anything. `write_frame`
         # takes an `fcntl.flock` on the file, which is cross-process and
-        # not part of any Python lock hierarchy.)
+        # a leaf.) The caller -- `save_all`, site 6 -- holds the sidecar
+        # gate around the whole prepass and transaction, so the order at
+        # this `write_frame` is gate -> `_pixel_swap_lock` -> the leaf
+        # flock. Do not take the gate in here: it would be taken under
+        # the swap lock, which is the reverse of the order the rewire
+        # needs and is what `tests/test_sidecar_gate_order.py` pins
+        # (#368).
         #
         # The lock must open *before* the first read of `pixel_array`,
         # not after it. `Instance.unload_pixel_data()` nulls that field
@@ -3656,8 +3939,14 @@ class SqliteStore:
             # does nothing reads as though it were re-pointing a writer at
             # the compacted file, which is a guarantee this code does not
             # make and cannot make -- a concurrent writer holds whatever
-            # manager it already read. That is #368, and no assignment here
-            # closes it.
+            # manager it already read. What does close that is the sidecar
+            # gate (#368), which `Session.compact()` holds across this
+            # method AND the loader rewire after it; this method takes no
+            # lock of its own, deliberately, so the hold and the rewire
+            # cannot be split. A direct caller of this method gets the
+            # predicate and nothing else --
+            # `tests/test_compaction_reclaims_a_row_instances_does_not_carry.py`
+            # is the record of what that means.
             self._log_compaction_result(start_time, original_size, written_bytes)
             return uid_map
 

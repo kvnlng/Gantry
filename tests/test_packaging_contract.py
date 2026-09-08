@@ -1564,3 +1564,136 @@ def test_no_shipped_module_carries_an_invalid_escape_sequence():
         "invalid escape sequences found; CPython warns about them today "
         "and the documentation says a future version will raise "
         "`SyntaxError` (#292).\n" + "\n".join(detail))
+
+
+# ---------------------------------------------------------------------------
+# #376: the platform claim must match the platform the code needs
+# ---------------------------------------------------------------------------
+
+def _module_scope_imports_of(module_name):
+    """Every unguarded module-scope `import <module_name>` under isocenter/.
+
+    Walks `tree.body` only -- the statements that *are* module scope --
+    so an import inside `try:`, `if:`, a function or a class is not
+    counted. That narrowness is the point: a `try: import fcntl` would
+    make the POSIX classifier true and this walk's answer false, and the
+    walk must say "unbacked" in that case rather than "backed".
+    """
+    hits = set()
+    for path in sorted(PACKAGE.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                if any(alias.name == module_name for alias in node.names):
+                    hits.add((path.relative_to(REPO).as_posix(), node.lineno))
+            elif isinstance(node, ast.ImportFrom) and node.module == module_name:
+                hits.add((path.relative_to(REPO).as_posix(), node.lineno))
+    return hits
+
+
+def test_the_platform_classifier_matches_the_fcntl_import():
+    """`Operating System :: POSIX`, because the code is (#376).
+
+    Every sidecar write takes `fcntl.flock`, and the gate and pass-lock
+    beside the sidecar are `flock` files too (#368). `fcntl` does not
+    exist on Windows, so `Operating System :: OS Independent` promised a
+    platform on which the first sidecar write raised
+    `ModuleNotFoundError: No module named 'fcntl'` -- after a
+    successful install. The claim and the import are checked against
+    each other in both directions: the classifier must be POSIX, and
+    `import fcntl` must be at module scope in the package, so that on
+    Windows the failure is at `import isocenter`, where the packaging
+    claim is checked, rather than at the first write. If `fcntl` ever
+    leaves the tree, this test says the POSIX claim is now the unbacked
+    one -- which is the direction a Windows port would take.
+    """
+    classifiers = _setup_keyword("classifiers") or []
+
+    assert not any("OS Independent" in item for item in classifiers), (
+        "setup.py claims `Operating System :: OS Independent`, but every "
+        "sidecar write takes fcntl.flock and fcntl does not exist on "
+        "Windows: a Windows install succeeds and fails at the first "
+        "sidecar write (#376)")
+    assert any(item.startswith("Operating System :: POSIX")
+               for item in classifiers), (
+        "setup.py carries no `Operating System :: POSIX` classifier; the "
+        "flock-based sidecar, gate and pass-lock are POSIX-only and the "
+        "metadata must say so (#376)")
+
+    fcntl_sites = _module_scope_imports_of("fcntl")
+    assert fcntl_sites, (
+        "no module-scope `import fcntl` under isocenter/. Either the "
+        "import is guarded or function-local (then a Windows install "
+        "fails at the first sidecar write instead of at `import "
+        "isocenter`), or fcntl is gone -- in which case the POSIX "
+        "classifier is the unbacked claim now (#376)")
+
+
+def test_sidecar_lock_files_are_ignored_before_any_exist():
+    """`*.lock` is in `.gitignore` (#376).
+
+    Tests write beside the sidecar in the repo root and CLAUDE.md says
+    to leave those artefacts alone rather than add cleanup, so the gate
+    and pass-lock files (`<name>_pixels.bin.lock`,
+    `<name>_pixels.bin.pass.lock`) would otherwise sit untracked in the
+    root after the first run. Low value on its own; its job is to fail
+    *before* a lock file is committed by accident.
+    """
+    patterns = [line.strip()
+                for line in (REPO / ".gitignore").read_text(
+                    encoding="utf-8").splitlines()]
+    assert "*.lock" in patterns, (
+        ".gitignore has no `*.lock` pattern; the sidecar gate and "
+        "pass-lock files would be left untracked in the repo root by the "
+        "first test run (#376)")
+
+
+def test_the_sidecar_gate_deadline_sits_inside_the_timeout_family():
+    """`120 < _SIDECAR_GATE_TIMEOUT_S < 240 < 300`, and the helper reads it.
+
+    The sidecar gate (#368) is the one lock deliberately held across a
+    sqlite write, so a waiter behind a holder that is itself waiting out
+    `_SQLITE_BUSY_TIMEOUT_S` must not give up first: it would raise a
+    gate error that misnames the fault (the database is what is stuck)
+    and, on the save path, leave the instances dirty when the holder was
+    seconds from succeeding. Above that, it must expire inside both
+    faulthandler windows (`_WORKER_FAULTHANDLER_TIMEOUT_S` in a worker,
+    pytest's threshold in the parent) so a stuck gate dumps a thread
+    *waiting at the gate* with a stack and the error, not the job cap,
+    ends the test (#280, #250). And the helper must read the constant by
+    name: a re-inlined literal is exactly how `timeout=900.0` went
+    unquestioned for so long (2026-09-08 spec §2.3).
+    """
+    import inspect
+
+    from isocenter import parallel, persistence
+
+    threshold, _step_seconds, _ = _faulthandler_threshold_and_step_seconds()
+    gate = persistence._SIDECAR_GATE_TIMEOUT_S
+
+    assert persistence._SQLITE_BUSY_TIMEOUT_S < gate, (
+        f"_SIDECAR_GATE_TIMEOUT_S={gate:g}s is not above "
+        f"_SQLITE_BUSY_TIMEOUT_S={persistence._SQLITE_BUSY_TIMEOUT_S:g}s: a "
+        "writer queued behind one legitimately waiting out sqlite would "
+        "expire first and misname the fault (#368)")
+    assert gate < parallel._WORKER_FAULTHANDLER_TIMEOUT_S, (
+        f"_SIDECAR_GATE_TIMEOUT_S={gate:g}s outlasts the worker "
+        f"faulthandler ({parallel._WORKER_FAULTHANDLER_TIMEOUT_S:g}s): a "
+        "stuck gate in a worker dumps nothing before the parent gives up "
+        "(#368)")
+    assert gate < threshold, (
+        f"_SIDECAR_GATE_TIMEOUT_S={gate:g}s outlasts the faulthandler "
+        f"window ({threshold:g}s): a stuck gate stalls past the diagnosis "
+        "instead of erroring inside it (#368)")
+
+    # By AST, not by substring: the helper's docstring names the constant
+    # in prose, and a substring check would be satisfied by that alone
+    # while the body carried a literal.
+    import textwrap
+
+    source = inspect.getsource(persistence.SqliteStore._hold_sidecar_gate)
+    names = {node.id for node in ast.walk(ast.parse(textwrap.dedent(source)))
+             if isinstance(node, ast.Name)}
+    assert "_SIDECAR_GATE_TIMEOUT_S" in names, (
+        "_hold_sidecar_gate no longer reads _SIDECAR_GATE_TIMEOUT_S; a "
+        "re-inlined literal is exactly how 900.0 went unquestioned (#368)")
