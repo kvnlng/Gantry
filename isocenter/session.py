@@ -979,62 +979,65 @@ class DicomSession:
         wait on the persistence manager (#294): a wedged background
         worker wedges a compaction rather than letting one race it.
 
-        PRECONDITION, single-threaded: nothing else may be writing pixel
-        state while this runs. Two parts of that are now enforced and
-        the rest is still convention, and the difference matters when
-        you are reading this to decide whether your caller is safe.
+        **Concurrent writers are serialised, and a pass is refused
+        (#368).** Two behaviours are contract, observable from any
+        thread of this session:
 
-        **Enforced, and narrower than it reads (#320).** What is refused
-        is a save **queued on the persistence manager** -- after the
-        synchronous save below, `has_pending_saves()` is consulted and a
-        `RuntimeError` is raised if anything is in that manager's queue
-        or in-flight set. That is the whole of what it sees. It does
-        **not** see a `Session.save(sync=True)` running on another
-        thread, which executes `save_all` on its *caller's* thread and
-        enters neither structure, and it does not see a redaction's
-        `store.persist_pixel_data(...)`, which is not a save at all.
-        Measured: `has_pending_saves()` reads `False` in all five
-        corrupting orderings, including one where an entire concurrent
-        `save(sync=True)` runs start to finish inside the window
-        (`tests/test_compaction_races_a_concurrent_write.py`). So the
-        refusal cannot fire for the population that actually reaches the
-        window; read it as "nothing is queued behind me", not as "no one
-        else is writing". The check sits after `save(sync=True)` and
-        before `compact_sidecar()` on purpose -- refusing after the
-        rewrite would leave the file compacted and every in-memory
-        loader on a pre-compaction offset, which is worse than not
-        checking. And the rewiring below rebinds each loader under
-        `SqliteStore._pixel_swap_lock`, so no reader can land between
-        the offset and the length assignments (#295).
+        1. This method **raises `RuntimeError`** while a `redact()` or
+           `ingest()` pass is open on the same store (`"compact()
+           refused: a redact() or ingest() pass is open on
+           <sidecar>.pass.lock; wait for it to return"`). During a pass
+           the graph carries references the store has not been told
+           about yet -- a redaction worker commits its blob row under a
+           regenerated UID before any `instances` row names it -- and
+           compaction's orphan predicate would reclaim exactly those
+           rows. Measured on 0.9.3 through this very method: it
+           returned success and deleted every redacted frame. The
+           refusal sits after the leading save and before the rewrite,
+           for the same reason the #295 check does: refusing after the
+           rewrite is worse than not checking.
+        2. A `redact()` or `ingest()` that starts while this method is
+           rewriting **waits**, bounded by `_SIDECAR_GATE_TIMEOUT_S`
+           (180 s), and then proceeds.
 
-        **Still convention.** A write that starts *after* that check runs
-        concurrently with the rewrite, and the per-instance lock does
-        not make that safe: it removes the torn rebind, not the
-        possibility of frames being appended during the rewrite.
+        Underneath both is the sidecar gate, `<sidecar>.lock`: held by
+        every one of the **six** places that append a frame and commit
+        its row (ingest's pixel, nested-icon and waveform frames,
+        `persist_blob`, `persist_pixel_data`, `save_all`) and by this
+        method across `compact_sidecar()` **plus** `_rewire_sidecar_
+        loaders`. A frame writer that starts after the check below no
+        longer runs concurrently with the rewrite: it blocks on the
+        gate and lands in the compacted file. A writer that cannot take
+        the gate within the deadline raises `RuntimeError` naming the
+        lock file; a background save that expires that way is logged
+        as `Background save failed` with its instances left dirty for
+        the next save (owner's decision C1). The gate is cross-process
+        (`fcntl.flock` on a stable path beside the sidecar), which is
+        what reaches the spawned redaction workers.
 
-        **What closing it would take, corrected (#368).** Not "a coarse
-        save-wide lock", which is how #320 prices it: `save_all` is one
-        of **five** places in production code that write a sidecar frame
-        and commit its row separately, and four of the five reproduced
-        orderings reach this window through `persist_pixel_data` rather
-        than through `save_all`. It takes a *sidecar-generation* lock
-        held by all five, and by this method across `compact_sidecar()`
-        **plus** `_rewire_sidecar_loaders`, with an open question about
-        the two ingest sites, which may run in a spawned subprocess a
-        `threading.Lock` cannot reach. Filed as #368, post-1.0.
+        **The #295 refusal, kept, and narrower than it reads (#320).**
+        What it refuses is a save **queued on the persistence manager**
+        -- after the synchronous save below, `has_pending_saves()` is
+        consulted and a `RuntimeError` is raised if anything is in that
+        manager's queue or in-flight set. It does **not** see a
+        `Session.save(sync=True)` running on another thread, which
+        executes `save_all` on its *caller's* thread and enters neither
+        structure, nor a redaction's `store.persist_pixel_data(...)`,
+        which is not a save at all; measured `False` in every ordering
+        `tests/test_compaction_races_a_concurrent_write.py` forces. That
+        population is now stopped by the gate instead. The rewiring
+        rebinds each loader under `SqliteStore._pixel_swap_lock`, so no
+        reader can land between the offset and the length assignments
+        (#295), and the gate is taken *outside* that lock.
 
-        **The residual is accepted, and what makes that defensible is
-        that it is loud.** The window is `live_bytes / throughput`
-        (0.024 s at 200 MB, 0.221 s at 2 GB measured); one instance's
-        newly written pixels are lost per overlapping write, plus an
-        orphaned frame the next compaction reclaims; and every read of
-        that instance then raises `RuntimeError: Integrity Error`
-        (`ValueError: Waveform integrity check failed` on the waveform
-        path) rather than returning plausible wrong bytes, because the
-        frame's hash is written beside it and `_apply_new_offsets`
-        rewrites only `offset` and `length`. **The honest cost is the
-        distance**: the error arrives at export or verify time and this
-        call reports success, with nothing tying the two together.
+        **The liveness cost, stated.** The gate is held for the whole
+        rewrite (0.217 s/GB live on local SSD measured). A `close()`
+        whose persistence worker is queued behind a compaction longer
+        than `_SHUTDOWN_JOIN_TIMEOUT_S` (30 s) has #314's wedged-worker
+        machinery misfire on a healthy compaction; the same ordering
+        used to corrupt the save. Loud and late beats silent and wrong;
+        the structural fix (a two-phase compaction holding the gate
+        only for the tail) is a filed follow-up.
         """
         if hasattr(self, 'store_backend'):
             print("Beginning Sidecar Compaction (this may take a while)...")
@@ -1068,7 +1071,17 @@ class DicomSession:
             # this method is the only place the hold and the rewire are
             # tied together.
             with self.store_backend._hold_sidecar_gate():
-                self._compact_under_gate()
+                # The refusal (#368), between the save and the rewrite
+                # like the #295 one above, for the same reason: refusing
+                # after the rewrite is worse than not checking. Under
+                # the gate so no writer can slip between the two, and
+                # `LOCK_NB` only -- a blocking EX here would deadlock
+                # against a pass whose workers are queued on the gate
+                # this thread now holds. Held through the rewire, so a
+                # pass that starts mid-compaction waits at its own SH
+                # instead of dispatching into the rewrite.
+                with self.store_backend._refuse_while_pass_open():
+                    self._compact_under_gate()
 
         else:
             print("Persistence backend does not support compaction.")
@@ -1368,15 +1381,40 @@ class DicomSession:
                 nothing until #211, which left a caller no programmatic
                 way to learn that a directory ingest silently rejected
                 some of its files.
+
+        Raises:
+            RuntimeError: If the ingest cannot start within
+                `_SIDECAR_GATE_TIMEOUT_S` (180 s) because a `compact()`
+                is still rewriting the sidecar (#368).
+
+        **Concurrency (#368).** An ingest holds the sidecar pass-lock,
+        shared, for the whole import. While it is held, `compact()` on
+        any thread of this session **raises**: ingest appends each
+        result's frames before the `instances` row that references them
+        exists, and a compaction in that window reclaimed them as
+        orphans. While a `compact()` is rewriting, this call **waits**
+        (bounded as above) and then proceeds. Each frame is appended
+        under the sidecar gate; a result whose write cannot get the gate
+        in time is rejected like any other failed file, with an ERROR
+        audit row naming the path and the reason.
         """
         print(f"Ingesting from '{directory}'...")
-        # Pass Sidecar Manager for eager pixel writing
-        summary = DicomImporter.import_files(
-            [directory],
-            self.store,
-            executor=self._executor,
-            sidecar_manager=self.store_backend.sidecar,
-            store_backend=self.store_backend)
+        # The pass-lock (#368), shared, around the import and not the
+        # save after it (owner's decision D1). Ingest appends every
+        # result's frames -- and commits the nested-icon and waveform
+        # blob rows -- before the `instances` row that references them
+        # exists, so a compaction inside this call reclaimed freshly
+        # ingested frames as orphans. While this is held `compact()`
+        # refuses; behind a running compaction this waits (bounded)
+        # before the first worker is dispatched.
+        with self.store_backend._hold_pass_lock():
+            # Pass Sidecar Manager for eager pixel writing
+            summary = DicomImporter.import_files(
+                [directory],
+                self.store,
+                executor=self._executor,
+                sidecar_manager=self.store_backend.sidecar,
+                store_backend=self.store_backend)
 
         self.save(sync=True)
 
@@ -2687,6 +2725,22 @@ class DicomSession:
                 here must reach the caller. This used to be caught, printed as
                 `Execution interrupted`, and followed by `Execution Complete`,
                 which left a half-redacted session looking like a finished one.
+            RuntimeError: If the pass cannot start within
+                `_SIDECAR_GATE_TIMEOUT_S` (180 s) because a `compact()` is
+                still rewriting the sidecar. Raised before any worker is
+                dispatched and before any UID is regenerated, so there is
+                nothing to undo (#368).
+
+        **Concurrency (#368).** A pass holds the sidecar pass-lock,
+        shared, from before the first worker runs until every outcome
+        has been applied. While it is held, `compact()` on any thread
+        of this session **raises** rather than reclaiming the frames
+        the workers have committed under UIDs the store does not yet
+        carry; while a `compact()` is rewriting, this call **waits**
+        (bounded as above) and then proceeds. Each worker's sidecar
+        write also takes the sidecar gate, so a worker that cannot get
+        it in time comes back as a failed redaction with an ERROR audit
+        row, not a silent skip.
         """
         if not self.configuration.rules:
             get_logger().warning("No configuration loaded. Use .load_config() first.")
@@ -2705,7 +2759,20 @@ class DicomSession:
 
         service = RedactionService(self.store, self.store_backend)
         try:
-            return self._apply_redaction_rules(service, show_progress, force)
+            # The pass-lock (#368), shared, held from before the first
+            # worker can call `regenerate_uid()` until after
+            # `_apply_redaction_outcomes` has bound every loader --
+            # `_apply_redaction_rules` is both -- and released by this
+            # `with` on every exit, including the `RedactionError` it
+            # raises at the end of a pass. While it is held, `compact()`
+            # refuses; while a compaction holds it exclusive, this waits
+            # (bounded) before dispatching anything. Taken holding
+            # nothing: the drain above has already returned. Direct
+            # `RedactionService` callers are not covered -- the pass is
+            # a `Session` concept -- and `redact_by_machine` goes
+            # through here, so it does not open a second one.
+            with self.store_backend._hold_pass_lock():
+                return self._apply_redaction_rules(service, show_progress, force)
         except Exception:
             get_logger().exception(
                 "Redaction failed. Images already processed are still redacted "
