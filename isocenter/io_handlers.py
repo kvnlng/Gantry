@@ -121,6 +121,7 @@ are what an operator watching a terminal sees -- but a test that pinned
 their wording would pin a rendering, not a fact.
 """
 
+import contextlib
 import os
 import sys
 import hashlib
@@ -1668,6 +1669,16 @@ class DicomImporter:
         # it, and re-querying per result would walk the whole graph once
         # per file.
         superseded = store.get_superseded_uids()
+
+        # The sidecar gate for sites 1-3 below (#368). Every frame this
+        # loop appends is written under it, per result, so no append
+        # can land in a file `compact_sidecar` is replacing. Callers that
+        # pass a bare `DicomStore` and no backend (two test callers, and
+        # the fixture generators) have no store to gate on and no
+        # compaction to race, so they get a no-op.
+        gate = (store_backend._hold_sidecar_gate
+                if hasattr(store_backend, "_hold_sidecar_gate")
+                else contextlib.nullcontext)
         declined = 0
         count = 0
         failures: List[Tuple[str, str]] = []
@@ -1750,8 +1761,23 @@ class DicomImporter:
                         continue
 
                     # Persist Pixels to Sidecar (Main Thread Sequential Write)
+                    #
+                    # Site 1 of six (#368). The gate is taken per result
+                    # around the append, not around the whole loop: a
+                    # 10k-file ingest must not hold it for its duration,
+                    # or a background save queued behind it expires at
+                    # `_SIDECAR_GATE_TIMEOUT_S` on any real dataset. This
+                    # site records no blob row -- the pixel row is
+                    # committed by the `save(sync=True)` that ends
+                    # `ingest()`, under site 6's gate -- and the offset
+                    # stays valid between the two because `ingest()`
+                    # holds the pass-lock, so no compaction can run.
+                    # The `except Exception` arm below runs with the
+                    # gate released, so a failing result cannot hold it
+                    # while `_record_failure` writes an audit row.
                     if p_bytes and sidecar_manager:
-                        off, leng = sidecar_manager.write_frame(p_bytes, p_alg)
+                        with gate():
+                            off, leng = sidecar_manager.write_frame(p_bytes, p_alg)
                         inst._pixel_loader = SidecarPixelLoader(
                             sidecar_manager.filepath, off, leng, p_alg, instance=inst)
                         inst._pixel_hash = p_hash
@@ -1872,9 +1898,16 @@ class DicomImporter:
                                 'dropped_private_binary', []).append(
                                     (n_tag, n_vr))
                             continue
-                        n_off, n_len = sidecar_manager.write_frame(
-                            n_raw, 'zlib')
                         kind = serialize_blob_kind('pixels', n_path, n_tag)
+                        # Site 2 of six (#368): append and row commit under
+                        # one hold, per icon, for the reason at site 1.
+                        with gate():
+                            n_off, n_len = sidecar_manager.write_frame(
+                                n_raw, 'zlib')
+                            if store_backend is not None:
+                                store_backend.record_blob_ref(
+                                    inst.sop_instance_uid, kind, n_off, n_len,
+                                    n_hash, 'zlib')
                         # The provenance geometry, captured from the item
                         # these bytes came out of. `_write_back_nested_
                         # pixels` compares it against whatever sits at this
@@ -1887,10 +1920,6 @@ class DicomImporter:
                                 'zlib', n_hash,
                                 nested_item_geometry(n_item.attributes)
                                 if n_item is not None else None)
-                        if store_backend is not None:
-                            store_backend.record_blob_ref(
-                                inst.sop_instance_uid, kind, n_off, n_len,
-                                n_hash, 'zlib')
 
                     # Private binary elements never reached the graph, so
                     # `remove_private_tags=False` could not have kept
@@ -1977,24 +2006,32 @@ class DicomImporter:
                                 element_tag=tag)
 
                     # Persist Waveform Samples to Sidecar
+                    #
+                    # Site 3 of six (#368): append and row commit under one
+                    # hold, for the reason at site 1.
                     if w_bytes and sidecar_manager:
-                        w_off, w_len = sidecar_manager.write_frame(w_bytes, 'zlib')
+                        with gate():
+                            w_off, w_len = sidecar_manager.write_frame(
+                                w_bytes, 'zlib')
+                            # Unlike pixels, waveform offsets have no
+                            # column on `instances`, so the blob table is
+                            # their only record. Skipping this makes
+                            # compaction reclaim them.
+                            #
+                            # Called without `conn=`: this loop runs
+                            # outside any open SqliteStore transaction, so
+                            # record_blob_ref is free to open (and commit)
+                            # its own connection here -- under the gate,
+                            # which is the one lock held across a sqlite
+                            # write on purpose.
+                            if store_backend is not None:
+                                store_backend.record_blob_ref(
+                                    inst.sop_instance_uid, 'waveform',
+                                    w_off, w_len, w_hash, 'zlib')
                         inst._waveform_hash = w_hash
                         inst._waveform_loader = SidecarWaveformLoader(
                             sidecar_manager.filepath, w_off, w_len, 'zlib',
                             instance=inst, waveform_hash=w_hash)
-
-                        # Unlike pixels, waveform offsets have no column on
-                        # `instances`, so the blob table is their only record.
-                        # Skipping this makes compaction reclaim them.
-                        #
-                        # Called without `conn=`: this loop runs outside any
-                        # open SqliteStore transaction, so record_blob_ref is
-                        # free to open (and commit) its own connection here.
-                        if store_backend is not None:
-                            store_backend.record_blob_ref(
-                                inst.sop_instance_uid, 'waveform',
-                                w_off, w_len, w_hash, 'zlib')
 
                     # Linkage Logic
                     pid = meta['pid']

@@ -1,56 +1,62 @@
-"""compact() races a write that starts after its guard, and how loudly (#320).
+"""compact() and a concurrent sidecar write are serialised by the gate (#368).
 
 `session.compact()` saves, refuses if the persistence manager still has
-work, and then rewrites the sidecar. A write that *starts after* that
-refusal runs concurrently with the rewrite, appending frames to a file
-compaction is in the middle of replacing. #295 closed the torn rebind and
-the entered-with-a-save-in-flight case; #317 said in the changelog that
-it closed neither of the rest, and #320 is that statement as an issue.
+work, and then rewrites the sidecar. Until #368 a write that *started
+after* that refusal ran concurrently with the rewrite, appending frames
+to a file compaction was in the middle of replacing. This file was the
+characterization of that window (#320): six orderings, each ending in
+a loud integrity failure at the next read, accepted for 0.9.3 with the
+correctly-scoped fix filed as #368. The owner ruled on 2026-09-08 that
+the 1.0 tag waits on #368, and the gate is now built:
+`SqliteStore._hold_sidecar_gate()` -- a `threading.Lock` for in-process
+fairness followed by `fcntl.flock(LOCK_EX)` on the stable path
+`<sidecar>.lock` -- held by every one of the **six** `write_frame` sites
+across append *and* row commit, and by `compact()` across the rewrite
+*and* the loader rewire.
 
-**This file is a characterization test, not a red-then-green one.** The
-race is accepted for now, deliberately and with the costs measured: the
-window is `live_bytes / storage_throughput` (0.024 s at 200 MB, 0.221 s
-at 2 GB on the hardware this was measured on), it is reachable only by
-violating a precondition `compact()` has always documented, and the
-correctly-scoped fix is a *sidecar-generation lock* over five separate
-write-frame-then-commit-row sites plus a cross-process question at the
-two ingest sites -- materially larger than the one lock around `save_all`
-that #320 prices. That fix is filed as a post-1.0 item. What is landed
-here is the reproduction, because a race nobody can reproduce is a race
-nobody can verify fixed.
+**Every phase now asserts the opposite of what it characterized**: the
+intruder's write is *blocked* until the compaction has returned, its
+row survives `_apply_new_offsets` untouched, the row sits inside the
+post-compaction file, and the instance reads back the *new* pixels.
+Phase B, which used to see `FileNotFoundError` at the writer between
+the two renames, sees nothing of the kind: the writer never reaches the
+path while it names nothing.
 
-**The half that is load-bearing is the failure *mode*, not the failure.**
-#320 inherits from #295 the framing "reads the wrong bytes or runs off
-the end of the file". That was true of the torn rebind, which #295
-closed. It is **not** true of the residual: every ordering below ends in
-an exception the caller cannot miss -- `RuntimeError: Integrity Error`
-from the pixel loader, `IOError: Incomplete read from sidecar` where the
-row dangles past EOF, `FileNotFoundError` at the writer during the swap,
-and `ValueError: Waveform integrity check failed` on the waveform path.
-Loud data loss, not silent wrong data. That is the finding the decision
-to accept the window rests on, and it holds only because `_pixel_hash`
-(and the waveform sha256) are written alongside the frame and are not
-touched by the rewrite, which rewrites `offset` and `length` alone. Drop
-either hash and the residual becomes silent wrong pixels; these tests are
-where that would be caught rather than discovered.
+**The scaffolding changed, and had to (2026-09-08 spec §10).** #320's
+`_park_phase` parked `compact_sidecar()` *with the gate held*, and its
+intruder released the park in its own `finally` -- after a write that,
+under the gate, cannot return until the park is released. Measured with
+a simulated gate: the intruder sat on the gate for the whole window and
+the parked phase's `released.wait` returned `False`. So the park is
+released by a **timer thread** instead, `_PARK_S` after the intruder
+signals (`waiting`) that it is about to write. The timer records
+`t_release` immediately before releasing, the intruder records
+`t_write_returned` immediately after its write returns, and the
+load-bearing assertion is `t_write_returned > t_release`: without the
+gate the write completes in milliseconds, long before the timer fires;
+with it the write cannot return until the compaction has released the
+gate, which is after the park. The timer waits on `waiting` *before*
+its delay, so the intruder is blocked on the gate before the park is
+released and the "landed after" assertion is never vacuous.
 
-**`has_pending_saves()` is `False` in every one of these windows**, and
-each test asserts it. The #295 refusal reads only the persistence
-manager's queue and in-flight set. A `Session.save(sync=True)` from
-another thread runs `save_all` on the *caller's* thread and enters
-neither; a redaction's `persist_pixel_data` is not a save at all. So the
-refusal cannot fire for the population that reaches this window -- which
-is the correction #320's amendment 1 makes to `compact()`'s docstring.
-Phase E is what makes that a measurement rather than an inspection: a
-whole `save(sync=True)` runs start to finish inside the window and the
-guard still reads `False`.
+**Deadline.** The gate is bounded by `_SIDECAR_GATE_TIMEOUT_S`, polled
+`LOCK_NB`, and expiry raises `RuntimeError` naming the lock file and
+the constant; the last test pins that with the constant patched to
+0.5 s and the park held longer.
+
+**`has_pending_saves()` is still `False` inside every window**, and each
+phase still asserts it: the #295 refusal reads the persistence manager's
+queue and in-flight set, and neither a caller-thread `save(sync=True)`
+nor a redaction's `persist_pixel_data` enters either. That claim about
+the #295 guard is unchanged by #368; what changed is that the population
+it cannot see is now stopped by the gate instead.
 
 **Style**: `tests/test_export_flushes_before_it_sweeps.py`. A helper
-thread on a bounded daemon, the ordering forced by a pair of
-`threading.Event`s from a monkeypatched phase method, and the helper's
-exception kept rather than swallowed.
+thread on a bounded daemon, the ordering forced by `threading.Event`s
+from a monkeypatched phase method, and the helper's exception kept
+rather than swallowed.
 
-**Two traps that cost real time when this was built, per the spec.**
+**Two traps that cost real time when the characterization was built.**
 The new content must be produced *inside* the window: `compact()` leads
 with `save(sync=True)`, so a `set_pixel_data` done before it is captured
 by that save and the intruder appends a duplicate of a frame the index
@@ -62,6 +68,7 @@ not `unload_pixel_data()`, which refuses a diverged array (#293).
 import os
 import sqlite3
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -77,6 +84,11 @@ CT_STORAGE = "1.2.840.10008.5.1.4.1.1.2"
 #: Bounded, and generously so. A helper thread that waits forever is not
 #: a test; a helper thread that times out on a loaded machine is a flake.
 _WAIT = 60.0
+
+#: How long the timer holds the park after the intruder says it is about
+#: to write. Long enough that an ungated write (milliseconds) has landed
+#: well before the release; short enough not to matter.
+_PARK_S = 0.3
 
 #: Big enough that compaction has real bytes to move and that a changed
 #: frame compresses to a different length, small enough to stay quick.
@@ -158,18 +170,24 @@ def _blob_row(session, uid, kind='pixels'):
 
 
 class _Intruder(threading.Thread):
-    """Runs `work` once the compaction parks, then releases it.
+    """Runs `work` once the compaction parks.
 
-    The exception is kept rather than swallowed: on phase B the *writer*
-    is what raises, and a helper that ate it would read as a green test
-    over an unreported failure.
+    Signals `done` when finished; it does **not** release the park --
+    that is the timer's job, because under the gate the intruder's write
+    cannot return until the park is released (the #320 scaffolding's
+    deadlock, 2026-09-08 spec §10). The exception is kept rather than
+    swallowed, so a failing write reads as a failed test rather than a
+    green one over an unreported failure.
     """
 
-    def __init__(self, parked, released, work):
+    def __init__(self, parked, waiting, done, work):
         super().__init__(daemon=True)
-        self.parked, self.released, self.work = parked, released, work
+        self.parked, self.waiting, self.done, self.work = (
+            parked, waiting, done, work)
         self.error = None
         self.pending_during = None
+        self.t_write_returned = None
+        self.t_release = None
 
     def run(self):
         try:
@@ -180,17 +198,51 @@ class _Intruder(threading.Thread):
         except Exception as exc:      # pylint: disable=broad-except
             self.error = exc
         finally:
-            self.released.set()
+            self.done.set()
+
+    def about_to_write(self):
+        """Called by `work` immediately before the gated write."""
+        self.waiting.set()
+
+    def write_returned(self):
+        """Called by `work` immediately after the gated write returns."""
+        self.t_write_returned = time.monotonic()
+
+
+class _Timer(threading.Thread):
+    """Releases the park `_PARK_S` after the intruder is about to write.
+
+    Waits on `waiting` first, bounded, so the release cannot race the
+    intruder's *start*: the intruder is blocked on the gate before the
+    park is lifted. If the intruder never signals (its work failed
+    first), the bounded wait still releases the park so nothing hangs.
+    """
+
+    def __init__(self, waiting, released):
+        super().__init__(daemon=True)
+        self.waiting, self.released = waiting, released
+        self.t_release = None
+
+    def run(self):
+        self.waiting.wait(_WAIT)
+        time.sleep(_PARK_S)
+        self.t_release = time.monotonic()
+        self.released.set()
 
 
 def _park_phase(monkeypatch, method_name, parked, released):
-    """Park on entry to one of `compact_sidecar()`'s four phase methods."""
+    """Park on entry to one of `compact_sidecar()`'s phase methods.
+
+    The park is *inside* the gate: `compact()` holds it across
+    `compact_sidecar()`, so anything that needs the gate is blocked for
+    as long as the park is held. That is the ordering under test.
+    """
     original = getattr(SqliteStore, method_name)
 
     def patched(self, *args, **kwargs):
         parked.set()
         assert released.wait(_WAIT), (
-            "the intruder never released the parked phase; the window "
+            "the timer never released the parked phase; the window "
             "would otherwise be held for the life of the test")
         return original(self, *args, **kwargs)
 
@@ -198,14 +250,18 @@ def _park_phase(monkeypatch, method_name, parked, released):
 
 
 def _run_race(session, monkeypatch, phase, work):
-    """Force one ordering: park `phase`, run `work` inside it, compact."""
+    """Force one ordering: park `phase`, run `work` against it, compact."""
     parked, released = threading.Event(), threading.Event()
+    waiting, done = threading.Event(), threading.Event()
     _park_phase(monkeypatch, phase, parked, released)
-    intruder = _Intruder(parked, released, work)
+    intruder = _Intruder(parked, waiting, done, work)
+    timer = _Timer(waiting, released)
     intruder.start()
+    timer.start()
     session.compact()
-    intruder.join(timeout=_WAIT)
-    assert not intruder.is_alive(), "the intruder thread did not finish"
+    assert done.wait(_WAIT), "the intruder thread did not finish"
+    timer.join(timeout=_WAIT)
+    intruder.t_release = timer.t_release
     return intruder
 
 
@@ -226,30 +282,46 @@ def _assert_guard_was_blind(intruder):
         "(#320)." % (intruder.pending_during,))
 
 
-def _readback_raises(instance):
-    """Read through the loader, not from memory, and return the error."""
+def _assert_blocked_then_landed(intruder, session, uid, kind='pixels'):
+    """The three assertions every phase shares under the gate (#368)."""
+    assert intruder.error is None, intruder.error
+    assert intruder.t_write_returned is not None, "the write never returned"
+    assert intruder.t_write_returned > intruder.t_release, (
+        "the intruder's write returned %.3f s BEFORE the park was "
+        "released: it landed during the rewrite, so the gate is not held "
+        "at this site (#368)"
+        % (intruder.t_release - intruder.t_write_returned,))
+    row_final = _blob_row(session, uid, kind)
+    assert row_final == intruder.row_after, (
+        "the row the intruder committed after the compaction was "
+        "rewritten from a map computed before it existed: %r became %r "
+        "(#368)" % (intruder.row_after, row_final))
+    size = os.path.getsize(session.store_backend.sidecar_path)
+    assert row_final[0] + row_final[1] <= size, (
+        "the row at %r runs past the end of a %d-byte sidecar" % (
+            row_final, size))
+    return row_final
+
+
+def _reads_back(instance):
+    """Read through the loader, not from memory."""
     instance.discard_pixel_data()
-    try:
-        instance.get_pixel_data()
-    except Exception as exc:          # pylint: disable=broad-except
-        return exc
-    return None
+    return instance.get_pixel_data()
 
 
 # --------------------------------------------------------------------------
-# Phase A -- the append lands during `_rewrite_live_frames`
+# Phase A -- the append would land during `_rewrite_live_frames`
 # --------------------------------------------------------------------------
 
-def test_phase_a_an_append_during_the_rewrite_is_overwritten_and_reads_loud(
+def test_phase_a_a_write_during_the_rewrite_waits_and_then_lands(
         compactable, monkeypatch):
-    """The frame goes into the inode compaction is about to delete.
+    """`persist_pixel_data` blocks on the gate until the rewrite is done.
 
-    `_read_blob_index` has already run, so `updates` carries the
-    *pre-change* frame's compacted position for this instance's blob row.
-    `_apply_new_offsets` writes that over the row the intruder just
-    committed, while the `_pixel_hash` `persist_pixel_data` stored is the
-    new frame's. Store and sidecar now disagree, and the disagreement is
-    detected on the next read rather than returned as pixels.
+    Characterized (#320): the frame went into the inode compaction was
+    about to delete, `_apply_new_offsets` overwrote the row from a
+    pre-change map, and the next read raised `Integrity Error`. Under
+    the gate the write waits, then appends to the compacted file and
+    commits a row that is correct for it.
     """
     session, _series, live = compactable
     target = live[0]
@@ -260,46 +332,33 @@ def test_phase_a_an_append_during_the_rewrite_is_overwritten_and_reads_loud(
         # save(sync=True), so a change made before it is captured by that
         # save and there is nothing new for the intruder to append.
         target.set_pixel_data(_frame(200))
+        intruder.about_to_write()
         session.store_backend.persist_pixel_data(target)
+        intruder.write_returned()
         intruder.row_after = _blob_row(session, target.sop_instance_uid)
 
     intruder = _run_race(session, monkeypatch, "_rewrite_live_frames", work)
 
-    assert intruder.error is None, intruder.error
     _assert_guard_was_blind(intruder)
-
-    row_final = _blob_row(session, target.sop_instance_uid)
-    assert row_final != intruder.row_after, (
-        "the intruder's row survived the compaction; this ordering is "
-        "expected to have it overwritten from a map computed before the "
-        "write existed (#320)")
-
-    error = _readback_raises(target)
-    assert isinstance(error, RuntimeError), (
-        "the read after the race returned %r instead of raising. The "
-        "whole case for accepting this window is that its outcome is "
-        "loud: if _pixel_hash is ever dropped from the loader this "
-        "becomes silent wrong pixels (#320)." % (error,))
-    assert "Integrity Error" in str(error) and "hash mismatch" in str(error), (
-        "the read raised %r, which is not the integrity failure this "
-        "window is characterized by" % (error,))
+    _assert_blocked_then_landed(intruder, session, target.sop_instance_uid)
+    assert np.array_equal(_reads_back(target), _frame(200)), (
+        "the instance does not read back the pixels written during the "
+        "compaction (#368)")
 
 
 # --------------------------------------------------------------------------
-# Phase B -- the append lands between the two `os.replace` calls
+# Phase B -- the append would land between the two `os.replace` calls
 # --------------------------------------------------------------------------
 
-def test_phase_b_a_write_between_the_two_renames_fails_at_the_writer(
+def test_phase_b_a_write_between_the_two_renames_waits_for_the_swap(
         compactable, monkeypatch):
-    """For one instant the sidecar path names nothing, and the writer says so.
+    """The writer never sees the instant in which the path names nothing.
 
-    `_swap_in_compacted_sidecar` renames the sidecar to `.compact.bak`
-    before renaming the temp file in, and `SidecarManager.write_frame`
-    opens the path `r+b`, per call. So the writer raises rather than
-    creating a stray file -- loud at the writer, where on the redaction
-    path it surfaces as a failed redaction. The compaction itself still
-    reports success, which is the "error at a distance" half of this
-    window's cost.
+    Characterized (#320): `write_frame` opens the sidecar `r+b` per call,
+    and between `_swap_in_compacted_sidecar`'s two renames the path
+    names nothing, so the writer raised `FileNotFoundError`. Under the
+    gate the swap is inside the compaction's hold and the writer is
+    blocked on the gate throughout it.
 
     The park is on `os.replace` as `persistence` sees it rather than on
     the phase method: parking *between* the two renames cannot be done by
@@ -309,6 +368,7 @@ def test_phase_b_a_write_between_the_two_renames_fails_at_the_writer(
     session, _series, live = compactable
     target = live[1]
     parked, released = threading.Event(), threading.Event()
+    waiting, done = threading.Event(), threading.Event()
 
     real_replace = os.replace
     seen = []
@@ -318,49 +378,44 @@ def test_phase_b_a_write_between_the_two_renames_fails_at_the_writer(
         seen.append((src, dst))
         if len(seen) == 1:
             parked.set()
-            assert released.wait(_WAIT), "the intruder never released"
+            assert released.wait(_WAIT), "the timer never released"
 
     monkeypatch.setattr(persistence_module.os, "replace", parking_replace)
 
     def work(intruder):
         _record_pending(session, intruder)
         target.set_pixel_data(_frame(201))
-        try:
-            session.store_backend.persist_pixel_data(target)
-        except Exception as exc:      # pylint: disable=broad-except
-            intruder.writer_error = exc
-        else:
-            intruder.writer_error = None
+        intruder.about_to_write()
+        session.store_backend.persist_pixel_data(target)
+        intruder.write_returned()
+        intruder.row_after = _blob_row(session, target.sop_instance_uid)
 
-    intruder = _Intruder(parked, released, work)
+    intruder = _Intruder(parked, waiting, done, work)
+    timer = _Timer(waiting, released)
     intruder.start()
+    timer.start()
     session.compact()
-    intruder.join(timeout=_WAIT)
-    assert not intruder.is_alive()
+    assert done.wait(_WAIT), "the intruder thread did not finish"
+    timer.join(timeout=_WAIT)
+    intruder.t_release = timer.t_release
 
-    assert intruder.error is None, intruder.error
     _assert_guard_was_blind(intruder)
-    assert isinstance(intruder.writer_error, FileNotFoundError), (
-        "the writer got %r where a FileNotFoundError is expected: for the "
-        "instant between the two renames the sidecar path names nothing, "
-        "and write_frame opens it 'r+b' rather than creating it (#320)"
-        % (intruder.writer_error,))
+    _assert_blocked_then_landed(intruder, session, target.sop_instance_uid)
+    assert np.array_equal(_reads_back(target), _frame(201))
 
 
 # --------------------------------------------------------------------------
-# Phase C -- the append lands after the swap, before `_apply_new_offsets`
+# Phase C -- the append would land after the swap, before `_apply_new_offsets`
 # --------------------------------------------------------------------------
 
-def test_phase_c_a_correct_row_written_after_the_swap_is_overwritten_anyway(
+def test_phase_c_a_write_after_the_swap_waits_for_the_offsets_to_commit(
         compactable, monkeypatch):
-    """The writer does everything right and is overwritten regardless.
+    """The ordering with the largest gap between "correct" and "survived".
 
-    The swap has already happened, so the intruder appends to the *new*
-    file and commits a row that is correct for it. `_apply_new_offsets`
-    then writes over that row from a map computed before the write
-    existed, and the fresh frame is orphaned in the sidecar until the next
-    compaction reclaims it. This is the ordering with the largest gap
-    between "the writer was correct" and "the data survived".
+    Characterized (#320): the writer appended to the *new* file and
+    committed a row that was correct for it, and `_apply_new_offsets`
+    overwrote that row from a map computed before the write existed.
+    Under the gate the offsets commit first and the write lands after.
     """
     session, _series, live = compactable
     target = live[2]
@@ -368,45 +423,32 @@ def test_phase_c_a_correct_row_written_after_the_swap_is_overwritten_anyway(
     def work(intruder):
         _record_pending(session, intruder)
         target.set_pixel_data(_frame(202))
+        intruder.about_to_write()
         session.store_backend.persist_pixel_data(target)
+        intruder.write_returned()
         intruder.row_after = _blob_row(session, target.sop_instance_uid)
-        intruder.size_at_append = os.path.getsize(
-            session.store_backend.sidecar_path)
 
     intruder = _run_race(session, monkeypatch, "_apply_new_offsets", work)
 
-    assert intruder.error is None, intruder.error
     _assert_guard_was_blind(intruder)
-
-    assert intruder.row_after[0] < intruder.size_at_append, (
-        "the intruder's row is not inside the file it wrote to; this "
-        "ordering is the one where the writer was correct")
-    row_final = _blob_row(session, target.sop_instance_uid)
-    assert row_final != intruder.row_after, (
-        "the intruder's correct row survived _apply_new_offsets; this "
-        "ordering is characterized by it being overwritten (#320)")
-
-    error = _readback_raises(target)
-    assert isinstance(error, RuntimeError) and "Integrity Error" in str(error), (
-        "the read after the race gave %r rather than raising loudly; the "
-        "case for accepting this window rests on it being detected (#320)"
-        % (error,))
+    _assert_blocked_then_landed(intruder, session, target.sop_instance_uid)
+    assert np.array_equal(_reads_back(target), _frame(202))
 
 
 # --------------------------------------------------------------------------
 # Phase D -- a blob row `_read_blob_index` never saw
 # --------------------------------------------------------------------------
 
-def test_phase_d_a_row_inserted_after_the_index_read_dangles_past_eof(
+def test_phase_d_a_first_write_for_a_new_instance_waits_for_the_index(
         compactable, monkeypatch):
-    """A row INSERTed during the window is not in `updates` at all.
+    """A row INSERTed during the window used to dangle past EOF.
 
-    A concurrent ingest, or a first `persist_pixel_data` for an instance
-    created inside the window, produces a blob row whose id
-    `_apply_new_offsets` has no entry for -- so it is left alone, pointing
-    into the pre-compaction layout of a file that is now smaller. The read
-    runs off the end rather than landing on plausible bytes, because the
-    recorded length no longer fits.
+    Characterized (#320): a first `persist_pixel_data` for an instance
+    created inside the window produced a blob row `_apply_new_offsets`
+    had no entry for, left pointing into the pre-compaction layout of a
+    now-smaller file, and the read ran off the end. Under the gate the
+    insert waits until the compacted file is in place and its offsets
+    are committed, so the new row describes the file it was written to.
     """
     session, series, _live = compactable
     newcomer = _make_instance("1.2.3.NEW", 42)
@@ -414,7 +456,9 @@ def test_phase_d_a_row_inserted_after_the_index_read_dangles_past_eof(
     def work(intruder):
         _record_pending(session, intruder)
         series.instances.append(newcomer)
+        intruder.about_to_write()
         session.store_backend.persist_pixel_data(newcomer)
+        intruder.write_returned()
         # The instances row has to exist or the blob is an orphan and the
         # next compaction reclaims it, which is a different outcome.
         with session.store_backend._get_connection() as conn:
@@ -422,112 +466,69 @@ def test_phase_d_a_row_inserted_after_the_index_read_dangles_past_eof(
                 "INSERT OR IGNORE INTO instances "
                 "(sop_instance_uid, sop_class_uid) VALUES (?, ?)",
                 (newcomer.sop_instance_uid, CT_STORAGE))
-        intruder.size_before = os.path.getsize(
-            session.store_backend.sidecar_path)
         intruder.row_after = _blob_row(session, newcomer.sop_instance_uid)
 
     intruder = _run_race(session, monkeypatch, "_rewrite_live_frames", work)
 
-    assert intruder.error is None, intruder.error
     _assert_guard_was_blind(intruder)
-
-    row_final = _blob_row(session, newcomer.sop_instance_uid)
-    assert row_final == intruder.row_after, (
-        "the newcomer's row was rewritten; this ordering is the one where "
-        "_apply_new_offsets has no entry for it and leaves it alone")
-
-    size_after = os.path.getsize(session.store_backend.sidecar_path)
-    assert row_final[0] + row_final[1] > size_after, (
-        "the row at %r is still inside a file of %d bytes, so this "
-        "ordering did not reproduce" % (row_final, size_after))
-
-    error = _readback_raises(newcomer)
-    assert isinstance(error, RuntimeError), (
-        "the read gave %r rather than raising; a row past EOF must not "
-        "come back as data (#320)" % (error,))
-    assert "Incomplete read from sidecar" in str(error), (
-        "the read raised %r rather than the short-read this ordering is "
-        "characterized by" % (error,))
+    _assert_blocked_then_landed(intruder, session, newcomer.sop_instance_uid)
+    assert np.array_equal(_reads_back(newcomer), _frame(42))
 
 
 # --------------------------------------------------------------------------
 # Phase E -- the intruder is `save(sync=True)`, not `persist_pixel_data`
 # --------------------------------------------------------------------------
 
-def test_phase_e_a_whole_sync_save_runs_inside_the_window_unseen(
+def test_phase_e_a_sync_save_waits_at_the_gate_inside_save_all(
         compactable, monkeypatch):
-    """The same window, reached through `save_all` instead.
+    """The same window, reached through `save_all` (site 6).
 
-    Phases A-D all write through `persist_pixel_data`, which is not a site
-    the coarse lock #320 prices would cover. This one is: the helper does
-    `set_pixel_data` and then a full `session.save(sync=True)`, so the
-    frame is appended and its row committed by `save_all` -- and the
-    outcome is identical. That is why #320's Arm B closes *one* of five
-    ways in rather than none, and why the correctly-scoped fix is a
-    sidecar-generation lock over all five sites rather than one lock
-    around `save_all`.
+    Phases A-D all write through `persist_pixel_data`. This one goes
+    through `save_all`, whose gate must span `_prepare_pixel_frames`
+    *and* the transaction's commit: characterized (#320) as a row
+    committed after `_apply_new_offsets` from a frame appended before
+    `_read_blob_index`, which only a gate spanning the commit closes.
+    A gate released between the prepass and the commit reopens exactly
+    this phase.
 
-    It is also the ordering that turns the `has_pending_saves()` claim
-    from an inspection into a measurement: an entire synchronous save runs
-    start to finish inside the window and the guard still reads `False`,
-    because `save(sync=True)` runs `save_all` on the caller's thread and
-    never enters the manager's queue or in-flight set.
+    `has_pending_saves()` is read *before* the save here: under the gate
+    a whole `save(sync=True)` can no longer run start to finish inside
+    the window, which is the point, and the guard's blindness to a
+    caller-thread save is what is being pinned, not its timing.
     """
     session, _series, live = compactable
     target = live[0]
 
     def work(intruder):
-        target.set_pixel_data(_frame(203))
-        session.save(sync=True)
-        # Read the guard AFTER the save has run to completion. That is
-        # the whole point of this phase.
         _record_pending(session, intruder)
+        target.set_pixel_data(_frame(203))
+        intruder.about_to_write()
+        session.save(sync=True)
+        intruder.write_returned()
         intruder.row_after = _blob_row(session, target.sop_instance_uid)
 
     intruder = _run_race(session, monkeypatch, "_rewrite_live_frames", work)
 
-    assert intruder.error is None, intruder.error
     _assert_guard_was_blind(intruder)
-
-    row_final = _blob_row(session, target.sop_instance_uid)
-    assert row_final != intruder.row_after, (
-        "the row save_all committed survived the compaction; this "
-        "ordering is characterized by it being overwritten (#320)")
-
-    error = _readback_raises(target)
-    assert isinstance(error, RuntimeError) and "Integrity Error" in str(error), (
-        "a save(sync=True) that ran entirely inside the window left %r "
-        "rather than a loud integrity failure (#320)" % (error,))
+    _assert_blocked_then_landed(intruder, session, target.sop_instance_uid)
+    assert np.array_equal(_reads_back(target), _frame(203))
 
 
 # --------------------------------------------------------------------------
 # The waveform path -- one test, not four
 # --------------------------------------------------------------------------
 
-def test_a_waveform_written_in_the_window_is_caught_by_its_own_sha256(
+def test_a_waveform_written_in_the_window_waits_and_reads_back(
         compactable, monkeypatch):
-    """The "loud, not silent" claim is only as good as its weakest path.
+    """`persist_blob` (site 4) is gated too, and the hydrated loader reads.
 
-    `compact()` rewires waveform loaders as well as pixel ones, and
-    `persist_blob` is one of the five write-frame-then-commit-row sites,
-    so the waveform half reaches the same window. It is a different loader
-    with a different exception type -- `ValueError: Waveform integrity
-    check failed` rather than `RuntimeError: Integrity Error`. Had this
-    check been absent the residual race would have been *silent wrong
-    samples* for waveforms, and the decision to accept the window would
-    not stand as written.
-
-    **The loader is armed from the blob row, which is the only place it
-    can be armed from.** `persist_blob` -- unlike `persist_pixel_data` --
-    writes no hash onto the instance and rebinds no loader, so an
-    in-memory waveform loader keeps whatever hash it was built with. The
-    hash that matters is the one `_hydrate_waveform_loader` reads out of
-    `instance_blobs` (`wref['hash']`), which the intruder's write has
-    updated to the *new* frame's while `_apply_new_offsets` has pointed
-    `offset`/`length` back at the *old* one. This test therefore builds
-    the loader the way hydration does, from the post-race row -- which is
-    what the next reopen of this store gets, and the reason the spec
-    calls the failure one that survives a reopen.
+    Characterized (#320): the intruder's row carried the *new* frame's
+    sha256 while `_apply_new_offsets` pointed `offset`/`length` back at
+    the *old* one, and `SidecarWaveformLoader.read_raw()` raised
+    `ValueError: Waveform integrity check failed`. Under the gate the
+    row and the bytes agree, and a loader hydrated from the post-race
+    row -- which is what the next reopen of this store gets -- returns
+    the replacement samples.
 
     `metadata=` rather than an instance, because the loader's only other
     source of geometry is a Waveform Sequence and building one here would
@@ -552,32 +553,101 @@ def test_a_waveform_written_in_the_window_is_caught_by_its_own_sha256(
 
     def work(intruder):
         _record_pending(session, intruder)
+        intruder.about_to_write()
         store.persist_blob(target, 'waveform', replacement)
+        intruder.write_returned()
         intruder.row_after = _blob_row(
             session, target.sop_instance_uid, kind='waveform')
 
     intruder = _run_race(session, monkeypatch, "_rewrite_live_frames", work)
 
-    assert intruder.error is None, intruder.error
     _assert_guard_was_blind(intruder)
-
-    final = _blob_row(session, target.sop_instance_uid, kind='waveform')
-    assert final[2] == intruder.row_after[2] != before[2], (
-        "the row's hash is not the intruder's; _apply_new_offsets rewrites "
-        "offset and length alone and this test depends on that")
-    assert (final[0], final[1]) != (intruder.row_after[0],
-                                    intruder.row_after[1]), (
-        "the intruder's offset survived the compaction, so the row and the "
-        "bytes it names do not disagree and there is nothing to detect")
+    final = _assert_blocked_then_landed(
+        intruder, session, target.sop_instance_uid, kind='waveform')
+    assert final[2] != before[2], (
+        "the row's hash is still the original frame's; the intruder's "
+        "write did not reach the store")
 
     hydrated = SidecarWaveformLoader(
         store.sidecar_path, final[0], final[1], 'zlib',
         metadata={"num_samples": 4096, "num_channels": 1,
                   "interpretation": "SS", "waveform_hash": final[2]})
+    raw = hydrated.read_raw()
+    assert np.array_equal(np.frombuffer(raw, dtype=np.int16), replacement), (
+        "a loader hydrated from the post-compaction row does not read the "
+        "samples written during the compaction (#368)")
 
-    with pytest.raises(ValueError) as caught:
-        hydrated.read_raw()
-    assert "Waveform integrity check failed" in str(caught.value), (
-        "the waveform read raised %r; the sha256 in read_raw() is what "
-        "keeps this window from being silent wrong samples (#320)"
-        % (caught.value,))
+
+# --------------------------------------------------------------------------
+# The deadline names the lock
+# --------------------------------------------------------------------------
+
+def test_a_writer_that_cannot_take_the_gate_in_time_raises_naming_the_lock(
+        compactable, monkeypatch):
+    """Expiry is `RuntimeError` naming `<sidecar>.lock` and the constant.
+
+    `_SIDECAR_GATE_TIMEOUT_S` is patched to 0.5 s and the park is held
+    until the intruder has raised, so the writer cannot get the gate in
+    time. The error must name the lock file (so the reader knows what
+    is stuck) and the constant (so the reader knows what bounded it);
+    both are what the redaction ERROR row and the `Background save
+    failed` log line carry downstream (#368, 2026-09-08 spec §2.3).
+
+    What this test does *not* pin, measured: the flock half's polled
+    `LOCK_NB`. The intruder and the compaction are two threads of one
+    process, so the gate's `threading.Lock` half -- `acquire(timeout=)`
+    -- is what expires here, before the flock is reached; a blocking
+    `flock` survives this test. It is killed by
+    `tests/test_sidecar_gate_crosses_processes.py`, where the holder is
+    another process, the thread lock is free, and the flock is the only
+    wait there is.
+    """
+    session, _series, live = compactable
+    target = live[0]
+    monkeypatch.setattr(persistence_module, "_SIDECAR_GATE_TIMEOUT_S", 0.5)
+    parked, released = threading.Event(), threading.Event()
+    _park_phase(monkeypatch, "_rewrite_live_frames", parked, released)
+
+    outcome = {}
+
+    def work():
+        if not parked.wait(_WAIT):
+            outcome["error"] = AssertionError("the compaction never parked")
+            released.set()
+            return
+        target.set_pixel_data(_frame(204))
+        started = time.monotonic()
+        try:
+            session.store_backend.persist_pixel_data(target)
+        except Exception as exc:      # pylint: disable=broad-except
+            outcome["raised"] = exc
+        else:
+            outcome["raised"] = None
+        outcome["elapsed"] = time.monotonic() - started
+        # Only now, so the park is held for longer than the deadline.
+        released.set()
+
+    intruder = threading.Thread(target=work, daemon=True)
+    intruder.start()
+    session.compact()
+    intruder.join(timeout=_WAIT)
+    assert not intruder.is_alive(), "the intruder thread did not finish"
+    assert "error" not in outcome, outcome.get("error")
+
+    raised = outcome["raised"]
+    assert isinstance(raised, RuntimeError), (
+        "the writer got %r where the gate deadline should have raised "
+        "RuntimeError (#368)" % (raised,))
+    lock_path = session.store_backend._gate_path()
+    assert lock_path in str(raised), (
+        "the gate error does not name the lock file %s: %s" % (
+            lock_path, raised))
+    assert "_SIDECAR_GATE_TIMEOUT_S" in str(raised), (
+        "the gate error does not name the constant that bounded it: %s"
+        % (raised,))
+    assert outcome["elapsed"] < 10.0, (
+        "the writer waited %.1f s against a 0.5 s deadline; the deadline "
+        "is not being read from the module constant" % outcome["elapsed"])
+    # The frame was never appended and no row moved, so the instance
+    # still reads back what the compaction rewired it to.
+    assert np.array_equal(_reads_back(target), _frame(1))

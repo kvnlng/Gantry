@@ -1646,3 +1646,54 @@ def test_sidecar_lock_files_are_ignored_before_any_exist():
         ".gitignore has no `*.lock` pattern; the sidecar gate and "
         "pass-lock files would be left untracked in the repo root by the "
         "first test run (#376)")
+
+
+def test_the_sidecar_gate_deadline_sits_inside_the_timeout_family():
+    """`120 < _SIDECAR_GATE_TIMEOUT_S < 240 < 300`, and the helper reads it.
+
+    The sidecar gate (#368) is the one lock deliberately held across a
+    sqlite write, so a waiter behind a holder that is itself waiting out
+    `_SQLITE_BUSY_TIMEOUT_S` must not give up first: it would raise a
+    gate error that misnames the fault (the database is what is stuck)
+    and, on the save path, leave the instances dirty when the holder was
+    seconds from succeeding. Above that, it must expire inside both
+    faulthandler windows (`_WORKER_FAULTHANDLER_TIMEOUT_S` in a worker,
+    pytest's threshold in the parent) so a stuck gate dumps a thread
+    *waiting at the gate* with a stack and the error, not the job cap,
+    ends the test (#280, #250). And the helper must read the constant by
+    name: a re-inlined literal is exactly how `timeout=900.0` went
+    unquestioned for so long (2026-09-08 spec §2.3).
+    """
+    import inspect
+
+    from isocenter import parallel, persistence
+
+    threshold, _step_seconds, _ = _faulthandler_threshold_and_step_seconds()
+    gate = persistence._SIDECAR_GATE_TIMEOUT_S
+
+    assert persistence._SQLITE_BUSY_TIMEOUT_S < gate, (
+        f"_SIDECAR_GATE_TIMEOUT_S={gate:g}s is not above "
+        f"_SQLITE_BUSY_TIMEOUT_S={persistence._SQLITE_BUSY_TIMEOUT_S:g}s: a "
+        "writer queued behind one legitimately waiting out sqlite would "
+        "expire first and misname the fault (#368)")
+    assert gate < parallel._WORKER_FAULTHANDLER_TIMEOUT_S, (
+        f"_SIDECAR_GATE_TIMEOUT_S={gate:g}s outlasts the worker "
+        f"faulthandler ({parallel._WORKER_FAULTHANDLER_TIMEOUT_S:g}s): a "
+        "stuck gate in a worker dumps nothing before the parent gives up "
+        "(#368)")
+    assert gate < threshold, (
+        f"_SIDECAR_GATE_TIMEOUT_S={gate:g}s outlasts the faulthandler "
+        f"window ({threshold:g}s): a stuck gate stalls past the diagnosis "
+        "instead of erroring inside it (#368)")
+
+    # By AST, not by substring: the helper's docstring names the constant
+    # in prose, and a substring check would be satisfied by that alone
+    # while the body carried a literal.
+    import textwrap
+
+    source = inspect.getsource(persistence.SqliteStore._hold_sidecar_gate)
+    names = {node.id for node in ast.walk(ast.parse(textwrap.dedent(source)))
+             if isinstance(node, ast.Name)}
+    assert "_SIDECAR_GATE_TIMEOUT_S" in names, (
+        "_hold_sidecar_gate no longer reads _SIDECAR_GATE_TIMEOUT_S; a "
+        "re-inlined literal is exactly how 900.0 went unquestioned (#368)")

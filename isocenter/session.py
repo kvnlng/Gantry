@@ -1058,38 +1058,52 @@ class DicomSession:
                     "offsets that no longer exist. Flush the persistence "
                     "manager and stop other writers first (#295).")
 
-            # 2. Compact and get updates
-            # Returns Dict[sop_instance_uid, (new_offset, new_length)]
-            updates = self.store_backend.compact_sidecar()
-
-            # compact_sidecar's uid_map is pixels-only by design: it is keyed
-            # by UID alone, so a waveform entry would be handed to a pixel
-            # loader. Waveform offsets are re-read from the blob table
-            # instead -- they moved in the same rewrite, and a loader left on
-            # a pre-compaction offset reads the wrong bytes or runs off the
-            # end of the file.
-            wave_updates = self.store_backend.get_blob_refs('waveform')
-
-            # Nested pixel payloads are in exactly the same position, and
-            # cannot ride `updates` for a sharper version of the same
-            # reason: that map is keyed by UID alone, and one instance can
-            # carry a bare `pixels` blob plus a row per icon. Keyed
-            # `(uid, kind)` instead (#183).
-            nested_updates = self.store_backend.get_nested_pixel_refs()
-
-            if not updates and not wave_updates and not nested_updates:
-                print("Compaction finished (no changes or empty).")
-                return
-
-            # 3. Patch In-Memory Instances (Preserve References)
-            print(f"Updating {len(updates)} in-memory instances...")
-            count = self._rewire_sidecar_loaders(updates, wave_updates,
-                                                 nested_updates)
-
-            print(f"Patched {count} active objects.")
+            # The gate (#368), taken AFTER the leading save above -- that
+            # save runs site 6 on this thread and would deadlock against
+            # a gate already held -- and released only after the rewire
+            # below: release it at the end of `compact_sidecar()` and a
+            # writer slipping in before `_rewire_sidecar_loaders` has a
+            # correct loader overwritten from a map computed before its
+            # write existed. `compact_sidecar()` itself is not gated, so
+            # this method is the only place the hold and the rewire are
+            # tied together.
+            with self.store_backend._hold_sidecar_gate():
+                self._compact_under_gate()
 
         else:
             print("Persistence backend does not support compaction.")
+
+    def _compact_under_gate(self):
+        """`compact()`'s rewrite and rewire; the caller holds the gate."""
+        # 2. Compact and get updates
+        # Returns Dict[sop_instance_uid, (new_offset, new_length)]
+        updates = self.store_backend.compact_sidecar()
+
+        # compact_sidecar's uid_map is pixels-only by design: it is keyed
+        # by UID alone, so a waveform entry would be handed to a pixel
+        # loader. Waveform offsets are re-read from the blob table
+        # instead -- they moved in the same rewrite, and a loader left on
+        # a pre-compaction offset reads the wrong bytes or runs off the
+        # end of the file.
+        wave_updates = self.store_backend.get_blob_refs('waveform')
+
+        # Nested pixel payloads are in exactly the same position, and
+        # cannot ride `updates` for a sharper version of the same
+        # reason: that map is keyed by UID alone, and one instance can
+        # carry a bare `pixels` blob plus a row per icon. Keyed
+        # `(uid, kind)` instead (#183).
+        nested_updates = self.store_backend.get_nested_pixel_refs()
+
+        if not updates and not wave_updates and not nested_updates:
+            print("Compaction finished (no changes or empty).")
+            return
+
+        # 3. Patch In-Memory Instances (Preserve References)
+        print(f"Updating {len(updates)} in-memory instances...")
+        count = self._rewire_sidecar_loaders(updates, wave_updates,
+                                             nested_updates)
+
+        print(f"Patched {count} active objects.")
 
     def _rewire_sidecar_loaders(self, updates, wave_updates,
                                 nested_updates=None) -> int:
