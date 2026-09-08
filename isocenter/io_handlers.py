@@ -1223,11 +1223,11 @@ def process_sequence(tag, elem, parent_item, dropped: list = None,
 def _decode_pixels(ds) -> Tuple[np.ndarray, str]:
     """The array `Dataset.pixel_array` returns, and the colour space it is in.
 
-    `pixel_array` calls exactly this -- `get_decoder(ts).as_array(ds)`
-    on the `pydicom.pixels` backend, which is the one `Dataset` uses
+    `pixel_array` calls exactly this -- `as_array` on `get_decoder(ts)`,
+    the `pydicom.pixels` backend, which is the one `Dataset` uses
     unless `use_pdh` is set and nothing in this package sets it -- and
-    then discards the meta (pydicom 3.0.2 `pixels/utils.py`, `arr, _ =
-    decoder.as_array(...)`). That meta is the one place pydicom states
+    then discards the meta (pydicom 3.0.2 `pixels/utils.py`: `arr, _ =`
+    the `as_array` pair). That meta is the one place pydicom states
     what colour space the returned array is in, and it is not the
     declared `PhotometricInterpretation`: with the default `as_rgb=True`
     every 8-bit YBR family comes back RGB, under any transfer syntax,

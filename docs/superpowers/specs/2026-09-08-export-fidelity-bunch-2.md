@@ -1007,7 +1007,7 @@ determinations in §0–§3 stand; these are where the *mechanism* or a
    rather than "none for a control"; it kills the same two mutants §5.2
    names. `docs/environment.md` says the variable "does not apply to
    `session.export()`"; it also does not apply to `session.ingest()`,
-   for this reason. Not a code change here; noted for a docs follow-up.
+   for this reason. Not a code change here; noted for a docs follow-up (#390).
 2. **§5.2 item 6 / §0.2 C1: the `:674` test's fixture was not "a JPEG
    Baseline icon declared `YBR_FULL_422`".** It was `_icon_item()`'s
    default -- four raw bytes, `MONOCHROME2`, one sample -- under a file
