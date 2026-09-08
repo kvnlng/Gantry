@@ -635,6 +635,13 @@ class SqliteStore:
             tf = tempfile.NamedTemporaryFile(suffix="_pixels.bin", delete=False)
             self.sidecar_path = tf.name
             tf.close()
+            # This store created the temp file, so `stop()` unlinks it
+            # (and the two lock files beside it). Ownership is a flag
+            # rather than a re-derivation from `db_path` because a
+            # pickled clone -- a spawned worker's copy -- shares the
+            # *same* sidecar path and must not unlink it: `__getstate__`
+            # drops the flag and `__setstate__` sets it False (#376).
+            self._owns_temp_sidecar = True
             # Shared memory connection for :memory: database to persist across transactions
             self._memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
             self._memory_conn.row_factory = sqlite3.Row
@@ -643,6 +650,9 @@ class SqliteStore:
             self.sidecar_path = os.path.splitext(db_path)[0] + "_pixels.bin"
             self._memory_conn = None
             self._memory_lock = None
+            # A file-backed sidecar is data; its lock files are stable
+            # paths other processes of this session may be polling.
+            self._owns_temp_sidecar = False
 
         self.sidecar = SidecarManager(self.sidecar_path)
         self._init_db()
@@ -704,7 +714,12 @@ class SqliteStore:
             '_audit_wakeup',
             '_audit_drop_lock',
             '_pixel_swap_lock',
-            '_audit_thread']
+            '_audit_thread',
+            # Not a threading primitive, but dropped for the same
+            # reason a clone gets fresh locks: a clone that inherited
+            # `True` would unlink the parent's sidecar on its own
+            # `stop()` (#376). `__setstate__` sets it False.
+            '_owns_temp_sidecar']
         for k in keys_to_remove:
             state.pop(k, None)
         return state
@@ -720,6 +735,10 @@ class SqliteStore:
         else:
             self._memory_lock = None
             self._memory_conn = None
+        # A clone never owns the temp sidecar, whatever the parent did:
+        # `tests/test_save_redact_race.py` calls `clone.stop()` on
+        # pickled clones while the parent is still reading (#376).
+        self._owns_temp_sidecar = False
 
         self.audit_queue = queue.Queue()
         self._stop_event = threading.Event()
@@ -734,6 +753,21 @@ class SqliteStore:
                   self.audit_queue),
             daemon=True, name="AuditWorker")
         self._audit_thread.start()
+
+    def _gate_path(self) -> str:
+        """The sidecar gate's lock file: `<sidecar>.lock`.
+
+        A stable path *beside* the sidecar, never the sidecar itself.
+        `flock` binds to an inode, and `compact_sidecar` swaps the
+        sidecar in with `os.replace`, which gives the path a new inode:
+        a writer blocked on the old one wakes after the swap and appends
+        into the unlinked file (#368). This path is never replaced.
+        """
+        return self.sidecar_path + ".lock"
+
+    def _pass_lock_path(self) -> str:
+        """The pass-lock's file: `<sidecar>.pass.lock` (#368)."""
+        return self.sidecar_path + ".pass.lock"
 
     @contextlib.contextmanager
     def _get_connection(self):
@@ -1105,6 +1139,22 @@ class SqliteStore:
         # A timed-out join no longer loses rows: this waits out any
         # in-flight write on the lock and drains the rest itself.
         self.flush_audit_queue()
+
+        # Only the store that created a `:memory:` temp sidecar removes
+        # it -- never a pickled clone (flag dropped on pickle) and never
+        # a file-backed store (its sidecar is data, and its lock files
+        # are stable paths other processes may be polling). Measured
+        # before #376: the temp sidecar survived `close()` every time,
+        # and with the gate and pass-lock that would be three leaked
+        # files per session. `FileNotFoundError` is expected for a lock
+        # file no acquisition ever created.
+        if self._owns_temp_sidecar:
+            for path in (self.sidecar_path, self._gate_path(),
+                         self._pass_lock_path()):
+                try:
+                    os.remove(path)
+                except FileNotFoundError:
+                    pass
 
     def flush_audit_queue(self):
         """Settle the audit log.
