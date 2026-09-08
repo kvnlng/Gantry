@@ -982,3 +982,60 @@ hand per CLAUDE.md's runbook and recorded in the CHANGELOG entry.
   is empty at commit time. Full suite on this base, in the worktree,
   unpiped `pytest -v` per the runbook: **1626 passed in 386.43 s**,
   0 failed, 0 errors (`isocenter.__file__` resolved to the worktree).
+
+---
+
+## 10. Amendments (made during implementation, 2026-09-08)
+
+Corrections found while the code was being written, per CLAUDE.md's
+distinction between an amendments log and a later supersession. The
+determinations in §0–§3 stand; these are where the *mechanism* or a
+*count* the spec gave was wrong when tried.
+
+1. **§5.2 test 4's `ISOCENTER_FORCE_THREADS=1` cannot reach
+   `Session.ingest()`'s worker.** `session.ingest()` passes
+   `executor=self._executor` (the session's own spawn
+   `ProcessPoolExecutor`) to `DicomImporter.import_files`, and
+   `run_parallel` takes `_run_on_shared_executor` whenever an executor
+   is given -- `executor.map`, whatever the strategy says. The variable
+   decides the strategy only when no executor is passed. The test
+   (`test_the_label_is_written_only_when_it_changes`) calls
+   `ingest_worker(path)` directly, in-process, and wraps
+   `Instance.set_attr` there. `populate_attrs` also writes through
+   `set_attr`, so the assertion is a *count* of `0028,0004` writes (one
+   for a control, the copy; two for the YBR row, the copy then `RGB`)
+   rather than "none for a control"; it kills the same two mutants §5.2
+   names. `docs/environment.md` says the variable "does not apply to
+   `session.export()`"; it also does not apply to `session.ingest()`,
+   for this reason. Not a code change here; noted for a docs follow-up.
+2. **§5.2 item 6 / §0.2 C1: the `:674` test's fixture was not "a JPEG
+   Baseline icon declared `YBR_FULL_422`".** It was `_icon_item()`'s
+   default -- four raw bytes, `MONOCHROME2`, one sample -- under a file
+   whose transfer syntax merely *said* JPEG Baseline. With `.4.50`
+   allow-listed that icon fails to decode and keeps its loss row, so
+   the test would not have flipped. A real icon was built for it
+   (`_jpeg_icon_item()`: Pillow JPEG, `subsampling=1`, encapsulated,
+   undefined length, declared `YBR_FULL_422`), and `_write_src`'s "no
+   encoder plugin exists in this environment" docstring rewritten.
+3. **§5.2's J2K recipe needs `no_jp2=True`.** `Image.save(format=
+   "JPEG2000", irreversible=True, mct=1)` writes a JP2 box
+   (`0000000c 6a502020 ...`), not the raw codestream (`ff4fff51`) a
+   DICOM fragment carries; with `no_jp2=True` it is the codestream and
+   pydicom's Pillow plugin decodes it. Measured in the project venv
+   before the fixture was written.
+4. **§5.1 test 1's "seven red" for the predicate mutation is 15.** The
+   reverted predicate sends `[]` to `_fallback_multivalue`, whose answer
+   is now `('UN', None)`, so the `LO` rows go red too (they were the
+   "two passed" before the fix); and the reloaded path is a second
+   seven, plus the `()` test. 15 failed, 2 passed (the two
+   no-recorded-VR rows, which read `UN` either way).
+5. **§3.5 item 2 / §7 item 3, measured:** `get_decoder(ts).as_array(ds)`
+   reports `PALETTE COLOR` for a `PALETTE COLOR` source with LUT
+   descriptors and data present (pydicom 3.0.2, project venv), and
+   `MONOCHROME1` / `MONOCHROME2` / `RGB` for those. The write fires for
+   none; `palette` is a control in the revision test.
+6. **§9's "full suite 1626 passed" is the base; this PR's counts are in
+   its body.** The mutation for §5.4 ("re-add `research_tags.json`") is
+   `git checkout 283bf04 -- isocenter/resources/research_tags.json`
+   (staged, so `_tracked_paths_in_package` sees it) and `git rm` to
+   revert -- an untracked copy is invisible to the test by design.
