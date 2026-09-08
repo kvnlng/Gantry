@@ -1894,8 +1894,11 @@ closed as intended behaviour.</p>
 offset/length representation the EAV table does not have, plus a lazy
 loader and an export re-merge path. <code>session.compact()</code> rewrites the
 sidecar and rewires every offset it knows about, so a class of offset it
-does not know about is silent corruption after the first compaction. That
-is design work, not a flag.</p>
+does not know about is silent corruption after the first compaction. (It
+also holds the sidecar gate for the whole rewrite, so any writer of such
+an offset would have to take that gate too, and it refuses outright while
+a <code>redact()</code> or <code>ingest()</code> pass is open -- see <code>compact()</code>'s API entry.)
+That is design work, not a flag.</p>
 <div class="admonition warning">
 <p class="admonition-title">Standard binary elements are dropped too</p>
 <p>The same rule takes Overlay Data <code>(60xx,3000)</code> and the palette color
