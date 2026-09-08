@@ -17,6 +17,15 @@ rewritten, per CLAUDE.md's rule for a spec whose corrections were made
 is decided here for #277 and #150 option 3a as well, which is what #183
 asks for. Rests on #169, #170, #193, #194, #327. Touches the ground
 #125, #137, #160, #150 and #168 cover.
+**Superseded in part:** #372 (spec `2026-09-08-export-fidelity-bunch-2.md`
+§3, §4). §0 Q6's "no lossy-compressed fixture of any family can be built
+in this venv" is wrong — Pillow, an `install_requires`, builds baseline
+JPEG (4:2:2) and JPEG 2000 (ICT/RCT) fixtures and pydicom's Pillow plugin
+decodes them; and the top-level question Q6 marks unmeasured is now
+measured: every 8-bit YBR source, lossy or native, is decoded to RGB with
+the label left as declared. §16.6's reason for refusing lossy syntaxes
+("a decoder whose colour-space behaviour nobody checked") is therefore
+gone for JPEG Baseline and JPEG 2000. Both clauses are struck in place.
 **Base:** `main` at `007705d`
 **Measured with:**
 `/Users/kevin/Developer/Isocenter/.venv/bin/python` (CPython 3.14.6),
@@ -166,10 +175,14 @@ first draft:
   dependencies: pylibjpeg - requires numpy, pylibjpeg>=2.0 and
   pylibjpeg-openjpeg>=2.2`. Confirmed by import: `pylibjpeg`,
   `openjpeg`, `libjpeg`, `gdcm` and `pyjpegls` are all absent; only
-  `PIL` is present. So **no lossy-compressed fixture of any family can
+  `PIL` is present. So ~~**no lossy-compressed fixture of any family can
   be built in this venv**, and taking this measurement means installing
-  `pylibjpeg-openjpeg` first. **Marked unmeasured deliberately rather
-  than asserted.**
+  `pylibjpeg-openjpeg` first.~~ **Marked unmeasured deliberately rather
+  than asserted.** (**Superseded by #372, 2026-09-08:** Pillow alone
+  builds every fixture family needed — `Image.save(format="JPEG",
+  subsampling=1)` and `Image.save(format="JPEG2000", mct=1)` — and the
+  measurement was taken: the top level *does* store RGB under the
+  declared YBR label, native sources included, not only lossy ones.)
 
   Two things that narrow the question while it is open. Isocenter's own
   compression is `_compress_j2k` (`io_handlers.py:2603`), which is
@@ -1570,8 +1583,11 @@ HTJ2K Lossless .201/.202).
 The two lists differ only in what happens to a UID on neither: a
 deny-list carries it, an allow-list refuses it. Refusing an unknown
 syntax costs a `DATA_LOSS` row that names it; carrying one risks
-shipping pixels through a decoder whose colour-space behaviour nobody
-checked, which is the whole substance of Q6. A new lossy syntax added to
+shipping pixels through a decoder ~~whose colour-space behaviour nobody
+checked~~ (#372 checked it: RGB, with the label corrected at ingest from
+the decoder's meta; JPEG Baseline and JPEG 2000 are proposed for the
+list, the rest stay out as unmeasured), which is the whole substance of
+Q6. A new lossy syntax added to
 DICOM lands on the safe side by default this way, and the failure is
 visible in the loss report rather than silent in the pixels.
 

@@ -5,6 +5,9 @@
 before this spec was written); ready for implementation
 **Tracking:** #344. Completes the half #339 named and deliberately left
 open. Touches the guard #154/#165/#190/#195 built.
+**Q1 answered by:** #367, spec `2026-09-08-export-fidelity-bunch-2.md`
+§1 (2026-09-08) — the recommendation "file it, do not fold it" was
+followed; the fix is one clause on this spec's `v is None` arm.
 **Base:** `main` at `e484bee`
 **Measured with:** `/Users/kevin/Developer/Isocenter/.venv/bin/python`
 (CPython 3.14.6), `pydicom 3.0.2`, `numpy` as installed. Every figure
@@ -34,6 +37,10 @@ element — it yields `None` (§1.3), so `[]` is reachable only from a hand
 `set_attr`. Recommendation: file it, do not fold it. It is one line of
 the same argument and folding it would put an untested shape in a change
 whose whole value is that its population is measured.
+*(Filed as #367 and answered in `2026-09-08-export-fidelity-bunch-2.md`
+§1: the predicate on this arm widens to empty containers, the value is
+normalised to `None`, and `_fallback_multivalue([])` returns
+`('UN', None)`.)*
 
 **Q2. A `set_attr(tag, None)` on a recorded-`LO` tag now writes `LO ''`
 where it used to be dropped, and no source file ever said so.** The rule
