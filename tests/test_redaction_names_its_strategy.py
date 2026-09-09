@@ -173,10 +173,23 @@ def test_the_banner_is_the_strategy_the_pool_was_built_from(
     `sys._is_gil_enabled()` -- would print `(processes)` over a pool of
     threads. Only a banner that reads the resolved object survives.
 
-    The disagreement is the whole test, which is why the lever is set: on
-    a free-threaded build with no lever the real default is already
-    threads, the patch would agree with it, and this would prove nothing
-    on exactly the leg the gate runs it for.
+    The disagreement is the whole test, which is why **both** the lever
+    and the GIL reading are pinned against the patch. Measured, each is
+    load-bearing on a different leg:
+
+    - Without the `setenv`, an environment-derived banner survives on
+      *both* interpreters -- there is no lever for it to read, so it
+      falls through to the same answer the patch gives.
+    - Without the `setattr`, a `sys._is_gil_enabled()`-derived banner is
+      red on 3.12.14 and **green on 3.14.7t**, because there it says
+      `threads` and agrees with the patched pool. That is the leg this
+      test exists for, and this docstring claimed to cover it while
+      nothing did.
+
+    `raising=False` because `sys._is_gil_enabled` does not exist on the
+    3.12 floor at all; the production ranking guards on `hasattr`, and
+    creating the attribute here is harmless because the ranking itself is
+    patched out.
 
     `parallel._resolve_execution_choice` is the patch target because
     `_resolve_strategy` looks it up as a module global at call time.
@@ -186,6 +199,7 @@ def test_the_banner_is_the_strategy_the_pool_was_built_from(
     unpatched code.
     """
     monkeypatch.setenv("ISOCENTER_FORCE_PROCESSES", "1")
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: True, raising=False)
     monkeypatch.setattr(
         parallel, "_resolve_execution_choice",
         lambda force_threads, maxtasksperchild, recycling_lever:

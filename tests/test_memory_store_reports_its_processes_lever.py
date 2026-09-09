@@ -49,6 +49,7 @@ import pytest
 
 from isocenter import session as session_module
 from isocenter.entities import Equipment, Instance, Patient, Series, Study
+from isocenter.parallel import _Strategy
 from isocenter.services import RedactionError
 from isocenter.session import DicomSession
 
@@ -187,16 +188,31 @@ def test_the_warning_fires_once_for_a_whole_session_of_passes(
         monkeypatch, caplog):
     """Once per `redact()` call, not once per `run_parallel`.
 
-    `audit()` on a `:memory:` store under `ISOCENTER_FORCE_PROCESSES=1`
-    succeeds -- its worker reads and returns findings the parent persists
-    -- so it is a parallel pass that genuinely honours the variable, and
-    a warning emitted from `parallel.py` would fire on it too. #185's
-    warning fires on every parallel pass in the process when both its
-    levers are set, which its own comment concedes is "a lot of output on
-    a long run"; this one is emitted from `session.py`, once.
+    #185's warning fires on every parallel pass in the process when both
+    its levers are set, which its own comment concedes is "a lot of
+    output on a long run"; this one is emitted from `session.py`, once.
 
-    Killing edit: the warning emitted from `parallel.py`. It passes every
-    other test in this file.
+    Killing edit: the warning emitted from `parallel.py` instead, keyed
+    on `strategy.processes_requested_by and strategy.use_threads` -- the
+    shape an implementer reaches for, since `parallel.py` cannot see the
+    store's path. It passes every other test in this file.
+
+    **`discover_redaction_zones()` is the pass that discriminates, and
+    `audit()` is not.** Measured: with the warning moved to
+    `parallel.py`, a session that runs `audit()` then `redact()` still
+    warns exactly once, so this test was a full survivor of the very
+    mutation it names. `audit()` under `ISOCENTER_FORCE_PROCESSES=1`
+    *honours* the request -- `use_threads` is `False` there -- so the
+    parallel-side condition is false on it, and it is the one pass in
+    the session that cannot tell the two placements apart.
+    `discover_redaction_zones()` passes `force_threads=True`
+    unconditionally, so its strategy carries `use_threads=True` beside a
+    set `processes_requested_by`: it is a second pass the relocated
+    warning fires on, and this test then reads `got 2`. It also pins the
+    second wrong output of that placement, which no count in this file
+    would otherwise see -- on a *file* store the relocation prints a
+    sentence about a `":memory:"` store for a pass that has nothing to
+    do with one.
     """
     monkeypatch.setenv(FORCE_PROCESSES, "1")
     with caplog.at_level(logging.WARNING):
@@ -212,11 +228,18 @@ def test_the_warning_fires_once_for_a_whole_session_of_passes(
                 "the audit found nothing, so it is not the parallel pass "
                 "this test needs to have run")
             assert session.redact() == 3
+            # The pass that tells the two placements apart: it asks for
+            # threads unconditionally, so its strategy carries
+            # `use_threads=True` beside a set `processes_requested_by`,
+            # which is the exact condition a parallel-side warning would
+            # be keyed on.
+            session.discover_redaction_zones(SERIAL)
 
     selected = _naming(caplog, FORCE_PROCESSES)
     assert len(selected) == 1, (
-        f"a session that ran audit() and redact() under {FORCE_PROCESSES} "
-        f"must warn once, from redact(); got {len(selected)}: {selected}")
+        f"a session that ran audit(), redact() and "
+        f"discover_redaction_zones() under {FORCE_PROCESSES} must warn "
+        f"once, from redact(); got {len(selected)}: {selected}")
 
 
 def test_a_file_store_with_force_processes_says_nothing(tmp_path, monkeypatch,
@@ -362,8 +385,8 @@ def test_the_refusal_has_done_nothing(monkeypatch, caplog):
     never started -- in a milestone about false sentences. The spy and
     the audit count stay green for such a placement.
 
-    Killing edit: the refusal moved below task preparation, or inside the
-    `try`.
+    Killing edit: the refusal moved below task preparation, inside the
+    `try`, or above the persistence drain.
     """
     dispatched = []
     real = session_module.run_parallel
@@ -384,12 +407,33 @@ def test_the_refusal_has_done_nothing(monkeypatch, caplog):
         pixels_before = {inst.sop_instance_uid: inst.get_pixel_data().copy()
                          for inst in _instances(session)}
 
+        # The other side of the same placement: *after* the drain.
+        # `docs/api/stability.md`'s frozen "audit() and redact() drain
+        # the persistence manager on entry" is stated of every call, and
+        # the CHANGELOG and `redact()`'s `Raises:` both say the refusal
+        # is raised after it so that stays true of a refused one.
+        # Measured: resolution and refusal moved *above*
+        # `persistence_manager.flush()` passes the entire suite --
+        # 1795/2 on 3.12.14, identical to unmutated. Three committed
+        # claims and nothing behind them.
+        drained = []
+        real_flush = session.persistence_manager.flush
+
+        def flush_spy(*args, **kwargs):
+            drained.append(True)
+            return real_flush(*args, **kwargs)
+
+        monkeypatch.setattr(session.persistence_manager, "flush", flush_spy)
         monkeypatch.setattr(session_module, "run_parallel", spy)
         monkeypatch.setenv(MAX_TASKS, "1")
         with caplog.at_level(logging.INFO):
             with pytest.raises(RuntimeError):
                 session.redact()
 
+        assert drained, (
+            "the refused call never drained the persistence manager, so "
+            'the frozen "audit() and redact() drain on entry" clause is '
+            "not true of it -- the refusal is above the drain")
         assert dispatched == [], (
             f"the refusal dispatched work before raising: {dispatched}")
         after = session.store_backend.get_audit_summary().get("REDACTION", 0)
@@ -530,3 +574,86 @@ def test_a_file_store_with_max_tasks_per_child_still_redacts(tmp_path,
         _populate(session)
         assert session.redact() == 3
         _assert_zone_redacted(session)
+
+
+def _synthetic_strategy(use_threads, lever):
+    """A `_Strategy` shaped like `redact()`'s, asked for by `lever`.
+
+    Built by hand rather than resolved, because the row it describes is
+    the one the ranking cannot currently produce: a lever at a rank
+    *below* `force_threads=True` that asks for processes and loses. Every
+    other test in this file goes through `redact()` and therefore can
+    only exercise the two rows the four ranks reach today.
+    """
+    return _Strategy(
+        max_workers=3,
+        chunksize=1,
+        maxtasksperchild=None,
+        disable_gc=False,
+        use_threads=use_threads,
+        show_progress=False,
+        desc="Redacting Pixels",
+        total=None,
+        processes_requested_by=lever,
+        threads_request_overridden_by=None)
+
+
+def test_a_lever_that_asked_and_lost_is_warned_about_whatever_it_is_called(
+        caplog):
+    """The discriminator is `use_threads`, not the lever's name.
+
+    §14.1's stated reason for keying on `strategy.use_threads` is a fifth
+    lever added at some future rank: written that way it is classified
+    correctly without touching the helper, where `if lever == "..."`
+    would work today and be wrong the moment such a lever exists.
+
+    Nothing held that. Measured: `session.py`'s `if strategy.use_threads:`
+    replaced by `if lever == "ISOCENTER_FORCE_PROCESSES":` is **zero red**
+    across every test in this file, `test_redaction_names_its_strategy.py`,
+    `test_parallel_contract.py` and `test_memory_store_redaction_strategy.py`
+    on both gate interpreters -- because the two rows `redact()` can
+    actually reach today are exactly the two rows the hardcoded form gets
+    right by coincidence. The reason for the design was written down in
+    three docstrings and pinned by nothing.
+
+    This calls the helper directly with a strategy the ranking cannot
+    build yet, which is the only way to reach the row that tells the two
+    spellings apart. Killing edit: `if lever == "ISOCENTER_FORCE_PROCESSES"`
+    -- the hardcoded form then falls through to the refusal and this
+    raises instead of warning.
+    """
+    lever = "ISOCENTER_SOME_FUTURE_LEVER"
+    strategy = _synthetic_strategy(use_threads=True, lever=lever)
+
+    with caplog.at_level(logging.WARNING):
+        session_module._report_processes_lever_on_a_memory_store(
+            ":memory:", strategy)
+
+    selected = _naming(caplog, lever)
+    assert len(selected) == 1, (
+        f"a lever that asked for processes and lost is owed the same "
+        f"warning whatever it is called; got {len(selected)}: {selected}")
+    assert "had no effect on this run" in selected[0]
+
+
+def test_a_lever_that_asked_and_won_is_refused_whatever_it_is_called():
+    """The other half of the same discriminator.
+
+    A lever that *obtained* processes on a `:memory:` store is refused
+    because processes cannot redact one, and that is true of any lever
+    that manages it -- the name is not what makes it fatal. Killing edit:
+    a name test on the refusal side, which would let a future lever
+    reach the pool and fail three of three with
+    `no such table: instance_blobs`, the exact 0.9.4 behaviour #400
+    replaced.
+    """
+    lever = "ISOCENTER_SOME_FUTURE_LEVER"
+    strategy = _synthetic_strategy(use_threads=False, lever=lever)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        session_module._report_processes_lever_on_a_memory_store(
+            ":memory:", strategy)
+
+    assert lever in str(excinfo.value), (
+        "the refusal must name the lever it read, not a hardcoded one")
+    assert type(excinfo.value) is RuntimeError

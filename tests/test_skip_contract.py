@@ -232,7 +232,17 @@ def _decorator_skips():
                 call = dec if isinstance(dec, ast.Call) else None
                 target = call.func if call else dec
                 name = _called_name(target)
-                if name not in {"skip", "skipIf", "skipUnless"}:
+                # `skipif` is here for the same reason it is in
+                # `_SkipVisitor.visit_Call`, and it has to be taught in
+                # both places or the file gets *quieter* rather than
+                # louder: teaching only the visitor makes the text scan
+                # accept `@pytest.mark.skipif(True, ...)` as a known
+                # form while this walk still cannot see it, so a test
+                # skipped in every environment -- the one shape #107
+                # opens by forbidding -- passes both halves. Measured:
+                # such a probe is red before `skipif` is in this set and
+                # green after only the visitor learns it.
+                if name not in {"skip", "skipIf", "skipif", "skipUnless"}:
                     continue
                 found.append((path, dec.lineno, name, call))
     return found
@@ -263,7 +273,11 @@ def test_no_test_is_skipped_in_every_environment():
         condition = call.args[0]
         if not isinstance(condition, ast.Constant):
             continue  # a real runtime condition
-        always = bool(condition.value) if name == "skipIf" \
+        # `skipif` and `skipIf` skip when the condition is true;
+        # `skipUnless` is the inverse. Grouping the two spellings here
+        # rather than adding a second branch keeps one answer to "does
+        # this ever run".
+        always = bool(condition.value) if name in {"skipIf", "skipif"} \
             else not bool(condition.value)
         if always:
             offenders.append(
