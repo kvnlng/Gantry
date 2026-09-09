@@ -3853,7 +3853,8 @@ class DicomSession:
         libraries is reclaimed, which `ProcessPoolExecutor` cannot do.
 
         **Processes here are a decision, not an accident (#185).** Asking
-        for `maxtasksperchild` rules threads out in `_use_threads` --
+        for `maxtasksperchild` rules threads out in
+        `_resolve_execution_choice` --
         only `multiprocessing.Pool` implements recycling -- so this, the
         heaviest path in the library and the one that pickles the most,
         runs in processes on **every** interpreter, including a

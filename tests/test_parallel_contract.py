@@ -19,6 +19,20 @@ def identity(value):
     return value
 
 
+def _threads_chosen(force_threads, maxtasksperchild, lever=None):
+    """The one field these assertions are about (#384, #400).
+
+    `_resolve_execution_choice` answers three questions where
+    `_use_threads` answered one; the two attribution fields have their
+    own table below (`test_the_choice_records_which_lever_asked_for_processes`).
+    Reading `.use_threads` here keeps each assertion about the thing it
+    was written about.
+    """
+    return parallel._resolve_execution_choice(
+        force_threads, maxtasksperchild, lever).use_threads
+
+
+
 def double_or_raise(value):
     """Module scope: it has to pickle into a process-pool worker."""
     if value < 0:
@@ -184,15 +198,15 @@ def test_the_default_path_is_processes_under_a_gil_and_threads_without_one(
     The three levers are cleared by the autouse fixture.
     """
     monkeypatch.setattr(sys, "_is_gil_enabled", lambda: True, raising=False)
-    assert parallel._use_threads(False, None) is False, (
+    assert _threads_chosen(False, None) is False, (
         "with a GIL and no lever, the default must be processes")
 
     monkeypatch.setattr(sys, "_is_gil_enabled", lambda: False, raising=False)
-    assert parallel._use_threads(False, None) is True, (
+    assert _threads_chosen(False, None) is True, (
         "without a GIL and no lever, the default must be threads")
 
     monkeypatch.delattr(sys, "_is_gil_enabled", raising=False)
-    assert parallel._use_threads(False, None) is False, (
+    assert _threads_chosen(False, None) is False, (
         "a build that cannot be asked has always had a GIL: processes")
 
 
@@ -559,10 +573,10 @@ def test_a_lever_set_both_ways_runs_in_threads(monkeypatch):
     monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
     monkeypatch.setenv("ISOCENTER_FORCE_PROCESSES", "1")
 
-    assert parallel._use_threads(False, None) is True, (
+    assert _threads_chosen(False, None) is True, (
         "ISOCENTER_FORCE_PROCESSES overrode ISOCENTER_FORCE_THREADS; "
         "docs/environment.md says the reverse")
-    assert parallel._use_threads(False, 25) is False, (
+    assert _threads_chosen(False, 25, "the maxtasksperchild argument") is False, (
         "worker recycling was asked for and threads were chosen anyway; "
         "only multiprocessing.Pool implements maxtasksperchild")
 
@@ -586,7 +600,7 @@ def test_only_the_literal_one_switches_a_flag_on(monkeypatch):
     assert parallel._env_is("ISOCENTER_FORCE_THREADS", ("1",)) is False, (
         "'true' switched ISOCENTER_FORCE_THREADS on; the table in "
         "docs/environment.md says only the literal 1 counts")
-    assert parallel._use_threads(False, None) is False, (
+    assert _threads_chosen(False, None) is False, (
         "and so the processes lever, which is set to the literal 1, is "
         "the one that decides")
 
@@ -743,9 +757,9 @@ def test_an_explicit_zero_worker_count_is_not_an_environment_typo(monkeypatch):
 # one: the request was dropped with nothing anywhere saying so.
 
 
-def test_a_forced_thread_request_is_reported_when_worker_recycling_overrides_it(
+def test_which_thread_lever_lost_to_worker_recycling_is_recorded(
         monkeypatch, caplog):
-    """The override is announced, once, where the precedence lives (#185).
+    """The attribution half of #185: *which* lever was overridden.
 
     Both levers reach the same arm and both are asserted: the
     environment variable, which is what `docs/environment.md` documents
@@ -754,49 +768,89 @@ def test_a_forced_thread_request_is_reported_when_worker_recycling_overrides_it(
     `force_threads=True` (the discovery scan) passes no
     `maxtasksperchild` and so never contradicts anything.
 
-    The message has to name **both** levers and quote the recycling
-    value: a warning that says only "there is a conflict" cannot be
-    matched against what the operator typed, which is the same argument
-    `_env_int`'s and `ISOCENTER_MAX_WORKERS`' warnings already make.
+    This used to assert the *message* too, because the resolver was
+    where the message came from. Since #400 the resolver is silent and
+    the warning is emitted at dispatch, so this test states the fact and
+    `test_the_warning_at_dispatch_names_the_lever_and_quotes_the_value`
+    states the speech. One assertion about one thing each, where there
+    was one about two -- and the resolver's silence is its own test
+    (`test_resolving_a_strategy_emits_nothing`), because a
+    dispatch-level test cannot tell a warning that was never emitted
+    from one emitted twice and deduplicated.
     """
     monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
 
     with caplog.at_level(logging.WARNING):
-        assert parallel._use_threads(False, 25) is False, (
-            "recycling must still win; this test is about the silence, "
-            "not about the decision")
+        choice = parallel._resolve_execution_choice(
+            False, 25, "the maxtasksperchild argument")
 
-    messages = [record.message for record in caplog.records]
-    assert any("ISOCENTER_FORCE_THREADS" in message for message in messages), (
-        "the request was overridden without naming the lever that was "
-        "ignored, so an operator cannot tell why threads did not happen")
-    assert any("maxtasksperchild" in message for message in messages), (
-        "the warning does not name what overrode the request")
-    assert any("25" in message for message in messages), (
-        "the warning does not quote the recycling value that won")
+    assert choice.use_threads is False, (
+        "recycling must still win; this test is about the report, "
+        "not about the decision")
+    assert choice.threads_request_overridden_by == "ISOCENTER_FORCE_THREADS", (
+        "the request was overridden without recording the lever that was "
+        "ignored, so nothing downstream can tell an operator why threads "
+        f"did not happen; got {choice.threads_request_overridden_by!r}")
 
-    caplog.clear()
     monkeypatch.delenv("ISOCENTER_FORCE_THREADS")
-    with caplog.at_level(logging.WARNING):
-        assert parallel._use_threads(True, 25) is False
+    argument = parallel._resolve_execution_choice(
+        True, 25, "the maxtasksperchild argument")
+    assert argument.threads_request_overridden_by == "force_threads=True", (
+        "an explicit force_threads=True argument was overridden with no "
+        "record of it; the caller can see their own literal, but not that "
+        f"it lost to a value passed somewhere else; got "
+        f"{argument.threads_request_overridden_by!r}")
 
-    argument_messages = [record.message for record in caplog.records]
-    assert any("force_threads" in message for message in argument_messages), (
-        "an explicit force_threads=True argument was overridden in "
-        "silence; the caller can see their own literal, but not that it "
-        "lost to a value passed somewhere else")
+
+def test_the_warning_at_dispatch_names_the_lever_and_quotes_the_value(
+        monkeypatch, caplog):
+    """The speech half of #185, at the point of use (#400).
+
+    The message has to name **both** levers and quote the recycling
+    value: a warning that says only "there is a conflict" cannot be
+    matched against what the operator typed, which is the same argument
+    `_env_int`'s and `ISOCENTER_MAX_WORKERS`' warnings already make.
+
+    A single record is selected before anything is asserted about its
+    text, and the count is asserted first. One real line of this
+    library's output names `threads`, `processes` and two of the three
+    variables at once, so an `any(... in caplog.text)` over the whole log
+    is satisfied by prose from somewhere else.
+    """
+    monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
+
+    with caplog.at_level(logging.WARNING):
+        parallel.run_parallel(identity, [1], max_workers=1,
+                              maxtasksperchild=25, show_progress=False)
+
+    selected = [record.getMessage() for record in caplog.records
+                if "maxtasksperchild" in record.getMessage()]
+    assert len(selected) == 1, (
+        f"expected exactly one override warning per dispatch, got "
+        f"{len(selected)}: {selected}")
+    assert "ISOCENTER_FORCE_THREADS" in selected[0], (
+        "the warning does not name the lever that was ignored")
+    assert "maxtasksperchild=25" in selected[0], (
+        "the warning does not name what overrode the request, with the "
+        "value that won")
 
 
 def test_no_warning_when_recycling_was_not_contradicted(caplog, monkeypatch):
     """The silence half, and it is the ordinary export path.
 
-    `session.export()` calls exactly this -- `force_threads=False`, no
-    environment variable, `maxtasksperchild=25` -- on every export.
+    `session.export()` dispatches exactly this -- `force_threads=False`,
+    no environment variable, `maxtasksperchild=25` -- on every export.
     Nobody asked for threads, so nothing was overridden, and a warning
     on every export would be noise that teaches readers to filter this
     logger.
 
-    The `delenv` is not decoration. `_use_threads` reads
+    Asserted through `run_parallel` rather than through the resolver
+    since #400 moved the emission to dispatch. Through the resolver this
+    would now be silent for the wrong reason -- the resolver is silent on
+    *every* row -- which is the `0 == 0` shape: a test that grades
+    nothing because its subject was removed from the code it calls.
+
+    The `delenv` is not decoration. The ranking reads
     `ISOCENTER_FORCE_THREADS` from the ambient environment, so without
     it this test asserts silence about whatever the operator happens to
     have exported -- and would go green inside a full pytest run purely
@@ -806,10 +860,11 @@ def test_no_warning_when_recycling_was_not_contradicted(caplog, monkeypatch):
     monkeypatch.delenv("ISOCENTER_FORCE_THREADS", raising=False)
 
     with caplog.at_level(logging.WARNING):
-        assert parallel._use_threads(False, 25) is False
+        parallel.run_parallel(identity, [1], max_workers=1,
+                              maxtasksperchild=25, show_progress=False)
 
     assert not [record for record in caplog.records
-                if "maxtasksperchild" in record.message], (
+                if "maxtasksperchild" in record.getMessage()], (
         "the ordinary export path warns; nothing was contradicted")
 
 
@@ -861,20 +916,24 @@ def test_export_runs_in_processes_by_decision(monkeypatch, caplog):
         "decision with a memory argument behind it and eight test files "
         "resting on the process boundary it creates (#185)")
 
-    # The warning `_use_threads` emits repeats this number as a literal
-    # sentence -- "session.export() always sets maxtasksperchild=25" --
-    # and nothing reads it from here, so it can drift exactly the way an
-    # uncollected `tests/profile_memory.py`, deleted in #347, had drifted
-    # to `10` from this same `25`. Tying the two together is the whole
-    # point of capturing the kwarg: the shipped log line must quote what
-    # the shipped call passes.
+    # The override warning repeats this number as a literal sentence --
+    # "session.export() always sets maxtasksperchild=25" -- and nothing
+    # reads it from here, so it can drift exactly the way an uncollected
+    # `tests/profile_memory.py`, deleted in #347, had drifted to `10`
+    # from this same `25`. Tying the two together is the whole point of
+    # capturing the kwarg: the shipped log line must quote what the
+    # shipped call passes. Elicited through `run_parallel`, because
+    # since #400 the warning is emitted at dispatch rather than while
+    # the ranking is resolved.
     monkeypatch.delenv("ISOCENTER_FORCE_THREADS", raising=False)
     with caplog.at_level(logging.WARNING):
-        parallel._use_threads(True, captured["maxtasksperchild"])
+        parallel.run_parallel(identity, [1], max_workers=1, force_threads=True,
+                              maxtasksperchild=captured["maxtasksperchild"],
+                              show_progress=False)
 
     sentence = "session.export() always sets maxtasksperchild=%s" % (
         captured["maxtasksperchild"],)
-    assert any(sentence in record.message for record in caplog.records), (
+    assert any(sentence in record.getMessage() for record in caplog.records), (
         "the override warning tells operators session.export() sets a "
         "number that is not the one it sets; the message is prose in "
         "shipped output and this is the only thing reading it against "
@@ -1093,3 +1152,196 @@ def test_env_int_without_a_floor_returns_zero(monkeypatch, caplog):
         assert parallel._env_int("ISOCENTER_ZZ_TEST", minimum=None) == 0
     assert not [record for record in caplog.records
                 if "ISOCENTER_ZZ_TEST" in record.message]
+
+
+# --- The threads-or-processes decision, and who asked for what (#384, #400) --
+#
+# `_resolve_execution_choice` returns three facts where `_use_threads`
+# returned one. The two extra fields exist because `session.py` cannot
+# re-derive them: an attribution computed from the resolved
+# `use_threads` is impossible on `redact()`'s `:memory:` path, where
+# `use_threads` is always True and the operator's request has already
+# been silently dropped.
+
+
+def _pid_of_worker(_):
+    """Module scope so the processes path can pickle it, if it takes one."""
+    return os.getpid()
+
+
+def test_the_choice_records_which_lever_asked_for_processes(monkeypatch):
+    """The whole three-field `_Choice`, per row of the lever matrix (#400).
+
+    The single mutation the refusal and the warning both rest on is an
+    attribution computed *after* the `force_threads` short-circuit: the
+    row "processes lever set, threads argument passed" is the one that
+    carries `"ISOCENTER_FORCE_PROCESSES"` while `use_threads` is True,
+    and it is exactly the row a short-circuited attribution turns into
+    `None`. That row is `redact()` on a `:memory:` store, so an
+    attribution that loses it makes the warning unreachable and every
+    session-level test green for the wrong reason.
+
+    The whole tuple is asserted per row rather than one field at a time:
+    `threads_request_overridden_by` must be `None` on every row except
+    the two where recycling beat a threads request, and a per-field
+    assertion cannot say "and nothing else changed".
+
+    `sys._is_gil_enabled` is patched to True for the rows that reach the
+    free-threaded default, so the table reads the same on 3.12.14 and
+    3.14.7t. Without that patch the first row is `(True, None, None)` on
+    the gate's free-threaded leg and this test is red there for a reason
+    that has nothing to do with attribution.
+    """
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: True, raising=False)
+    force_processes = "ISOCENTER_FORCE_PROCESSES"
+    max_tasks = "ISOCENTER_MAX_TASKS_PER_CHILD"
+
+    # (env, force_threads, maxtasksperchild, recycling_lever) ->
+    # (use_threads, processes_requested_by, threads_request_overridden_by)
+    rows = [
+        ({}, False, None, None,
+         (False, None, None),
+         "nothing set: rank 4 is a default, and a default is not a request"),
+        ({}, True, None, None,
+         (True, None, None),
+         "the force_threads argument alone denies nobody"),
+        ({force_processes: "1"}, False, None, None,
+         (False, force_processes, None),
+         "the processes lever was set and got what it asked for"),
+        ({force_processes: "1"}, True, None, None,
+         (True, force_processes, None),
+         "the processes lever was set and the argument beat it -- the "
+         "request must survive the short-circuit, or redact() on a "
+         ":memory: store can never report it"),
+        ({"ISOCENTER_FORCE_THREADS": "1", force_processes: "1"}, False, None,
+         None,
+         (True, None, None),
+         "the operator's own threads lever supersedes their processes "
+         "lever by the documented order, so nothing was denied"),
+        ({max_tasks: "2"}, False, 2, max_tasks,
+         (False, max_tasks, None),
+         "recycling asked for processes and nobody asked for threads"),
+        ({max_tasks: "2"}, True, 2, max_tasks,
+         (False, max_tasks, "force_threads=True"),
+         "recycling beat the force_threads argument"),
+        ({"ISOCENTER_FORCE_THREADS": "1", max_tasks: "2"}, False, 2, max_tasks,
+         (False, max_tasks, "ISOCENTER_FORCE_THREADS"),
+         "recycling beat the threads variable, which is the lever the "
+         "#185 warning must name"),
+        ({}, False, 25, "the maxtasksperchild argument",
+         (False, "the maxtasksperchild argument", None),
+         "session.export()'s own call: the argument asked, not a variable"),
+    ]
+
+    for env, force_threads, maxtasks, lever, expected, why in rows:
+        for name in ("ISOCENTER_FORCE_THREADS", force_processes, max_tasks):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        choice = parallel._resolve_execution_choice(force_threads, maxtasks,
+                                                    lever)
+        assert tuple(choice) == expected, (
+            f"{env}, force_threads={force_threads}, "
+            f"maxtasksperchild={maxtasks}: {why}; got {tuple(choice)}")
+
+
+def test_resolving_a_strategy_emits_nothing(monkeypatch, caplog):
+    """The resolver is a pure function; it does not speak (#400).
+
+    This is the half of the warning's move to dispatch that a
+    session-level test cannot see: a session-level test cannot tell a
+    warning that was never emitted from one emitted and then filtered.
+    Resolving has to be silent because `redact()` now resolves a
+    strategy *before* deciding whether to run at all -- and the
+    combination it refuses is exactly the one whose resolution used to
+    log "so this run uses processes", one line above a refusal of a run
+    that never starts.
+
+    Killing edit: the `get_logger().warning(...)` left inside
+    `_resolve_execution_choice`. Every row of the matrix is passed,
+    including the recycling-beats-threads rows, which are the only ones
+    that ever had anything to say.
+    """
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: True, raising=False)
+    rows = [
+        ({}, False, None, None),
+        ({"ISOCENTER_FORCE_PROCESSES": "1"}, True, None, None),
+        ({"ISOCENTER_FORCE_THREADS": "1"}, False, 2,
+         "ISOCENTER_MAX_TASKS_PER_CHILD"),
+        ({}, True, 25, "the maxtasksperchild argument"),
+    ]
+    with caplog.at_level(logging.WARNING):
+        for env, force_threads, maxtasks, lever in rows:
+            for name in ("ISOCENTER_FORCE_THREADS",
+                         "ISOCENTER_FORCE_PROCESSES",
+                         "ISOCENTER_MAX_TASKS_PER_CHILD"):
+                monkeypatch.delenv(name, raising=False)
+            for name, value in env.items():
+                monkeypatch.setenv(name, value)
+            parallel._resolve_execution_choice(force_threads, maxtasks, lever)
+
+    assert [record.getMessage() for record in caplog.records
+            if record.levelname == "WARNING"] == [], (
+        "resolving a strategy warned; the #185 warning belongs at "
+        "dispatch, where the strategy is actually used, so a strategy "
+        "that is resolved and then refused says nothing")
+
+
+def test_a_pre_resolved_strategy_is_used_as_given(monkeypatch):
+    """`strategy=` is obeyed, not re-resolved (#384).
+
+    The point of `redact()` resolving once and handing the object over is
+    that the line it printed and the pool it got are readings of one
+    decision. A `run_parallel` that resolved a second time would reopen
+    the gap: the environment says processes here and the pre-resolved
+    strategy says threads, so a re-resolution runs in a subprocess and
+    the child's pid differs from this one's.
+    """
+    monkeypatch.setenv("ISOCENTER_FORCE_PROCESSES", "1")
+    strategy = parallel._resolve_strategy(
+        max_workers=2, chunksize=1, maxtasksperchild=None, disable_gc=False,
+        force_threads=True, show_progress=False, desc="Pinned", total=None)
+    assert strategy.use_threads is True, (
+        "the force_threads argument must beat ISOCENTER_FORCE_PROCESSES; "
+        "this test has no subject otherwise")
+
+    results = parallel.run_parallel(_pid_of_worker, [None], strategy=strategy)
+
+    assert results == [os.getpid()], (
+        "run_parallel re-resolved the strategy from the environment and "
+        "ran in a subprocess; a strategy handed in is the decision")
+
+
+def test_a_handed_in_strategy_still_announces_its_override(monkeypatch,
+                                                           caplog):
+    """The second entry point warns too (#185, #400).
+
+    `test_the_warning_at_dispatch_names_the_lever_and_quotes_the_value`
+    covers a strategy `run_parallel` resolved for itself. This covers one
+    handed in as `strategy=`, which is the path `redact()` takes: the
+    warning is keyed on the strategy object, not on the environment, so
+    both entry points reach it and neither reads a variable a second
+    time.
+
+    `ISOCENTER_FORCE_THREADS` is deliberately *not* set, so the lever
+    the message must name is `force_threads=True` -- an assertion the
+    ambient environment cannot satisfy by accident.
+    """
+    monkeypatch.delenv("ISOCENTER_FORCE_THREADS", raising=False)
+    strategy = parallel._resolve_strategy(
+        max_workers=1, chunksize=1, maxtasksperchild=25, disable_gc=False,
+        force_threads=True, show_progress=False, desc="Handed", total=None)
+
+    with caplog.at_level(logging.WARNING):
+        parallel.run_parallel(identity, [1], strategy=strategy)
+
+    handed = [record.getMessage() for record in caplog.records
+              if "maxtasksperchild" in record.getMessage()]
+    assert len(handed) == 1, (
+        f"a strategy handed in as strategy= must warn at dispatch too; "
+        f"got {len(handed)}: {handed}")
+    assert "force_threads=True" in handed[0], (
+        "the warning must name the lever that actually lost -- here the "
+        "argument, since ISOCENTER_FORCE_THREADS is not what was set")
+    assert "ISOCENTER_FORCE_THREADS was set" not in handed[0], (
+        "the warning named a variable the operator did not set")

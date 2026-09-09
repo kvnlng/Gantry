@@ -123,7 +123,8 @@ def test_force_threads_does_not_reach_ingest(tmp_path, monkeypatch):
     Characterization: green on the code it was written against, and the
     `ISOCENTER_FORCE_THREADS` row in `docs/environment.md` is written
     from it (the #333 convention). The lever resolves to threads --
-    `_use_threads` says so under the variable -- and `ingest()` hands
+    `_resolve_execution_choice` says so under the variable -- and
+    `ingest()` hands
     `run_parallel()` the session's own `ProcessPoolExecutor` as
     `executor=`, which `_run_on_shared_executor` uses as given without
     consulting the strategy. Nothing warns. Whether ingest *should*
@@ -158,7 +159,8 @@ def test_force_threads_does_not_reach_ingest(tmp_path, monkeypatch):
     with DicomSession(str(tmp_path / "s.db")) as session:
         session.ingest(str(tmp_path / "one.dcm"))
 
-        assert parallel._use_threads(False, None) is True, (
+        assert parallel._resolve_execution_choice(
+                False, None, None).use_threads is True, (
             "the lever is set; the strategy must resolve to threads for "
             "this to be a characterization of *ignoring* it")
         assert recorded.get("executor") is session._executor, (

@@ -141,7 +141,8 @@ def test_the_exported_filename_is_the_new_uid_under_either_executor(
     one -- measured, and it is what turned two commits red on 3.14t.
 
     The lever acts on `redact()` only. `session.export()` pins
-    `maxtasksperchild=25` (`session.py`), and `_use_threads` gives
+    `maxtasksperchild=25` (`session.py`), and
+    `_resolve_execution_choice` gives
     worker recycling the last word, so the export runs in processes on
     every interpreter and under either lever (#185).
 

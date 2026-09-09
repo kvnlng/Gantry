@@ -18,7 +18,8 @@ because the defect is in the sink and not in any one mechanism:
 
 Both run through `session.export()`, whose workers are always separate
 processes (`_run_export_batch` passes `maxtasksperchild=25`, and
-`parallel._use_threads` returns False whenever that is set). A
+`parallel._resolve_execution_choice` gives `use_threads=False`
+whenever that is set). A
 monkeypatch in the parent would not reach them, which is why both arms
 break the data or the filesystem instead.
 """
