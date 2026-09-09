@@ -2531,8 +2531,6 @@ class DicomSession:
             if "0010,0020" in tags_to_lock:
                 original_attrs["0010,0020"] = patient.patient_id
 
-        cnt = 0
-
         # Optimization: Encrypt once per patient
         token = self.reversibility_service.generate_identity_token(
             original_attributes=original_attrs)
@@ -2543,14 +2541,12 @@ class DicomSession:
                 for inst in se.instances:
                     self.reversibility_service.embed_identity_token(inst, token)
                     modified_instances.append(inst)
-                    cnt += 1
 
         if persist and modified_instances:
             self.store_backend.update_attributes(modified_instances)
             get_logger().info(
-                f"Secured identity (tags: {
-                    list(
-                        original_attrs.keys())}) in {cnt} instances for {patient_id}.")
+                f"Secured identity (tags: {list(original_attrs.keys())}) in "
+                f"{len(modified_instances)} instances for {patient_id}.")
 
         return LockingResult(modified_instances)
 
