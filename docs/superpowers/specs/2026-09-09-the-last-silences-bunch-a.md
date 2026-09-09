@@ -1801,6 +1801,15 @@ architect designed that as §11.13, and #404 is implemented in this same
 bunch. §12.4's "left exactly as it was in this bunch" is therefore no
 longer true and is struck below; §12.1-§12.3 and §12.5 stand as measured.
 
+**§11.13.3's support matrix is incomplete and owner ruling 2's stated
+scope ("32/64-bit only") is departed from — see §12.6.** The matrix has no
+row for a 16-bit *multi-sample* frame, because Pillow refused that shape at
+`Image.fromarray` and the question could not be asked; measured after the
+encoder swap, it encodes exactly and produces a DICOM file no pydicom
+decoding plugin will read. The refused set is therefore wider than the
+ruling names. This is recorded here rather than argued in place: the
+departure and its evidence are §12.6, and the owner may re-rule it.
+
 Added by the TDD developer during implementation, on 2026-09-09, because
 §11.6 requires one of its three arms to be written into this file with its
 numbers before the bunch is called done. Nothing above is rewritten.
@@ -1924,5 +1933,59 @@ about work this PR does rather than about #404:
   `astype(dtype.newbyteorder('='))` copies the whole frame, so normalizing
   first would fully copy a large `complex64` array immediately before
   rejecting it. The behaviour is identical for everything accepted.
+
+### §12.6 Step D1, measured — and one cell §11.13.3 never measured
+
+`probe_404_floor.py` is committed beside the other thirteen probes, per
+§11.7. It imports no isocenter code so it can be pointed at a scratch venv
+holding only `imagecodecs` and `numpy`, which is how the declared floor was
+measured.
+
+**The floor moves, and it had to.** `imagecodecs==2023.9.18` — the floor
+`setup.py` declared before this change — publishes no cp312 wheel and does
+not build from source here, so it cannot be installed on this project's own
+`python_requires` floor at all. `2024.6.1` is the next release, installs
+from a wheel, and returns the same verdict as 2026.8.16 on every cell:
+
+| dtype | 2024.6.1 | 2026.8.16 |
+| --- | --- | --- |
+| `uint8`, `int8`, `uint16`, `int16` (1 sample) | exact | exact |
+| `uint8`, `int8` (3 samples) | exact | exact |
+| `uint16`, `int16` (3 samples) | exact at the codec | exact at the codec |
+| `uint32`, `int32` | encodes, **inexact** | encodes, **inexact** |
+| `uint64`, `int64` | `Jpeg2kError: opj_encode or opj_write_tile failed` | `ValueError: item size not supported by codec` |
+| `float32`, `bool` | `ValueError: invalid data shape or dtype` | `ValueError: sample format not supported by codec` |
+
+Every codestream starts `ff4fff51` on both releases. The two releases give
+the *same verdicts* and *different sentences*, which is the measured reason
+the refusal's wording is ours rather than the codec's.
+
+**The cell §11.13.3 did not measure: 16-bit multi-sample.** Pillow refused
+it at `Image.fromarray`, so the question could not previously be asked, and
+the matrix in §11.13.3 has no row for it. Measured after the swap: the
+codestream is *exact*, the export succeeds, a file is written — and
+`ds.pixel_array` raises `RuntimeError: Unable to decode as exceptions were
+raised by all available plugins` / `Pillow cannot decode 16-bit
+multi-sample data correctly`. Pillow is the only JPEG 2000 decoding plugin
+this project installs, so the library could not re-ingest its own export.
+
+That is 32-bit's silence arriving through a different door, and it is
+reachable *only* because of this fix — which makes it a hole in this PR's
+own code, not an adjacent issue. So the itemsize tuple `§11.13.6` names,
+`_J2K_ENCODABLE_ITEMSIZES`, is **renamed** `_J2K_ENCODABLE_FRAMES` and
+becomes a matrix keyed on `(itemsize, samples > 1)` rather than a list of
+widths -- with `_J2kWidthRefusal` renamed `_J2kFrameRefusal` for the same
+reason, since "width" is no longer the whole rule:
+
+    _J2K_ENCODABLE_FRAMES = frozenset({(1, False), (1, True), (2, False)})
+
+`int8` multi-sample, which Pillow also refused, *is* exact and is now
+supported — so the swap widens the accepted set as well as fixing it.
+Owner ruling 2's shape is unchanged: positive rule, raised before any
+encode and before any `ds` mutation, naming the dtype, `BitsAllocated`,
+`PixelRepresentation` and `use_compression=False`, not re-wrapped by the
+outer handler. Only its *reason* clause is now selected by which cell was
+refused, because "the encoder is exact only to 25 bits" is false for the
+16-bit case and would send a reader after the wrong thing.
 
 *End of implementation addendum.*

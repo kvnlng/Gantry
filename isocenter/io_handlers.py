@@ -125,7 +125,6 @@ import contextlib
 import os
 import sys
 import hashlib
-import io
 import struct
 from typing import List, Dict, Any, Optional, Tuple, Iterable
 from datetime import datetime, date
@@ -3392,8 +3391,8 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
                              sop_instance_uid=uid, losses=losses, error=e)
 
 
-class _J2kWidthRefusal(RuntimeError):
-    """A frame too wide for the JPEG 2000 encoder to carry honestly.
+class _J2kFrameRefusal(RuntimeError):
+    """A frame this project cannot compress and read back honestly.
 
     A `RuntimeError` subclass, so the export worker and every existing
     caller handle it exactly as they handled the old `Compression failed`
@@ -3405,37 +3404,65 @@ class _J2kWidthRefusal(RuntimeError):
     """
 
 
-#: The itemsizes `imagecodecs.jpeg2k_encode` carries bit-exactly, measured
-#: end to end -- encode, encapsulate, `save_as`, `dcmread`, compare -- on
-#: both imagecodecs 2024.6.1 (the floor) and 2026.8.16.
+#: The frames this project can compress **and read back**, keyed on
+#: `(itemsize, multi-sample)`. Measured end to end -- ingest, export,
+#: `dcmread`, compare against the literal -- on both imagecodecs 2024.6.1
+#: (the floor) and 2026.8.16:
 #:
-#: A **positive** rule, because the codec's own refusals do not mark the
-#: boundary of what is safe: 64-bit raises, but 32-bit encodes silently to
-#: 25 bits of precision and produces a file no pydicom plugin can decode.
-#: A deny-list would have to anticipate that, and did not.
-_J2K_ENCODABLE_ITEMSIZES = (1, 2)
+#: | itemsize | samples 1 | samples 3 |
+#: | --- | --- | --- |
+#: | 1 (`uint8`, `int8`) | exact | exact |
+#: | 2 (`uint16`, `int16`) | exact | encodes, **unreadable** |
+#: | 4, 8 | see below | see below |
+#:
+#: A **positive** rule, because neither the codec's refusals nor the
+#: encoder's exactness marks the boundary of what is safe to write. Two
+#: separate cells prove it: 32-bit encodes silently to 25 bits, and
+#: 16-bit multi-sample encodes *exactly* and still produces a file no
+#: pydicom decoding plugin will read (`Pillow cannot decode 16-bit
+#: multi-sample data correctly`), so this library cannot re-ingest its own
+#: output. A deny-list would have had to anticipate both, and would have
+#: anticipated neither.
+_J2K_ENCODABLE_FRAMES = frozenset({
+    (1, False),
+    (1, True),
+    (2, False),
+})
 
 
-def _refuse_unencodable_j2k_dtype(arr, ds):
+def _refuse_unencodable_j2k_frame(arr, ds, samples):
     """Raise before the encode, naming what the codec will not say.
 
     Called with the array in its final shape and dtype -- `bool` already
     viewed as `uint8` -- and **before any mutation of `ds`**, so a refused
     instance leaves this function exactly as it entered it.
     """
-    if arr.dtype.itemsize in _J2K_ENCODABLE_ITEMSIZES:
+    if (arr.dtype.itemsize, samples > 1) in _J2K_ENCODABLE_FRAMES:
         return
-    raise _J2kWidthRefusal(
+
+    if arr.dtype.itemsize in (1, 2):
+        # The encode is exact here; the decode is what does not exist.
+        # Said in those words, because "cannot carry" would be false and
+        # a user who reads it would go looking for the wrong thing.
+        why = (f"the codestream would be exact, but no pydicom decoding "
+               f"plugin reads {arr.dtype.itemsize * 8}-bit multi-sample "
+               f"JPEG 2000, so the file would be written and then "
+               f"unreadable -- by this library included")
+    else:
+        why = (f"the encoder (imagecodecs {imagecodecs.__version__}) is "
+               f"exact only to 25 bits, so a 32-bit frame would be written "
+               f"wrong and read back wrong, and a 64-bit frame is refused "
+               f"by the codec outright")
+
+    raise _J2kFrameRefusal(
         f"Compression failed: JPEG 2000 lossless cannot carry "
-        f"{arr.dtype} pixel data (BitsAllocated "
+        f"{arr.dtype} pixel data at {samples} sample(s) per pixel "
+        f"(BitsAllocated "
         f"{getattr(ds, 'BitsAllocated', arr.dtype.itemsize * 8)}, "
         f"PixelRepresentation "
         f"{getattr(ds, 'PixelRepresentation', 1 if arr.dtype.kind == 'i' else 0)})"
-        f". The encoder (imagecodecs {imagecodecs.__version__}) is exact "
-        f"only to 25 bits, so a 32-bit frame would be written wrong and "
-        f"read back wrong, and a 64-bit frame is refused by the codec "
-        f"outright. Export this study with use_compression=False, which "
-        f"writes the same pixels uncompressed and bit-exact.")
+        f". Here {why}. Export this study with use_compression=False, "
+        f"which writes the same pixels uncompressed and bit-exact.")
 
 
 def _compress_j2k(ds, pixel_array=None):
@@ -3450,18 +3477,20 @@ def _compress_j2k(ds, pixel_array=None):
     wrote a JP2 *box* (`0000000c6a502020`) under that same syntax; lenient
     decoders read it, which is why it went unnoticed for every release.
 
-    **Accepted, and measured bit-exact end to end: `uint8`, `int8`,
-    `uint16`, `int16`, and `bool` (encoded as `uint8`).** Pillow accepted
-    exactly `uint8` and `uint16`, so `session.export(folder)` -- which
-    compresses by default -- wrote *nothing at all* for CT and MR, failing
-    with `broken data stream when writing image file` (#404).
+    **Accepted, and measured bit-exact end to end: 8-bit at any number of
+    samples per pixel, 16-bit at one, and `bool` (encoded as `uint8`).**
+    Pillow accepted exactly `uint8` and `uint16` greyscale, so
+    `session.export(folder)` -- which compresses by default -- wrote
+    *nothing at all* for CT and MR, failing with `broken data stream when
+    writing image file` (#404).
 
-    Everything wider is refused by name before any encode. That refusal is
-    the safety of this function, not a rough edge: `imagecodecs` does not
-    reject 32-bit, it encodes exactly to 25 bits and wrong above that, and
-    the DICOM file built from a 32-bit codestream cannot be decoded by any
-    pydicom plugin -- so an unguarded encoder would replace a loud failure
-    with `wrote 1 of 1` beside an unreadable file.
+    Everything else is refused by name before any encode, and that refusal
+    is the safety of this function rather than a rough edge. Two cells
+    would otherwise be written and be unreadable: `imagecodecs` does not
+    reject 32-bit, it encodes exactly to 25 bits and wrong above that; and
+    it encodes 16-bit *multi-sample* frames exactly, which no pydicom
+    decoding plugin will read back. Both would replace a loud failure with
+    `wrote 1 of 1` beside a file no reader can open.
 
     Updates `TransferSyntaxUID` and `PixelData`, and mutates nothing when
     it refuses.
@@ -3560,10 +3589,10 @@ def _compress_j2k(ds, pixel_array=None):
         if arr.dtype.kind == 'b':
             arr = arr.view(np.uint8)
 
-        # **The width guard, and it runs before any encode and before any
+        # **The frame guard, and it runs before any encode and before any
         # mutation of `ds`.** It is a positive rule -- encode only what is
-        # measured bit-exact -- because the codec's own refusals do not
-        # line up with what is safe to write.
+        # measured to survive a round trip -- because neither the codec's
+        # refusals nor its exactness lines up with what is safe to write.
         #
         # 64-bit it does refuse, but with a different sentence on
         # different releases (`ValueError: item size not supported by
@@ -3579,7 +3608,17 @@ def _compress_j2k(ds, pixel_array=None):
         # succeeds, a file is written, and the audit log says
         # `wrote 1 of 1` beside a file no reader can open -- a silence
         # created by the fix for a silence (#404).
-        _refuse_unencodable_j2k_dtype(arr, ds)
+        #
+        # 16-bit **multi-sample** is the same silence from the other
+        # direction, and it is this encoder's alone: `imagecodecs` encodes
+        # a `uint16` RGB frame bit-exactly where Pillow refused it at
+        # `Image.fromarray`, so the swap turned a loud failure into a
+        # written file that `ds.pixel_array` cannot open (`Pillow cannot
+        # decode 16-bit multi-sample data correctly` -- the only J2K
+        # decoding plugin this project installs). Measured, not reasoned:
+        # `int8` RGB, which Pillow also refused, *is* exact and is now
+        # supported.
+        _refuse_unencodable_j2k_frame(arr, ds, samples)
 
         def encode_frame(frame_arr):
             """One frame to a bare JPEG 2000 lossless codestream."""
@@ -3601,7 +3640,7 @@ def _compress_j2k(ds, pixel_array=None):
         # both from the UID and removes the attributes in 4.0 (#141).
         ds.file_meta.TransferSyntaxUID = JPEG2000Lossless
 
-    except _J2kWidthRefusal:
+    except _J2kFrameRefusal:
         # Re-raised unchanged, ahead of the generic handler below. Wrapped
         # it would read `Compression failed: Compression failed: ...`, and
         # the whole point of the refusal is that the sentence the user

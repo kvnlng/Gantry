@@ -134,7 +134,7 @@ def test_compress_j2k_generic_exception(mock_dataset_compress):
                           pixel_array=np.zeros((10, 10), dtype=np.uint8))
 
 
-def test_the_width_refusal_is_not_rewrapped_by_the_generic_handler(
+def test_the_frame_refusal_is_not_rewrapped_by_the_generic_handler(
         mock_dataset_compress):
     """`Compression failed: Compression failed: ...` is the shape to avoid.
 

@@ -30,15 +30,27 @@ codecformat="J2K")`. Not a new dependency: `imagecodecs` is already in
 `imagecodecs_handler.py`, so the project already trusts it with pixel
 fidelity in the other direction.
 
-**32- and 64-bit are refused, by name, and that refusal is the safety of
-this fix rather than a rough edge.** The codec does not reject 32-bit --
-it encodes, exactly to 25 bits and wrong above that, and the DICOM file
-built from a 32-bit codestream cannot be decoded by any pydicom plugin.
-An unguarded switch would therefore have turned today's loud failure into
-`wrote 1 of 1` beside a file no reader can open: this milestone's own
-defect, introduced by its own fix. The guard is **positive** -- encode
-only what is measured bit-exact -- and is raised before any encode and
-before any `ds` mutation.
+**What is refused is refused by name, and that refusal is the safety of
+this fix rather than a rough edge.** Two separate cells would otherwise
+have turned today's loud failure into `wrote 1 of 1` beside a file no
+reader can open -- this milestone's own defect, introduced by its own
+fix:
+
+- **32- and 64-bit.** The codec does not reject 32-bit: it encodes,
+  exactly to 25 bits and wrong above that, and the DICOM file built from
+  a 32-bit codestream cannot be decoded by any pydicom plugin.
+- **16-bit multi-sample.** Here the codestream is *exact*; the decoder is
+  what does not exist. Pillow is the only JPEG 2000 decoding plugin this
+  project installs and it reports `Pillow cannot decode 16-bit
+  multi-sample data correctly`, so the library could not re-ingest its
+  own output. Pillow refused this shape at `Image.fromarray`, so it is
+  reachable only *because* of the encoder swap.
+
+So the guard is a **matrix** over `(itemsize, samples > 1)`, not a list
+of widths, and it is **positive** -- encode only what is measured to
+survive the round trip -- and raised before any encode and before any
+`ds` mutation. `int8` multi-sample, which Pillow also refused, is exact
+and is now supported: the swap widens the matrix as well as fixing it.
 
 Every value assertion here is against a **literal** and every dtype
 assertion against an **absolute** dtype. `got.dtype == src.dtype` where
@@ -141,20 +153,52 @@ def _export(tmp_path, arr, pixel_representation, prefix, samples=1, frames=1,
 
     The absent keyword is the point: `use_compression=True` is the default
     and is what a caller of `session.export(folder)` gets.
+
+    A `bool` array takes the one detour, and the detour has two parts
+    that both had to be measured rather than assumed.
+
+    No DICOM file can hold a boolean frame -- (0028,0100) is a bit count
+    and (0028,0103) a signedness flag, and neither of them spells
+    "boolean" -- so an instance holds a bool array only when a caller has
+    handed it one through `set_pixel_data`. Ingesting a file and calling
+    the result `bool` is a second `uint8` arm wearing the `bool` label.
+
+    And the source file must not carry the *same bytes* as the mask.
+    `np.array(BOOL_ROWS, bool).tobytes()` equals
+    `np.array(BOOL_ROWS, uint8).tobytes()`, and the save deduplicates
+    frames on their SHA-256: identical bytes mean no frame is written,
+    so no loader is rebuilt, so the instance keeps the ingest-time loader
+    and `export()`'s `release_memory()` reloads the frame as `uint8`.
+    Measured: with a same-bytes source, deleting `_compress_j2k`'s bool
+    view left every bool test here green while the array they exported
+    was never bool. `FLAT_ROWS` is the source instead, and the assertion
+    below is against the reloaded frame rather than the resident one --
+    the reload is what the export worker gets.
     """
     src = tmp_path / f"{prefix}_src"
     src.mkdir(exist_ok=True)
     out = tmp_path / f"{prefix}_out"
     db = str(tmp_path / f"{prefix}.db")
 
-    _write_src(str(src), arr, pixel_representation, samples, frames,
-               photometric)
+    in_memory = arr if arr.dtype.kind == 'b' else None
+    _write_src(str(src),
+               np.array(FLAT_ROWS, dtype=np.uint8) if in_memory is not None
+               else arr,
+               pixel_representation, samples, frames, photometric)
 
     error = None
     summary = None
     session = DicomSession(persistence_file=db)
     try:
         session.ingest(str(src))
+        if in_memory is not None:
+            instance = session.store.patients[0].studies[0].series[0].instances[0]
+            instance.set_pixel_data(in_memory)
+            session.save(sync=True)
+            instance.unload_pixel_data()
+            assert instance.get_pixel_data().dtype == np.dtype(bool), (
+                "fixture never entered the arm under test: the frame the "
+                "export worker reloads is not bool")
         session.save()
         try:
             summary = session.export(str(out), format="dicom",
@@ -296,7 +340,7 @@ def test_a_32_bit_frame_is_refused_by_name_rather_than_written_wrong(
     encode succeeds, a file is written, and `wrote 1 of 1` appears beside
     a file no reader can open.
 
-    *Red when:* the width guard is removed -- and it is red on the file
+    *Red when:* the frame guard is removed -- and it is red on the file
     assertion, not merely on "something raised", which is why the
     no-file-on-disk assertion is here.
     """
@@ -415,28 +459,93 @@ def test_a_multi_frame_signed_stack_survives(tmp_path):
     assert got.tolist() == stack.tolist()
 
 
-@pytest.mark.parametrize("frames", [1, 2])
-def test_an_rgb_frame_still_round_trips(tmp_path, frames):
+#: One RGB frame, as a literal. Every channel differs from its
+#: neighbours, so a channel swap or an axis reorder is a different list.
+RGB_ROWS = [[[10, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]],
+            [[1, 2, 3], [4, 5, 6], [7, 8, 9], [11, 12, 13]],
+            [[200, 201, 202], [203, 204, 205], [206, 207, 208], [209, 210, 211]],
+            [[255, 0, 0], [0, 255, 0], [0, 0, 255], [127, 127, 127]]]
+
+
+@pytest.mark.parametrize("frames,dtype_name,pixrep", [
+    (1, "uint8", 0),
+    (2, "uint8", 0),
+    # Signed colour, which Pillow refused at `fromarray` exactly as it
+    # refused signed greyscale. It is bit-exact through `imagecodecs`, so
+    # the swap widens what compresses as well as fixing what was broken;
+    # this arm is the evidence for that half of the claim.
+    (1, "int8", 1),
+])
+def test_an_rgb_frame_still_round_trips(tmp_path, frames, dtype_name, pixrep):
     """The control against a colour regression from the encoder swap.
 
     *Red when:* the encoder is handed the frame with its axes reordered.
     """
-    one = [[[10, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]],
-           [[1, 2, 3], [4, 5, 6], [7, 8, 9], [11, 12, 13]],
-           [[200, 201, 202], [203, 204, 205], [206, 207, 208], [209, 210, 211]],
-           [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255]]]
-    arr = (np.array([one, one], dtype="uint8") if frames == 2
-           else np.array(one, dtype="uint8"))
+    one = ([[[v - 128 for v in px] for px in row] for row in RGB_ROWS]
+           if pixrep == 1 else RGB_ROWS)
+    arr = (np.array([one, one], dtype=dtype_name) if frames == 2
+           else np.array(one, dtype=dtype_name))
 
     _summary, error, files, _rows, _out = _export(
-        tmp_path, arr, 0, f"p8_{frames}", samples=3, frames=frames,
-        photometric="RGB")
+        tmp_path, arr, pixrep, f"p8_{frames}_{dtype_name}", samples=3,
+        frames=frames, photometric="RGB")
 
     assert error is None, f"an RGB export failed: {error}"
     ds = pydicom.dcmread(files[0])
     assert ds.PhotometricInterpretation == "RGB"
     assert ds.PlanarConfiguration == 0
+    assert ds.BitsAllocated == 8
+    assert ds.pixel_array.dtype == np.dtype(dtype_name)
     assert ds.pixel_array.tolist() == arr.tolist()
+
+
+@pytest.mark.parametrize("dtype_name,pixel_representation", [
+    ("uint16", 0),
+    ("int16", 1),
+])
+def test_a_16_bit_colour_frame_is_refused_rather_than_written_unreadable(
+        tmp_path, dtype_name, pixel_representation):
+    """The second cell the guard has to hold, and it is this fix's own.
+
+    `imagecodecs` encodes a 16-bit multi-sample frame **bit-exactly**,
+    where Pillow refused it at `Image.fromarray`. So the encoder swap
+    turned a loud failure into a written file that `ds.pixel_array` will
+    not open: `Pillow cannot decode 16-bit multi-sample data correctly`,
+    and Pillow is the only JPEG 2000 decoding plugin this project
+    installs -- the library cannot re-ingest its own export. Measured
+    with the guard removed: `wrote 1 of 1`, a file on disk, and
+    `RuntimeError: Unable to decode as exceptions were raised by all
+    available plugins` on read.
+
+    That is 32-bit's silence arriving through a different door, and it is
+    why the rule is a *matrix* and not a list of widths. *Red when:* the
+    `(2, True)` cell is added to `_J2K_ENCODABLE_FRAMES`.
+    """
+    one = ([[[(v - 128) * 128 for v in px] for px in row] for row in RGB_ROWS]
+           if pixel_representation == 1
+           # Above 255 on purpose: a value that fits in a byte would not
+           # tell a 16-bit frame apart from an 8-bit one.
+           else [[[v * 257 for v in px] for px in row] for row in RGB_ROWS])
+    arr = np.array(one, dtype=dtype_name)
+
+    _summary, error, files, rows, _out = _export(
+        tmp_path, arr, pixel_representation, f"p8x_{dtype_name}", samples=3,
+        photometric="RGB")
+
+    assert error is not None, (
+        "a 16-bit colour frame was compressed; the file it wrote cannot "
+        "be decoded by any plugin this project installs")
+    assert files == []
+
+    message = " ".join(d for _a, _u, d in rows if d)
+    assert dtype_name in message, message
+    assert "3 sample(s) per pixel" in message, message
+    assert "BitsAllocated 16" in message, message
+    assert "use_compression=False" in message, message
+    # The refusal must not borrow 32-bit's reason: the codestream here
+    # would be exact, and telling a user their pixels do not fit sends
+    # them after the wrong thing.
+    assert "exact only to 25 bits" not in message, message
 
 
 # ---------------------------------------------------------------------------
