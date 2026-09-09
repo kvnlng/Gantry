@@ -13,6 +13,19 @@ adds work to §1.4, §1.5 and §3.6 and adds **§11.13 (#404)**, a defect found 
 §11.6's own step P1. Read §11 before implementing; where it disagrees with the
 text above, §11 wins.
 
+**Superseded in part, by implementation:** §11.12's "no 3.14.7t run is
+required" (struck in place — #404 added an unguarded module-scope C-extension
+import whose encoder runs inside export workers, so the gate is the
+measurement); §11.13.3's support matrix (no row for a 16-bit **multi-sample**
+frame, which the old encoder refused before the question could be asked) and
+owner ruling 2's stated scope of "32/64-bit only" (the refused set is wider —
+measured, a 16-bit colour frame encodes exactly and produces a file this
+project cannot re-ingest); §2.5 T6's second arm (factually wrong — `audit()`
+never reaches `load_phi_config()`); and §11.5's stated ordering of the dtype
+check and the byte-order normalization (inverted, for cost). All four are
+recorded with their measurements in **§12 Implementation addendum**, §12.5 and
+§12.6.
+
 The three are one bunch because they are the same failure at the ingest/export
 boundary: the pipeline drops or corrupts something and the session's own
 accounting says nothing happened. In every case below the *speech* is the
@@ -1291,9 +1304,19 @@ PYTHONPATH="$(pwd):/Users/kevin/Developer/Isocenter/.venv/lib/python3.14/site-pa
 checkout, the editable install won and every measurement taken after it is about
 a tree you did not edit. Substitute `-m pytest -v <file>` for the `-c '...'` to
 run tests; never `-q` piped. `sys._is_gil_enabled()` prints `True` here, and for
-this bunch that is fine: nothing in it touches a thread, a lock or a
+this bunch that is fine: ~~nothing in it touches a thread, a lock or a
 `write_frame` site, so no 3.14.7t run is required. If a later change touches one,
-that sentence stops being true and the 3.14.7t rig comes back.
+that sentence stops being true and the 3.14.7t rig comes back.~~
+
+**Superseded by §11.13 (#404), struck above rather than rewritten.** That
+reasoning was written before #404 was in this bunch, and #404 adds an
+**unguarded module-scope import of a C extension** (`imagecodecs`) whose
+encoder then runs *inside export workers* — on the threads path under a
+free-threaded build. "Nothing here touches a thread" stopped being true the
+moment that landed, and the premise was never restated. It is not restated
+now either: the 3.14.7t gate on the PR is the measurement, and it passed
+(`test (3.14t)` SUCCESS, 12m35s, run 34391330672). Cite that run rather than
+the argument.
 
 ---
 
@@ -1967,7 +1990,20 @@ codestream is *exact*, the export succeeds, a file is written — and
 `ds.pixel_array` raises `RuntimeError: Unable to decode as exceptions were
 raised by all available plugins` / `Pillow cannot decode 16-bit
 multi-sample data correctly`. Pillow is the only JPEG 2000 decoding plugin
-this project installs, so the library could not re-ingest its own export.
+this project installs, so the library could not re-ingest its own export --
+verified in review of #405 through `session.ingest()` rather than bare
+`dcmread`: a `uint16` RGB export comes back `ingested=0` with a
+`Decompression Failed` row, while the `uint8` equivalent ingests with exact
+pixels.
+
+**And the claim is narrower than "JPEG 2000 cannot do this", deliberately.**
+`imagecodecs.jpeg2k_decode` reads those frames bit-exactly and so does
+pylibjpeg-openjpeg. The standard applied here is *what this library can read
+back*, which is the same standard the 32-bit cell is judged by — and the
+refusal's own sentence says that, rather than "no plugin reads it", which
+would be a false statement in the one place a user reads it. Review of #405
+caught the first wording; the runtime message and the docstring now name
+Pillow and this installation.
 
 That is 32-bit's silence arriving through a different door, and it is
 reachable *only* because of this fix — which makes it a hole in this PR's

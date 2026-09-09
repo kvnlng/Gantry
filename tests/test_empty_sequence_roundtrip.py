@@ -447,13 +447,32 @@ def test_an_empty_private_sequence_is_stripped_by_remove_private_tags(tmp_path):
 
 def test_add_sequence_is_idempotent_and_only_dirties_when_it_creates():
     """A sequence that newly exists is a change the store must hold; a
-    second call on a tag that already has one is not."""
+    second call on a tag that already has one is not.
+
+    Both halves are asserted, and only one of them loses data. This test
+    asserted the harmless half alone until review of #405: deleting
+    `mark_modified()` from `add_sequence()` left the **whole suite**
+    green at 1770 passed, while dirtying unconditionally reddened one
+    test. The `mark_persisted()` before the first call is what makes the
+    load-bearing assertion say anything -- a fresh `DicomItem` starts at
+    revision 1 against 0 persisted, so `has_unsaved_changes` is already
+    True and asserting it there would hold for a reason that has nothing
+    to do with `add_sequence`.
+    """
     from isocenter.entities import DicomItem
 
     parent = DicomItem()
+    parent.mark_persisted()
+    assert not parent.has_unsaved_changes, (
+        "fixture never entered the arm under test: the baseline the next "
+        "assertion is measured against is not clean")
+
     created = parent.add_sequence("0008,1140")
     assert parent.sequences["0008,1140"] is created
     assert created.items == []
+    assert parent.has_unsaved_changes, (
+        "add_sequence created a sequence and left the entity reporting "
+        "nothing to save")
 
     parent.mark_persisted()
     again = parent.add_sequence("0008,1140")
@@ -464,3 +483,71 @@ def test_add_sequence_is_idempotent_and_only_dirties_when_it_creates():
     # Case-insensitive, like every other tag entry point.
     assert parent.add_sequence("0008,1140".upper()) is created
     assert len(parent.sequences) == 1
+
+
+#: A standard sequence tag the fixture source does **not** carry, so
+#: `add_sequence()` genuinely creates one rather than finding it.
+ADDED_STANDARD_SQ = "0008,1115"     # Referenced Series Sequence
+
+
+def test_a_sequence_added_through_the_public_method_reaches_the_store(tmp_path):
+    """`add_sequence()`'s dirtying, pinned by consequence rather than flag.
+
+    `has_unsaved_changes` is a flag a mutation can satisfy by accident;
+    what it exists for is that the next `save()` writes the row. So this
+    goes through the store: reload a saved graph, add an empty sequence
+    through the published method, save, reopen, and read it back.
+
+    *Red when:* `mark_modified()` is deleted from `add_sequence()`.
+    Measured with it deleted -- the reloaded instance reports nothing to
+    save, `save(sync=True)` skips it, and the reopened graph has no
+    `0008,1115` at all. That is #392's own failure mode ("this sequence
+    is present and has no items" becoming nothing at all) reintroduced
+    through the tier-2 method this change publishes.
+    """
+    src = tmp_path / "addseq_src"
+    src.mkdir()
+    db = str(tmp_path / "addseq.db")
+    _write_src(str(src))
+
+    session = DicomSession(persistence_file=db)
+    try:
+        session.ingest(str(src))
+        session.save(sync=True)
+    finally:
+        session.close()
+
+    session = DicomSession(persistence_file=db)
+    try:
+        instance = _the_instance(session)
+        assert not instance.has_unsaved_changes, (
+            "fixture never entered the arm under test: the reloaded "
+            "instance was already dirty, so the assertion below would "
+            "hold whatever add_sequence did")
+        assert ADDED_STANDARD_SQ not in instance.sequences, (
+            "fixture never entered the arm under test: the tag already "
+            "exists, so add_sequence creates nothing")
+
+        added = instance.add_sequence(ADDED_STANDARD_SQ)
+        assert added.items == []
+        assert instance.has_unsaved_changes, (
+            "add_sequence created a sequence and left the instance "
+            "reporting nothing to save; the next save skips it")
+        session.save(sync=True)
+    finally:
+        session.close()
+
+    session = DicomSession(persistence_file=db)
+    try:
+        reloaded = _the_instance(session)
+        assert ADDED_STANDARD_SQ in reloaded.sequences, (
+            "the sequence added through add_sequence() never reached the "
+            "store: the instance said it had nothing to save")
+        assert reloaded.sequences[ADDED_STANDARD_SQ].items == [], (
+            "the sequence came back with items it never had")
+        # The control: the sequences that were already there are still
+        # there, so "reached the store" is not "rewrote the row wrong".
+        assert EMPTY_STANDARD_SQ in reloaded.sequences
+        assert reloaded.sequences[EMPTY_STANDARD_SQ].items == []
+    finally:
+        session.close()

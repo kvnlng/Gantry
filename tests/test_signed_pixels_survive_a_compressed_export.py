@@ -32,19 +32,25 @@ fidelity in the other direction.
 
 **What is refused is refused by name, and that refusal is the safety of
 this fix rather than a rough edge.** Two separate cells would otherwise
-have turned today's loud failure into `wrote 1 of 1` beside a file no
-reader can open -- this milestone's own defect, introduced by its own
-fix:
+have turned today's loud failure into `wrote 1 of 1` beside a file
+**this library cannot read back** -- this milestone's own defect,
+introduced by its own fix. The two cells fail that standard for
+different reasons, and only one of them is unreadable by every decoder:
 
 - **32- and 64-bit.** The codec does not reject 32-bit: it encodes,
   exactly to 25 bits and wrong above that, and the DICOM file built from
   a 32-bit codestream cannot be decoded by any pydicom plugin.
-- **16-bit multi-sample.** Here the codestream is *exact*; the decoder is
-  what does not exist. Pillow is the only JPEG 2000 decoding plugin this
-  project installs and it reports `Pillow cannot decode 16-bit
-  multi-sample data correctly`, so the library could not re-ingest its
-  own output. Pillow refused this shape at `Image.fromarray`, so it is
-  reachable only *because* of the encoder swap.
+- **16-bit multi-sample.** Here the codestream is *exact*, and the
+  decoder is what **this project** does not have. Pillow is the only
+  JPEG 2000 decoding plugin it installs and it reports `Pillow cannot
+  decode 16-bit multi-sample data correctly`, so `session.ingest()` on
+  such an export returns `ingested=0` with a `Decompression Failed` row
+  -- the library cannot re-ingest its own output. Other decoders read
+  those frames fine (`imagecodecs.jpeg2k_decode` bit-exactly,
+  pylibjpeg-openjpeg too), so the standard applied is *what this library
+  can read back*, which is the same standard the 32-bit cell is judged
+  by. Pillow refused this shape at `Image.fromarray`, so it is reachable
+  only *because* of the encoder swap.
 
 So the guard is a **matrix** over `(itemsize, samples > 1)`, not a list
 of widths, and it is **positive** -- encode only what is measured to
@@ -340,9 +346,13 @@ def test_a_32_bit_frame_is_refused_by_name_rather_than_written_wrong(
     encode succeeds, a file is written, and `wrote 1 of 1` appears beside
     a file no reader can open.
 
-    *Red when:* the frame guard is removed -- and it is red on the file
-    assertion, not merely on "something raised", which is why the
-    no-file-on-disk assertion is here.
+    *Red when:* the frame guard is removed. Measured, it is red on
+    `assert error is not None` -- the export **succeeds** -- so the
+    no-file-on-disk assertion below is never reached under that mutation.
+    It is here anyway and it is independently sufficient: it is what
+    distinguishes "the export refused" from "the export raised after
+    leaving a file behind", and a future change that turns the refusal
+    into a partial write would be red on it alone.
     """
     arr = np.array(_rows_for(dtype_name), dtype=dtype_name)
     _summary, error, files, rows, _out = _export(
@@ -511,11 +521,17 @@ def test_a_16_bit_colour_frame_is_refused_rather_than_written_unreadable(
     where Pillow refused it at `Image.fromarray`. So the encoder swap
     turned a loud failure into a written file that `ds.pixel_array` will
     not open: `Pillow cannot decode 16-bit multi-sample data correctly`,
-    and Pillow is the only JPEG 2000 decoding plugin this project
-    installs -- the library cannot re-ingest its own export. Measured
-    with the guard removed: `wrote 1 of 1`, a file on disk, and
-    `RuntimeError: Unable to decode as exceptions were raised by all
-    available plugins` on read.
+    and Pillow is the only JPEG 2000 decoding plugin *this project*
+    installs -- `session.ingest()` on such an export returns
+    `ingested=0`. Measured with the guard removed: `wrote 1 of 1`, a file
+    on disk, and `RuntimeError: Unable to decode as exceptions were
+    raised by all available plugins` on read.
+
+    Not a claim about JPEG 2000: `imagecodecs.jpeg2k_decode` reads those
+    frames bit-exactly and so does pylibjpeg-openjpeg. The standard is
+    what this library can read back, and the refusal's sentence has to
+    say that rather than "no decoder reads it" -- which is why the last
+    two assertions below are on the wording and not only on the refusal.
 
     That is 32-bit's silence arriving through a different door, and it is
     why the rule is a *matrix* and not a list of widths. *Red when:* the
@@ -546,6 +562,17 @@ def test_a_16_bit_colour_frame_is_refused_rather_than_written_unreadable(
     # would be exact, and telling a user their pixels do not fit sends
     # them after the wrong thing.
     assert "exact only to 25 bits" not in message, message
+    # And it must not overclaim in the other direction either. The
+    # sentence has to name the decoder *this library* lacks, because
+    # `imagecodecs.jpeg2k_decode` and pylibjpeg-openjpeg both read these
+    # frames -- "no plugin reads it" would be a false statement in the
+    # one place a user reads, which is the shape this milestone removes.
+    assert "Pillow" in message, (
+        f"the refusal does not name the decoder that cannot read this "
+        f"frame: {message}")
+    assert "this library installs" in message, (
+        f"the refusal states its limit as a fact about JPEG 2000 rather "
+        f"than about this installation: {message}")
 
 
 # ---------------------------------------------------------------------------

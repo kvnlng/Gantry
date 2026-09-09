@@ -3412,17 +3412,22 @@ class _J2kFrameRefusal(RuntimeError):
 #: | itemsize | samples 1 | samples 3 |
 #: | --- | --- | --- |
 #: | 1 (`uint8`, `int8`) | exact | exact |
-#: | 2 (`uint16`, `int16`) | exact | encodes, **unreadable** |
+#: | 2 (`uint16`, `int16`) | exact | encodes, **unreadable here** |
 #: | 4, 8 | see below | see below |
 #:
 #: A **positive** rule, because neither the codec's refusals nor the
 #: encoder's exactness marks the boundary of what is safe to write. Two
 #: separate cells prove it: 32-bit encodes silently to 25 bits, and
-#: 16-bit multi-sample encodes *exactly* and still produces a file no
-#: pydicom decoding plugin will read (`Pillow cannot decode 16-bit
-#: multi-sample data correctly`), so this library cannot re-ingest its own
-#: output. A deny-list would have had to anticipate both, and would have
-#: anticipated neither.
+#: 16-bit multi-sample encodes *exactly* and still produces a file **this
+#: project cannot read** -- Pillow is the only JPEG 2000 decoding plugin
+#: it installs, and it reports `Pillow cannot decode 16-bit multi-sample
+#: data correctly`, so `session.ingest()` on our own export returns
+#: `ingested=0` with a `Decompression Failed` row. Other decoders manage
+#: it (`imagecodecs.jpeg2k_decode` returns those frames bit-exactly, and
+#: so does pylibjpeg-openjpeg); the standard applied here is what this
+#: library can read back, which is the same standard the 32-bit cell is
+#: judged by. A deny-list would have had to anticipate both cells, and
+#: would have anticipated neither.
 _J2K_ENCODABLE_FRAMES = frozenset({
     (1, False),
     (1, True),
@@ -3441,13 +3446,18 @@ def _refuse_unencodable_j2k_frame(arr, ds, samples):
         return
 
     if arr.dtype.itemsize in (1, 2):
-        # The encode is exact here; the decode is what does not exist.
-        # Said in those words, because "cannot carry" would be false and
-        # a user who reads it would go looking for the wrong thing.
-        why = (f"the codestream would be exact, but no pydicom decoding "
-               f"plugin reads {arr.dtype.itemsize * 8}-bit multi-sample "
-               f"JPEG 2000, so the file would be written and then "
-               f"unreadable -- by this library included")
+        # The encode is exact here; the decode is what this project
+        # cannot do. Said in those words, because "cannot carry" would be
+        # false and a user who read it would go looking for the wrong
+        # thing -- and "no decoder reads it" would be false too:
+        # `imagecodecs.jpeg2k_decode` and pylibjpeg-openjpeg both read
+        # these frames. What is true is the sentence below, and it is the
+        # one that tells a user what to do about it.
+        why = (f"the codestream would be exact, but Pillow is the only "
+               f"JPEG 2000 decoding plugin this library installs and it "
+               f"cannot decode {arr.dtype.itemsize * 8}-bit multi-sample "
+               f"data, so the file would be written and then unreadable "
+               f"by this library itself")
     else:
         why = (f"the encoder (imagecodecs {imagecodecs.__version__}) is "
                f"exact only to 25 bits, so a 32-bit frame would be written "
@@ -3486,11 +3496,15 @@ def _compress_j2k(ds, pixel_array=None):
 
     Everything else is refused by name before any encode, and that refusal
     is the safety of this function rather than a rough edge. Two cells
-    would otherwise be written and be unreadable: `imagecodecs` does not
-    reject 32-bit, it encodes exactly to 25 bits and wrong above that; and
-    it encodes 16-bit *multi-sample* frames exactly, which no pydicom
-    decoding plugin will read back. Both would replace a loud failure with
-    `wrote 1 of 1` beside a file no reader can open.
+    would otherwise be written and then be unreadable *by this project*:
+    `imagecodecs` does not reject 32-bit, it encodes exactly to 25 bits
+    and wrong above that; and it encodes 16-bit *multi-sample* frames
+    exactly, which Pillow -- the only JPEG 2000 decoding plugin this
+    library installs -- cannot decode, so `session.ingest()` on such an
+    export returns `ingested=0`. Other decoders read that second cell
+    fine; the standard applied is what this library can read back. Both
+    would replace a loud failure with `wrote 1 of 1` beside a file this
+    project cannot open.
 
     Updates `TransferSyntaxUID` and `PixelData`, and mutates nothing when
     it refuses.
