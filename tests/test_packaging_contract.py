@@ -224,13 +224,25 @@ def test_python_requires_matches_the_floor_the_source_actually_needs():
         "(numpy, imagecodecs) resolves only on 3.12+")
 
 
-@pytest.mark.parametrize("module", ["pytesseract", "imagecodecs"])
+@pytest.mark.parametrize("module", ["pytesseract"])
 def test_optional_dependencies_are_imported_defensively(module):
     """Optional features must degrade, not explode.
 
     If one of these becomes a hard import, it must move into
     install_requires -- otherwise `import isocenter` breaks for anyone who
     did not install the extra.
+
+    **`imagecodecs` left this list in #404, in the direction the docstring
+    above describes.** It has been in `install_requires` all along -- it
+    was never an extra -- and `io_handlers.py` now imports it unguarded to
+    encode JPEG 2000, because Pillow's encoder accepted only `uint8` and
+    `uint16` and so wrote nothing at all for CT and MR. A guarded import
+    whose absence turns into `Compression failed` is the same shape as a
+    loader returning `[]` for a missing shipped resource (#388), and this
+    release removes that shape rather than adding one.
+    `test_every_unguarded_third_party_import_is_declared_in_setup_py` is
+    what covers it now, and it is the stronger check: it reads every
+    unguarded import in the package rather than a hand-kept list.
     """
     hard_sites = _unguarded_third_party_imports().get(module)
     assert not hard_sites, (

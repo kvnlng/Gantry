@@ -133,10 +133,27 @@ from dataclasses import dataclass, field
 
 import pydicom
 import numpy as np
-try:
-    from PIL import Image
-except ImportError:
-    Image = None
+# Unguarded, and at module scope, beside the other declared dependencies.
+# `imagecodecs>=2024.6.1` is in `install_requires` and already drives the
+# *decode* side in `imagecodecs_handler.py`, so the project already trusts
+# it with pixel fidelity in the other direction; it now drives the JPEG
+# 2000 encode as well (#404). Deliberately not a `try/except ImportError`
+# like the `from PIL import Image` it replaces: a guarded import whose
+# absence turns into `Compression failed` is the same shape as a loader
+# returning `[]` for a missing shipped resource, and this release removes
+# that shape rather than adding one. `python-dotenv` is the precedent --
+# a declared dependency imported plainly.
+#
+# The encoder is bound as a module-level name rather than reached as
+# `imagecodecs.jpeg2k_encode` at each call, and that is not style.
+# `imagecodecs` resolves its codecs through a module-level `__getattr__`
+# that delegates back to itself, so `mock.patch` on the attribute leaves
+# the module recursing (`RecursionError: maximum recursion depth
+# exceeded`) once the patch is undone. A name in *this* module is patchable
+# without reaching into a third-party module's lazy loader at all. The
+# module import stays for `__version__`, which the refusal message quotes.
+import imagecodecs
+from imagecodecs import jpeg2k_encode
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.pixels import get_decoder
 from pydicom.uid import ImplicitVRLittleEndian, JPEG2000Lossless
@@ -354,9 +371,12 @@ _INTEGER_DTYPE_BY_BITS = {
 def _integer_dtype(bits: int, pixel_representation: int):
     """The dtype for a declared width and signedness, table then fallback.
 
-    One function so the loader and `_compress_j2k`'s reconstruction branch
-    cannot drift apart -- they held two copies of the same bucketing rule
-    and only one of them was ever fixed the last time (#386).
+    One function because there were three copies of `uint16 if bits > 8
+    else uint8` when #386 was filed and only one of them had ever been
+    fixed: a signed frame rebuilt by a stale copy came back unsigned for
+    exactly the reason `SidecarPixelLoader`'s did. The third copy, in
+    `_compress_j2k`'s reconstruct-from-bytes branch, was deleted with that
+    branch as unreachable (#404); this is what remains, with one caller.
     """
     unsigned, signed = _INTEGER_DTYPE_BY_BITS.get(
         bits, (np.uint16, np.int16) if bits > 8 else (np.uint8, np.int8))
@@ -3372,56 +3392,110 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
                              sop_instance_uid=uid, losses=losses, error=e)
 
 
-def _compress_j2k(ds, pixel_array=None):
+class _J2kWidthRefusal(RuntimeError):
+    """A frame too wide for the JPEG 2000 encoder to carry honestly.
+
+    A `RuntimeError` subclass, so the export worker and every existing
+    caller handle it exactly as they handled the old `Compression failed`
+    -- the exception type, the `ExportError`, the `wrote 0 of N` and the
+    empty output directory are all unchanged, and only the sentence
+    improves. It is a distinct type for one reason: so `_compress_j2k`'s
+    outer handler can re-raise it instead of wrapping it into
+    `Compression failed: <our own sentence>`.
     """
-    Compresses the pixel data of the dataset using JPEG 2000 Lossless (Pillow).
-    Updates TransferSyntaxUID and PixelData.
+
+
+#: The itemsizes `imagecodecs.jpeg2k_encode` carries bit-exactly, measured
+#: end to end -- encode, encapsulate, `save_as`, `dcmread`, compare -- on
+#: both imagecodecs 2024.6.1 (the floor) and 2026.8.16.
+#:
+#: A **positive** rule, because the codec's own refusals do not mark the
+#: boundary of what is safe: 64-bit raises, but 32-bit encodes silently to
+#: 25 bits of precision and produces a file no pydicom plugin can decode.
+#: A deny-list would have to anticipate that, and did not.
+_J2K_ENCODABLE_ITEMSIZES = (1, 2)
+
+
+def _refuse_unencodable_j2k_dtype(arr, ds):
+    """Raise before the encode, naming what the codec will not say.
+
+    Called with the array in its final shape and dtype -- `bool` already
+    viewed as `uint8` -- and **before any mutation of `ds`**, so a refused
+    instance leaves this function exactly as it entered it.
+    """
+    if arr.dtype.itemsize in _J2K_ENCODABLE_ITEMSIZES:
+        return
+    raise _J2kWidthRefusal(
+        f"Compression failed: JPEG 2000 lossless cannot carry "
+        f"{arr.dtype} pixel data (BitsAllocated "
+        f"{getattr(ds, 'BitsAllocated', arr.dtype.itemsize * 8)}, "
+        f"PixelRepresentation "
+        f"{getattr(ds, 'PixelRepresentation', 1 if arr.dtype.kind == 'i' else 0)})"
+        f". The encoder (imagecodecs {imagecodecs.__version__}) is exact "
+        f"only to 25 bits, so a 32-bit frame would be written wrong and "
+        f"read back wrong, and a 64-bit frame is refused by the codec "
+        f"outright. Export this study with use_compression=False, which "
+        f"writes the same pixels uncompressed and bit-exact.")
+
+
+def _compress_j2k(ds, pixel_array=None):
+    """Compress the dataset's pixels as JPEG 2000 Lossless, in place.
+
+    The encoder is `imagecodecs.jpeg2k_encode(frame, level=0,
+    codecformat="J2K")`. `level=0` is lossless -- measured reversible on a
+    full-range `int16` frame and identical to the explicit
+    `reversible=True` -- and `codecformat="J2K"` emits a **bare
+    codestream**, starting `ff4f ff51`, which is what transfer syntax
+    1.2.840.10008.1.2.4.90 names. Pillow, which stood here until #404,
+    wrote a JP2 *box* (`0000000c6a502020`) under that same syntax; lenient
+    decoders read it, which is why it went unnoticed for every release.
+
+    **Accepted, and measured bit-exact end to end: `uint8`, `int8`,
+    `uint16`, `int16`, and `bool` (encoded as `uint8`).** Pillow accepted
+    exactly `uint8` and `uint16`, so `session.export(folder)` -- which
+    compresses by default -- wrote *nothing at all* for CT and MR, failing
+    with `broken data stream when writing image file` (#404).
+
+    Everything wider is refused by name before any encode. That refusal is
+    the safety of this function, not a rough edge: `imagecodecs` does not
+    reject 32-bit, it encodes exactly to 25 bits and wrong above that, and
+    the DICOM file built from a 32-bit codestream cannot be decoded by any
+    pydicom plugin -- so an unguarded encoder would replace a loud failure
+    with `wrote 1 of 1` beside an unreadable file.
+
+    Updates `TransferSyntaxUID` and `PixelData`, and mutates nothing when
+    it refuses.
+
+    Args:
+        ds (pydicom.Dataset): the dataset to compress, in place.
+        pixel_array (np.ndarray, optional): the frame(s) to encode. When
+            None there is nothing to compress and this returns having done
+            nothing -- see the comment at the guard.
     """
     try:
         arr = pixel_array
         if arr is None:
-            # Fallback to reconstructing from PixelData bytes if array not passed
-            if not hasattr(ds, 'PixelData'):
-                return
-
-            # 1. Get metadata
-            rows = ds.Rows
-            cols = ds.Columns
-            samples = ds.SamplesPerPixel
-            bits = ds.BitsAllocated
-
-            # 2. Reconstruct Numpy Array from bytes (since we just set it in worker)
-            # Assuming Little Endian input for now (as set in _create_ds)
+            # Nothing to compress, and that is the whole meaning of the
+            # branch. It used to rebuild the array from `ds.PixelData`,
+            # reading those bytes as `uint16` regardless of
+            # `PixelRepresentation` -- a silent-corruption sibling of #386
+            # that would have compressed signed data to wrong values
+            # without raising.
             #
-            # The third copy of `SidecarPixelLoader`'s old bucketing rule,
-            # and it had the same two defects: a 32-bit frame rebuilt two
-            # times too wide, and a signed frame rebuilt unsigned because
-            # nothing here read PixelRepresentation at all. Same
-            # `_integer_dtype` as the loader, so the rule has one spelling
-            # (#386). **This branch is not reachable from
-            # `session.export()`** -- `_finalize_dataset` is called with
-            # `pixel_array=arr` at the one production call site, and the
-            # arms that leave `arr` as None leave `ds` with no PixelData
-            # either, so the guard above returns first. It is exercised by
-            # `tests/test_compress_j2k_coverage.py`'s direct calls.
-            dt = _integer_dtype(bits, getattr(ds, 'PixelRepresentation', 0))
-            arr = np.frombuffer(ds.PixelData, dtype=dt)
-
-            # Reshape
-            # Correctly handle frames
-            frames = getattr(ds, "NumberOfFrames", 1)
-
-            # Shape logic matching export worker
-            if frames > 1:
-                if samples > 1:
-                    arr = arr.reshape((frames, rows, cols, samples))
-                else:
-                    arr = arr.reshape((frames, rows, cols))
-            else:
-                if samples > 1:
-                    arr = arr.reshape((rows, cols, samples))
-                else:
-                    arr = arr.reshape((rows, cols))
+            # Deleted rather than corrected, because it is unreachable:
+            # `_compress_j2k`'s only caller is `_finalize_dataset`, whose
+            # only caller is the export worker, which always passes
+            # `pixel_array=arr`; and with `ctx.compression` set the worker
+            # never assigns `ds.PixelData` at all, which the comment at
+            # the `arr is not None` block above already says in those
+            # words. The one path that arrives here with `arr is None` is
+            # the float branch, which has deleted (7fe0,0010) and wants
+            # the file written uncompressed per PS3.5 8.2.
+            #
+            # So: return, leaving `ds` exactly as it was. Restoring a
+            # reconstruction here would reintroduce a decoder that can
+            # disagree with the loader.
+            return
         else:
             # Array passed explicitly.
             # Handle Flattened (1D)
@@ -3473,30 +3547,46 @@ def _compress_j2k(ds, pixel_array=None):
 
         # A bool frame is stored, declared and exported as 8-bit: the
         # dtype carrier keeps `bool` because no DICOM descriptor can name
-        # it, but `set_pixel_data` still writes BitsAllocated 8 and
+        # it (#386), but `set_pixel_data` still writes BitsAllocated 8 and
         # PixelRepresentation 0, and the uncompressed path writes
         # `arr.tobytes()` -- one byte per element. `view` rather than
         # `astype` says exactly that: the same bytes, read under the dtype
         # the file declares, with no copy and no conversion to get wrong.
-        #
-        # Without it the carrier's widening would have been a regression.
-        # `Image.fromarray` gives a bool array mode `1`, which Pillow's
-        # JPEG 2000 encoder refuses -- so a mask that compressed cleanly
-        # while it reloaded as `uint8` would have started failing the
-        # *default* export with `broken data stream when writing image
-        # file` the moment it began reloading as `bool` (#386).
+        # The codec refuses kind `b` outright
+        # (`ValueError: sample format not supported by codec`), so without
+        # this a mask that compressed cleanly while it reloaded as `uint8`
+        # would have started failing the *default* export the moment the
+        # carrier began reloading it as `bool`.
         if arr.dtype.kind == 'b':
             arr = arr.view(np.uint8)
 
-        # Helper to compress single frame
+        # **The width guard, and it runs before any encode and before any
+        # mutation of `ds`.** It is a positive rule -- encode only what is
+        # measured bit-exact -- because the codec's own refusals do not
+        # line up with what is safe to write.
+        #
+        # 64-bit it does refuse, but with a different sentence on
+        # different releases (`ValueError: item size not supported by
+        # codec` on 2026.8.16, `Jpeg2kError: opj_encode or opj_write_tile
+        # failed` on 2024.6.1), so a message a user can act on cannot come
+        # from the codec.
+        #
+        # 32-bit it does **not** refuse, and that is the dangerous half:
+        # it encodes exactly to 25 bits and wrong above that, and the
+        # DICOM file built from a 32-bit codestream raises
+        # `RuntimeError: Unable to decode as exceptions were raised by all
+        # available plugins` on read. Without this guard the encode
+        # succeeds, a file is written, and the audit log says
+        # `wrote 1 of 1` beside a file no reader can open -- a silence
+        # created by the fix for a silence (#404).
+        _refuse_unencodable_j2k_dtype(arr, ds)
+
         def encode_frame(frame_arr):
-            # Pillow expects [H, W] or [H, W, C]
-            if Image is None:
-                raise ImportError("Pillow not installed.")
-            img = Image.fromarray(frame_arr)
-            bio = io.BytesIO()
-            img.save(bio, format='JPEG2000', compression='lossless')
-            return bio.getvalue()
+            """One frame to a bare JPEG 2000 lossless codestream."""
+            # `codecformat="J2K"` rather than the default: the transfer
+            # syntax names a codestream, not a JP2 file. `level=0` is
+            # lossless.
+            return jpeg2k_encode(frame_arr, level=0, codecformat="J2K")
 
         if frames > 1:
             for i in range(frames):
@@ -3511,9 +3601,12 @@ def _compress_j2k(ds, pixel_array=None):
         # both from the UID and removes the attributes in 4.0 (#141).
         ds.file_meta.TransferSyntaxUID = JPEG2000Lossless
 
-    except ImportError:
-        # Fallback or Log?
-        raise RuntimeError("Pillow or pydicom not installed/configured for JPEG 2000.")
+    except _J2kWidthRefusal:
+        # Re-raised unchanged, ahead of the generic handler below. Wrapped
+        # it would read `Compression failed: Compression failed: ...`, and
+        # the whole point of the refusal is that the sentence the user
+        # reads is ours rather than the codec's.
+        raise
     except Exception as e:
         raise RuntimeError(f"Compression failed: {e}")
 

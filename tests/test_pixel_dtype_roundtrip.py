@@ -622,62 +622,18 @@ def test_an_integer_array_deletes_the_dtype_carrier_a_float_array_left(tmp_path)
     (1, 0, "uint8"), (12, 0, "uint16"), (12, 1, "int16"),
 ])
 def test_the_integer_dtype_rule_has_one_spelling(bits, pixrep, expected):
-    """`_integer_dtype` is the single rule the loader and `_compress_j2k`'s
-    reconstruction branch both call.
+    """The table and its fallback, pinned where `SidecarPixelLoader` reads them.
 
-    They held two copies of `uint16 if bits > 8 else uint8` and only one
-    of them was fixed the last time; a signed frame rebuilt in the second
-    came back unsigned for exactly the reason the loader's did. This pins
-    the table *and* its fallback at the level where both callers share it.
+    Three copies of `uint16 if bits > 8 else uint8` existed when #386 was
+    filed and only one of them had ever been fixed. Two survive as this
+    one function; the third, in `_compress_j2k`'s reconstruct-from-bytes
+    branch, was deleted with that branch as unreachable (#404).
     """
     from isocenter.io_handlers import _integer_dtype
 
     assert np.dtype(_integer_dtype(bits, pixrep)) == np.dtype(expected)
 
 
-def test_the_j2k_reconstruction_branch_honours_pixel_representation():
-    """The reconstruction branch, called directly.
-
-    `_finalize_dataset` passes `pixel_array=arr` at its one production
-    call site and the arms that leave `arr` as None leave `ds` without
-    PixelData, so this branch is **not reachable from
-    `session.export()`** -- it is reached only by a direct call, which is
-    how `tests/test_compress_j2k_coverage.py` exercises it and how this
-    test does. It is fixed anyway, because a second copy of a rule that
-    disagrees with the first is what #386 was.
-
-    Asserting on the array Pillow is handed rather than on the encoded
-    bytes: the encoder itself refuses a signed frame outright (#404), so
-    the bytes cannot be the observable here.
-    """
-    import isocenter.io_handlers as io_handlers
-    from pydicom.dataset import Dataset
-
-    seen = {}
-
-    class _FakeImage:
-        @staticmethod
-        def fromarray(frame):
-            seen['dtype'] = frame.dtype
-            seen['values'] = frame.tolist()
-            raise RuntimeError("stop here: the array is what is under test")
-
-    ds = Dataset()
-    ds.Rows = ds.Columns = 4
-    ds.SamplesPerPixel = 1
-    ds.NumberOfFrames = 1
-    ds.BitsAllocated = 16
-    ds.PixelRepresentation = 1
-    ds.PixelData = np.array(SIGNED_ROWS, dtype="int16").tobytes()
-
-    with pytest.raises(RuntimeError):
-        with pytest.MonkeyPatch.context() as patcher:
-            patcher.setattr(io_handlers, "Image", _FakeImage)
-            io_handlers._compress_j2k(ds, pixel_array=None)
-
-    assert seen['dtype'] == np.dtype("int16"), (
-        "the reconstruction branch rebuilt a signed frame as unsigned")
-    assert seen['values'] == SIGNED_ROWS
 
 
 # ---------------------------------------------------------------------------

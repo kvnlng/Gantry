@@ -77,5 +77,9 @@ class TestCompressHandlers:
         with pytest.raises(RuntimeError) as excinfo:
             _compress_j2k(ds, pixel_array=flat_arr)
 
-        # Pillow raises IndexError/TypeError on scalar, caught and re-raised as RuntimeError
+        # The reshape itself raises, and `_compress_j2k` re-raises it as a
+        # RuntimeError. Asserted on that wrapper rather than on the
+        # encoder's own words: the encoder changed from Pillow to
+        # imagecodecs in #404, and a test pinned to one codec's sentence
+        # is a test about the codec rather than about this function.
         assert "Compression failed" in str(excinfo.value)

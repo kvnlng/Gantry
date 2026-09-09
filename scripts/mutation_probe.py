@@ -183,6 +183,7 @@ TARGETS = {
                                   "tests/test_services.py",
                                   "tests/test_session.py",
                                   "tests/test_shared_executor_lifecycle.py",
+                                  "tests/test_signed_pixels_survive_a_compressed_export.py",
                                   "tests/test_sidecar_gate_crosses_processes.py",
                                   "tests/test_sidecar_gate_order.py",
                                   "tests/test_sr_anonymization.py",

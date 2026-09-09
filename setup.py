@@ -115,7 +115,17 @@ setup(
         "numpy>=1.26.0",
         "pandas>=2.1.0",
         "pillow>=10.1.0",
-        "imagecodecs>=2023.9.18",
+        # Raised from >=2023.9.18 in #404, and the old floor was unbackable
+        # in two separate ways. It publishes no cp312 wheel, so on this
+        # project's own Python floor `pip install imagecodecs==2023.9.18`
+        # fails outright -- measured: "No matching distribution found" with
+        # --only-binary, and a failed source build without it. And
+        # `io_handlers._compress_j2k` now encodes JPEG 2000 with it, so the
+        # floor has to be a release where `jpeg2k_encode(arr, level=0,
+        # codecformat="J2K")` is bit-exact for uint8/int8/uint16/int16;
+        # 2024.6.1 is the first release after the old floor and was
+        # measured exact for all four, and for uint8 RGB.
+        "imagecodecs>=2024.6.1",
         "PyYAML>=6.0.1",
         "pyarrow>=14.0.0",
         "cryptography>=41.0.0",
