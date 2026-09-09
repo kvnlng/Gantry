@@ -7,9 +7,10 @@
 **Author:** architect (bunch A). Written for a TDD developer.
 **Status:** design brief. No production code was changed while writing it.
 **Superseded in part:** §0.3, §2.2 (the helper signature), §2.3, §2.4, §2.5 T1
-and T6, §5 (#388), and all five of §7 — by five owner rulings and one closing
-review of 2026-09-09, recorded in **§11 Amendments**, which also adds work to
-§1.4, §1.5 and §3.6. Read §11 before implementing; where it disagrees with the
+and T6, §5 (#388), all five of §7, and §11.6 items 2 and 3 — by owner rulings
+and closing reviews of 2026-09-09, recorded in **§11 Amendments**, which also
+adds work to §1.4, §1.5 and §3.6 and adds **§11.13 (#404)**, a defect found by
+§11.6's own step P1. Read §11 before implementing; where it disagrees with the
 text above, §11 wins.
 
 The three are one bunch because they are the same failure at the ingest/export
@@ -1153,7 +1154,10 @@ use_compression=True, ...)` (session.py:3358) defaults to True and maps to
 (io_handlers.py:3325). This is the ordinary path, not an exotic arm, which
 raises the stakes on the answer.
 
-**2. `_compress_j2k` holds a third copy of the defect.** Its fallback
+**2. `_compress_j2k` holds a third copy of the defect.**
+**[Superseded by §11.13.4: the branch is measured **unreachable** in the export
+flow, so it is deleted rather than corrected. The reachability argument is
+there; do not fix a branch that no longer exists.]** Its fallback
 reconstruction branch (io_handlers.py:~3344), taken when `pixel_array` is not
 passed and the array must be rebuilt from `ds.PixelData`, reads:
 
@@ -1162,9 +1166,11 @@ dt = np.uint16 if bits > 8 else np.uint8
 ```
 
 — the same bucket §1.3 replaces in `SidecarPixelLoader`, in a second function
-§1.4 does not list. **Add it to the change list**: same
+§1.4 does not list. ~~**Add it to the change list**: same
 `_INTEGER_DTYPE_BY_BITS` lookup, same legacy fallback, and it must honour
-`PixelRepresentation` too — a signed frame rebuilt here today comes back
+`PixelRepresentation` too~~ **[Superseded by §11.13.4: deleted, not
+corrected — the branch is unreachable in the export flow.]** — a signed
+frame rebuilt here today comes back
 unsigned for exactly the reason the loader's did.
 
 **Step P1, before writing any #386 test.** Build a `(uint32, pixrep=0)` and an
@@ -1188,7 +1194,9 @@ numbers before the bunch is called done:
   it. Also a negative result for #386, also a characterization test; note in the
   CHANGELOG that 32-bit frames are uncompressible on this path and that the run
   says so.
-- **The export refuses or degrades and the accounting does not say why.** The
+- **The export refuses or degrades and the accounting does not say why.**
+  **[This is the arm P1 landed on, and worse than predicted — see §11.13. The
+  informative refusal survives, narrowed to 32- and 64-bit, in §11.13.3.]** The
   likely arm: `_compress_j2k` ends
   `except Exception as e: raise RuntimeError(f"Compression failed: {e}")`, which
   reports the codec's message and not the dtype, and most J2K encoders cap below
@@ -1199,6 +1207,10 @@ numbers before the bunch is called done:
   Pillow's.
 
 "May have a separate gap" is not an acceptable finding for this bunch.
+
+**P1 has been run. The result is §11.13 (#404), and it is larger than the
+question P1 asked: signed 16-bit pixel data — every CT and MR study — could
+not be exported at all on the default path.**
 
 ### §11.7 The probes are committed beside this brief (closing review). Supersedes §0.3.
 
@@ -1285,10 +1297,509 @@ that sentence stops being true and the 3.14.7t rig comes back.
 
 ---
 
+
+### §11.13 #404 — signed pixel data cannot be exported at all. Owner: fix it properly, inside bunch A. Supersedes §11.6 items 2 and 3.
+
+#404 is what step P1 (§11.6) was written to find, and it is larger than the
+32-bit question P1 asked. Everything below was measured on the rebuilt venv —
+Python 3.12.14, the CI floor — with `isocenter.__file__` printed and read; the
+scripts are `probe_404_codecs.py`, `probe_404_detail.py`, `probe_404_32bit.py`,
+`probe_404_matrix.py`, `probe_404_shapes.py`, `probe_404_export.py` and
+`probe_404_container.py`, committed beside this file.
+
+#### §11.13.1 Diagnosis, re-measured
+
+`session.export(folder)` writes **nothing** for signed 16-bit pixel data — CT
+and MR. Compression is the default (`_export_dicom(..., use_compression=True)`,
+frozen at `docs/api/stability.md:73`), `_finalize_dataset` calls
+`_compress_j2k`, and `Image.fromarray(...).save(..., format="JPEG2000")` at
+io_handlers.py:3417 raises for every dtype Pillow's encoder does not accept.
+
+End to end, a 64x64 CT frame of Hounsfield units (`int16`,
+`PixelRepresentation 1`), on unmodified code:
+
+```
+1. DEFECT: default export (use_compression=True)
+   export raised : ExportError: ... wrote 0 of 1 planned instances; 1 failed
+                   and nothing reached disk.
+   files on disk : 0
+   AUDIT ERROR   : Export failed for .../<uid>.dcm: Compression failed:
+                   broken data stream when writing image file
+   AUDIT EXPORT  : wrote 0 of 1 planned instances from 1 patients.
+
+2. CONTROL: use_compression=False, same data, same code
+   export raised : None
+   written       : 1     files on disk: 1
+   TransferSyntaxUID : 1.2.840.10008.1.2 (Implicit VR Little Endian)
+   BitsAllocated 16   PixelRepresentation 1   BitsStored 16
+   pixel_array dtype : int16      BIT-EXACT: True
+```
+
+Two things this settles. **The sidecar is not implicated** — case 2 is
+bit-exact from the same store, so the loader's `pixel_representation == 1` arm
+(io_handlers.py:3517-3519) is doing its job and the array reaching the exporter
+is already correct. **The axis is signedness, not width.** Measured against
+Pillow 12.3.0's JPEG 2000 encoder, one array per dtype:
+
+| dtype | Pillow J2K |
+| --- | --- |
+| `uint8` | EXACT |
+| `int8` | `OSError: broken data stream when writing image file` |
+| `uint16` | EXACT |
+| `int16` | `OSError: broken data stream when writing image file` |
+| `uint32`, `int32`, `float32`, `bool` | `OSError: broken data stream ...` |
+| `uint64`, `int64` | `TypeError: Cannot handle this data type` (in `fromarray`) |
+
+Exactly two dtypes work, and `tests/conftest.py:257` makes the shared fixture
+`np.zeros((512, 512), dtype=np.uint16)` — one of the two. Every export test on
+the default path rides it. That is the blind spot, and §11.13.7 is its
+disposition.
+
+The refusal is also mute: the `ERROR` row carries Pillow's sentence and names
+neither the dtype, nor `BitsAllocated`, nor `PixelRepresentation`, nor the
+encoder, nor a remedy. A reader is told a data stream broke.
+
+`export(verify_readback=True)` would not have caught it either, and cannot be
+made to: `_READBACK_DESCRIPTORS` is `("Rows", "Columns", "SamplesPerPixel",
+"NumberOfFrames", "BitsAllocated")`, it does not include
+`PixelRepresentation`, and `_verify_readback` never decodes pixels. Noted for
+§6, not proposed as a fix here.
+
+#### §11.13.2 The approach, chosen by measurement
+
+Three candidates, all encoding the same arrays to JPEG 2000 lossless
+(`probe_404_codecs.py`):
+
+| dtype | A: Pillow (today) | B: imagecodecs | C: pydicom `ds.compress()` |
+| --- | --- | --- | --- |
+| `uint8` | EXACT | EXACT | unavailable |
+| `int8` | broken data stream | EXACT | unavailable |
+| `uint16` | EXACT | EXACT | unavailable |
+| `int16` | broken data stream | **EXACT** | unavailable |
+| `uint32` | broken data stream | encodes, see §11.13.3 | unavailable |
+| `int32` | broken data stream | encodes, see §11.13.3 | unavailable |
+| `uint64`/`int64` | `TypeError` in `fromarray` | `ValueError: item size not supported by codec` | unavailable |
+| `float32`/`float64` | broken data stream | `ValueError: sample format not supported by codec` | unavailable |
+| `bool` | broken data stream | `ValueError: sample format not supported by codec` | unavailable |
+
+**C is rejected on measurement, not on taste.** `ds.compress(JPEG2000Lossless,
+arr)` raises, in full:
+
+```
+RuntimeError: The pixel data encoder for 'JPEG 2000 Image Compression
+(Lossless Only)' is unavailable because all of its plugins are missing
+dependencies:
+    pylibjpeg - requires numpy, pylibjpeg>=2.0 and pylibjpeg-openjpeg>=2.2
+```
+
+Neither `pylibjpeg` nor `pylibjpeg-openjpeg` is installed, and neither is in
+`setup.py`. **The task brief's premise that "#372 already established installs
+and works in this environment" does not hold on the rebuilt venv** — #372's own
+CHANGELOG entry says its result was "identical with Pillow alone and with the
+pylibjpeg plugins installed", which records a comparison made with them
+temporarily present, not a dependency the project took. Taking C means adding
+**two** runtime dependencies, one of which builds a C extension, to fix a
+defect that a dependency already in `install_requires` fixes.
+
+**The signed-to-unsigned shift carried by `RescaleIntercept` is rejected**, and
+this is the more tempting of the two. It fails the owner's own bar — pixels
+that read back bit-exact with `PixelRepresentation` correct in the written
+file. A shifted export writes `PixelRepresentation 0` over data that was
+signed, so the file's own descriptor is a lie that only a reader honouring
+`RescaleIntercept` can undo; every reader that shows stored values, and every
+tool that recomputes a hash of the pixels, sees different numbers. It also
+collides with real data: `RescaleIntercept` is already populated on CT (the
+population this defect is about), so the fix would have to compose with an
+existing value rather than set one, and #182's date-shift precedent is the
+wrong analogy — a jittered date is still a date, where a shifted pixel under a
+flipped descriptor is a different image. Rejected.
+
+**B is the fix: `imagecodecs.jpeg2k_encode(arr, level=0, codecformat="J2K")`.**
+It is not a new dependency. `setup.py` already carries
+`imagecodecs>=2023.9.18` in `install_requires`, and
+`isocenter/imagecodecs_handler.py` already uses it for the **decode** side —
+so the project already trusts this library with pixel fidelity in the other
+direction. `level=0` is lossless; measured reversible on a random full-range
+`int16` frame, and identically with the explicit `reversible=True`.
+
+Verified through the real `DicomExporter._finalize_dataset(ds, "j2k",
+pixel_array=arr)`, IOD validation included, with `_compress_j2k` replaced
+in-process (export's workers are spawned processes, so a session-level
+monkeypatch cannot reach them — CLAUDE.md, #185; the process boundary is not
+what is under test):
+
+```
+3. THE UNIT: _finalize_dataset(ds, 'j2k', pixel_array=arr)
+   current  (Pillow)      : RuntimeError: Compression failed: broken data
+                            stream when writing image file
+   proposed (imagecodecs) : WROTE proposed.dcm
+       TransferSyntaxUID  : 1.2.840.10008.1.2.4.90
+       BitsAllocated 16   BitsStored 16   PixelRepresentation 1
+       decoded dtype      : int16
+       BIT-EXACT          : True    dtype match: True
+```
+
+Shapes, through the same call — the matrix has no unmeasured column
+(`probe_404_shapes.py`):
+
+| shape | proposed | current |
+| --- | --- | --- |
+| `int16` 3-frame stack | EXACT | `RuntimeError: Compression failed` |
+| `int16` single frame | EXACT | `RuntimeError: Compression failed` |
+| `uint8` RGB `(H,W,3)` | EXACT | EXACT |
+| `uint8` RGB 2-frame `(F,H,W,3)` | EXACT | not run (uint8 works either way) |
+
+RGB needs no `colorspace` or `planar` argument: the axis order survives as
+written. There is no colour regression to design around.
+
+**One encoder, not two.** A dual path — Pillow for the two dtypes it handles,
+imagecodecs for the rest — is rejected under CLAUDE.md's one-spelling-per-behaviour
+rule: it would leave two encoders whose output can diverge for the same input,
+and the divergence would be invisible because both produce readable files.
+`from PIL import Image` at io_handlers.py:136 becomes unused **in this module**
+and should go with it; Pillow stays in `install_requires` because
+`isocenter/pixel_analysis.py` still imports it.
+
+#### §11.13.3 The dtype matrix the fix must satisfy
+
+Measured end to end — encode, wrap as the export worker wraps, `save_as`,
+`dcmread`, compare (`probe_404_matrix.py`). This is the table the parametrized
+tests come from.
+
+| dtype | BitsAllocated | PixelRepresentation | after the fix | why |
+| --- | --- | --- | --- | --- |
+| `uint8` | 8 | 0 | **compressed, bit-exact** | measured EXACT |
+| `int8` | 8 | 1 | **compressed, bit-exact** | measured EXACT; fails today |
+| `uint16` | 16 | 0 | **compressed, bit-exact** | measured EXACT |
+| `int16` | 16 | 1 | **compressed, bit-exact** | measured EXACT; **this is #404** |
+| `bool` | 8 | 0 | **compressed, bit-exact, encoded as `uint8`** | the codec refuses kind `b`; `astype(np.uint8)` is exact and is what the uncompressed path already writes |
+| `uint32` | 32 | 0 | **refused** | see below |
+| `int32` | 32 | 1 | **refused** | see below |
+| `uint64`/`int64` | 64 | 0/1 | **refused** | `ValueError: item size not supported by codec` |
+| `float32`/`float64` | — | — | **never reaches the encoder** | the float branch writes (7fe0,0008)/(7fe0,0009) and deletes (7fe0,0010), so `_compress_j2k` returns at its `hasattr(ds, "PixelData")` guard and the file is written uncompressed, per PS3.5 8.2. Unchanged, and pinned by a test so it stays that way. |
+
+**32-bit must be refused, and this is the answer §11.6's P1 was asking for.**
+The codec does not refuse it — it encodes, and the result is wrong twice over:
+
+```
+int32 holding 16 bits of data : exact
+int32 holding 24 bits of data : exact
+int32 holding 25 bits of data : exact
+int32 holding 26 bits of data : NOT exact
+int32 holding 32 bits of data : NOT exact
+```
+
+`bitspersample=31`, `bitspersample=32` and `reversible=True` do not rescue it;
+imagecodecs' own docstring carries the matching TODO ("(u)int32 must contain
+26 bits or fewer?"). And the DICOM file built from a 32-bit codestream is
+**unreadable**: `pydicom.dcmread(path).pixel_array` raises `RuntimeError:
+Unable to decode as exceptions were raised by all available plugins`. So an
+unguarded switch to imagecodecs would turn today's loud failure into a
+`wrote 1 of 1` beside a file no reader can open — this milestone's own defect,
+introduced by its own fix. The width guard is not optional.
+
+**Refusal message.** §11.6's arm 3 informative refusal is not deleted; it is
+**narrowed to the widths that remain unsupported**, and it is the only thing
+left of arm 3. It must name the dtype, `BitsAllocated`, `PixelRepresentation`,
+the encoder and the remedy:
+
+```
+raise RuntimeError(
+    f"Compression failed: JPEG 2000 lossless cannot carry {arr.dtype} "
+    f"pixel data (BitsAllocated {bits}, PixelRepresentation {pixrep}). "
+    f"The encoder (imagecodecs {imagecodecs.__version__}) is exact only "
+    f"to 25 bits, so a 32-bit frame would be written wrong and read "
+    f"back wrong, and a 64-bit frame is refused by the codec outright. "
+    f"Export this study with use_compression=False, which writes the "
+    f"same pixels uncompressed and bit-exact.")
+```
+
+Raised **before** the encode, from the dtype, so nothing is written first. It
+keeps the exception type and the outcome the default path already has — an
+`ExportError`, `wrote 0 of N`, nothing on disk — so this is **not** a change to
+what `use_compression=True` promises; only the speech improves. A reviewer will
+ask; that sentence is the answer.
+
+**Rejected pending the owner (§11.13.9, call 2):** falling back to an
+uncompressed write plus an audit row saying so. It would deliver a file where
+today the export fails, and it is not silent — but it changes what
+`use_compression=True` *means* on a frozen option, which is the owner's call
+under the escalation rule, not mine.
+
+#### §11.13.4 The third `uint16 if bits > 8` copy is dead code, and is deleted. Supersedes §11.6 item 2.
+
+§11.6 recorded the copy at io_handlers.py:~3344 as a defect to correct. Measured
+since: in the export flow **it cannot be reached**, and the correct disposition
+is deletion rather than repair.
+
+The branch runs only when `pixel_array is None` **and** `ds.PixelData` exists.
+`_compress_j2k` has exactly two callers — `_finalize_dataset`
+(io_handlers.py:4275) and nothing else — and `_finalize_dataset` has exactly
+one, the export worker at io_handlers.py:3276, which always passes
+`pixel_array=arr`. When `ctx.compression` is set the worker never assigns
+`ds.PixelData` at all: the assignment at io_handlers.py:3116 sits under
+`if not ctx.compression`, and the comment at :3154-:3155 already says so in
+those words. The one path that reaches `_compress_j2k` with `arr is None` is
+the float branch, which has deleted (7fe0,0010) — so the guard above returns
+first. `tests/test_compress_handlers.py` calls `_compress_j2k(ds,
+pixel_array=...)` directly and always passes an array, so the branch has never
+executed in the suite either.
+
+It is a silent-corruption sibling, which is why it must not simply be left:
+reading bytes as `uint16` regardless of `PixelRepresentation` would compress
+signed data to wrong values without raising. Delete the reconstruct-from-bytes
+arm and keep the early return, so `pixel_array is None` means "nothing to
+compress" and nothing else. The file stays uncompressed and coherent, which is
+exactly what the float branch already relies on.
+
+#### §11.13.5 Dependency consequences
+
+**No new dependency.** `imagecodecs>=2023.9.18` is already in `setup.py`'s
+`install_requires`. `tests/test_packaging_contract.py` — the single-source rule
+— is satisfied as it stands.
+
+**The import is unguarded, at module scope**, beside the other unguarded
+imports in `io_handlers.py`. Not `try/except ImportError` like today's
+`from PIL import Image` (io_handlers.py:136-139) and not like
+`imagecodecs_handler.py`'s guarded import: a guarded import whose absence turns
+into `Compression failed` is the same shape as `_load_redaction_knowledge_base`
+returning `[]`, and this bunch is removing that shape, not adding one. The
+precedent in `setup.py`'s own comments is `python-dotenv` — "Imported unguarded
+by `isocenter/config_manager.py`" — a declared dependency imported plainly.
+Consequence for the CHANGELOG: `import isocenter` now fails on an installation
+missing `imagecodecs`, which is an installation `pip` cannot produce.
+
+**`publish.yml`** checks that the built wheel carries its own `resources/*.json`
+and can `ConfigLoader.load_phi_config()`. It does not exercise the export path,
+so it will not catch a codec problem; nothing there needs changing and no new
+release gate is proposed. Say that explicitly rather than leaving it unsaid.
+
+**Not `extras_require`.** An optional extra that degrades would mean a
+`pip install isocenter` whose compressed export silently stops working — the
+#388 silence, reintroduced one issue later in the same bunch.
+
+**The floor is unverified, and this is a numbered step, not a footnote.**
+Everything above was measured on imagecodecs **2026.8.16**; `setup.py` floors
+at **2023.9.18**, and signed-integer support, `codecformat="J2K"` and `level=0`
+exactness on that release are unknown. A floor that does not support signed
+`int16` ships #404 as fixed. **Step D1:** build a scratch venv on
+`imagecodecs==2023.9.18` and run `probe_404_codecs.py` against it. If it passes,
+record the number here and leave the floor alone. If it fails, raise the floor
+to the first release that passes and say so in the CHANGELOG — CLAUDE.md's rule
+for `setup.py` cuts that way ("a bound we cannot back with a passing matrix is
+a bound we should not widen"), and by the same logic a bound we cannot back is
+one we should not keep.
+
+#### §11.13.6 What a compressed export actually contains today
+
+Measured through the real export path on a `uint16` frame — a dtype that works
+today — by reading the encapsulated fragments of the written file
+(`probe_404_container.py`):
+
+```
+TransferSyntaxUID : 1.2.840.10008.1.2.4.90
+fragment count    : 2          (fragment 0 is the 4-byte basic offset table)
+codestream head   : 0000000c6a5020200d0a870a
+VERDICT           : JP2 box (a file format), not a bare codestream
+readback ok       : True
+```
+
+`Image.save(bio, format="JPEG2000")` with no filename wraps the codestream in a
+JP2 box; `no_jp2=True` produces the bare codestream, and imagecodecs'
+`codecformat="J2K"` produces `ff4f ff51`, the SOC marker. **Every compressed
+file Isocenter has ever exported carries a JP2 box under a transfer syntax that
+names a codestream.** Lenient decoders read it — pydicom does, through Pillow —
+which is why nothing noticed. The project already knows the distinction on the
+fixture side: #372's entry records its J2K fixtures being written `no_jp2=True`
+"since Pillow's default wraps them in a JP2 box".
+
+The fix changes this as a side effect, because `codecformat="J2K"` is the right
+argument for DICOM. That makes it **three things at once** — a conformance
+correction, a change to the bytes of every compressed export including the ones
+that work today, and a statement about what released versions wrote. All three
+are the owner's under the escalation rule, so this brief measures it and does
+not decide it. See §11.13.9, call 1.
+
+#### §11.13.7 The `conftest.py:257` blind spot
+
+Blast radius, measured: `dummy_pixel_array_2d` and `dummy_patient` are
+referenced **21 times across 5 test files** — `test_unified_config.py` (4),
+`test_session.py` (7), `test_services.py` (6), `test_io.py` (3),
+`test_recursive_import.py` (1) — not "the whole suite". That changes the
+disposition.
+
+**Recommendation: change the fixture's dtype to `int16` in the #404 commit, and
+make it the first red test.** It is one line, its reach is five files, and on
+unmodified code it turns every export test riding it red with
+`Compression failed` — the defect, stated as a test, for free. Doing it here
+rather than in its own issue also means the fix is proved by tests that already
+existed, not only by new ones written to pass.
+
+The decision rule for what comes back red, so this is not "see what breaks":
+a red that is a `Compression failed` on the export path **is** #404 and goes
+green with the fix. A red that is anything else is a test that was quietly
+depending on unsignedness — a value comparison, a hash, a byte count — and each
+needs its own look and its own line in the PR body. If more than a couple turn
+up, stop and file them rather than absorbing them here.
+
+Not recommended: parametrizing the fixture over signedness. It doubles five
+files' worth of tests to prove one thing, and that one thing is better proved
+by the dedicated `int16` cases in §11.13.8.
+
+#### §11.13.8 Change list and TDD test plan
+
+| File | Function | Change |
+| --- | --- | --- |
+| `isocenter/io_handlers.py` | module imports (`:136`-`:139`) | `import imagecodecs`, unguarded, at module scope; remove the guarded `from PIL import Image` once nothing else in this module uses it. |
+| `isocenter/io_handlers.py` | `_compress_j2k` (`:3325`) | new positive width/kind guard raising the §11.13.3 message **before** any encode; `bool` normalized with `astype(np.uint8)`; `encode_frame` becomes `imagecodecs.jpeg2k_encode(frame, level=0, codecformat="J2K")`; the reconstruct-from-bytes arm (`:3333`-`:3363`) deleted per §11.13.4, keeping the early return. |
+| `isocenter/io_handlers.py` | `_compress_j2k` docstring | it says "using Pillow"; it will not be. State the encoder, the accepted widths, and that `level=0` is lossless. |
+| `setup.py` | `install_requires` | **no change unless step D1 fails**, in which case raise the `imagecodecs` floor and carry the reason in the comment beside it, as the other pins do. |
+| `tests/conftest.py` | `dummy_pixel_array_2d` (`:257`) | `np.zeros((512, 512), dtype=np.int16)` per §11.13.7. |
+| `tests/test_compress_handlers.py` | whole file | it exercises `_compress_j2k` directly and is where the shape cases belong; check nothing in it asserts a Pillow-specific error string. |
+| `CHANGELOG.md` | 0.9.5 | §11.13.10. |
+
+New file `tests/test_signed_pixels_survive_a_compressed_export.py`, registered
+in `scripts/mutation_probe.py`'s `TARGETS` for `io_handlers.py` and in
+CLAUDE.md's module-to-tests table, or `tests/test_mutation_probe_targets.py`
+goes red. Every test names the single production edit that reddens it.
+
+- **P1 `test_a_signed_16_bit_study_exports_with_the_default_options`**. The
+  milestone test: ingest a CT-shaped `int16` frame, `save()`, `export(out)` with
+  **no** keyword arguments, then assert three things together — a file exists;
+  `dcmread(...).pixel_array` is bit-exact against a **literal** array and
+  `dtype == np.int16`; and, after `flush_audit_queue()`, the `EXPORT` row says
+  `wrote 1 of 1 planned instances` with no `ERROR` row for that UID. Today all
+  three fail. *Red when:* the encoder is reverted to `Image.fromarray`.
+- **P2 `test_the_written_file_declares_the_signedness_it_holds`**. Same export;
+  assert `ds.PixelRepresentation == 1`, `ds.BitsAllocated == 16`,
+  `ds.file_meta.TransferSyntaxUID == JPEG2000Lossless`. *Red when:* the
+  descriptors are written from anything but the array's dtype.
+- **P3 `test_every_supported_dtype_round_trips_through_the_compressed_path`**,
+  parametrized over `uint8, int8, uint16, int16, bool` from §11.13.3's table.
+  Compare to a literal per case, and assert the dtype, never
+  `got.dtype == src.dtype` of an array built in the same test. *Red when:* the
+  `bool` normalization is dropped (that arm alone), or the encoder is reverted
+  (all arms).
+- **P4 `test_a_32_bit_frame_is_refused_by_name_rather_than_written_wrong`**,
+  parametrized `uint32`/`int32`. Assert the export fails **and** that the
+  message names the dtype, `BitsAllocated`, `PixelRepresentation`, the encoder
+  and `use_compression=False`; then assert **no file reached disk**. *Red when:*
+  the width guard is removed — at which point the encode succeeds, a file is
+  written, and `wrote 1 of 1` appears beside a file `pixel_array` cannot
+  decode. This is the test that stops the fix from creating a new silence.
+- **P5 `test_a_64_bit_frame_is_refused_by_name`**. Same shape; the codec's own
+  `ValueError` must not be what the user sees. *Red when:* the guard is
+  narrowed to 32-bit only.
+- **P6 `test_float_pixel_data_still_exports_uncompressed_under_the_default`**.
+  A `float32` instance exported with defaults: assert a file exists, that it
+  carries (7fe0,0008) or (7fe0,0009) and no (7fe0,0010), and that the transfer
+  syntax is **not** JPEG 2000. *Red when:* the `hasattr(ds, "PixelData")` early
+  return is removed, or the deleted fallback is restored.
+- **P7 `test_a_multi_frame_signed_stack_survives`**. Three `int16` frames;
+  assert shape `(3, H, W)`, dtype, and values against a literal. *Red when:*
+  the per-frame loop is replaced by a single whole-array encode.
+- **P8 `test_an_rgb_frame_still_round_trips`**. `uint8` `(H, W, 3)`, one frame
+  and two: assert exact values **and** `PhotometricInterpretation == "RGB"` and
+  `PlanarConfiguration == 0`. The control against a colour regression from the
+  encoder swap. *Red when:* the encoder is given the frame with its axes
+  reordered.
+- **P9 `test_the_encapsulated_fragment_is_a_codestream_not_a_jp2_box`**. Read
+  the fragments of a written file and assert the payload starts `ff4f`. *Red
+  when:* `codecformat="J2K"` is dropped. **Hold this test until the owner has
+  answered §11.13.9 call 1** — it pins a behaviour change the owner may want
+  scoped differently.
+- **P10 `test_compress_j2k_without_an_array_writes_nothing_and_raises_nothing`**.
+  Call `_compress_j2k(ds, pixel_array=None)` on a dataset carrying `PixelData`
+  and assert the transfer syntax is unchanged and `PixelData` is untouched —
+  the characterization pin for §11.13.4's deletion. Docstring says it is a
+  characterization test, as `tests/test_compaction_races_a_concurrent_write.py:357`
+  does. *Red when:* the reconstruct-from-bytes arm is restored.
+
+Regression watch: `tests/test_compress_handlers.py`,
+`tests/test_compress_j2k_coverage.py`, `tests/test_export_pixels.py`,
+`tests/test_export_readback.py`, `tests/test_float_pixel_data_export.py`,
+`tests/test_redaction_rgb.py`, `tests/test_planar_configuration_roundtrip.py`,
+`tests/test_colour_space_at_ingest.py`, `tests/test_nested_pixel_carriage.py`,
+plus the five files §11.13.7 names.
+
+#### §11.13.9 Owner calls raised by #404
+
+1. **The JP2 box (§11.13.6).** Every compressed file Isocenter has exported
+   carries a JP2 box under `1.2.840.10008.1.2.4.90`, which names a codestream.
+   The fix produces a bare codestream instead. Should the CHANGELOG name that
+   as a conformance fix in its own right — a claim about what released versions
+   wrote — or should the exporter keep writing the JP2 wrapping for
+   compatibility with whatever has been reading Isocenter's output? Downstream
+   readers are a fact I cannot measure, so this brief does not choose. P9 is
+   held until you answer.
+2. **Refuse or fall back, for 32/64-bit.** The design refuses, which keeps
+   `use_compression=True` meaning what it means and keeps the same exception
+   and the same `wrote 0 of N`. The alternative is to write the file
+   uncompressed and file an audit row saying the codec could not carry that
+   width — louder in the useful direction, and not silent, but it changes what
+   a frozen option does. Your call, not mine.
+
+#### §11.13.10 CHANGELOG shape for #404
+
+A **breaking-adjacent** entry — no signature changes, but a previously failing
+call now succeeds and a previously succeeding one now raises a different
+message. Open on the corrected diagnosis, not the width the issue was found
+through: *"Signed pixel data could not be exported at all. `session.export()`
+compresses by default, and the JPEG 2000 encoder it used accepted exactly
+`uint8` and `uint16`, so every CT and MR study — `int16`,
+`PixelRepresentation 1` — failed with `Compression failed: broken data stream
+when writing image file`, `wrote 0 of 1`, and nothing on disk (#404)."*
+
+Carry: that the axis is **signedness, not width**, with the measured Pillow
+table; that the shared test fixture was `uint16`, one of the exactly two dtypes
+that worked, which is why the suite was green; that the encoder is now
+`imagecodecs`, **already an `install_requires` dependency and already used for
+decoding**, imported unguarded, so `import isocenter` now fails on an install
+missing it; the supported matrix and the **exact exception** for what is not —
+the `RuntimeError` naming dtype, `BitsAllocated`, `PixelRepresentation`, the
+encoder and `use_compression=False`; that 32-bit is refused **because the codec
+encodes it silently wrong above 25 bits and the resulting file cannot be
+decoded at all**, so a permissive version of this fix would have replaced a
+loud failure with `wrote 1 of 1` beside an unreadable file; that
+`_compress_j2k`'s reconstruct-from-bytes branch is deleted as unreachable
+rather than corrected, with the reachability argument; that float pixel data is
+unaffected and still exports uncompressed per PS3.5 8.2; and — if the owner
+rules that way on call 1 — that the encapsulated payload is now a bare
+codestream where it was a JP2 box. Reference §11.6's P1 as the step that found
+it, and do not rewrite §11.6.
+
+#### §11.13.11 What the reviewer should attack, added to §6
+
+16. **The width guard is the whole safety of this fix.** Delete it and the
+    suite must go red on P4; if it does not, P4 is decoration. Check that P4
+    asserts *no file on disk*, not merely that something raised.
+17. **`level=0` is assumed to mean lossless.** It is measured exact on
+    full-range `int16` and identical to `reversible=True`, but that is a
+    property of one imagecodecs release. Step D1 is the floor check; ask
+    whether it was actually run and what number came back.
+18. **The bool arm writes `uint8`.** Confirm the uncompressed path writes the
+    same bytes for the same array, or the two export paths disagree for one
+    dtype.
+19. **`_verify_readback` cannot catch this family.** `_READBACK_DESCRIPTORS`
+    is `("Rows", "Columns", "SamplesPerPixel", "NumberOfFrames",
+    "BitsAllocated")` — no `PixelRepresentation` — and it never decodes pixels,
+    so `verify_readback=True` passes on a file whose codestream is wrong.
+    Naming it here; widening it is not this bunch's work.
+20. **The conftest flip is a test-quality change with a blast radius.** Every
+    red it produces must be explained in the PR body, not absorbed.
+
+---
+
 *End of amendments. Nothing above §11 was rewritten; the struck clauses and
 their markers are the whole of the change to the dated text.*
-
 ## §12 Implementation addendum — step P1, measured
+
+**Superseded in part: §12.4's disposition, by §11.13.** This section was
+written when P1's escalation was still open; the owner then ruled neither
+of §11.6 arm 3's options but "fix it properly, at the encoder", the
+architect designed that as §11.13, and #404 is implemented in this same
+bunch. §12.4's "left exactly as it was in this bunch" is therefore no
+longer true and is struck below; §12.1-§12.3 and §12.5 stand as measured.
 
 Added by the TDD developer during implementation, on 2026-09-09, because
 §11.6 requires one of its three arms to be written into this file with its
@@ -1360,15 +1871,22 @@ caught it because `tests/conftest.py:257`'s shared pixel fixture is
 `np.zeros((512, 512), dtype=np.uint16)`, one of the exactly two dtypes
 that work.
 
-### §12.4 What was done about it
+### §12.4 What was done about it — *superseded by §11.13*
 
 Escalated rather than decided. **Owner ruling: neither of §11.6 arm 3's
 two options — fix it properly, at the encoder, as its own issue.** The
-measurement is now **#404**, on the v0.9.5 milestone, and goes back
-through the architect because the encoder fix is a design call with a
-probable dependency change. `_compress_j2k`'s error path is therefore left
-exactly as it was in this bunch: an informative refusal written here would
-be written and then deleted by #404's fix.
+measurement is now **#404**, on the v0.9.5 milestone.
+
+~~and goes back through the architect because the encoder fix is a design
+call with a probable dependency change. `_compress_j2k`'s error path is
+therefore left exactly as it was in this bunch: an informative refusal
+written here would be written and then deleted by #404's fix.~~
+**[Superseded by §11.13: the architect's design landed inside this bunch
+and #404 is implemented in this PR. The encoder is `imagecodecs` — already
+in `install_requires` and already driving the decode side, so not a new
+dependency. §11.6's informative refusal survives, narrowed to 32- and
+64-bit, which is the one width range that stays unsupported. The error
+path is therefore rewritten here after all.]**
 
 The fall-back-to-uncompressed-and-file-a-row option was **not** taken, and
 the owner did not take it either: a `DATA_LOSS` row for a fallback that
