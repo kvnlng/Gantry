@@ -52,8 +52,15 @@ def test_validation_logic(tmp_path):
         ConfigLoader.load_redaction_rules(str(p))
 
 def test_phi_config_default():
-    # Calling with None should attempt to load default.
-    # We can't easily assert content unless we know it, but it shouldn't crash.
+    # The positive control for #388, and kept as-is on purpose. In a
+    # correct checkout the shipped `phi_tags.json` is present, parseable,
+    # and returns a mapping; without this assertion,
+    # `tests/test_shipped_resource_is_required.py`'s negative test proves
+    # only that *something* raises. Converting this one to
+    # `pytest.raises` would assert the same refusal in two files, which is
+    # the duplicate spelling this project deletes on sight -- the refusal
+    # when the resource is absent is that file's
+    # `test_a_missing_phi_tag_policy_refuses_instead_of_auditing_against_nothing`.
     tags = ConfigLoader.load_phi_config(None)
     assert isinstance(tags, dict)
 

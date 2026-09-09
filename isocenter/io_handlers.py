@@ -1257,9 +1257,9 @@ def process_sequence(tag, elem, parent_item, dropped: list = None,
     absent from the export with `losses == []` and an `EXPORT` row reading
     `wrote 1 of 1 planned instances` (#392). The call is unconditional
     rather than guarded by `if not len(elem)`: one statement covers both
-    cases and cannot go stale. `_merge_sequences` already writes
-    `ds.add_new(tag, 'SQ', Sequence())` for an empty one, so nothing is
-    lost and no `DATA_LOSS` row is filed.
+    cases and cannot go stale. `_merge_sequences` already writes a
+    zero-item `SQ` element for an empty one, so nothing is lost and no
+    `DATA_LOSS` row is filed.
     """
     parent_item.add_sequence(tag)
     for index, ds_item in enumerate(elem):

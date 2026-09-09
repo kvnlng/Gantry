@@ -1287,3 +1287,124 @@ that sentence stops being true and the 3.14.7t rig comes back.
 
 *End of amendments. Nothing above §11 was rewritten; the struck clauses and
 their markers are the whole of the change to the dated text.*
+
+## §12 Implementation addendum — step P1, measured
+
+Added by the TDD developer during implementation, on 2026-09-09, because
+§11.6 requires one of its three arms to be written into this file with its
+numbers before the bunch is called done. Nothing above is rewritten.
+Reproduce with
+`docs/superpowers/specs/2026-09-09-the-last-silences-bunch-a/probe_386_p1_compressed.py`,
+committed beside the six of §11.7.
+
+### §12.1 The rig changed mid-implementation
+
+The project `.venv` was rebuilt to **3.12.14 — the CI floor** — while this
+bunch was in progress, so §11.12's 3.14.7 workaround is superseded for
+anyone reading this later. Every number below was taken on 3.12.14,
+numpy 2.5.3, pydicom 3.0.2, Pillow 12.3.0, with the worktree ahead of the
+editable install on `PYTHONPATH` and `isocenter.__file__` printed and read
+each time. The suite baseline on that interpreter is **1685 passed,
+1 skipped**; the one skip is `test_discovery_integration.py::
+TestDiscoveryIntegration::test_proper_noun_merging` (spacy absent).
+
+### §12.2 The four cells
+
+One 4x4 frame per row, ingest to `save()` to `close()` to reopen to
+`export()`, with the `_INTEGER_DTYPE_BY_BITS` table in place so the frames
+load at all:
+
+| dtype | pixrep | `use_compression` | files | file BitsAllocated / PixelRepresentation | `pixel_array` | `written` | audit |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| uint32 | 0 | **False** | 1 | 32 / 0 | `uint32`, values exact | 1 | `EXPORT ... wrote 1 of 1 planned instances` |
+| int32 | 1 | **False** | 1 | 32 / 1 | `int32`, values exact | 1 | `EXPORT ... wrote 1 of 1 planned instances` |
+| uint32 | 0 | **True** (the default) | **0** | — | — | **0**, `ExportError` raised | `ERROR ... Compression failed: broken data stream when writing image file` + `EXPORT ... wrote 0 of 1` |
+| int32 | 1 | **True** (the default) | **0** | — | — | **0**, `ExportError` raised | same |
+
+Read after `flush_audit_queue()`, so "no row" and "row not yet written"
+are distinguishable.
+
+**Verdict: arm 3.** The export refuses, and refuses *loudly* about
+whether — `written_uids == []`, an `ExportError` raised, nothing on disk —
+but the accounting does not say *why*: the `ERROR` row carries Pillow's
+own sentence and names neither the dtype nor the width. The uncompressed
+path is entirely correct for both, which is the second half of the
+finding: nothing is wrong with the pixels or the descriptors.
+
+### §12.3 The population is wider than §11.6 assumed, and the axis is not width
+
+Measured directly against Pillow 12.3.0's JPEG 2000 encoder:
+
+| array | `Image.fromarray` mode | `save(format='JPEG2000', compression='lossless')` |
+| --- | --- | --- |
+| uint8 (H,W) | `L` | OK |
+| uint16 (H,W) | `I;16` | OK |
+| uint8 (H,W,3) / (H,W,4) | `RGB` / `RGBA` | OK |
+| **int8, int16, int32, uint32** | `I` | **OSError: broken data stream when writing image file** |
+| float32 | `F` | same |
+| bool | `1` | same |
+| uint16 (H,W,3) / (H,W,4) | — | `TypeError: Cannot handle this data type` at `fromarray` |
+| uint64, int64 | — | `TypeError: Cannot handle this data type` at `fromarray` |
+
+So **signedness is the axis, not width**, and `int16` is CT and MR: a
+plain `session.export(folder)` — compression is the default — fails
+outright for the most ordinary medical dtype there is, writing nothing.
+Confirmed end to end: `int16` and `int8` raise `ExportError` while
+`uint16` and `uint8` write correct J2K files.
+
+**This is pre-existing, not introduced here.** The identical probe run
+against the main checkout at `c925829`, unmodified, gives identical
+results. The loader is correct — it honours `pixel_representation == 1`
+and returns `int16` — and the frame dies at the encoder. The suite never
+caught it because `tests/conftest.py:257`'s shared pixel fixture is
+`np.zeros((512, 512), dtype=np.uint16)`, one of the exactly two dtypes
+that work.
+
+### §12.4 What was done about it
+
+Escalated rather than decided. **Owner ruling: neither of §11.6 arm 3's
+two options — fix it properly, at the encoder, as its own issue.** The
+measurement is now **#404**, on the v0.9.5 milestone, and goes back
+through the architect because the encoder fix is a design call with a
+probable dependency change. `_compress_j2k`'s error path is therefore left
+exactly as it was in this bunch: an informative refusal written here would
+be written and then deleted by #404's fix.
+
+The fall-back-to-uncompressed-and-file-a-row option was **not** taken, and
+the owner did not take it either: a `DATA_LOSS` row for a fallback that
+loses nothing would be exactly the kind of false statement this milestone
+exists to remove.
+
+Two consequences handled inside this bunch regardless, because both are
+about work this PR does rather than about #404:
+
+1. **`_compress_j2k` views a bool frame as `uint8` before encoding.** The
+   `bool` carrier of D2 would otherwise have been a regression: while a
+   mask reloaded as `uint8` the default export worked, and the moment it
+   began reloading as `bool` it reached `Image.fromarray` as mode `1`.
+2. **§1.5 T6 exports with `use_compression=False`**, with a comment citing
+   this section and #404. On the default path it would be red for a reason
+   with nothing to do with recording signedness, and the choice stays
+   correct after #404 lands.
+
+### §12.5 Two corrections to the brief, found by implementing it
+
+- **§2.5 T6's second arm is wrong as written.** It asks for "a second arm
+  asserting a session cannot `audit()` on that install". Measured:
+  `session.audit()` passes `config_tags=self.configuration.phi_tags` to
+  `PhiInspector`, and `{}` is not `None`, so `__init__` takes its first
+  branch and `load_phi_config()` is never reached. A bare session already
+  audits against an empty policy and says so with its own
+  `"PHI Scan Warning: No PHI tags defined"` — a different question, and
+  not a silence. The test instead asserts the two paths that do reach the
+  loader: `PhiInspector()` with no policy (`privacy.py:161`), and
+  `create_config()` through `_scaffold_phi_tags`, which is also the arm
+  that proves the `except (OSError, ValueError)` handlers do not swallow a
+  `RuntimeError`.
+- **§11.5 phrases byte-order normalization before the accept check;
+  implemented the other way round.** The check is O(1) on `dtype` and
+  `astype(dtype.newbyteorder('='))` copies the whole frame, so normalizing
+  first would fully copy a large `complex64` array immediately before
+  rejecting it. The behaviour is identical for everything accepted.
+
+*End of implementation addendum.*

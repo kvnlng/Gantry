@@ -181,7 +181,8 @@ def _ingest_save_reopen(tmp_path, write, prefix):
     finally:
         session.close()
 
-    return DicomSession(persistence_file=db), db
+    reopened = DicomSession(persistence_file=db)
+    return reopened, db
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +298,8 @@ def _ingest_set_save_reopen(tmp_path, array, prefix, source_dtype="uint8",
     finally:
         session.close()
 
-    return DicomSession(persistence_file=db), db, after
+    reopened = DicomSession(persistence_file=db)
+    return reopened, db, after
 
 
 # ---------------------------------------------------------------------------

@@ -20,8 +20,86 @@ from .profiles import PRIVACY_PROFILES
 
 CONFIG_VERSION = "2.0"
 
+#: Where this package's own shipped resources live.
+#:
+#: Hoisted out of `load_phi_config`'s body in #388. Computed inline there,
+#: there was nothing for a test to monkeypatch, so a test of the
+#: missing-resource arm either passed against the real source tree -- the
+#: correct-by-accident shape -- or was written against the `filepath`
+#: argument instead, which exercises the *user-config* branch and never
+#: enters the arm under test. `session.py` has had its own `RESOURCES_DIR`
+#: all along; this is the same constant for the same reason.
+RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "resources")
+
 # Load environment variables
 load_dotenv()
+
+
+def require_package_resource(directory: str, basename: str,
+                             consequence: str) -> str:
+    """The path to a resource this package ships, or a refusal.
+
+    Three loaders returned an empty collection when a shipped file was
+    absent, with no log line and no audit row: the run then scanned every
+    frame with no redaction rules, or audited against an empty PHI tag
+    list, and reported clean (#388).
+
+    **A refusal rather than a warning**, on #400's reasoning: a warning in
+    front of a run that then succeeds is a line nobody reads, and there is
+    nothing to *annotate*, because a missing shipped resource is never a
+    correct state. The degrade-gracefully rule is about the optional
+    extras (`ocr`, `nlp`, `docs`); a shipped package resource is the
+    opposite kind of thing -- `setup.py`'s `package_data` promises it and
+    `publish.yml` refuses to release a wheel without it, so this is the
+    runtime half of a promise CI already makes. No audit row is written
+    either, for the same reason.
+
+    **`RuntimeError`, and deliberately not `FileNotFoundError`.**
+    `ConfigLoader._load_yaml` already raises that for a *user's* config
+    file, which is a different failure with a different remedy, and a
+    caller writing `except FileNotFoundError` around `load_config` would
+    silently swallow "your install is broken". The sharper reason is that
+    the callers' own handlers are `except (OSError, ...)` and
+    `FileNotFoundError` **is** an `OSError`: a refusal of that type, if it
+    ever drifted inside one of those `try` blocks, would be caught and
+    turned straight back into the empty collection this function exists to
+    replace. Call it **before** the `try`.
+
+    `directory` is a parameter rather than a module global read in here.
+    Both callers' `RESOURCES_DIR` is what tests monkeypatch, and a helper
+    that closed over its own copy would make every such test pass against
+    the real source tree.
+
+    `consequence` is the caller's own words for what continuing would have
+    done. A generic sentence would be the same failure as a generic loss
+    row: accurate, not generic, is the standard this applies to refusals
+    as much as to anything else.
+
+    Args:
+        directory (str): the resources directory to look in.
+        basename (str): the file's name, passed as a bare literal by every
+            caller so `test_every_shipped_resource_is_named_by_the_package`
+            can still see it in the AST.
+        consequence (str): what a silent continue would have done, e.g.
+            "audited against an empty PHI tag list".
+
+    Returns:
+        str: the resolved path, which exists.
+
+    Raises:
+        RuntimeError: if the resource is not there.
+    """
+    path = os.path.join(directory, basename)
+    if not os.path.exists(path):
+        raise RuntimeError(
+            f"Isocenter's shipped resource {basename} is missing from this "
+            f"installation (looked in {path}). setup.py packages it and "
+            f"publish.yml refuses to release a wheel without it, so its "
+            f"absence is a broken install rather than a configuration "
+            f"choice -- reinstall isocenter. Continuing would have "
+            f"{consequence}, and reported a clean run.")
+    return path
 
 
 def get_logger() -> logging.Logger:
@@ -204,16 +282,19 @@ class ConfigLoader:
                 return data["phi_tags"]
             return data.get("phi_tags", data)  # Fallback to assumes root dict is tags if no key
         else:
-            # Load default from package resources
-            base = os.path.dirname(os.path.abspath(__file__))
-            filepath = os.path.join(base, "resources", "phi_tags.json")
-            if os.path.exists(filepath):
-                # Read with json, not the YAML helper: user-facing config
-                # files are YAML-only by design, but this is a shipped
-                # package resource and stays JSON.
-                with open(filepath, 'r', encoding="utf-8") as f:
-                    return json.load(f).get("phi_tags", {})
-            return {}
+            # Load default from package resources. The refusal replaces a
+            # `return {}` that made `audit()` report success on data full
+            # of PHI -- `publish.yml`'s own words for the same failure
+            # (#388), so the release gate and the runtime now say the same
+            # thing about the same file.
+            filepath = require_package_resource(
+                RESOURCES_DIR, "phi_tags.json",
+                "audited against an empty PHI tag list")
+            # Read with json, not the YAML helper: user-facing config
+            # files are YAML-only by design, but this is a shipped
+            # package resource and stays JSON.
+            with open(filepath, 'r', encoding="utf-8") as f:
+                return json.load(f).get("phi_tags", {})
 
     @staticmethod
     def clean_filename(filename: str) -> str:
