@@ -676,3 +676,140 @@ def test_the_j2k_reconstruction_branch_honours_pixel_representation():
     assert seen['dtype'] == np.dtype("int16"), (
         "the reconstruction branch rebuilt a signed frame as unsigned")
     assert seen['values'] == SIGNED_ROWS
+
+
+# ---------------------------------------------------------------------------
+# The dtypes the sidecar cannot honestly carry
+# ---------------------------------------------------------------------------
+
+def _exotic_dtypes():
+    """The refused population, built rather than listed where numpy varies."""
+    cases = [
+        ("complex64", np.zeros((4, 4), dtype="complex64")),
+        ("complex128", np.zeros((4, 4), dtype="complex128")),
+        ("object", np.zeros((4, 4), dtype=object)),
+        ("str", np.array([["a", "b"], ["c", "d"]])),
+        ("structured", np.zeros((4, 4), dtype=[("x", "u1"), ("y", "u1")])),
+        ("datetime64", np.zeros((4, 4), dtype="datetime64[s]")),
+    ]
+    if hasattr(np, "float128"):
+        cases.append(("float128", np.zeros((4, 4), dtype=np.float128)))
+    return cases
+
+
+@pytest.mark.parametrize("label,array", _exotic_dtypes(),
+                         ids=[label for label, _ in _exotic_dtypes()])
+def test_set_pixel_data_refuses_a_dtype_the_sidecar_cannot_carry(label, array):
+    """`ValueError`, at the call, naming the dtype and the accepted set.
+
+    `set_pixel_data` accepted anything with a `.dtype`. A `complex64`
+    array recorded no carrier, declared `BitsAllocated 128` and reloaded
+    through the loader's fallback as `uint16` -- silently, and with the
+    values wrong. The guard states the accepted set **positively**, so a
+    numpy release that adds a kind is refused by default rather than
+    admitted by omission; `float128` is the worked example, since it is
+    kind `'f'` and the positive rule catches it with no special case.
+
+    Red when the guard is removed.
+    """
+    from isocenter.entities import Instance
+
+    instance = Instance(sop_instance_uid="1.2.386.refuse")
+    with pytest.raises(ValueError) as excinfo:
+        instance.set_pixel_data(array)
+
+    message = str(excinfo.value)
+    assert array.dtype.name in message, (
+        f"the refusal does not name the dtype it refused: {message}")
+    # The accepted set, stated: three anchors rather than one word, so a
+    # message that merely contains "dtype" cannot satisfy this.
+    for anchor in ("float32", "bool", "PixelRepresentation"):
+        assert anchor in message, (
+            f"the refusal does not state the accepted set ({anchor!r} "
+            f"missing): {message}")
+
+
+def test_a_refused_dtype_leaves_the_instance_exactly_as_it_was(tmp_path):
+    """Validate first, as a fact rather than a comment.
+
+    `set_pixel_data` assigns `self.pixel_array` as its *first* statement
+    and writes several descriptors after it, so a `ValueError` raised
+    part-way leaves an instance describing an array it does not hold -- a
+    new silence inside the fix.
+
+    **The load-bearing assertion is that `get_pixel_data()` still returns
+    the original `int16` frame.** The attributes comparison catches a
+    guard moved below the first `_write_int_if_changed`; only the frame
+    assertion catches one moved below `self.pixel_array = array`, which is
+    the worse of the two and leaves every descriptor untouched.
+    """
+    from isocenter.entities import Instance
+
+    instance = Instance(sop_instance_uid="1.2.386.intact")
+    good = np.array(SIGNED_ROWS, dtype="int16")
+    instance.set_pixel_data(good)
+
+    before_attributes = dict(instance.attributes)
+    before_revision = instance._revision
+    assert before_attributes["0028,0100"] == 16
+    assert before_attributes["0028,0103"] == 1
+    assert PIXEL_DTYPE_ATTR not in before_attributes
+
+    with pytest.raises(ValueError):
+        instance.set_pixel_data(np.zeros((4, 4), dtype="complex64"))
+
+    assert instance.attributes == before_attributes, (
+        "a refused array left descriptors behind: the instance now "
+        "describes an array it never took")
+    assert instance._revision == before_revision, (
+        "a refused array advanced the revision, so the next save would "
+        "rewrite a row for a change that did not happen")
+    got = instance.get_pixel_data()
+    assert got.dtype == np.dtype("int16")
+    assert got.tolist() == SIGNED_ROWS
+
+
+def test_a_big_endian_array_is_normalized_not_refused(tmp_path):
+    """Byte order is the round-trippable case, and is normalized.
+
+    A big-endian `>i2` is kind `'i'` and itemsize 2, so it passes every
+    clause of the accept rule -- yet the sidecar stores raw bytes and the
+    loader reads them with a native-order dtype, so before this it
+    reloaded byte-swapped. Refusing it would reject an array that is
+    exactly representable and merely spelled unusually.
+
+    The reload is compared against a **literal**, never against a `>i2`
+    array built in the same test: that comparison is true even when both
+    sides are wrong. Red when the normalization is deleted, and red when
+    the accept rule is tightened to refuse non-native order.
+    """
+    big = np.array(SIGNED_ROWS, dtype=">i2")
+    assert big.dtype.byteorder in ('>',), "fixture is not actually big-endian"
+
+    session, _db, after = _ingest_set_save_reopen(tmp_path, big, "bigend")
+    try:
+        got = _only_instance(session).get_pixel_data()
+    finally:
+        session.close()
+
+    assert after["0028,0103"] == 1
+    assert after["0028,0100"] == 16
+    assert got.tolist() == SIGNED_ROWS
+
+
+def test_a_big_endian_and_a_little_endian_array_store_identical_bytes():
+    """What "normalized" means, said in bytes.
+
+    `>i2` and `<i2` describe the same numbers; after normalization they
+    produce the same frame, which is what a caller means by handing over
+    either.
+    """
+    from isocenter.entities import Instance
+
+    big, little = Instance("1.2.386.be"), Instance("1.2.386.le")
+    big.set_pixel_data(np.array(SIGNED_ROWS, dtype=">i2"))
+    little.set_pixel_data(np.array(SIGNED_ROWS, dtype="<i2"))
+
+    assert big.pixel_array.tobytes() == little.pixel_array.tobytes()
+    assert big.pixel_array.dtype.byteorder in ('=', '|')
+    assert big.attributes["0028,0103"] == little.attributes["0028,0103"] == 1

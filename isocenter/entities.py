@@ -1059,6 +1059,69 @@ class Instance(DicomItem):
         self.set_attr(tag, value)
         return True
 
+    @staticmethod
+    def _accepted_pixel_array(array: np.ndarray) -> np.ndarray:
+        """The array as the sidecar will hold it, or a `ValueError`.
+
+        **The accepted set is stated positively, never as a blacklist.**
+        A deny-list has to be complete to be safe and is wrong the moment
+        numpy adds a kind -- silently, in the direction that stores a
+        frame nothing can decode. Stated this way, a new kind is refused
+        by default rather than admitted by omission, which is why
+        `float128` needs no clause of its own: it is kind `'f'` and
+        simply absent from `SIDECAR_DTYPE_NAMES`.
+
+        The three clauses are the three channels the sidecar decodes by,
+        and each is exactly as wide as its channel:
+
+        - `'u'`/`'i'` at 1, 2, 4 or 8 bytes -- the domain of
+          `_INTEGER_DTYPE_BY_BITS`, so the accept rule and the reload
+          table are one statement rather than two that can drift apart.
+        - `'b'` -- carried by name in the dtype carrier.
+        - `'f'` whose name is in `SIDECAR_DTYPE_NAMES` -- likewise.
+
+        Everything else round-tripped wrongly and nothing refused it:
+        `complex64` recorded no carrier, declared `BitsAllocated 128` and
+        reloaded through the loader's fallback as `uint16`, silently
+        (#386).
+
+        **Byte order is normalised rather than refused.** A big-endian
+        `>i2` is kind `'i'` at 2 bytes and passes every clause -- but the
+        sidecar stores raw bytes and the loader reads them with a
+        native-order dtype, so it reloaded byte-swapped. Refusing an
+        array that is exactly representable and merely spelled unusually
+        would be the wrong answer; `>i2` and `<i2` now produce
+        byte-identical frames, which is what a caller means by handing
+        over either. Note that the normalised array is a **copy**, so a
+        caller who mutates a big-endian array in place after this call no
+        longer reaches the frame the instance holds -- the one place
+        where "callers mutate arrays in place" stops being true.
+        """
+        dtype = array.dtype
+        accepted = (
+            (dtype.kind in ('u', 'i') and dtype.itemsize in (1, 2, 4, 8))
+            or dtype.kind == 'b'
+            or (dtype.kind == 'f' and dtype.name in SIDECAR_DTYPE_NAMES))
+        if not accepted:
+            raise ValueError(
+                f"set_pixel_data() cannot take a {dtype.name} array: the "
+                f"sidecar stores raw bytes and decodes them from "
+                f"BitsAllocated, PixelRepresentation and the dtype carrier, "
+                f"which between them name unsigned and signed integers of 1, "
+                f"2, 4 or 8 bytes, bool, and float16/float32/float64 -- and "
+                f"nothing else. Accepting this array would have stored bytes "
+                f"no reload could name, and handed back a different array "
+                f"than the one given. Convert to one of those dtypes first, "
+                f"deliberately, so the conversion is yours rather than this "
+                f"library's.")
+
+        # Byte order last, and only for what passed: `astype` copies the
+        # whole frame, so normalising first would copy a large refused
+        # array before rejecting it.
+        if dtype.byteorder not in ('=', '|'):
+            array = array.astype(dtype.newbyteorder('='))
+        return array
+
     def set_pixel_data(self, array: np.ndarray):
         """
         Sets the pixel array and updates the descriptors that describe it.
@@ -1099,12 +1162,23 @@ class Instance(DicomItem):
             array (np.ndarray): The pixel data to set. Can be 1D, 2D, 3D, or 4D.
 
         Raises:
+            ValueError: If `array.dtype` is one the sidecar cannot
+                round-trip. The accepted set is unsigned and signed
+                integers of 1, 2, 4 or 8 bytes, `bool`, and
+                `float16`/`float32`/`float64`; `complex64`, `object`,
+                strings, structured and void dtypes, datetimes and
+                `float128` are refused. Byte order is **normalised, not
+                refused**, so a big-endian array is accepted and stored
+                native-order. This check runs before any mutation, so a
+                caught `ValueError` leaves the instance exactly as it was.
             ValueError: If the instance declares a SamplesPerPixel that no
                 axis of `array` can carry, or if the rank is unsupported.
                 The two statements cannot both be right and neither
                 trusting the attributes (descriptors that do not describe
                 the bytes) nor trusting the array (this is how #186
-                happened) is honest.
+                happened) is honest. **This one raises after
+                `self.pixel_array` has been assigned** -- pre-existing,
+                and not what the dtype guard above is about.
 
         Note that this does **not** clear `_pixel_loader`. #293 weighed
         clearing it as a cheaper fix and rejected it: the loader is what
@@ -1114,6 +1188,23 @@ class Instance(DicomItem):
         Instead the divergence is recorded, and `unload_pixel_data()`
         refuses until it is written.
         """
+        # **Before any mutation, and that is the whole of it.** The
+        # assignment below is this method's first side effect and the
+        # descriptor writes follow it, so a refusal raised part-way would
+        # leave an instance describing an array it does not hold -- a new
+        # silence inside the fix that closes one.
+        # `tests/test_pixel_dtype_roundtrip.py::
+        # test_a_refused_dtype_leaves_the_instance_exactly_as_it_was`
+        # asserts it on the frame as well as on the attributes, because
+        # only the frame assertion catches a guard moved below this line.
+        #
+        # The dtype check runs before the byte-order normalisation
+        # deliberately, even though the normalisation reads as the
+        # earlier step: the check is O(1) on `dtype`, and `astype` copies
+        # the whole frame -- normalising first would fully copy a large
+        # `complex64` array immediately before rejecting it.
+        array = self._accepted_pixel_array(array)
+
         self.pixel_array = array
         # The resident array no longer matches anything on disk or in the
         # sidecar, and `_pixel_loader` is deliberately left pointing at
