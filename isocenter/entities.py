@@ -1082,6 +1082,11 @@ class Instance(DicomItem):
               outright contradiction -- YBR_FULL and MONOCHROME1 survive
             - PlanarConfiguration (0028,0006), only when colour and undeclared
             - BitsAllocated (0028,0100), from the array's itemsize
+            - PixelRepresentation (0028,0103), from the array's dtype kind:
+              1 for signed integers, 0 for unsigned and bool. Left alone
+              for a float array, because PS3.5 Section 8.2 forbids it
+              beside a float pixel element and the export deletes it
+              there.
 
         A genuinely ambiguous shape is **accepted** with a WARNING rather
         than refused, because a hand-built graph has to be able to take
@@ -1222,6 +1227,37 @@ class Instance(DicomItem):
             get_logger().debug(
                 "BitsAllocated for %s corrected from %s to %d by a %s pixel "
                 "array.", self.sop_instance_uid, previous, bits, array.dtype)
+
+        # PixelRepresentation, on exactly the argument the BitsAllocated
+        # block above already makes. The width was derived from the array
+        # and the signedness was not, so `set_pixel_data(int16_array)`
+        # recorded a 16 and nothing at all about the sign: the sidecar
+        # reloaded the frame as `uint16` and `-8` came back as `65528`,
+        # and `_export_instance_worker`'s
+        # `ds.PixelRepresentation = inst.attributes.get("0028,0103", 0)`
+        # wrote a file declaring an unsigned frame beside signed bytes --
+        # with `wrote 1 of 1 planned instances` in the audit log beside
+        # it (#386). The export writes `arr.tobytes()`, so a
+        # PixelRepresentation disagreeing with the array cannot be
+        # honoured; "the attributes win" is not one of the options here
+        # either.
+        #
+        # **Floats are deliberately excluded**, and left alone rather
+        # than popped. PS3.5 Section 8.2 says Bits Stored, High Bit and
+        # Pixel Representation *shall not be present* beside a float
+        # pixel element, and the export's float arm already deletes all
+        # three -- so writing a 0 here would be a write the export
+        # immediately undoes, and the carrier (not this descriptor) is
+        # what decodes a float frame on the way back in.
+        if array.dtype.kind in ('i', 'u', 'b'):
+            representation = 1 if array.dtype.kind == 'i' else 0
+            previous = declared_int(self.attributes, "0028,0103")
+            if (self._write_int_if_changed("0028,0103", representation)
+                    and previous is not None):
+                get_logger().debug(
+                    "PixelRepresentation for %s corrected from %s to %d by a "
+                    "%s pixel array.", self.sop_instance_uid, previous,
+                    representation, array.dtype)
 
         # Unconditional, and separate from the conditional descriptor writes
         # above. The array's *contents* are part of what the store holds, and

@@ -161,7 +161,7 @@ def _read_only_written(out):
 def _audit_rows(db_path):
     with sqlite3.connect(db_path) as conn:
         return conn.execute(
-            "SELECT action_type, status, details FROM audit_log").fetchall()
+            "SELECT action_type, entity_uid, details FROM audit_log").fetchall()
 
 
 def _ingest_save_reopen(tmp_path, write, prefix):
@@ -271,3 +271,211 @@ def test_a_one_bit_frame_still_reloads_as_uint8(tmp_path):
     assert got.dtype == np.dtype("uint8")
     assert got.shape == (2, 4, 8)
     assert got.tolist() == arr.tolist()
+
+
+def _ingest_set_save_reopen(tmp_path, array, prefix, source_dtype="uint8",
+                            source_pixrep=0):
+    """Ingest a plain frame, replace its pixels in memory, save, reopen.
+
+    The setter arm: what `set_pixel_data()` recorded is the only thing the
+    sidecar has to decode by, so this is where a missing
+    `PixelRepresentation` shows up.
+    """
+    src = tmp_path / f"{prefix}_src"
+    src.mkdir(exist_ok=True)
+    base = np.array(UNSIGNED_ROWS, dtype=source_dtype)
+    db = str(tmp_path / f"{prefix}.db")
+
+    session = DicomSession(persistence_file=db)
+    try:
+        _write_src(str(src), base, source_pixrep)
+        session.ingest(str(src))
+        instance = _only_instance(session)
+        instance.set_pixel_data(array)
+        after = dict(instance.attributes)
+        session.save()
+    finally:
+        session.close()
+
+    return DicomSession(persistence_file=db), db, after
+
+
+# ---------------------------------------------------------------------------
+# The signedness nothing recorded
+# ---------------------------------------------------------------------------
+
+def test_an_int16_array_set_in_memory_records_its_signedness(tmp_path):
+    """The smallest test here, and the one that pins the root cause.
+
+    `set_pixel_data()` wrote `BitsAllocated` from `array.itemsize` and
+    wrote *nothing* about signedness -- not `PixelRepresentation`, not the
+    dtype carrier -- so there was nothing recorded for the loader to read
+    and nothing for the export to write. Red when the `0028,0103` write is
+    removed.
+    """
+    src = tmp_path / "t4_src"
+    src.mkdir()
+    session = DicomSession(persistence_file=str(tmp_path / "t4.db"))
+    try:
+        _write_src(str(src), np.array(UNSIGNED_ROWS, dtype="uint8"), 0)
+        session.ingest(str(src))
+        instance = _only_instance(session)
+        assert instance.attributes["0028,0103"] in (0, "0"), (
+            "fixture never entered the arm under test: the source already "
+            "declared a signed frame")
+
+        instance.set_pixel_data(np.array(SIGNED_ROWS, dtype="int16"))
+
+        assert instance.attributes["0028,0103"] == 1
+        assert instance.attributes["0028,0100"] == 16
+    finally:
+        session.close()
+
+
+def test_an_int16_array_set_in_memory_reloads_signed(tmp_path):
+    """Red when the `0028,0103` write is removed: today it reloads `uint16`
+    and `-8` comes back as `65528`."""
+    session, _db, _after = _ingest_set_save_reopen(
+        tmp_path, np.array(SIGNED_ROWS, dtype="int16"), "t5")
+    try:
+        got = _only_instance(session).get_pixel_data()
+    finally:
+        session.close()
+
+    assert got.dtype == np.dtype("int16")
+    assert got.tolist() == SIGNED_ROWS
+
+
+def test_a_uint32_array_set_in_memory_reloads_unsigned(tmp_path):
+    """The setter half of the 32-bit gap, which #386's text does not
+    mention: `set_pixel_data(uint32_array)` raised the same loader
+    `RuntimeError` on reload, because the loader had no 32-bit arm
+    whatever put the bytes there. Red when the `32` row is removed."""
+    session, _db, after = _ingest_set_save_reopen(
+        tmp_path, np.array(UNSIGNED_ROWS, dtype="uint32"), "t9")
+    try:
+        got = _only_instance(session).get_pixel_data()
+    finally:
+        session.close()
+
+    assert after["0028,0100"] == 32
+    assert after["0028,0103"] == 0
+    assert got.dtype == np.dtype("uint32")
+    assert got.tolist() == UNSIGNED_ROWS
+
+
+def test_the_exported_file_declares_the_signedness_of_an_array_set_in_memory(
+        tmp_path):
+    """The milestone test.
+
+    Before the fix the file on disk declared `PixelRepresentation 0` beside
+    signed bytes, a reader got 65528 where the caller wrote -8, and the
+    audit log said `wrote 1 of 1 planned instances`. The point is not that
+    the row disappears -- it is that the sentence becomes **true**, so the
+    row is asserted still present and still saying 1 of 1.
+
+    `flush_audit_queue()` first: the audit writer is a background thread,
+    so an unflushed `SELECT` returns `[]` and "the row is missing" cannot
+    be told from "the row has not landed yet" (§11.8).
+
+    **`use_compression=False` is load-bearing, and P1 is why.** Pillow's
+    JPEG 2000 encoder accepts mode `L` (uint8) and `I;16` (uint16) and
+    nothing else, so *every* signed frame -- int8, int16, int32 alike --
+    fails the default compressed path with `broken data stream when
+    writing image file`. That is a pre-existing defect (verified on `main`
+    at c925829, unmodified) whose accounting is fixed separately in
+    `test_the_compressed_path_names_the_dtype_it_cannot_encode`; leaving
+    it in this test would turn it red for a reason that has nothing to do
+    with recording signedness.
+    """
+    src = tmp_path / "t6_src"
+    src.mkdir()
+    out = tmp_path / "t6_out"
+    db = str(tmp_path / "t6.db")
+
+    session = DicomSession(persistence_file=db)
+    try:
+        _write_src(str(src), np.array(UNSIGNED_ROWS, dtype="uint8"), 0)
+        session.ingest(str(src))
+        _only_instance(session).set_pixel_data(
+            np.array(SIGNED_ROWS, dtype="int16"))
+        summary = session.export(str(out), format="dicom",
+                                 use_compression=False, show_progress=False)
+        session.store_backend.flush_audit_queue()
+    finally:
+        session.close()
+
+    assert len(summary.written_uids) == 1
+    assert summary.failures == []
+
+    ds = _read_only_written(out)
+    assert ds.PixelRepresentation == 1
+    assert ds.BitsAllocated == 16
+    assert ds.pixel_array.dtype == np.dtype("int16")
+    assert ds.pixel_array.tolist() == SIGNED_ROWS
+
+    rows = _audit_rows(db)
+    exports = [details for action, _uid, details in rows if action == 'EXPORT']
+    assert exports, "no EXPORT row in the audit log (was the queue flushed?)"
+    assert any("wrote 1 of 1 planned instances" in details
+               for details in exports), (
+        f"the EXPORT row no longer claims a complete export: {exports}")
+    assert not [r for r in rows if r[0] in ('DATA_LOSS', 'ERROR')], (
+        f"an unexpected loss or error row was filed: "
+        f"{[r for r in rows if r[0] in ('DATA_LOSS', 'ERROR')]}")
+
+
+def test_a_float_array_leaves_pixel_representation_alone_and_nothing_reads_it(
+        tmp_path):
+    """The deliberate float exclusion, and the proof it is harmless.
+
+    `set_pixel_data()` does not touch `0028,0103` for a float array --
+    PS3.5 Section 8.2 forbids Pixel Representation beside a float pixel
+    element and the export's float arm deletes it -- so an instance
+    ingested as signed `int16` and then handed a `float32` array keeps a
+    **stale `PixelRepresentation 1`** in the graph. That is only safe if
+    nothing reads it, which is the assertion rather than the argument:
+    the dtype carrier wins on the way back in (a float frame can only be
+    rebuilt from a carried dtype, #183), and the exported file carries no
+    Pixel Representation at all.
+
+    Red if the exclusion is ever "tidied" into a `pop`, or if the loader
+    is reordered to consult the descriptors before the carrier.
+    """
+    src = tmp_path / "flt_src"
+    src.mkdir()
+    out = tmp_path / "flt_out"
+    db = str(tmp_path / "flt.db")
+
+    session = DicomSession(persistence_file=db)
+    try:
+        _write_src(str(src), np.array(SIGNED_ROWS, dtype="int16"), 1)
+        session.ingest(str(src))
+        instance = _only_instance(session)
+        assert instance.attributes["0028,0103"] in (1, "1"), (
+            "fixture never entered the arm under test: the source is not signed")
+
+        instance.set_pixel_data(np.array(UNSIGNED_ROWS, dtype="float32"))
+        assert instance.attributes["0028,0103"] in (1, "1"), (
+            "the float arm wrote or popped PixelRepresentation; it is "
+            "documented as leaving it alone")
+        assert instance.attributes[PIXEL_DTYPE_ATTR] == "float32"
+        session.save()
+    finally:
+        session.close()
+
+    session = DicomSession(persistence_file=db)
+    try:
+        got = _only_instance(session).get_pixel_data()
+        assert got.dtype == np.dtype("float32"), (
+            "the stale PixelRepresentation was read on the load path")
+        assert got.tolist() == [[float(v) for v in row] for row in UNSIGNED_ROWS]
+        session.export(str(out), format="dicom", use_compression=False,
+                       show_progress=False)
+    finally:
+        session.close()
+
+    ds = _read_only_written(out)
+    assert "PixelRepresentation" not in ds, (
+        "the stale PixelRepresentation reached the exported file")
+    assert "BitsStored" not in ds and "HighBit" not in ds

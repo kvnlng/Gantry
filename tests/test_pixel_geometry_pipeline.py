@@ -653,6 +653,13 @@ def test_redaction_dirties_the_instance_it_redacted():
     inst.attributes["0028,0010"] = 8
     inst.attributes["0028,0011"] = 8
     inst.attributes["0028,0100"] = 8
+    # PixelRepresentation joined the declared set in #386, when
+    # `set_pixel_data` started deriving it from the array's dtype kind the
+    # way it already derived BitsAllocated from the itemsize. Without it
+    # `declared_int` returns None, which is not 0, so the write fires and
+    # this test starts dirtying the instance through a descriptor change
+    # -- the wrong route, and precisely what the assertion below refuses.
+    inst.attributes["0028,0103"] = 0
     arr = np.ones((8, 8), dtype=np.uint8) * 7
     arr.flags.writeable = False
     inst.pixel_array = arr
