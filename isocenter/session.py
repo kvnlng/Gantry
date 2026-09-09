@@ -540,6 +540,97 @@ def _redaction_worker_count() -> int:
     return max(1, min((os.cpu_count() or 1) // 2, 8))
 
 
+#: Why processes can never redact a `:memory:` store. Shared by the
+#: warning and the refusal below, because it is one fact and two
+#: spellings of one fact is what this project's conventions forbid.
+_WHY_PROCESSES_CANNOT_REDACT_A_MEMORY_STORE = (
+    "a spawned worker is handed _memory_conn=None by "
+    "SqliteStore.__setstate__ and opens a fresh, empty in-memory database "
+    "with no instance_blobs table")
+
+
+def _report_processes_lever_on_a_memory_store(db_path, strategy):
+    """Says something when a `:memory:` `redact()` was asked for processes.
+
+    Two silences, and they are not the same silence (#400). The
+    discriminator is **`strategy.use_threads`**, never the lever's name:
+
+    - `use_threads` is `True` -- the request was **discarded** and the
+      pass is about to run correctly in threads. There is a correct run
+      to annotate, which is exactly #185's case, so this **warns**.
+    - `use_threads` is `False` -- the request was **obeyed**, and there
+      is no execution in which obeying it is correct: every redaction
+      worker ends in `persist_pixel_data`, so all of them fail with
+      `no such table: instance_blobs`, measured three of three on both
+      gate interpreters. Nothing to annotate, so this **refuses**.
+
+    On the redaction path only two rows are reachable and that is a
+    consequence of the ranking rather than a coincidence: `redact()`
+    passes `force_threads=True` for a `:memory:` store, which sits at
+    rank 2, so the only lever that can make `use_threads` false is rank
+    1, worker recycling. Written on `use_threads` all the same -- a
+    fifth lever added at some future rank is then classified correctly
+    without touching this function, where `if lever == "..."` would work
+    today and be wrong the moment such a lever exists.
+
+    `strategy.processes_requested_by` is read, never re-derived. A
+    session-side `_env_is("ISOCENTER_FORCE_PROCESSES", ...)` would
+    re-encode the rank-2-beats-rank-3 ordering in a second file and
+    would speak up for an operator who set **both** force levers, whose
+    effective request is threads and who is being denied nothing.
+
+    Raises:
+        RuntimeError: When the store is `:memory:` and a lever obtained
+            processes. Plain, not `RedactionError`: nothing was
+            attempted, and `RedactionError` **is** a `RuntimeError`, so
+            a caller writing `except RedactionError` around `redact()`
+            to handle a partial pass would otherwise read "your
+            environment cannot run this" as "some images failed".
+    """
+    if db_path != ":memory:":
+        return
+    lever = strategy.processes_requested_by
+    if lever is None:
+        # Nobody asked. On 3.12 the ranking's last rank makes processes
+        # the default for a store with no lever set, and a default is
+        # not a request -- this is the line that keeps
+        # `Session(":memory:")` working out of the box on the floor.
+        return
+
+    if strategy.use_threads:
+        # Four properties this message holds, and #185's does not.
+        # It names no knob the reader did not set (`force_threads`
+        # appears nowhere -- redact() set that, not them); it says in as
+        # many words that the result is correct, because a warning in
+        # front of a correct result that does not say so sends the
+        # reader looking for damage that is not there; it bounds itself,
+        # since the fact an operator needs is that their variable works
+        # at every step but this one; and it is emitted once per
+        # `redact()` call rather than once per `run_parallel`.
+        get_logger().warning(
+            '%s had no effect on this run. redact() requires threads on a '
+            '":memory:" store and asks for them per call, and that request '
+            'outranks the variable, so this pass ran in threads and its '
+            'result is correct. Processes cannot redact a ":memory:" store '
+            'at all: %s. The variable still applies to every other parallel '
+            'pass in this process. If you set it expecting redaction in '
+            'processes, that needs a file-backed store -- '
+            'Session("session.db").',
+            lever, _WHY_PROCESSES_CANNOT_REDACT_A_MEMORY_STORE)
+        return
+
+    raise RuntimeError(
+        f'redact() cannot run on a ":memory:" store with {lever} set. '
+        f'A redaction worker writes its redacted frame back to the store, '
+        f'and {_WHY_PROCESSES_CANNOT_REDACT_A_MEMORY_STORE}, so processes '
+        f'are never correct for this store. Only multiprocessing.Pool '
+        f'implements worker recycling, so this call would have run in '
+        f'processes and every task would have failed with "no such table: '
+        f'instance_blobs". Unset {lever} for this session, or use a '
+        f'file-backed store -- Session("session.db") -- where processes are '
+        f'the default.')
+
+
 class DicomSession:
     """
     The Main Facade for the Isocenter library.
@@ -2813,6 +2904,24 @@ class DicomSession:
                 still saving or rewriting the sidecar. Raised before any
                 worker is dispatched and before any UID is regenerated,
                 so there is nothing to undo (#368).
+            RuntimeError: On a `":memory:"` store when the environment
+                asks for worker recycling -- `ISOCENTER_MAX_TASKS_PER_CHILD`
+                -- because only `multiprocessing.Pool` implements it and
+                a spawned worker cannot reach an in-memory database, so
+                every task would fail with `no such table:
+                instance_blobs`. The message names the store, the
+                variable, why processes cannot work here, and two
+                remedies. Raised **after** the persistence drain and
+                **before** the pass-lock: no task prepared, no SOP
+                Instance UID regenerated, no pixel touched, no audit row,
+                no attestation. Deliberately not `RedactionError` --
+                nothing was attempted, so the exception meaning "these
+                instances failed" would be the wrong report -- though
+                `except RuntimeError` catches both. `ISOCENTER_FORCE_PROCESSES`
+                does **not** raise: this call asks for threads per call
+                and that request outranks the variable, so the pass is
+                correct and gets a `WARNING` naming the variable instead
+                (#400).
 
         **Concurrency (#368).** A pass holds the sidecar pass-lock,
         shared, from before the first worker runs until every outcome
@@ -2871,6 +2980,19 @@ class DicomSession:
             show_progress=show_progress,
             desc="Redacting Pixels",
             total=None)
+        # After the drain, so `docs/api/stability.md`'s frozen "`audit()`
+        # and `redact()` drain the persistence manager on entry" stays
+        # true verbatim of every call including a refused one -- the
+        # drain mutates nothing a caller can observe, is idempotent, and
+        # a caller who fixes their environment and retries wants it to
+        # have happened. Outside the `try` below, so a refusal is not
+        # preceded by `Redaction failed. Images already processed are
+        # still redacted in memory; ...`, a sentence about work that
+        # never started. Before task preparation, so a configuration
+        # that cannot run is refused whether or not it had work to do
+        # (#400).
+        _report_processes_lever_on_a_memory_store(
+            self.store_backend.db_path, strategy)
 
         service = RedactionService(self.store, self.store_backend)
         try:
@@ -3303,6 +3425,12 @@ class DicomSession:
                 not be applied. The `finally` restores the original rules
                 first, so the configuration is intact when it reaches the
                 caller (#213).
+            RuntimeError: Propagated from `redact()`, which refuses a
+                `":memory:"` store whose environment asks for worker
+                recycling (#400) and refuses a pass-lock wait that
+                expires (#368). The `finally` restores the original rules
+                first here too, so a caller who fixes the environment and
+                retries is not also repairing their configuration.
         """
         # Swap in a single-rule configuration, run redact() against it, then
         # restore the original rules in `finally` regardless of outcome.

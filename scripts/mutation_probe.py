@@ -91,11 +91,22 @@ TARGETS = {
     # rather than the issue's three: test_every_test_that_imports_a_target_module_is_listed
     # demands every file whose text names `isocenter.parallel`, and
     # test_logging.py and test_shared_executor_lifecycle.py do.
+    #
+    # The last two are listed although the guard does not demand them
+    # (#384, #400): they cover the threads-or-processes decision through
+    # `redact()`, which is where its two attribution fields are read, and
+    # a probe that did not run them would report a survivor for exactly
+    # the mutation those files exist to kill -- an attribution computed
+    # after the `force_threads` short-circuit. Extras cost the guard
+    # nothing.
     "isocenter/parallel.py": (["tests/test_logging.py",
                                "tests/test_parallel_config.py",
                                "tests/test_parallel_contract.py",
                                "tests/test_redaction_worker_count.py",
-                               "tests/test_shared_executor_lifecycle.py"], 80),
+                               "tests/test_shared_executor_lifecycle.py",
+                               "tests/test_redaction_names_its_strategy.py",
+                               "tests/test_memory_store_reports_its_processes_lever.py"],
+                              80),
     "isocenter/crypto.py": (["tests/test_crypto.py", "tests/test_reversibility.py"], 30),
     "isocenter/privacy.py": (["tests/test_analysis.py", "tests/test_analysis_persistence.py",
                               "tests/test_audit_suppression.py", "tests/test_automation.py",

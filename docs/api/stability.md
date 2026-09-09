@@ -132,7 +132,10 @@ with `.failures` (a list of `(entity_uid, details)`) and `.attempted`,
 raised after the whole pass; `ExportError(failures, attempted,
 folder=None)`, a `RuntimeError`, raised last and only when zero of N
 reached disk. `compact()` raises `RuntimeError` while a pass is open
-(below). `ValueError` from `generate_report` on an unknown format.
+(below); `redact()` raises `RuntimeError` on a `:memory:` store when
+the environment asks for worker recycling, after the persistence
+drain and before any work is done (#400). `ValueError` from
+`generate_report` on an unknown format.
 
 **Environment.** Every `ISOCENTER_*` name in
 [Environment Variables](../environment.md), its default and its
@@ -165,7 +168,8 @@ note; export-time `DATA_LOSS` rows are in a report generated after it);
 `audit()` and `redact()` drain the persistence manager on entry;
 nothing reaches disk before `export()`; source files are never
 modified; `redact()` on a `:memory:` store runs in threads on every
-interpreter (#381); and the two behaviours below.
+interpreter, and refuses when worker recycling is asked for (#381,
+#400); and the two behaviours below.
 
 ### Compaction and passes (#368)
 
