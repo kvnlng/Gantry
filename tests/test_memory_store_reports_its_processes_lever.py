@@ -381,6 +381,13 @@ def test_the_refusal_has_done_nothing(monkeypatch, caplog):
     grades nothing. `get_audit_summary()` calls `flush_audit_queue()`
     before its `SELECT`, so it is a barrier rather than a race.
 
+    The dispatch spy carries a positive control for the same reason the
+    audit count does. `assert dispatched == []` is trivially true of a
+    spy that was never wired to anything, so the spy is installed before
+    the successful pass, asserted to have seen it, and only then
+    cleared -- an empty list after the refusal then means the refusal
+    dispatched nothing, rather than that nothing was ever being watched.
+
     The `caplog` clause is the one that catches a refusal placed inside
     `redact()`'s `try`: that handler logs `Redaction failed. ...` for any
     exception raised there, which would be a sentence about work that
@@ -399,9 +406,22 @@ def test_the_refusal_has_done_nothing(monkeypatch, caplog):
             dispatched.append(strategy.desc)
         return real(*args, **kwargs)
 
+    monkeypatch.setattr(session_module, "run_parallel", spy)
+
     with DicomSession(":memory:") as session:
         _populate(session)
         assert session.redact() == 3
+        # The spy's own positive control. Installed *before* the
+        # successful pass, so `dispatched` is asserted non-empty once
+        # while work really is being dispatched: without this, a spy
+        # patched onto the wrong target records nothing and the
+        # `== []` below holds for a reason that has nothing to do with
+        # the refusal.
+        assert dispatched == ["Redacting Pixels"], (
+            f"the spy saw no redaction dispatch on a pass that redacted "
+            f"3 images, so it is not wired to the call under test: "
+            f"{dispatched}")
+        dispatched.clear()
         before = session.store_backend.get_audit_summary().get("REDACTION", 0)
         assert before, (
             "the positive control recorded no REDACTION row, so the "
@@ -426,7 +446,6 @@ def test_the_refusal_has_done_nothing(monkeypatch, caplog):
             return real_flush(*args, **kwargs)
 
         monkeypatch.setattr(session.persistence_manager, "flush", flush_spy)
-        monkeypatch.setattr(session_module, "run_parallel", spy)
         monkeypatch.setenv(MAX_TASKS, "1")
         with caplog.at_level(logging.INFO):
             with pytest.raises(RuntimeError):

@@ -145,9 +145,23 @@ def test_the_memory_store_asks_for_threads_per_call_and_a_file_store_does_not(
     second half is red -- a file store on the floor interpreter must
     keep processes, the only path whose recycling and memory behaviour
     #185 measured. `os.environ["ISOCENTER_FORCE_THREADS"] = "1"` in
-    place of the argument: the first half is red, because the spy sees
-    no argument -- and the front-door test is green, which is exactly
-    the combination that means the wrong fix landed (spec §9 item 1).
+    place of the argument: the **second** half is red, and the
+    front-door test is green -- exactly the combination that means the
+    wrong fix landed (spec §9 item 1). The `:memory:` half stays green
+    under it, because the variable does obtain threads for that pass.
+    What the variable cannot do is stop: it is process-global, so the
+    file store later in the same process inherits what an earlier
+    `redact()` leaked into the environment and asks for threads too.
+    Measured: `1 failed, 1 passed`, the failure reading
+    `it dispatched [True]` against `[False]` on the file store.
+
+    That clause used to say the *first* half went red "because the spy
+    sees no argument", and that stopped being true at #384: the spy
+    reads `strategy.use_threads` off the resolved strategy, and a
+    strategy resolved from the environment carries the same `True` as
+    one resolved from the keyword. The test kept killing the mutant --
+    the account of how had gone stale, which is its own kind of false
+    sentence in a milestone about those.
 
     The spy reads `kwargs["strategy"].use_threads` since #384, because
     the dispatch now hands `run_parallel` an already-resolved strategy

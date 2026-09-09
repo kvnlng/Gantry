@@ -283,3 +283,76 @@ def test_a_free_threaded_build_runs_a_file_store_in_threads_and_says_so(
         assert session.redact() == 3
 
     _assert_banner(capsys.readouterr(), THREADS_LINE, "(processes)")
+
+
+# --------------------------------------------------------------------------
+# What a `redact()` with nothing to do now says about its tuning values.
+# --------------------------------------------------------------------------
+
+#: The five parallel tuning variables `redact()` reads while resolving its
+#: strategy, and whether a below-minimum value is reported on a pass that
+#: matches no images. The three that speak go through `_env_int`, which
+#: warns; the two that do not go through `_env_is`, which never does.
+TUNING_VARIABLES = [
+    ("ISOCENTER_MAX_WORKERS", True),
+    ("ISOCENTER_CHUNKSIZE", True),
+    ("ISOCENTER_MAX_TASKS_PER_CHILD", True),
+    ("ISOCENTER_DISABLE_GC", False),
+    ("ISOCENTER_SHOW_PROGRESS", False),
+]
+
+
+@pytest.mark.parametrize("variable,reported", TUNING_VARIABLES)
+def test_a_malformed_tuning_value_is_reported_by_a_pass_with_no_work(
+        variable, reported, monkeypatch, caplog):
+    """The behaviour change #384 made to a `redact()` that matches nothing.
+
+    Resolving the strategy before task preparation -- which the banner
+    requires, since it has to name the strategy the pool was built from
+    rather than guess at it -- moved three environment reads ahead of
+    `No matching images found for any loaded rules.` At `f544989` none
+    of the five variables below said anything on such a call; three of
+    them now warn once each.
+
+    The CHANGELOG states that as fact, so it is asserted here rather
+    than left to a measurement in a commit message. Both directions are
+    parametrized on purpose: the three that speak pin the change, and
+    the two that stay silent pin its *boundary* -- `_env_is` has no
+    warning to emit, and a future edit that gave it one would be a
+    second behaviour change arriving unannounced under cover of this
+    one.
+
+    `0` is the malformed value for all five: it is below every minimum
+    `_env_int` is called with here, and it is the value #341 and #335
+    are both about.
+    """
+    monkeypatch.setenv(variable, "0")
+
+    with caplog.at_level(logging.WARNING):
+        with DicomSession(":memory:") as session:
+            _populate(session)
+            # The rule that matches nothing, which is the arm under
+            # test: `redact()` returns 0 without preparing a task.
+            session.configuration.rules = [
+                {"serial_number": "NO_SUCH_SERIAL",
+                 "redaction_zones": [ZONE]}]
+            caplog.clear()
+            assert session.redact() == 0, (
+                "the rule matched something, so this is not the "
+                "no-matching-images arm this test is about")
+
+    naming = [record.getMessage() for record in caplog.records
+              if record.levelname == "WARNING"
+              and variable in record.getMessage()]
+
+    if reported:
+        assert len(naming) == 1, (
+            f"{variable} is read through _env_int while the strategy is "
+            f"resolved, which now happens before the no-matching-images "
+            f"return, so a value of 0 must be reported exactly once on "
+            f"this call; got {len(naming)}: {naming}")
+        assert "below the minimum" in naming[0]
+    else:
+        assert naming == [], (
+            f"{variable} is read through _env_is, which has no warning to "
+            f"emit, so this call must stay silent about it; got {naming}")
