@@ -17,7 +17,7 @@ spellings of the same thing in one column.
 closed and disjoint from the delimiters -- a tag is drawn from `[0-9a-f,]`
 and so cannot hold `/` or `:`; an index is drawn from `[0-9]` and can hold
 neither. A kind that does not match is refused, not escaped. That is the
-same discipline `FLOAT_DTYPE_NAMES` applies to the dtype carrier: a string
+same discipline `SIDECAR_DTYPE_NAMES` applies to the dtype carrier: a string
 that came back out of the store is data, and the reader allow-lists rather
 than interprets.
 """

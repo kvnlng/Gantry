@@ -160,7 +160,7 @@ from .entities import (Patient, Study, Series, Instance, Equipment, DicomItem,
 from .logger import get_logger
 from .pixel_geometry import (
     FLOAT_DTYPE_BY_ELEMENT,
-    FLOAT_DTYPE_NAMES,
+    SIDECAR_DTYPE_NAMES,
     GeometryEvidence,
     PIXEL_DTYPE_ATTR,
     TAG_DOUBLE_FLOAT_PIXEL_DATA,
@@ -269,7 +269,7 @@ _NESTED_PIXEL_DATA_TAG = Tag(0x7fe0, 0x0010)
 #: wrong the moment the standard adds a syntax -- silently, in the
 #: direction that ships pixels. This list is wrong in the direction that
 #: files a `DATA_LOSS` row, which is a reported non-carriage rather than a
-#: mis-declared image. It is the same discipline `FLOAT_DTYPE_NAMES`
+#: mis-declared image. It is the same discipline `SIDECAR_DTYPE_NAMES`
 #: applies to the dtype carrier: allow-list, never interpret.
 #:
 #: Why the lossy syntaxes were excluded, and why two of them are now in:
@@ -323,6 +323,44 @@ _NESTED_GEOMETRY_TAGS = (
     ("0028,0100", 8),   # BitsAllocated
     ("0028,0103", 0),   # PixelRepresentation
 )
+
+
+#: The numpy dtype an integer frame decodes to, keyed on BitsAllocated
+#: and indexed by PixelRepresentation: `(unsigned, signed)`.
+#:
+#: It replaces `uint16 if bits > 8 else uint8`, which decoded a 32-bit
+#: frame two times too wide and a 64-bit one four times too wide -- so
+#: `SidecarPixelLoader` raised `Integrity Error: ... holds 32 samples;
+#: geometry (4, 4) needs 16` on an RTDOSE-shaped uint32 instance that had
+#: ingested cleanly (#386). #373's bound was right; the dtype it was
+#: checking against was not.
+#:
+#: **Callers must keep the legacy rule as a fallback rather than
+#: subscripting this table directly.** The keys are the four widths a
+#: numpy integer array can actually have, and DICOM declares widths that
+#: are not among them: `BitsAllocated 1` is a real ingested population --
+#: a binary Segmentation, whose packed bits pydicom unpacks to one uint8
+#: per pixel -- and `BitsAllocated 12` arrives as uint16. A dict-only
+#: rewrite turns both into a `KeyError` on the load path, which is a
+#: regression, not a tidy-up.
+_INTEGER_DTYPE_BY_BITS = {
+    8:  (np.uint8,  np.int8),
+    16: (np.uint16, np.int16),
+    32: (np.uint32, np.int32),
+    64: (np.uint64, np.int64),
+}
+
+
+def _integer_dtype(bits: int, pixel_representation: int):
+    """The dtype for a declared width and signedness, table then fallback.
+
+    One function so the loader and `_compress_j2k`'s reconstruction branch
+    cannot drift apart -- they held two copies of the same bucketing rule
+    and only one of them was ever fixed the last time (#386).
+    """
+    unsigned, signed = _INTEGER_DTYPE_BY_BITS.get(
+        bits, (np.uint16, np.int16) if bits > 8 else (np.uint8, np.int8))
+    return signed if pixel_representation == 1 else unsigned
 
 
 def nested_item_geometry(attributes) -> tuple:
@@ -3514,21 +3552,26 @@ class SidecarPixelLoader:
                     f"Loader(offset={self.offset}, length={self.length}, alg={self.alg})"
                 )
 
-        # Reconstruct based on attributes. A recorded float dtype
+        # Reconstruct based on attributes. A recorded carrier dtype
         # first: no DICOM descriptor says "float" -- a 32-bit float
         # frame and a 32-bit integer frame both declare BitsAllocated
-        # 32 -- so a frame whose dtype is floating-point can only be
-        # rebuilt from a dtype that was carried, never from one that
-        # was inferred (#183). Checked against the allow-list, because
+        # 32 -- and none says "bool" either, since numpy `bool_` and
+        # `uint8` both declare BitsAllocated 8 with PixelRepresentation
+        # 0. A frame whose dtype is one of those can only be rebuilt
+        # from a dtype that was carried, never from one that was
+        # inferred (#183, #386). Checked against the allow-list, because
         # this string comes back out of the store and
         # `np.dtype(anything)` is not a thing a loader should do.
-        if self.pixel_dtype in FLOAT_DTYPE_NAMES:
+        if self.pixel_dtype in SIDECAR_DTYPE_NAMES:
             dt = np.dtype(self.pixel_dtype)
         else:
-            dt = np.uint16 if self.bits > 8 else np.uint8
-            # Handle signed?
-            if self.pixel_representation == 1:
-                dt = np.int16 if self.bits > 8 else np.int8
+            # BitsAllocated crossed with PixelRepresentation, which
+            # between them name every integer dtype the sidecar can hold
+            # -- and the legacy bucketing as the fallback, because
+            # `BitsAllocated` 1 and 12 are real ingested populations that
+            # this table has no row for and must keep decoding as they do
+            # (#386). Do not subscript `_INTEGER_DTYPE_BY_BITS` here.
+            dt = _integer_dtype(self.bits, self.pixel_representation)
 
         # Before `np.frombuffer`, which raises a bare `ValueError: buffer
         # size must be a multiple of element size` for a byte count that

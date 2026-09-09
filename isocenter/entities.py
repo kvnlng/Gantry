@@ -9,7 +9,7 @@ from pydicom.uid import generate_uid
 import isocenter.imagecodecs_handler as h
 from .logger import get_logger
 from .pixel_geometry import (
-    FLOAT_DTYPE_NAMES,
+    SIDECAR_DTYPE_NAMES,
     GeometryEvidence,
     PIXEL_DTYPE_ATTR,
     declared_int,
@@ -1202,7 +1202,7 @@ class Instance(DicomItem):
         # would have the loader read those integers back as floats --
         # the same silent corruption arriving from the other direction.
         name = array.dtype.name if array.dtype.kind == 'f' else None
-        if name in FLOAT_DTYPE_NAMES:
+        if name in SIDECAR_DTYPE_NAMES:
             self.attributes[PIXEL_DTYPE_ATTR] = name
         else:
             self.attributes.pop(PIXEL_DTYPE_ATTR, None)
