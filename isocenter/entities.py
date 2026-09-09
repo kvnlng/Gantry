@@ -9,7 +9,7 @@ from pydicom.uid import generate_uid
 import isocenter.imagecodecs_handler as h
 from .logger import get_logger
 from .pixel_geometry import (
-    FLOAT_DTYPE_NAMES,
+    SIDECAR_DTYPE_NAMES,
     GeometryEvidence,
     PIXEL_DTYPE_ATTR,
     declared_int,
@@ -328,18 +328,57 @@ class DicomItem(TrackedEntity):
         """
         self.attribute_vrs[_canonical_tag(tag)] = vr
 
+    def add_sequence(self, tag: str) -> 'DicomSequence':
+        """
+        The sequence at `tag`, created empty if it is not there yet.
+
+        A sequence with no items is a thing a source can assert, and until
+        #392 this graph had no way to hold one: the only route in was
+        `add_sequence_item`, so a zero-item `SQ` made zero calls and
+        vanished at ingest with `losses == []`. Both hops that dropped it
+        -- `process_sequence` on the way in, `_deserialize_into` on the way
+        back out of the store -- now call this once, before their item
+        loop, so the empty and the non-empty case are the same statement
+        and the empty one cannot go stale.
+
+        `mark_modified()` **only when it creates**. A sequence that newly
+        exists is a change the store must hold; a second call on a tag that
+        already has one is not, and dirtying there would have every
+        hydration and every re-ingest rewrite rows that did not change
+        (#186's rule, applied to sequences).
+
+        Args:
+            tag (str): The DICOM tag for the sequence. Case-insensitive.
+
+        Returns:
+            DicomSequence: the sequence now at `tag`, existing or new.
+        """
+        tag = _canonical_tag(tag)
+        sequence = self.sequences.get(tag)
+        if sequence is None:
+            sequence = self.sequences[tag] = DicomSequence(tag=tag)
+            self.mark_modified()
+        return sequence
+
     def add_sequence_item(self, tag: str, item: 'DicomItem'):
         """
         Appends a new item to a sequence, creating the sequence if needed.
+
+        Delegates the creating half to `add_sequence()` rather than
+        repeating it, so there is one spelling of "a sequence comes into
+        existence". The first item on a brand-new sequence therefore
+        advances `_revision` twice where it advanced once -- harmless,
+        because `_revision` is a monotonic counter and
+        `has_unsaved_changes` is a comparison rather than arithmetic, but
+        real, and `tests/test_empty_sequence_roundtrip.py::
+        test_adding_the_first_item_to_a_new_sequence_still_leaves_one_dirty_entity`
+        is what says so.
 
         Args:
             tag (str): The DICOM tag for the sequence.
             item (DicomItem): The item to append.
         """
-        tag = _canonical_tag(tag)
-        if tag not in self.sequences:
-            self.sequences[tag] = DicomSequence(tag=tag)
-        self.sequences[tag].items.append(item)
+        self.add_sequence(tag).items.append(item)
         self.mark_modified()
 
     def mark_subtree_persisted(self):
@@ -1020,6 +1059,69 @@ class Instance(DicomItem):
         self.set_attr(tag, value)
         return True
 
+    @staticmethod
+    def _accepted_pixel_array(array: np.ndarray) -> np.ndarray:
+        """The array as the sidecar will hold it, or a `ValueError`.
+
+        **The accepted set is stated positively, never as a blacklist.**
+        A deny-list has to be complete to be safe and is wrong the moment
+        numpy adds a kind -- silently, in the direction that stores a
+        frame nothing can decode. Stated this way, a new kind is refused
+        by default rather than admitted by omission, which is why
+        `float128` needs no clause of its own: it is kind `'f'` and
+        simply absent from `SIDECAR_DTYPE_NAMES`.
+
+        The three clauses are the three channels the sidecar decodes by,
+        and each is exactly as wide as its channel:
+
+        - `'u'`/`'i'` at 1, 2, 4 or 8 bytes -- the domain of
+          `_INTEGER_DTYPE_BY_BITS`, so the accept rule and the reload
+          table are one statement rather than two that can drift apart.
+        - `'b'` -- carried by name in the dtype carrier.
+        - `'f'` whose name is in `SIDECAR_DTYPE_NAMES` -- likewise.
+
+        Everything else round-tripped wrongly and nothing refused it:
+        `complex64` recorded no carrier, declared `BitsAllocated 128` and
+        reloaded through the loader's fallback as `uint16`, silently
+        (#386).
+
+        **Byte order is normalised rather than refused.** A big-endian
+        `>i2` is kind `'i'` at 2 bytes and passes every clause -- but the
+        sidecar stores raw bytes and the loader reads them with a
+        native-order dtype, so it reloaded byte-swapped. Refusing an
+        array that is exactly representable and merely spelled unusually
+        would be the wrong answer; `>i2` and `<i2` now produce
+        byte-identical frames, which is what a caller means by handing
+        over either. Note that the normalised array is a **copy**, so a
+        caller who mutates a big-endian array in place after this call no
+        longer reaches the frame the instance holds -- the one place
+        where "callers mutate arrays in place" stops being true.
+        """
+        dtype = array.dtype
+        accepted = (
+            (dtype.kind in ('u', 'i') and dtype.itemsize in (1, 2, 4, 8))
+            or dtype.kind == 'b'
+            or (dtype.kind == 'f' and dtype.name in SIDECAR_DTYPE_NAMES))
+        if not accepted:
+            raise ValueError(
+                f"set_pixel_data() cannot take a {dtype.name} array: the "
+                f"sidecar stores raw bytes and decodes them from "
+                f"BitsAllocated, PixelRepresentation and the dtype carrier, "
+                f"which between them name unsigned and signed integers of 1, "
+                f"2, 4 or 8 bytes, bool, and float16/float32/float64 -- and "
+                f"nothing else. Accepting this array would have stored bytes "
+                f"no reload could name, and handed back a different array "
+                f"than the one given. Convert to one of those dtypes first, "
+                f"deliberately, so the conversion is yours rather than this "
+                f"library's.")
+
+        # Byte order last, and only for what passed: `astype` copies the
+        # whole frame, so normalising first would copy a large refused
+        # array before rejecting it.
+        if dtype.byteorder not in ('=', '|'):
+            array = array.astype(dtype.newbyteorder('='))
+        return array
+
     def set_pixel_data(self, array: np.ndarray):
         """
         Sets the pixel array and updates the descriptors that describe it.
@@ -1043,6 +1145,11 @@ class Instance(DicomItem):
               outright contradiction -- YBR_FULL and MONOCHROME1 survive
             - PlanarConfiguration (0028,0006), only when colour and undeclared
             - BitsAllocated (0028,0100), from the array's itemsize
+            - PixelRepresentation (0028,0103), from the array's dtype kind:
+              1 for signed integers, 0 for unsigned and bool. Left alone
+              for a float array, because PS3.5 Section 8.2 forbids it
+              beside a float pixel element and the export deletes it
+              there.
 
         A genuinely ambiguous shape is **accepted** with a WARNING rather
         than refused, because a hand-built graph has to be able to take
@@ -1055,12 +1162,23 @@ class Instance(DicomItem):
             array (np.ndarray): The pixel data to set. Can be 1D, 2D, 3D, or 4D.
 
         Raises:
+            ValueError: If `array.dtype` is one the sidecar cannot
+                round-trip. The accepted set is unsigned and signed
+                integers of 1, 2, 4 or 8 bytes, `bool`, and
+                `float16`/`float32`/`float64`; `complex64`, `object`,
+                strings, structured and void dtypes, datetimes and
+                `float128` are refused. Byte order is **normalised, not
+                refused**, so a big-endian array is accepted and stored
+                native-order. This check runs before any mutation, so a
+                caught `ValueError` leaves the instance exactly as it was.
             ValueError: If the instance declares a SamplesPerPixel that no
                 axis of `array` can carry, or if the rank is unsupported.
                 The two statements cannot both be right and neither
                 trusting the attributes (descriptors that do not describe
                 the bytes) nor trusting the array (this is how #186
-                happened) is honest.
+                happened) is honest. **This one raises after
+                `self.pixel_array` has been assigned** -- pre-existing,
+                and not what the dtype guard above is about.
 
         Note that this does **not** clear `_pixel_loader`. #293 weighed
         clearing it as a cheaper fix and rejected it: the loader is what
@@ -1070,6 +1188,23 @@ class Instance(DicomItem):
         Instead the divergence is recorded, and `unload_pixel_data()`
         refuses until it is written.
         """
+        # **Before any mutation, and that is the whole of it.** The
+        # assignment below is this method's first side effect and the
+        # descriptor writes follow it, so a refusal raised part-way would
+        # leave an instance describing an array it does not hold -- a new
+        # silence inside the fix that closes one.
+        # `tests/test_pixel_dtype_roundtrip.py::
+        # test_a_refused_dtype_leaves_the_instance_exactly_as_it_was`
+        # asserts it on the frame as well as on the attributes, because
+        # only the frame assertion catches a guard moved below this line.
+        #
+        # The dtype check runs before the byte-order normalisation
+        # deliberately, even though the normalisation reads as the
+        # earlier step: the check is O(1) on `dtype`, and `astype` copies
+        # the whole frame -- normalising first would fully copy a large
+        # `complex64` array immediately before rejecting it.
+        array = self._accepted_pixel_array(array)
+
         self.pixel_array = array
         # The resident array no longer matches anything on disk or in the
         # sidecar, and `_pixel_loader` is deliberately left pointing at
@@ -1158,12 +1293,24 @@ class Instance(DicomItem):
         # integer path and never files the DATA_LOSS row that says its
         # pixels could not be written.
         #
+        # Kind `'b'` joins them in #386, and is the only integer-kind
+        # dtype that ever will. Once the block below records
+        # PixelRepresentation, BitsAllocated and PixelRepresentation
+        # together name every integer dtype the sidecar can hold exactly,
+        # so a carrier for one of those would be a second answer to a
+        # question the descriptors already answer -- and the
+        # authoritative one, so a graph whose descriptors were later
+        # corrected would decode against a stale carrier. `bool` is the
+        # exception because no descriptor pair can name it: numpy
+        # `bool_` and `uint8` both declare 8 and 0, so a mask set in
+        # memory came back as `uint8` and only its values survived.
+        #
         # It DELETES as well as writes. Replacing a float instance's
         # pixels with an integer array and leaving the carrier behind
         # would have the loader read those integers back as floats --
         # the same silent corruption arriving from the other direction.
-        name = array.dtype.name if array.dtype.kind == 'f' else None
-        if name in FLOAT_DTYPE_NAMES:
+        name = array.dtype.name if array.dtype.kind in ('f', 'b') else None
+        if name in SIDECAR_DTYPE_NAMES:
             self.attributes[PIXEL_DTYPE_ATTR] = name
         else:
             self.attributes.pop(PIXEL_DTYPE_ATTR, None)
@@ -1183,6 +1330,37 @@ class Instance(DicomItem):
             get_logger().debug(
                 "BitsAllocated for %s corrected from %s to %d by a %s pixel "
                 "array.", self.sop_instance_uid, previous, bits, array.dtype)
+
+        # PixelRepresentation, on exactly the argument the BitsAllocated
+        # block above already makes. The width was derived from the array
+        # and the signedness was not, so `set_pixel_data(int16_array)`
+        # recorded a 16 and nothing at all about the sign: the sidecar
+        # reloaded the frame as `uint16` and `-8` came back as `65528`,
+        # and `_export_instance_worker`'s
+        # `ds.PixelRepresentation = inst.attributes.get("0028,0103", 0)`
+        # wrote a file declaring an unsigned frame beside signed bytes --
+        # with `wrote 1 of 1 planned instances` in the audit log beside
+        # it (#386). The export writes `arr.tobytes()`, so a
+        # PixelRepresentation disagreeing with the array cannot be
+        # honoured; "the attributes win" is not one of the options here
+        # either.
+        #
+        # **Floats are deliberately excluded**, and left alone rather
+        # than popped. PS3.5 Section 8.2 says Bits Stored, High Bit and
+        # Pixel Representation *shall not be present* beside a float
+        # pixel element, and the export's float arm already deletes all
+        # three -- so writing a 0 here would be a write the export
+        # immediately undoes, and the carrier (not this descriptor) is
+        # what decodes a float frame on the way back in.
+        if array.dtype.kind in ('i', 'u', 'b'):
+            representation = 1 if array.dtype.kind == 'i' else 0
+            previous = declared_int(self.attributes, "0028,0103")
+            if (self._write_int_if_changed("0028,0103", representation)
+                    and previous is not None):
+                get_logger().debug(
+                    "PixelRepresentation for %s corrected from %s to %d by a "
+                    "%s pixel array.", self.sop_instance_uid, previous,
+                    representation, array.dtype)
 
         # Unconditional, and separate from the conditional descriptor writes
         # above. The array's *contents* are part of what the store holds, and

@@ -47,7 +47,10 @@ TAG_FLOAT_PIXEL_DATA = "7fe0,0008"
 TAG_DOUBLE_FLOAT_PIXEL_DATA = "7fe0,0009"
 
 #: Where an instance records the numpy dtype of the pixel frame it is
-#: holding, when that dtype is floating-point (#183).
+#: holding, when no DICOM descriptor can name that dtype -- the three
+#: floating-point widths (#183) and `bool` (#386). See
+#: `SIDECAR_DTYPE_NAMES` for why the integer dtypes are deliberately not
+#: here.
 #:
 #: Not a tag key, and deliberately so. It rides `attributes_json`
 #: because `DicomExporter._merge` skips `t.startswith("_")` and
@@ -56,13 +59,16 @@ TAG_DOUBLE_FLOAT_PIXEL_DATA = "7fe0,0009"
 #: `"7fe0,0008"` key in `attributes` would be written back out as an
 #: element by `_merge`, carrying this string as its value.
 #:
-#: It exists because **no DICOM descriptor says "float"**.
-#: `SidecarPixelLoader` derives its dtype from BitsAllocated and
-#: PixelRepresentation, and a 32-bit float frame and a 32-bit integer
-#: frame declare the same 32 -- so without this the sidecar hands back
-#: integers where floats went in, silently. Set at ingest from the
-#: element the bytes came out of, and kept true by `set_pixel_data()`
-#: from the dtype of the array it is handed.
+#: It exists because **no DICOM descriptor says "float"**, and none says
+#: "bool" either. `SidecarPixelLoader` derives its dtype from
+#: BitsAllocated and PixelRepresentation, and a 32-bit float frame and a
+#: 32-bit integer frame declare the same 32 -- so without this the
+#: sidecar hands back integers where floats went in, silently. `bool` is
+#: the same failure at 8 bits: numpy `bool_` and `uint8` both declare
+#: BitsAllocated 8 with PixelRepresentation 0, so a mask set in memory
+#: came back as `uint8` and only the *values* survived (#386). Set at
+#: ingest from the element the bytes came out of, and kept true by
+#: `set_pixel_data()` from the dtype of the array it is handed.
 #:
 #: **The dtype, not the element**, and the difference is float16: it has
 #: no DICOM element at any width, so an element-shaped carrier could not
@@ -74,11 +80,23 @@ TAG_DOUBLE_FLOAT_PIXEL_DATA = "7fe0,0009"
 #: it was given.
 PIXEL_DTYPE_ATTR = "_ISOCENTER_PIXEL_DTYPE"
 
-#: The float dtypes this carrier may name, as an allow-list. A stored
-#: string is data, and `np.dtype()` on an arbitrary one is not something
-#: a loader should do; these three are every floating-point width numpy
-#: and DICOM between them produce here.
-FLOAT_DTYPE_NAMES = frozenset({"float16", "float32", "float64"})
+#: The dtypes this carrier may name, as an allow-list. A stored string is
+#: data, and `np.dtype()` on an arbitrary one is not something a loader
+#: should do.
+#:
+#: The three float widths are every floating-point width numpy and DICOM
+#: between them produce here. `bool` joined them in #386 and is the only
+#: integer-kind dtype that will ever be here: once `set_pixel_data()`
+#: records `PixelRepresentation` as well as `BitsAllocated`, that pair
+#: names every integer dtype the sidecar can hold *exactly*, and a
+#: carrier recorded as well would be a second answer to a question the
+#: descriptors already answer -- and the authoritative one, so a graph
+#: whose descriptors were later corrected would decode against a stale
+#: carrier. `bool` is the exception because no DICOM descriptor can name
+#: it: numpy `bool_` and `uint8` both declare BitsAllocated 8 with
+#: PixelRepresentation 0, which is the same argument #183 makes for
+#: float16 and the reason this carrier exists at all.
+SIDECAR_DTYPE_NAMES = frozenset({"float16", "float32", "float64", "bool"})
 
 #: Numpy dtype name for each float pixel element. PS3.3 C.7.6.24 fixes
 #: (7fe0,0008) at 32-bit IEEE-754 and C.7.6.25 fixes (7fe0,0009) at

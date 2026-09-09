@@ -224,13 +224,25 @@ def test_python_requires_matches_the_floor_the_source_actually_needs():
         "(numpy, imagecodecs) resolves only on 3.12+")
 
 
-@pytest.mark.parametrize("module", ["pytesseract", "imagecodecs"])
+@pytest.mark.parametrize("module", ["pytesseract"])
 def test_optional_dependencies_are_imported_defensively(module):
     """Optional features must degrade, not explode.
 
     If one of these becomes a hard import, it must move into
     install_requires -- otherwise `import isocenter` breaks for anyone who
     did not install the extra.
+
+    **`imagecodecs` left this list in #404, in the direction the docstring
+    above describes.** It has been in `install_requires` all along -- it
+    was never an extra -- and `io_handlers.py` now imports it unguarded to
+    encode JPEG 2000, because Pillow's encoder accepted only `uint8` and
+    `uint16` and so wrote nothing at all for CT and MR. A guarded import
+    whose absence turns into `Compression failed` is the same shape as a
+    loader returning `[]` for a missing shipped resource (#388), and this
+    release removes that shape rather than adding one.
+    `test_every_unguarded_third_party_import_is_declared_in_setup_py` is
+    what covers it now, and it is the stronger check: it reads every
+    unguarded import in the package rather than a hand-kept list.
     """
     hard_sites = _unguarded_third_party_imports().get(module)
     assert not hard_sites, (
@@ -322,14 +334,21 @@ def test_classifiers_do_not_advertise_unsupported_python_versions():
 # Everything above reads setup.py. That is not the same contract: the
 # defect these next tests exist for was invisible to a source-tree read.
 # `isocenter/resources/*.json` shipped in neither the wheel nor the sdist,
-# because nothing declared package_data -- and the loaders guard on
+# because nothing declared package_data -- and the loaders guarded on
 # os.path.exists, so a pip-installed Isocenter did not crash. It audited
-# against an empty PHI tag list (`ConfigLoader.load_phi_config` returns
-# {}, `PhiInspector` at isocenter/privacy.py:140 takes it) and reported
-# clean. A de-identification tool that silently stops looking for PHI is
-# the worst failure this project can ship, and every test in the suite
-# passed while it was true, because tests import from the source tree
-# where the files are present.
+# against an empty PHI tag list (`ConfigLoader.load_phi_config` returned
+# {}, `PhiInspector` took it) and reported clean. A de-identification tool
+# that silently stops looking for PHI is the worst failure this project
+# can ship, and every test in the suite passed while it was true, because
+# tests import from the source tree where the files are present.
+#
+# #388 removed the silence at runtime: those loaders now raise
+# `RuntimeError` rather than returning an empty collection, so an install
+# missing a shipped resource refuses at the first call that needs it. That
+# does not retire these tests -- it changes what a missing resource costs,
+# from a clean-looking wrong answer to a broken install, and neither is
+# something to discover after publishing. The wheel is still the artefact
+# under test.
 #
 # So these build the real artefacts and read what is inside them.
 
@@ -461,9 +480,19 @@ def built(tmp_path_factory):
 def test_the_wheel_ships_every_resource_the_package_reads(built):
     """A data file left out of the wheel silently disables a feature.
 
-    isocenter/resources/phi_tags.json is the whole default PHI policy. When
-    it is absent, load_phi_config() returns {} rather than raising, so
-    audit() finds nothing and reports success on data full of PHI.
+    isocenter/resources/phi_tags.json is the whole default PHI policy, and
+    leaving it out of the wheel is still release-blocking.
+
+    What changed in #388 is the failure mode, not the requirement. When it
+    is absent, `load_phi_config()` now raises `RuntimeError` at the first
+    call that needs it -- naming the file, the path it looked in, and that
+    continuing would have "audited against an empty PHI tag list" -- where
+    it used to return `{}`, so a scan found nothing and reported success
+    on data full of PHI. A wheel without it therefore refuses at first use
+    instead of degrading, which is why this test still has to fail rather
+    than leave the check to runtime: a build that ships without the file
+    is broken for every user of it, and finding that out one `pip install`
+    later is not the same as finding it out here.
     """
     shipped = {
         name[len("isocenter/"):]

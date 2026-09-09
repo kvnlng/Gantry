@@ -254,7 +254,19 @@ def redirect_logging(tmp_path):
 
 @pytest.fixture
 def dummy_pixel_array_2d():
-    return np.zeros((512, 512), dtype=np.uint16)
+    """A signed frame, deliberately: `int16` is CT and MR.
+
+    This was `uint16` until #404, and `uint16` is one of the exactly two
+    dtypes the old JPEG 2000 encoder accepted. Every export test on the
+    default compressed path rides this fixture -- 21 references across five
+    files -- so the suite was uniformly green while `session.export()`
+    wrote **nothing at all** for signed pixel data, failing with
+    `Compression failed: broken data stream when writing image file`. A
+    shared fixture that only ever exercises the working half of a
+    dichotomy is a blind spot, not a default; this one now sits on the
+    side that was broken.
+    """
+    return np.zeros((512, 512), dtype=np.int16)
 
 
 @pytest.fixture

@@ -2156,6 +2156,14 @@ class SqliteStore:
         if sequences_data:
             from .entities import DicomItem
             for tag, items_list in sequences_data.items():
+                # Before the item loop, and unconditional. `_serialize_item`
+                # already stores a zero-item sequence as `{"0009,1005": []}`,
+                # but iterating an empty list called `add_sequence_item`
+                # zero times, so hydration dropped what the store had
+                # faithfully kept: a graph that ingested an empty `SQ`
+                # exported it, and the same graph after a save/close/reopen
+                # did not (#392).
+                target_item.add_sequence(tag)
                 for item_data in items_list:
                     new_item = DicomItem()
                     self._deserialize_into(new_item, item_data)

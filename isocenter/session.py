@@ -20,7 +20,7 @@ from .io_handlers import (DicomImporter, DicomExporter, ExportContext,
 from .store import DicomStore
 from .services import (RedactionService, RedactionOutcome, RedactionError,
                        _report_redaction_failures)
-from .config_manager import ConfigLoader
+from .config_manager import ConfigLoader, require_package_resource
 from .privacy import PhiInspector, PhiFinding, PhiReport
 from .logger import configure_logger, get_logger
 from .reporting import (ComplianceReport, get_renderer, GAP_REMOVED,
@@ -149,9 +149,15 @@ _CONFIG_HEADER = """# Isocenter Privacy Configuration (v2.0)
 
 def _load_redaction_knowledge_base() -> List[Dict[str, Any]]:
     """Machine redaction rules shipped with the package, keyed by serial."""
-    path = os.path.join(RESOURCES_DIR, "redaction_rules.json")
-    if not os.path.exists(path):
-        return []
+    # Before the `try`, and that placement is load-bearing: the handler
+    # below catches `OSError`, and `FileNotFoundError` is one -- a
+    # refusal that drifted inside would be caught and turned straight
+    # back into the `return []` this replaces, with every test still
+    # green (#388). `require_package_resource` raises `RuntimeError`
+    # partly so that cannot happen even if it does drift.
+    path = require_package_resource(
+        RESOURCES_DIR, "redaction_rules.json",
+        "scanned every frame with no machine redaction rules")
     try:
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f).get("machines", [])
@@ -166,11 +172,15 @@ def _load_ctp_rules() -> List[Dict[str, Any]]:
 
     YAML is preferred when present; the shipped copy is JSON.
     """
+    # The YAML keeps its `os.path.exists`, deliberately: `ctp_rules.yaml`
+    # is *not* shipped, so its absence is the ordinary case and routing it
+    # through the helper would make every correct installation a broken
+    # one. Only the JSON fallback -- which `setup.py` does package and
+    # `publish.yml` does gate on -- is required (#388).
     yaml_path = os.path.join(RESOURCES_DIR, "ctp_rules.yaml")
-    path = yaml_path if os.path.exists(yaml_path) else os.path.join(
-        RESOURCES_DIR, "ctp_rules.json")
-    if not os.path.exists(path):
-        return []
+    path = yaml_path if os.path.exists(yaml_path) else require_package_resource(
+        RESOURCES_DIR, "ctp_rules.json",
+        "matched no CTP de-identification rules")
     try:
         with open(path, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f) if path.endswith('.yaml') else json.load(f)
