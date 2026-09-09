@@ -494,6 +494,16 @@ class LockingResult(list):
         return f"<LockingResult: {len(self)} instances secured>"
 
 
+#: The tags `lock_identities()` embeds when the caller names none.
+_DEFAULT_TAGS_TO_LOCK = (
+    "0010,0010",  # PatientName
+    "0010,0020",  # PatientID
+    "0010,0030",  # PatientBirthDate
+    "0010,0040",  # PatientSex
+    "0008,0050",  # AccessionNumber
+)
+
+
 def _redaction_worker_count() -> int:
     """How many workers to redact pixels with.
 
@@ -543,7 +553,16 @@ class DicomSession:
 
         Args:
             persistence_file (str): Path to the SQLite database file for session persistence.
-                                    Defaults to "isocenter.db".
+                Defaults to `ISOCENTER_DB_PATH`, then `"isocenter.db"`.
+                `":memory:"` is accepted and is part of the frozen surface
+                (#379): the index lives in memory and the pixel sidecar in
+                a temporary file the store unlinks on `close()`. On such a
+                store `redact()` runs in threads on every interpreter,
+                because its worker writes to the store and a process
+                cannot share an in-memory database (#381); with
+                `ISOCENTER_MAX_TASKS_PER_CHILD` set, recycling overrides
+                that and the call fails -- see that variable's row in
+                `docs/environment.md`.
         """
         configure_logger()
         self.persistence_file = persistence_file or os.getenv("ISOCENTER_DB_PATH", "isocenter.db")
@@ -2415,10 +2434,10 @@ class DicomSession:
     def lock_identities(self,
                         patient_id: str,
                         persist: bool = False,
-                        _patient_obj: "Patient" = None,
+                        *,
                         verbose: bool = True,
-                        **kwargs) -> Union[List["Instance"],
-                                           LockingResult]:
+                        tags_to_lock: Optional[List[str]] = None
+                        ) -> Union[List["Instance"], LockingResult]:
         """
         Securely embeds the original patient name/ID into a private DICOM tag.
 
@@ -2428,13 +2447,31 @@ class DicomSession:
 
         Must be called BEFORE anonymization/redaction if recovery is required.
 
+        A list of patient IDs, a `PhiReport` or a list of findings is
+        dispatched to `lock_identities_batch()` with the same `persist`,
+        `verbose` and `tags_to_lock`; chunked persistence
+        (`auto_persist_chunk_size`) is that method's own argument, because
+        it means nothing for one patient. Until 0.9.4 the batch loop
+        hardcoded `persist=False, verbose=False`, so the README's form
+        with `persist=True` added -- `lock_identities(report,
+        persist=True)` -- wrote nothing and said nothing (#379, Q10).
+        Until 0.9.4 this method also took `**kwargs` and forwarded them,
+        and the batch method did not accept `tags_to_lock`, so the call
+        the README teaches -- `lock_identities(report,
+        tags_to_lock=[...])` -- raised `TypeError`; a misspelled keyword
+        on the single-patient path was swallowed (#379, Q7). `verbose`
+        and `tags_to_lock` are keyword-only because the third positional
+        slot used to be `_patient_obj`: a caller still filling it would
+        otherwise have a `Patient` silently read as `verbose`.
+
         Args:
             patient_id (str): The ID of the patient to preserve (or a list/report for batch processing).
             persist (bool): If True, writes changes to the database immediately.
                             If False, returns modified instances (useful for batch buffering).
-            _patient_obj (Patient, optional): Optimization argument to avoid O(N) lookup.
             verbose (bool): If True, logs debug information.
-            **kwargs: Additional arguments passed to `lock_identities_batch`.
+            tags_to_lock (List[str], optional): The tags whose original values
+                are embedded. When omitted: PatientName, PatientID,
+                PatientBirthDate, PatientSex and AccessionNumber.
 
         Returns:
             Union[List[Instance], LockingResult]: A list of modified instances.
@@ -2445,32 +2482,34 @@ class DicomSession:
 
         # Dispatch to batch method if a list is provided
         if isinstance(patient_id, (list, tuple, set)) or hasattr(patient_id, 'findings'):
-            return self.lock_identities_batch(patient_id, **kwargs)
+            return self.lock_identities_batch(
+                patient_id, persist=persist, verbose=verbose, tags_to_lock=tags_to_lock)
 
-        if verbose:
-            get_logger().debug(f"Preserving identity for {patient_id}...")
-
-        modified_instances = []
-
-        if _patient_obj:
-            patient = _patient_obj
-        else:
-            patient = next((p for p in self.store.patients if p.patient_id == patient_id), None)
-
+        patient = next((p for p in self.store.patients if p.patient_id == patient_id), None)
         if not patient:
             get_logger().error(f"Patient {patient_id} not found.")
             return LockingResult([])
 
-        # Determine Tags to Lock (Default + Custom)
-        default_tags = [
-            "0010,0010",  # PatientName
-            "0010,0020",  # PatientID
-            "0010,0030",  # PatientBirthDate
-            "0010,0040",  # PatientSex
-            "0008,0050"  # AccessionNumber
-        ]
+        return self._lock_patient_identity(patient, persist, verbose, tags_to_lock)
 
-        tags_to_lock = kwargs.get("tags_to_lock", default_tags)
+    def _lock_patient_identity(self, patient: "Patient", persist: bool,
+                               verbose: bool, tags_to_lock: Optional[List[str]]
+                               ) -> LockingResult:
+        """Embeds one resolved patient's identity token into every instance.
+
+        The batch path already holds the `Patient` from its own O(1) map,
+        so this takes the object: the O(N) lookup by ID lives in
+        `lock_identities` alone. This used to be `lock_identities`'s
+        `_patient_obj` parameter -- a private name in a public,
+        soon-frozen signature.
+        """
+        patient_id = patient.patient_id
+        if verbose:
+            get_logger().debug(f"Preserving identity for {patient_id}...")
+
+        modified_instances = []
+        if tags_to_lock is None:
+            tags_to_lock = list(_DEFAULT_TAGS_TO_LOCK)
 
         # Capture Original Values from First Instance
         original_attrs = {}
@@ -2497,8 +2536,6 @@ class DicomSession:
             if "0010,0020" in tags_to_lock:
                 original_attrs["0010,0020"] = patient.patient_id
 
-        cnt = 0
-
         # Optimization: Encrypt once per patient
         token = self.reversibility_service.generate_identity_token(
             original_attributes=original_attrs)
@@ -2509,14 +2546,12 @@ class DicomSession:
                 for inst in se.instances:
                     self.reversibility_service.embed_identity_token(inst, token)
                     modified_instances.append(inst)
-                    cnt += 1
 
         if persist and modified_instances:
             self.store_backend.update_attributes(modified_instances)
             get_logger().info(
-                f"Secured identity (tags: {
-                    list(
-                        original_attrs.keys())}) in {cnt} instances for {patient_id}.")
+                f"Secured identity (tags: {list(original_attrs.keys())}) in "
+                f"{len(modified_instances)} instances for {patient_id}.")
 
         return LockingResult(modified_instances)
 
@@ -2524,8 +2559,12 @@ class DicomSession:
                               patient_ids: Union[List[str],
                                                  "PhiReport",
                                                  List["PhiFinding"]],
-                              auto_persist_chunk_size: int = 0) -> Union[List["Instance"],
-                                                                         LockingResult]:
+                              auto_persist_chunk_size: int = 0,
+                              tags_to_lock: Optional[List[str]] = None,
+                              *,
+                              persist: bool = False,
+                              verbose: bool = True
+                              ) -> Union[List["Instance"], LockingResult]:
         """
         Batch process multiple patients to lock identities.
 
@@ -2533,6 +2572,17 @@ class DicomSession:
             patient_ids (Union[List[str], PhiReport]): List of PatientIDs to process.
             auto_persist_chunk_size (int): If > 0, persists changes and releases memory every N instances.
                                            IMPORTANT: Returns an empty list if enabled to prevent OOM.
+            tags_to_lock (List[str], optional): Passed to every patient's
+                lock; `lock_identities()`'s five default tags when omitted.
+            persist (bool): Passed to every patient's lock: each patient's
+                instances are written as they are locked. With
+                `auto_persist_chunk_size > 0` as well, an instance is
+                written twice (with its patient, then with its chunk) --
+                redundant, not wrong. Until 0.9.4 the loop hardcoded
+                `False`, so `lock_identities(report, persist=True)` wrote
+                nothing in silence (#379, Q10).
+            verbose (bool): Passed to every patient's lock: one debug line
+                per patient. Until 0.9.4 the loop hardcoded `False`.
 
         Returns:
             Union[List[Instance], LockingResult]: List of all modified instances (if chunking is disabled).
@@ -2571,9 +2621,14 @@ class DicomSession:
             for pid in pbar:
                 p_obj = patient_map.get(pid)
                 if p_obj:
-                    # Use verbose=False to avoid log spam
-                    res = self.lock_identities(
-                        pid, persist=False, _patient_obj=p_obj, verbose=False)
+                    # Forwarded, not hardcoded: a `PhiReport` is the
+                    # README's form of `lock_identities`, and a loop that
+                    # writes `persist=False` here turns `persist=True` on
+                    # that call into one that writes nothing and says
+                    # nothing (Q10).
+                    res = self._lock_patient_identity(
+                        p_obj, persist=persist, verbose=verbose,
+                        tags_to_lock=tags_to_lock)
 
                     if auto_persist_chunk_size > 0:
                         current_chunk.extend(res)
@@ -2830,7 +2885,10 @@ class DicomSession:
         max_workers = _redaction_worker_count()
         print(f"Queued {len(tasks)} redaction tasks across "
               f"{len(self.configuration.rules)} rules.")
-        print(f"Executing using {max_workers} workers (Process Isolation)...")
+        # No "(Process Isolation)": the pool is threads on a free-threaded
+        # build and on every `:memory:` store (#381), so the parenthetical
+        # was a claim this line could not keep.
+        print(f"Executing using {max_workers} workers...")
         get_logger().info(
             f"Starting granular redaction ({len(tasks)} tasks, "
             f"workers={max_workers})...")
@@ -2873,6 +2931,19 @@ class DicomSession:
         # terminated mid-pass: every mutation still queued was discarded
         # unapplied, no ERROR row was written for anything, and the caller
         # got a bare `BrokenProcessPool` instead of `RedactionError` (#232).
+        # Threads for a `:memory:` store, asked for per call (#381). This
+        # worker is the only one that *writes to the store* from inside
+        # the child (`execute_redaction_task` -> `persist_pixel_data`),
+        # and `SqliteStore.__setstate__` hands a spawned child
+        # `_memory_conn = None`, so a process opens a fresh, empty
+        # in-memory database with no `instance_blobs` table. Threads
+        # share the parent's connection. The argument rather than
+        # `ISOCENTER_FORCE_THREADS`: the variable is process-global and
+        # does not reach every pool (#390). `force_threads` beats
+        # `ISOCENTER_FORCE_PROCESSES` by the documented order and loses to
+        # worker recycling -- with `ISOCENTER_MAX_TASKS_PER_CHILD` set
+        # this still runs in processes and still fails, which the
+        # variable's row in docs/environment.md says.
         mutations = run_parallel(
             service.execute_redaction_task,
             tasks,
@@ -2881,6 +2952,7 @@ class DicomSession:
             return_generator=True,
             chunksize=1,
             yield_exceptions=True,
+            force_threads=self.store_backend.db_path == ":memory:",
             progress=show_progress)
 
         applied, failures = self._apply_redaction_outcomes(

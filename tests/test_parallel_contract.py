@@ -8,6 +8,7 @@ removed.
 """
 import logging
 import os
+import sys
 
 import pytest
 
@@ -32,6 +33,13 @@ def double_or_die(value):
     if value < 0:
         os._exit(13)
     return value * 2
+
+
+def _collector_enabled(_):
+    """Module scope: it pickles into a worker and reports *that* process's
+    collector. Imported inside because it runs there, like `_worker_init`."""
+    import gc  # pylint: disable=import-outside-toplevel
+    return gc.isenabled()
 
 
 @pytest.fixture(autouse=True)
@@ -132,6 +140,62 @@ def test_the_progress_bar_is_told_how_many_items_to_expect(monkeypatch):
     assert seen.get("total") == 4
 
 
+def test_an_explicit_total_reaches_the_progress_bar(monkeypatch):
+    """The `total=` argument is for generators, which have no `__len__` (#365).
+
+    The test above covers the sized-iterable arm of `_progress_total`;
+    the explicit-`total` arm was covered by nothing, so `return
+    strategy.total` could become `return None` and every bar over a
+    generator would lose its denominator. Killing mutation: that
+    `return` -> `return None`.
+    """
+    monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
+
+    seen = {}
+    real_tqdm = parallel.tqdm
+
+    def capture(iterable, **kwargs):
+        seen.update(kwargs)
+        return real_tqdm(iterable, **kwargs)
+
+    monkeypatch.setattr(parallel, "tqdm", capture)
+
+    parallel.run_parallel(identity, (i for i in range(4)), total=4,
+                          show_progress=True)
+
+    assert seen.get("total") == 4
+
+
+def test_the_default_path_is_processes_under_a_gil_and_threads_without_one(
+        monkeypatch):
+    """What `_use_threads` answers when no lever is set, on both builds (#365).
+
+    The PR gate runs 3.14t precisely because `run_parallel()` takes the
+    threads path there, and nothing had ever said so in a test: the last
+    line of `_use_threads` could drop its `not`, turn its `and` into
+    `or`, or become `return None`, and the suite stayed green on
+    whichever build happened to be running. Pinned by patching
+    `sys._is_gil_enabled` both ways and deleting it (the builds that have
+    always had a GIL), so each arm is exercised on any interpreter.
+
+    **Identity assertions, not truthiness.** `None` is falsy, so `assert
+    not result` lets the `return None` mutant through on a GIL build
+    while it silently turns the free-threaded default into processes.
+    The three levers are cleared by the autouse fixture.
+    """
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: True, raising=False)
+    assert parallel._use_threads(False, None) is False, (
+        "with a GIL and no lever, the default must be processes")
+
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: False, raising=False)
+    assert parallel._use_threads(False, None) is True, (
+        "without a GIL and no lever, the default must be threads")
+
+    monkeypatch.delattr(sys, "_is_gil_enabled", raising=False)
+    assert parallel._use_threads(False, None) is False, (
+        "a build that cannot be asked has always had a GIL: processes")
+
+
 def test_the_per_call_process_pool_pins_spawn(monkeypatch):
     """Every process pool here starts workers by spawn, never by fork.
 
@@ -207,6 +271,50 @@ def test_the_shared_session_executor_pins_spawn(tmp_path, monkeypatch):
             "an explicit spawn context it forks on Linux 3.12 and the "
             "worker inherits the parent's open SQLite handles (#220, "
             "#250)")
+
+
+def test_the_shared_executor_gets_no_initializer_without_a_lever(
+        tmp_path, monkeypatch):
+    """`Session.__init__` calls `resolve_worker_initializer()` bare (#365).
+
+    So the resolver's own `disable_gc=False` default is what decides
+    whether every shared-executor worker runs with its collector off,
+    and no test looked at that executor's initializer: the default could
+    be flipped to `True` and ingest would run GC-less on every session.
+    Reads a private attribute of the executor, as the spawn test above
+    reads `_mp_context`. Killing mutation: `resolve_worker_initializer`'s
+    default `False` -> `True`.
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.delenv("ISOCENTER_DISABLE_GC", raising=False)
+    monkeypatch.delenv("ISOCENTER_WORKER_FAULTHANDLER", raising=False)
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        assert session._executor._initializer is None, (
+            "with neither lever set the session's executor was handed an "
+            f"initializer: {session._executor._initializer!r}")
+
+
+def test_the_initializer_actually_disables_the_collector_in_a_worker(
+        monkeypatch):
+    """`gc.disable()` runs, in a worker (#365).
+
+    `test_parallel_config.py::_assert_disables_gc` asserts the partial's
+    *shape* on purpose -- calling it would disable the test process's
+    collector -- so the one line that does the work, `gc.disable()`,
+    could be deleted and every test stayed green. A spawned worker
+    reports its own `gc.isenabled()`. Processes structurally: threads
+    get no initializer by rule (`_Strategy.worker_initializer`), so on
+    3.14t the default path would make this vacuous. One spawn, about a
+    second. Killing mutation: `gc.disable()` deleted from `_worker_init`.
+    """
+    monkeypatch.setenv("ISOCENTER_FORCE_PROCESSES", "1")
+
+    assert parallel.run_parallel(_collector_enabled, [0], disable_gc=True,
+                                 max_workers=1, show_progress=False) == [False]
+    assert parallel.run_parallel(_collector_enabled, [0],
+                                 max_workers=1, show_progress=False) == [True]
 
 
 # --- #232: exceptions as values ---------------------------------------------

@@ -87,6 +87,15 @@ PYTEST = [str(REPO / ".venv/bin/python"), "-m", "pytest", "-x", "-q", "--no-head
 # already-measured modules to re-pay at stride 1. The positional CLI
 # budget overrides every module for one run.
 TARGETS = {
+    # 68 sites; budget 80 is stride 1 with headroom (#365). Five files
+    # rather than the issue's three: test_every_test_that_imports_a_target_module_is_listed
+    # demands every file whose text names `isocenter.parallel`, and
+    # test_logging.py and test_shared_executor_lifecycle.py do.
+    "isocenter/parallel.py": (["tests/test_logging.py",
+                               "tests/test_parallel_config.py",
+                               "tests/test_parallel_contract.py",
+                               "tests/test_redaction_worker_count.py",
+                               "tests/test_shared_executor_lifecycle.py"], 80),
     "isocenter/crypto.py": (["tests/test_crypto.py", "tests/test_reversibility.py"], 30),
     "isocenter/privacy.py": (["tests/test_analysis.py", "tests/test_analysis_persistence.py",
                               "tests/test_audit_suppression.py", "tests/test_automation.py",

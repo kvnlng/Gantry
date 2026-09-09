@@ -116,5 +116,57 @@ class TestSharedExecutorLifecycle(unittest.TestCase):
         self.assertEqual(exec1, exec2)
         self.assertEqual(exec1, self.session._executor)
 
+
+def test_force_threads_does_not_reach_ingest(tmp_path, monkeypatch):
+    """`ISOCENTER_FORCE_THREADS` is read and ignored by `ingest()` (#390, #363).
+
+    Characterization: green on the code it was written against, and the
+    `ISOCENTER_FORCE_THREADS` row in `docs/environment.md` is written
+    from it (the #333 convention). The lever resolves to threads --
+    `_use_threads` says so under the variable -- and `ingest()` hands
+    `run_parallel()` the session's own `ProcessPoolExecutor` as
+    `executor=`, which `_run_on_shared_executor` uses as given without
+    consulting the strategy. Nothing warns. Whether ingest *should*
+    honour the lever is a design question the spec rules out of scope
+    (the shared executor exists so ingest does not pay a pool start-up
+    per call); the row says what is.
+
+    The spy replaces `isocenter.io_handlers`' binding of `run_parallel`
+    -- that is the one `DicomImporter.import_files` calls; the session's
+    own binding never sees an ingest -- and returns no results, so the
+    junk file is never read. Killing mutation: `executor=self._executor`
+    deleted from `ingest()`'s `import_files` call -- the spy then records
+    `executor=None`.
+    """
+    import concurrent.futures
+
+    from isocenter import parallel
+
+    monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
+    monkeypatch.delenv("ISOCENTER_FORCE_PROCESSES", raising=False)
+    monkeypatch.delenv("ISOCENTER_MAX_TASKS_PER_CHILD", raising=False)
+    (tmp_path / "one.dcm").write_bytes(b"not a dicom file; never read")
+
+    recorded = {}
+
+    def spy(func, items, **kwargs):
+        recorded.update(kwargs)
+        return []
+
+    monkeypatch.setattr("isocenter.io_handlers.run_parallel", spy)
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        session.ingest(str(tmp_path / "one.dcm"))
+
+        assert parallel._use_threads(False, None) is True, (
+            "the lever is set; the strategy must resolve to threads for "
+            "this to be a characterization of *ignoring* it")
+        assert recorded.get("executor") is session._executor, (
+            "ingest() must hand run_parallel the session's own executor; "
+            f"it passed {recorded.get('executor')!r}")
+        assert isinstance(session._executor,
+                          concurrent.futures.ProcessPoolExecutor)
+
+
 if __name__ == '__main__':
     unittest.main()

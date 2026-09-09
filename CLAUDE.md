@@ -9,11 +9,12 @@ Isocenter is a Python library for indexing, de-identifying, and exporting DICOM 
 ## Commands
 
 ```bash
-pip install -e ".[dev]"          # contributor environment: tests + pylint (there is deliberately no requirements.txt)
+pip install -e ".[dev]"          # contributor environment: tests + pylint + coverage (there is deliberately no requirements.txt)
 pytest                           # full suite
 pytest tests/test_session.py     # one file
 pytest tests/test_session.py::test_name -x   # one test
 pylint isocenter                    # lint (target >8.5/10; NOT enforced by CI)
+coverage run -m pytest tests/ && coverage combine && coverage report   # line coverage, spawned workers included (.coveragerc says why core=ctrace); not CI, no threshold
 mkdocs serve                     # docs preview (needs the `docs` extra)
 python -m tests.benchmarks.run_stress_test   # benchmark suite
 python -m scripts.mutation_probe            # do the tests notice when behaviour changes? (by hand: see below)
@@ -31,6 +32,7 @@ Which tests cover which module, for the local tier — `scripts/mutation_probe.p
 
 | Module | Tests |
 | --- | --- |
+| `parallel.py` | `test_logging.py`, `test_parallel_config.py`, `test_parallel_contract.py`, `test_redaction_worker_count.py`, `test_shared_executor_lifecycle.py` |
 | `crypto.py` | `test_crypto.py`, `test_reversibility.py` |
 | `privacy.py` | `test_analysis.py`, `test_analysis_persistence.py`, `test_audit_suppression.py`, `test_automation.py`, `test_config_tags_shapes.py`, `test_declined_remediation_is_recorded.py`, `test_multiprocessing.py`, `test_mutation_gaps.py`, `test_ocr_formal.py`, `test_persistence.py`, `test_privacy.py`, `test_private_sequence_implicit_vr.py`, `test_profile_end_to_end.py`, `test_remediation.py`, `test_remediation_actions.py`, `test_remediation_invariants.py`, `test_scaffold_features.py`, `test_sr_anonymization.py` |
 | `remediation.py` | `test_audit_suppression.py`, `test_declined_remediation_is_recorded.py`, `test_deid_tags.py`, `test_mutation_gaps.py`, `test_persistence.py`, `test_private_sequence_implicit_vr.py`, `test_remediation.py`, `test_remediation_accounting.py`, `test_remediation_actions.py`, `test_remediation_dates.py`, `test_remediation_invariants.py`, `test_phi_retention.py`, `test_scaffold_features.py` |
@@ -42,7 +44,7 @@ Four other workflows exist. `hang-probe.yml` is the #250 hang probe: `workflow_d
 
 Tests write `*.db`, `*_pixels.bin`, `*.lock` (the sidecar gate and pass-lock files beside each sidecar), `isocenter.log`, and a few config/CSV artifacts into the repo root. All are gitignored; leave them alone rather than adding cleanup.
 
-Optional extras degrade gracefully and must keep doing so: `ocr` (pytesseract — `pixel_analysis.HAS_OCR`), `nlp` (spacy — `ZoneDiscoverer` falls back to regex; the `en_core_web_sm` model is deliberately not declared, because PyPI refuses direct-URL requirements), `docs`, `tests` (includes `setuptools`, which the build-based contract tests need and 3.12+ venvs no longer ship), and `dev` (`tests` plus pylint — contributor tooling that `pip install isocenter` must never pull in).
+Optional extras degrade gracefully and must keep doing so: `ocr` (pytesseract — `pixel_analysis.HAS_OCR`), `nlp` (spacy — `ZoneDiscoverer` falls back to regex; the `en_core_web_sm` model is deliberately not declared, because PyPI refuses direct-URL requirements), `docs`, `tests` (includes `setuptools`, which the build-based contract tests need and 3.12+ venvs no longer ship), and `dev` (`tests` plus pylint and coverage — contributor tooling that `pip install isocenter` must never pull in).
 
 ### Running one mutation by hand
 

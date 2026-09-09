@@ -581,12 +581,14 @@ def test_get_flattened_instances_is_published_store_api():
     rendered on the docs site by an unfiltered `::: isocenter.persistence`,
     and named by the 0.9.1 CHANGELOG as the migration path for callers
     of the deleted `export_to_parquet`. #142 weighed deleting it and
-    kept it; this is the surface #26 will freeze. A characterization
-    pin, green today, same class as
+    kept it. #26 ruled it *documented but internal* (#379): the facade is
+    what gets frozen, and `SqliteStore` is a seam behind it -- so it
+    stays rendered and stays pinned here, and a change goes through a
+    red test and a CHANGELOG entry naming both spellings rather than a
+    2.0. A characterization pin, green today, same class as
     `test_the_page_size_default_is_not_a_public_knob`: a renamed or
     reordered parameter is an API change and goes through a red test.
-    Whether `page_size` belongs on the public surface is #26's call,
-    not a quiet edit here.
+    `page_size` is in the same tier as the method, by the same ruling.
     """
     params = list(inspect.signature(
         SqliteStore.get_flattened_instances).parameters)

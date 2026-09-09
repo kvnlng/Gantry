@@ -168,9 +168,10 @@ def test_lock_identities_wrapper_chunking(tmp_path):
         session.save()
         session.persistence_manager.flush()
 
-        # Act: Call wrapper with chunk size = 1
-        # Should trigger chunking: persist 1, clear 1.
-        res = session.lock_identities(ids, auto_persist_chunk_size=1)
+        # Act: chunk size = 1 -- persist 1, clear 1. The batch method's
+        # own argument since 0.9.4; `lock_identities` no longer forwards
+        # `**kwargs` (#379, Q7).
+        res = session.lock_identities_batch(ids, auto_persist_chunk_size=1)
 
         # Assert: Should return empty list because chunking happened
         assert res == []

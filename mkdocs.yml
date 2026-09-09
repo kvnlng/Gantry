@@ -92,6 +92,7 @@ nav:
       - 'Analytics & Reporting': analytics.md
       - 'Waveforms & WFDB': waveforms.md
   - API Reference:
+      - 'API stability': api/stability.md
       - 'Session': api/session.md
       - 'Configuration': api/configuration.md
       - 'Entities': api/entities.md
