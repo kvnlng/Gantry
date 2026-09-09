@@ -199,7 +199,9 @@ setup(
             # coverage: .coveragerc's spawned-worker measurement (#380);
             # contributor tooling like pylint, never in tests or
             # install_requires. >=7.10 because `[run] core` and
-            # `[run] sigterm`, both load-bearing there, exist by then.
+            # `[run] sigterm`, both load-bearing there, exist by then
+            # (read in 7.10.0's coverage/config.py; measured on 7.15.4
+            # and 7.16.0; nothing between was tried).
             "coverage>=7.10"
         ]
     }

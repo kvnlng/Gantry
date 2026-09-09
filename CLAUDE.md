@@ -9,7 +9,7 @@ Isocenter is a Python library for indexing, de-identifying, and exporting DICOM 
 ## Commands
 
 ```bash
-pip install -e ".[dev]"          # contributor environment: tests + pylint (there is deliberately no requirements.txt)
+pip install -e ".[dev]"          # contributor environment: tests + pylint + coverage (there is deliberately no requirements.txt)
 pytest                           # full suite
 pytest tests/test_session.py     # one file
 pytest tests/test_session.py::test_name -x   # one test
@@ -44,7 +44,7 @@ Four other workflows exist. `hang-probe.yml` is the #250 hang probe: `workflow_d
 
 Tests write `*.db`, `*_pixels.bin`, `*.lock` (the sidecar gate and pass-lock files beside each sidecar), `isocenter.log`, and a few config/CSV artifacts into the repo root. All are gitignored; leave them alone rather than adding cleanup.
 
-Optional extras degrade gracefully and must keep doing so: `ocr` (pytesseract — `pixel_analysis.HAS_OCR`), `nlp` (spacy — `ZoneDiscoverer` falls back to regex; the `en_core_web_sm` model is deliberately not declared, because PyPI refuses direct-URL requirements), `docs`, `tests` (includes `setuptools`, which the build-based contract tests need and 3.12+ venvs no longer ship), and `dev` (`tests` plus pylint — contributor tooling that `pip install isocenter` must never pull in).
+Optional extras degrade gracefully and must keep doing so: `ocr` (pytesseract — `pixel_analysis.HAS_OCR`), `nlp` (spacy — `ZoneDiscoverer` falls back to regex; the `en_core_web_sm` model is deliberately not declared, because PyPI refuses direct-URL requirements), `docs`, `tests` (includes `setuptools`, which the build-based contract tests need and 3.12+ venvs no longer ship), and `dev` (`tests` plus pylint and coverage — contributor tooling that `pip install isocenter` must never pull in).
 
 ### Running one mutation by hand
 
