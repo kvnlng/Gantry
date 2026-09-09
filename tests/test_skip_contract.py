@@ -121,8 +121,14 @@ class _SkipVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node):
         name = _called_name(node.func)
+        # `skipif` is pytest's decorator spelling and reads as an
+        # `ast.Call` with `attr == "skipif"`, which the four names either
+        # side of it do not cover. Added when the first one appeared
+        # (#384's free-threaded banner test), on this file's own
+        # instruction: the text scan below found it, and the answer to a
+        # form the walk cannot see is to teach the walk.
         if name in {"importorskip", "skip", "skipTest", "skipIf",
-                    "skipUnless"}:
+                    "skipif", "skipUnless"}:
             module = None
             if name == "importorskip" and node.args:
                 first = node.args[0]

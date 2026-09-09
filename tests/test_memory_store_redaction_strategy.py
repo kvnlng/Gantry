@@ -12,9 +12,12 @@ pass raised `RedactionError` naming it. `ingest()`, `audit()`, `save()`
 and `export()` on the same store succeed, because their workers read
 from a file or return results the parent persists (spec §1.1).
 
-The fix is one keyword argument: `_apply_redaction_rules` passes
-`force_threads=True` to `run_parallel()` when `store_backend.db_path ==
-":memory:"`. The *argument*, not `ISOCENTER_FORCE_THREADS` -- the
+The fix is one keyword argument: `redact()` passes
+`force_threads=True` to `_resolve_strategy()` when
+`store_backend.db_path == ":memory:"`, and hands the resolved strategy
+to `run_parallel()` (#384 moved the resolution fifty lines up; it used
+to be the `force_threads=` keyword on the `run_parallel(` call in
+`_apply_redaction_rules`). The *argument*, not `ISOCENTER_FORCE_THREADS` -- the
 variable is process-global, so set from inside `redact()` it would leak
 into every later pool in the process, and #390 measured that it does
 not reach every pool anyway. `force_threads` beats
@@ -26,6 +29,16 @@ other two levers, so the processes path is selected structurally on the
 free-threaded build too. Without that, 3.14t's default of threads would
 decide the test before the fix is consulted, and the suite would be
 green there for the wrong reason.
+
+That is a claim about the **killing mutation**, not about the passing
+run: with `force_threads=` deleted, `ISOCENTER_FORCE_PROCESSES=1` does
+select processes and these tests do go red, on both interpreters. With
+the fix in place the lever loses, which is the behaviour under test.
+Since #400 that losing lever also logs a `WARNING` naming itself on
+every `:memory:` pass here. These tests neither assert it -- that
+belongs to `tests/test_memory_store_reports_its_processes_lever.py` --
+nor suppress it: a fixture that filtered it would hide the one message
+that bunch adds from the only existing tests that trigger it.
 
 The fixture's pixels are **non-zero** and the image is larger than the
 zone, on purpose: a zero image redacted to zero is green with the fix
@@ -94,14 +107,20 @@ def _instances(session):
             for inst in se.instances]
 
 
-def test_a_memory_store_redacts_through_the_front_door_under_processes():
-    """The whole pass, on `Session(":memory:")`, with processes forced.
+def test_a_memory_store_redacts_through_the_front_door_when_processes_are_requested():
+    """The whole pass, on `Session(":memory:")`, with processes requested.
+
+    **Requested, not taken.** The old name said the pass ran under
+    processes; measured, it never has, on either interpreter, since #381
+    landed -- `force_threads=True` outranks the variable. The name was a
+    misnomer and #400's warning is about to say so out loud on every run
+    of this test.
 
     Red on 0.9.3 on both 3.12.13 and 3.14.7t with
     `RedactionError: Redaction failed for 3 of 3 instances ... no such
     table: instance_blobs`. Killing mutation: the `force_threads=`
-    keyword deleted from the `run_parallel(` call in
-    `_apply_redaction_rules`.
+    argument deleted from the `_resolve_strategy(` call in `redact()` --
+    the same one edit, fifty lines further up than it used to be (#384).
     """
     with DicomSession(":memory:") as session:
         _populate(session)
@@ -121,7 +140,7 @@ def test_the_memory_store_asks_for_threads_per_call_and_a_file_store_does_not(
     """The mechanism, not just the outcome: the keyword, per call.
 
     Three mutations are red here and the front-door test alone would
-    miss two of them. The keyword deleted: the first half is red (and
+    miss two of them. The argument deleted: the first half is red (and
     the front-door test). `force_threads=True` unconditionally: the
     second half is red -- a file store on the floor interpreter must
     keep processes, the only path whose recycling and memory behaviour
@@ -129,13 +148,21 @@ def test_the_memory_store_asks_for_threads_per_call_and_a_file_store_does_not(
     place of the argument: the first half is red, because the spy sees
     no argument -- and the front-door test is green, which is exactly
     the combination that means the wrong fix landed (spec §9 item 1).
+
+    The spy reads `kwargs["strategy"].use_threads` since #384, because
+    the dispatch now hands `run_parallel` an already-resolved strategy
+    rather than the keywords it was resolved from. The two recorded
+    expectations are unchanged in meaning. It keys on the strategy's own
+    `desc` for the same reason: `desc=` is no longer a keyword of the
+    call.
     """
     recorded = []
     real = session_module.run_parallel
 
     def spy(*args, **kwargs):
-        if kwargs.get("desc") == "Redacting Pixels":
-            recorded.append(kwargs.get("force_threads"))
+        strategy = kwargs.get("strategy")
+        if strategy is not None and strategy.desc == "Redacting Pixels":
+            recorded.append(strategy.use_threads)
         return real(*args, **kwargs)
 
     monkeypatch.setattr(session_module, "run_parallel", spy)
@@ -144,8 +171,8 @@ def test_the_memory_store_asks_for_threads_per_call_and_a_file_store_does_not(
         _populate(session)
         assert session.redact() == 3
     assert recorded == [True], (
-        f"redact() on a :memory: store must ask run_parallel for threads "
-        f"through the force_threads argument; it passed {recorded}")
+        f"redact() on a :memory: store must resolve a threads strategy "
+        f"through the force_threads argument; it dispatched {recorded}")
 
     recorded.clear()
     with DicomSession(str(tmp_path / "file_store.db")) as session:
@@ -153,4 +180,5 @@ def test_the_memory_store_asks_for_threads_per_call_and_a_file_store_does_not(
         assert session.redact() == 3
     assert recorded == [False], (
         f"redact() on a file-backed store must not ask for threads -- the "
-        f"processes path is the one #185 measured; it passed {recorded}")
+        f"processes path is the one #185 measured; it dispatched "
+        f"{recorded}")

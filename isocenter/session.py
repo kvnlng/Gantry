@@ -31,7 +31,7 @@ from .persistence import SqliteStore
 from .crypto import KeyManager
 from .reversibility import ReversibilityService
 from .persistence_manager import PersistenceManager
-from .parallel import run_parallel, _env_int, resolve_worker_initializer
+from .parallel import run_parallel, _env_int, _resolve_strategy, resolve_worker_initializer
 from .configuration import IsocenterConfiguration, FlowList
 from .entities import (PhiStatus, SOURCE_SOP_UID_ATTR, clone_sequences,
                        resolve_item_path, iter_item_tree)
@@ -2843,6 +2843,35 @@ class DicomSession:
         if hasattr(self, 'persistence_manager'):
             self.persistence_manager.flush()
 
+        # Resolved here, once, and carried to the pool. The console line
+        # a few lines into `_apply_redaction_rules` names the strategy
+        # off this object and `run_parallel` is handed the same object,
+        # so the sentence a user reads and the pool that runs are two
+        # readings of one decision rather than two guesses at it (#384).
+        # A second reading of the environment at the print site would be
+        # a second implementation of `_resolve_execution_choice`'s four
+        # ranks, and a second implementation is a second thing that can
+        # disagree.
+        #
+        # Threads for a `:memory:` store, asked for per call (#381). The
+        # redaction worker is the only one that *writes to the store*
+        # from inside the child (`execute_redaction_task` ->
+        # `persist_pixel_data`), and `SqliteStore.__setstate__` hands a
+        # spawned child `_memory_conn = None`, so a process opens a
+        # fresh, empty in-memory database with no `instance_blobs`
+        # table. Threads share the parent's connection. The argument
+        # rather than `ISOCENTER_FORCE_THREADS`: the variable is
+        # process-global and does not reach every pool (#390).
+        strategy = _resolve_strategy(
+            max_workers=_redaction_worker_count(),
+            chunksize=1,
+            maxtasksperchild=None,
+            disable_gc=False,
+            force_threads=self.store_backend.db_path == ":memory:",
+            show_progress=show_progress,
+            desc="Redacting Pixels",
+            total=None)
+
         service = RedactionService(self.store, self.store_backend)
         try:
             # The pass-lock (#368), shared, held from before the first
@@ -2858,20 +2887,26 @@ class DicomSession:
             # a `Session` concept -- and `redact_by_machine` goes
             # through here, so it does not open a second one.
             with self.store_backend._hold_pass_lock():
-                return self._apply_redaction_rules(service, show_progress, force)
+                return self._apply_redaction_rules(service, strategy, force)
         except Exception:
             get_logger().exception(
                 "Redaction failed. Images already processed are still redacted "
                 "in memory; the rest are untouched.")
             raise
 
-    def _apply_redaction_rules(self, service, show_progress, force=False):
+    def _apply_redaction_rules(self, service, strategy, force=False):
         """Runs every loaded rule and applies the results to the store.
 
         Returns the number of instances whose pixels a zone was applied
         to. Raises on failure; the caller logs and re-raises. `force` is
         threaded into every task and read only by the attestation skip
         (#237).
+
+        `strategy` is the `_Strategy` `redact()` resolved before it took
+        the pass-lock. It carries the worker count, the progress-bar
+        setting and the threads-or-processes decision, so there is no
+        second spelling of any of them here and nothing to keep in sync
+        with what the pool is built from (#384).
         """
         tasks = []
         get_logger().info("Analyzing workload...")
@@ -2892,16 +2927,23 @@ class DicomSession:
             print("No matching images found for any loaded rules.")
             return 0
 
-        max_workers = _redaction_worker_count()
         print(f"Queued {len(tasks)} redaction tasks across "
               f"{len(self.configuration.rules)} rules.")
-        # No "(Process Isolation)": the pool is threads on a free-threaded
-        # build and on every `:memory:` store (#381), so the parenthetical
-        # was a claim this line could not keep.
-        print(f"Executing using {max_workers} workers...")
+        # The parenthetical is read off the resolved strategy -- the very
+        # object the pool below is built from -- and not derived a second
+        # time here (#384). It says *what*, never *why*: a
+        # `(threads: the store is in memory)` would put the four-rank
+        # order in a second place, and the `why` is what #400's warning
+        # and refusal are for, said only when it matters. The retired
+        # `(Process Isolation)` named an implementation property rather
+        # than the choice and left the recycling pool ambiguous; the
+        # recycling pool is processes and says so.
+        named_strategy = "threads" if strategy.use_threads else "processes"
+        print(f"Executing using {strategy.max_workers} workers "
+              f"({named_strategy})...")
         get_logger().info(
             f"Starting granular redaction ({len(tasks)} tasks, "
-            f"workers={max_workers})...")
+            f"workers={strategy.max_workers}, strategy={named_strategy})...")
 
         # Keyed before any worker starts. A redacted image gets a new SOP
         # UID, and `run_parallel` uses threads on a free-threaded build --
@@ -2941,29 +2983,22 @@ class DicomSession:
         # terminated mid-pass: every mutation still queued was discarded
         # unapplied, no ERROR row was written for anything, and the caller
         # got a bare `BrokenProcessPool` instead of `RedactionError` (#232).
-        # Threads for a `:memory:` store, asked for per call (#381). This
-        # worker is the only one that *writes to the store* from inside
-        # the child (`execute_redaction_task` -> `persist_pixel_data`),
-        # and `SqliteStore.__setstate__` hands a spawned child
-        # `_memory_conn = None`, so a process opens a fresh, empty
-        # in-memory database with no `instance_blobs` table. Threads
-        # share the parent's connection. The argument rather than
-        # `ISOCENTER_FORCE_THREADS`: the variable is process-global and
-        # does not reach every pool (#390). `force_threads` beats
+        # The strategy `redact()` resolved, handed over rather than
+        # resolved again: `max_workers`, `chunksize`, `desc`, the
+        # progress-bar setting and the threads-or-processes decision are
+        # all inside it, and the console line above printed from the same
+        # object (#384). The `:memory:` store's request for threads is on
+        # the `_resolve_strategy` call in `redact()`, with the comment
+        # explaining why it has to be an argument (#381, #390); it beats
         # `ISOCENTER_FORCE_PROCESSES` by the documented order and loses to
-        # worker recycling -- with `ISOCENTER_MAX_TASKS_PER_CHILD` set
-        # this still runs in processes and still fails, which the
-        # variable's row in docs/environment.md says.
+        # worker recycling, which is why that combination is refused
+        # before this point rather than failing here (#400).
         mutations = run_parallel(
             service.execute_redaction_task,
             tasks,
-            desc="Redacting Pixels",
-            max_workers=max_workers,
+            strategy=strategy,
             return_generator=True,
-            chunksize=1,
-            yield_exceptions=True,
-            force_threads=self.store_backend.db_path == ":memory:",
-            progress=show_progress)
+            yield_exceptions=True)
 
         applied, failures = self._apply_redaction_outcomes(
             mutations, instances, self.store_backend, passes)
