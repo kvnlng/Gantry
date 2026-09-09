@@ -3620,8 +3620,12 @@ def _compress_j2k(ds, pixel_array=None):
         # `RuntimeError: Unable to decode as exceptions were raised by all
         # available plugins` on read. Without this guard the encode
         # succeeds, a file is written, and the audit log says
-        # `wrote 1 of 1` beside a file no reader can open -- a silence
-        # created by the fix for a silence (#404).
+        # `wrote 1 of 1` beside a file that was **written wrong and would
+        # be read back wrong** -- the loss is at the encoder, so a decoder
+        # that *does* open the codestream (`imagecodecs.jpeg2k_decode`)
+        # hands back the right dtype and shape with silently wrong values
+        # rather than raising. Worse than unreadable, not milder. A
+        # silence created by the fix for a silence (#404).
         #
         # 16-bit **multi-sample** is the same silence from the other
         # direction, and it is this encoder's alone: `imagecodecs` encodes

@@ -35,7 +35,8 @@ this fix rather than a rough edge.** Two separate cells would otherwise
 have turned today's loud failure into `wrote 1 of 1` beside a file
 **this library cannot read back** -- this milestone's own defect,
 introduced by its own fix. The two cells fail that standard for
-different reasons, and only one of them is unreadable by every decoder:
+different reasons, and the 32-bit one is the worse of the two: it is not
+merely unreadable here, it is **written wrong and read back wrong**.
 
 - **32- and 64-bit.** The codec does not reject 32-bit: it encodes,
   exactly to 25 bits and wrong above that, and the DICOM file built from
@@ -342,9 +343,14 @@ def test_a_32_bit_frame_is_refused_by_name_rather_than_written_wrong(
     `imagecodecs` does **not** refuse 32-bit: it encodes, exactly to 25
     bits and wrong above that, and the DICOM file built from a 32-bit
     codestream raises `RuntimeError: Unable to decode as exceptions were
-    raised by all available plugins` on read. So without the guard the
-    encode succeeds, a file is written, and `wrote 1 of 1` appears beside
-    a file no reader can open.
+    raised by all available plugins` on read here. So without the guard
+    the encode succeeds, a file is written, and `wrote 1 of 1` appears
+    beside a file that was **written wrong and would be read back wrong**
+    -- the pixels are lost at the encoder, so a decoder that does open
+    the codestream (`imagecodecs.jpeg2k_decode` does) returns the right
+    dtype and shape with silently wrong values: `uint32` full-range wrote
+    2147483647 and read back 67108863; `int32` full-range read back -1.
+    That is worse than unreadable, not a milder form of it.
 
     *Red when:* the frame guard is removed. Measured, it is red on
     `assert error is not None` -- the export **succeeds** -- so the
