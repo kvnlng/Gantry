@@ -134,6 +134,7 @@ TARGETS = {
                                   "tests/test_compress_handlers.py",
                                   "tests/test_compress_j2k_coverage.py",
                                   "tests/test_data_loss_reporting.py",
+                                  "tests/test_empty_sequence_roundtrip.py",
                                   "tests/test_export_atomic_write.py",
                                   "tests/test_export_contract.py",
                                   "tests/test_export_date_error.py",

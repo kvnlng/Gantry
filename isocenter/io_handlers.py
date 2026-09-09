@@ -1211,7 +1211,19 @@ def process_sequence(tag, elem, parent_item, dropped: list = None,
     sequence in the graph by the time anything resolves the path against
     it, so leaving it out would carry the bytes and then fail to find their
     home (#167).
+
+    **A zero-item sequence is carried, and that is what the
+    `add_sequence` call below is for.** This loop used to be the only way
+    a sequence reached the graph, so a source element saying "present, no
+    items" made zero calls and was gone before anything could report it --
+    absent from the export with `losses == []` and an `EXPORT` row reading
+    `wrote 1 of 1 planned instances` (#392). The call is unconditional
+    rather than guarded by `if not len(elem)`: one statement covers both
+    cases and cannot go stale. `_merge_sequences` already writes
+    `ds.add_new(tag, 'SQ', Sequence())` for an empty one, so nothing is
+    lost and no `DATA_LOSS` row is filed.
     """
+    parent_item.add_sequence(tag)
     for index, ds_item in enumerate(elem):
         seq_item = DicomItem()
         populate_attrs(ds_item, seq_item, dropped, is_root=False,

@@ -328,18 +328,57 @@ class DicomItem(TrackedEntity):
         """
         self.attribute_vrs[_canonical_tag(tag)] = vr
 
+    def add_sequence(self, tag: str) -> 'DicomSequence':
+        """
+        The sequence at `tag`, created empty if it is not there yet.
+
+        A sequence with no items is a thing a source can assert, and until
+        #392 this graph had no way to hold one: the only route in was
+        `add_sequence_item`, so a zero-item `SQ` made zero calls and
+        vanished at ingest with `losses == []`. Both hops that dropped it
+        -- `process_sequence` on the way in, `_deserialize_into` on the way
+        back out of the store -- now call this once, before their item
+        loop, so the empty and the non-empty case are the same statement
+        and the empty one cannot go stale.
+
+        `mark_modified()` **only when it creates**. A sequence that newly
+        exists is a change the store must hold; a second call on a tag that
+        already has one is not, and dirtying there would have every
+        hydration and every re-ingest rewrite rows that did not change
+        (#186's rule, applied to sequences).
+
+        Args:
+            tag (str): The DICOM tag for the sequence. Case-insensitive.
+
+        Returns:
+            DicomSequence: the sequence now at `tag`, existing or new.
+        """
+        tag = _canonical_tag(tag)
+        sequence = self.sequences.get(tag)
+        if sequence is None:
+            sequence = self.sequences[tag] = DicomSequence(tag=tag)
+            self.mark_modified()
+        return sequence
+
     def add_sequence_item(self, tag: str, item: 'DicomItem'):
         """
         Appends a new item to a sequence, creating the sequence if needed.
+
+        Delegates the creating half to `add_sequence()` rather than
+        repeating it, so there is one spelling of "a sequence comes into
+        existence". The first item on a brand-new sequence therefore
+        advances `_revision` twice where it advanced once -- harmless,
+        because `_revision` is a monotonic counter and
+        `has_unsaved_changes` is a comparison rather than arithmetic, but
+        real, and `tests/test_empty_sequence_roundtrip.py::
+        test_adding_the_first_item_to_a_new_sequence_still_leaves_one_dirty_entity`
+        is what says so.
 
         Args:
             tag (str): The DICOM tag for the sequence.
             item (DicomItem): The item to append.
         """
-        tag = _canonical_tag(tag)
-        if tag not in self.sequences:
-            self.sequences[tag] = DicomSequence(tag=tag)
-        self.sequences[tag].items.append(item)
+        self.add_sequence(tag).items.append(item)
         self.mark_modified()
 
     def mark_subtree_persisted(self):

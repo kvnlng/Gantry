@@ -206,7 +206,8 @@ in a 1.x release with a CHANGELOG entry naming both spellings:
   `session.reversibility_service`** — attributes that expose services.
 - **`TrackedEntity` bookkeeping**: `has_unsaved_changes`, `phi_status`,
   `mark_modified()`, `mark_persisted()`, `mark_subtree_persisted()`,
-  `record_phi_status()`; `PhiStatus`; `DicomItem.add_sequence_item()`,
+  `record_phi_status()`; `PhiStatus`; `DicomItem.add_sequence()` and
+  `add_sequence_item()`,
   `record_attr_vr()`; `DicomSequence`; `Instance.regenerate_uid()`,
   `get_waveform_bytes()`, `unload_waveform_data()`, `pixel_array`,
   `waveform_array`; `Equipment.from_parts()`.
