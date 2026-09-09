@@ -3392,7 +3392,19 @@ def _compress_j2k(ds, pixel_array=None):
 
             # 2. Reconstruct Numpy Array from bytes (since we just set it in worker)
             # Assuming Little Endian input for now (as set in _create_ds)
-            dt = np.uint16 if bits > 8 else np.uint8
+            #
+            # The third copy of `SidecarPixelLoader`'s old bucketing rule,
+            # and it had the same two defects: a 32-bit frame rebuilt two
+            # times too wide, and a signed frame rebuilt unsigned because
+            # nothing here read PixelRepresentation at all. Same
+            # `_integer_dtype` as the loader, so the rule has one spelling
+            # (#386). **This branch is not reachable from
+            # `session.export()`** -- `_finalize_dataset` is called with
+            # `pixel_array=arr` at the one production call site, and the
+            # arms that leave `arr` as None leave `ds` with no PixelData
+            # either, so the guard above returns first. It is exercised by
+            # `tests/test_compress_j2k_coverage.py`'s direct calls.
+            dt = _integer_dtype(bits, getattr(ds, 'PixelRepresentation', 0))
             arr = np.frombuffer(ds.PixelData, dtype=dt)
 
             # Reshape
@@ -3458,6 +3470,23 @@ def _compress_j2k(ds, pixel_array=None):
 
         # 3. Compress
         frames_data = []
+
+        # A bool frame is stored, declared and exported as 8-bit: the
+        # dtype carrier keeps `bool` because no DICOM descriptor can name
+        # it, but `set_pixel_data` still writes BitsAllocated 8 and
+        # PixelRepresentation 0, and the uncompressed path writes
+        # `arr.tobytes()` -- one byte per element. `view` rather than
+        # `astype` says exactly that: the same bytes, read under the dtype
+        # the file declares, with no copy and no conversion to get wrong.
+        #
+        # Without it the carrier's widening would have been a regression.
+        # `Image.fromarray` gives a bool array mode `1`, which Pillow's
+        # JPEG 2000 encoder refuses -- so a mask that compressed cleanly
+        # while it reloaded as `uint8` would have started failing the
+        # *default* export with `broken data stream when writing image
+        # file` the moment it began reloading as `bool` (#386).
+        if arr.dtype.kind == 'b':
+            arr = arr.view(np.uint8)
 
         # Helper to compress single frame
         def encode_frame(frame_arr):

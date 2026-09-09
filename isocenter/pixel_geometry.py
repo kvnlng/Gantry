@@ -96,7 +96,7 @@ PIXEL_DTYPE_ATTR = "_ISOCENTER_PIXEL_DTYPE"
 #: it: numpy `bool_` and `uint8` both declare BitsAllocated 8 with
 #: PixelRepresentation 0, which is the same argument #183 makes for
 #: float16 and the reason this carrier exists at all.
-SIDECAR_DTYPE_NAMES = frozenset({"float16", "float32", "float64"})
+SIDECAR_DTYPE_NAMES = frozenset({"float16", "float32", "float64", "bool"})
 
 #: Numpy dtype name for each float pixel element. PS3.3 C.7.6.24 fixes
 #: (7fe0,0008) at 32-bit IEEE-754 and C.7.6.25 fixes (7fe0,0009) at

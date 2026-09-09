@@ -381,12 +381,13 @@ def test_the_exported_file_declares_the_signedness_of_an_array_set_in_memory(
     **`use_compression=False` is load-bearing, and P1 is why.** Pillow's
     JPEG 2000 encoder accepts mode `L` (uint8) and `I;16` (uint16) and
     nothing else, so *every* signed frame -- int8, int16, int32 alike --
-    fails the default compressed path with `broken data stream when
-    writing image file`. That is a pre-existing defect (verified on `main`
-    at c925829, unmodified) whose accounting is fixed separately in
-    `test_the_compressed_path_names_the_dtype_it_cannot_encode`; leaving
-    it in this test would turn it red for a reason that has nothing to do
-    with recording signedness.
+    fails the *default* compressed path with `broken data stream when
+    writing image file`. That is a pre-existing defect, verified on `main`
+    at c925829 unmodified, and it is **#404**, not this issue: signedness
+    is the axis rather than width, the loader is correct, and the fix is
+    at the encoder. Leaving compression on here would turn this test red
+    for a reason that has nothing to do with recording signedness, and it
+    stays correct once #404 lands.
     """
     src = tmp_path / "t6_src"
     src.mkdir()
@@ -479,3 +480,199 @@ def test_a_float_array_leaves_pixel_representation_alone_and_nothing_reads_it(
     assert "PixelRepresentation" not in ds, (
         "the stale PixelRepresentation reached the exported file")
     assert "BitsStored" not in ds and "HighBit" not in ds
+
+
+# ---------------------------------------------------------------------------
+# The carrier widens by exactly one dtype
+# ---------------------------------------------------------------------------
+
+def test_a_bool_array_set_in_memory_reloads_as_bool(tmp_path):
+    """The one dtype no DICOM descriptor can name.
+
+    numpy `bool_` and `uint8` both declare `BitsAllocated 8` with
+    `PixelRepresentation 0`, so the descriptor pair cannot tell them
+    apart and a mask set in memory came back as `uint8`.
+
+    **The assertion is the dtype, and deliberately not the values.**
+    Measured: a bool array already round-trips to `uint8` with
+    `np.array_equal` True, because `True == 1`. A values-only test passes
+    on unfixed code and pins nothing. Red when `"bool"` is dropped from
+    `SIDECAR_DTYPE_NAMES`, or when the kind test in `set_pixel_data`
+    narrows back to `== 'f'`.
+    """
+    mask = np.array([[True, False, True, False],
+                     [False, True, False, True],
+                     [True, True, False, False],
+                     [False, False, True, True]])
+    assert mask.dtype == np.dtype(bool)
+
+    session, _db, after = _ingest_set_save_reopen(tmp_path, mask, "boolrt")
+    try:
+        got = _only_instance(session).get_pixel_data()
+    finally:
+        session.close()
+
+    assert after[PIXEL_DTYPE_ATTR] == "bool"
+    assert after["0028,0100"] == 8
+    assert after["0028,0103"] == 0
+    assert got.dtype == np.dtype(bool)
+    assert got.tolist() == mask.tolist()
+
+
+def test_a_bool_array_still_survives_the_default_compressed_export(tmp_path):
+    """The regression the `bool` carrier would otherwise have introduced.
+
+    Before the carrier widened, a bool frame reloaded as `uint8` and
+    compressed cleanly. Once it reloads as `bool` it reaches
+    `Image.fromarray` as mode `1`, which Pillow's JPEG 2000 encoder
+    refuses -- so the widening would have turned a working default export
+    into `Compression failed: broken data stream when writing image file`.
+    `_compress_j2k` therefore views a bool frame as `uint8` before
+    encoding: exact, and byte-identical to what the uncompressed path
+    writes, since `set_pixel_data` already declares the frame
+    `BitsAllocated 8, PixelRepresentation 0`.
+
+    Compression is left at its default here on purpose -- that default is
+    the whole point of the test.
+    """
+    mask = np.array([[True, False, True, False],
+                     [False, True, False, True],
+                     [True, True, False, False],
+                     [False, False, True, True]])
+    src = tmp_path / "boolx_src"
+    src.mkdir()
+    out = tmp_path / "boolx_out"
+    db = str(tmp_path / "boolx.db")
+
+    session = DicomSession(persistence_file=db)
+    try:
+        _write_src(str(src), np.array(UNSIGNED_ROWS, dtype="uint8"), 0)
+        session.ingest(str(src))
+        _only_instance(session).set_pixel_data(mask)
+        summary = session.export(str(out), format="dicom", show_progress=False)
+    finally:
+        session.close()
+
+    assert summary.failures == []
+    assert len(summary.written_uids) == 1
+
+    ds = _read_only_written(out)
+    assert ds.file_meta.TransferSyntaxUID.name == \
+        "JPEG 2000 Image Compression (Lossless Only)", (
+            "fixture never entered the arm under test: the export was not "
+            "compressed")
+    assert ds.BitsAllocated == 8
+    assert ds.PixelRepresentation == 0
+    assert ds.pixel_array.tolist() == [[1, 0, 1, 0], [0, 1, 0, 1],
+                                       [1, 1, 0, 0], [0, 0, 1, 1]]
+
+
+def test_an_integer_array_deletes_the_dtype_carrier_a_float_array_left(tmp_path):
+    """The half of #183 the widening could most easily break.
+
+    The carrier DELETES as well as writes: replacing a float instance's
+    pixels with an integer array and leaving the carrier behind would have
+    the loader read those integers back as floats -- the same silent
+    corruption from the other direction. Red when the `pop` becomes a
+    no-op, and the reload assertion is what makes that more than a
+    statement about a dict.
+    """
+    src = tmp_path / "carrier_src"
+    src.mkdir()
+    db = str(tmp_path / "carrier.db")
+
+    session = DicomSession(persistence_file=db)
+    try:
+        _write_src(str(src), np.array(UNSIGNED_ROWS, dtype="uint8"), 0)
+        session.ingest(str(src))
+        instance = _only_instance(session)
+
+        instance.set_pixel_data(np.array(UNSIGNED_ROWS, dtype="float32"))
+        assert instance.attributes[PIXEL_DTYPE_ATTR] == "float32"
+
+        instance.set_pixel_data(np.array(SIGNED_ROWS, dtype="int16"))
+        assert PIXEL_DTYPE_ATTR not in instance.attributes
+        session.save()
+    finally:
+        session.close()
+
+    session = DicomSession(persistence_file=db)
+    try:
+        got = _only_instance(session).get_pixel_data()
+    finally:
+        session.close()
+
+    assert got.dtype == np.dtype("int16")
+    assert got.tolist() == SIGNED_ROWS
+
+
+# ---------------------------------------------------------------------------
+# The third copy of the bucketing rule
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bits,pixrep,expected", [
+    (8, 0, "uint8"), (8, 1, "int8"),
+    (16, 0, "uint16"), (16, 1, "int16"),
+    (32, 0, "uint32"), (32, 1, "int32"),
+    (64, 0, "uint64"), (64, 1, "int64"),
+    # The two declared widths no numpy array can have, which is why the
+    # legacy bucketing survives as a fallback rather than being replaced.
+    (1, 0, "uint8"), (12, 0, "uint16"), (12, 1, "int16"),
+])
+def test_the_integer_dtype_rule_has_one_spelling(bits, pixrep, expected):
+    """`_integer_dtype` is the single rule the loader and `_compress_j2k`'s
+    reconstruction branch both call.
+
+    They held two copies of `uint16 if bits > 8 else uint8` and only one
+    of them was fixed the last time; a signed frame rebuilt in the second
+    came back unsigned for exactly the reason the loader's did. This pins
+    the table *and* its fallback at the level where both callers share it.
+    """
+    from isocenter.io_handlers import _integer_dtype
+
+    assert np.dtype(_integer_dtype(bits, pixrep)) == np.dtype(expected)
+
+
+def test_the_j2k_reconstruction_branch_honours_pixel_representation():
+    """The reconstruction branch, called directly.
+
+    `_finalize_dataset` passes `pixel_array=arr` at its one production
+    call site and the arms that leave `arr` as None leave `ds` without
+    PixelData, so this branch is **not reachable from
+    `session.export()`** -- it is reached only by a direct call, which is
+    how `tests/test_compress_j2k_coverage.py` exercises it and how this
+    test does. It is fixed anyway, because a second copy of a rule that
+    disagrees with the first is what #386 was.
+
+    Asserting on the array Pillow is handed rather than on the encoded
+    bytes: the encoder itself refuses a signed frame outright (#404), so
+    the bytes cannot be the observable here.
+    """
+    import isocenter.io_handlers as io_handlers
+    from pydicom.dataset import Dataset
+
+    seen = {}
+
+    class _FakeImage:
+        @staticmethod
+        def fromarray(frame):
+            seen['dtype'] = frame.dtype
+            seen['values'] = frame.tolist()
+            raise RuntimeError("stop here: the array is what is under test")
+
+    ds = Dataset()
+    ds.Rows = ds.Columns = 4
+    ds.SamplesPerPixel = 1
+    ds.NumberOfFrames = 1
+    ds.BitsAllocated = 16
+    ds.PixelRepresentation = 1
+    ds.PixelData = np.array(SIGNED_ROWS, dtype="int16").tobytes()
+
+    with pytest.raises(RuntimeError):
+        with pytest.MonkeyPatch.context() as patcher:
+            patcher.setattr(io_handlers, "Image", _FakeImage)
+            io_handlers._compress_j2k(ds, pixel_array=None)
+
+    assert seen['dtype'] == np.dtype("int16"), (
+        "the reconstruction branch rebuilt a signed frame as unsigned")
+    assert seen['values'] == SIGNED_ROWS

@@ -1202,11 +1202,23 @@ class Instance(DicomItem):
         # integer path and never files the DATA_LOSS row that says its
         # pixels could not be written.
         #
+        # Kind `'b'` joins them in #386, and is the only integer-kind
+        # dtype that ever will. Once the block below records
+        # PixelRepresentation, BitsAllocated and PixelRepresentation
+        # together name every integer dtype the sidecar can hold exactly,
+        # so a carrier for one of those would be a second answer to a
+        # question the descriptors already answer -- and the
+        # authoritative one, so a graph whose descriptors were later
+        # corrected would decode against a stale carrier. `bool` is the
+        # exception because no descriptor pair can name it: numpy
+        # `bool_` and `uint8` both declare 8 and 0, so a mask set in
+        # memory came back as `uint8` and only its values survived.
+        #
         # It DELETES as well as writes. Replacing a float instance's
         # pixels with an integer array and leaving the carrier behind
         # would have the loader read those integers back as floats --
         # the same silent corruption arriving from the other direction.
-        name = array.dtype.name if array.dtype.kind == 'f' else None
+        name = array.dtype.name if array.dtype.kind in ('f', 'b') else None
         if name in SIDECAR_DTYPE_NAMES:
             self.attributes[PIXEL_DTYPE_ATTR] = name
         else:
