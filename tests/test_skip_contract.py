@@ -240,8 +240,9 @@ def _decorator_skips():
                 # form while this walk still cannot see it, so a test
                 # skipped in every environment -- the one shape #107
                 # opens by forbidding -- passes both halves. Measured:
-                # such a probe is red before `skipif` is in this set and
-                # green after only the visitor learns it.
+                # such a probe is red at f544989, where the text scan
+                # above catches the unknown form, and green once only
+                # the visitor has learned it.
                 if name not in {"skip", "skipIf", "skipif", "skipUnless"}:
                     continue
                 found.append((path, dec.lineno, name, call))

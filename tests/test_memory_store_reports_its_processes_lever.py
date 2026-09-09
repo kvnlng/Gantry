@@ -208,11 +208,13 @@ def test_the_warning_fires_once_for_a_whole_session_of_passes(
     `discover_redaction_zones()` passes `force_threads=True`
     unconditionally, so its strategy carries `use_threads=True` beside a
     set `processes_requested_by`: it is a second pass the relocated
-    warning fires on, and this test then reads `got 2`. It also pins the
-    second wrong output of that placement, which no count in this file
-    would otherwise see -- on a *file* store the relocation prints a
-    sentence about a `":memory:"` store for a pass that has nothing to
-    do with one.
+    warning fires on, and this test then reads `got 2`.
+
+    That placement has a second wrong output which **nothing in this
+    file observes**: on a *file* store the relocation prints a sentence
+    about a `":memory:"` store for a pass that has nothing to do with
+    one. Killing the placement forecloses it; this test does not assert
+    on it, and no count here would see it.
     """
     monkeypatch.setenv(FORCE_PROCESSES, "1")
     with caplog.at_level(logging.WARNING):
