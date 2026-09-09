@@ -1,0 +1,39 @@
+# Line coverage that counts the spawned workers (#380). Every child --
+# the session's ProcessPoolExecutor(mp_context=spawn) and export's
+# multiprocessing.Pool(maxtasksperchild=25) -- is reached through
+# `concurrency = multiprocessing`, which patches BaseProcess._bootstrap
+# and pickles the configuration into the spawn preparation data so the
+# child starts measuring before it runs a task.
+#
+# `sigterm = True` is what saves the recycling pool's data: `with
+# ctx.Pool(...)` exits through terminate(), which SIGTERMs idle workers
+# before their _bootstrap `finally` can run, and a killed worker writes
+# nothing without a handler.
+#
+# `core = ctrace` is load-bearing on 3.14. coverage defaults to the
+# sys.monitoring core there (env.SYSMON_DEFAULT), whose callback holds a
+# non-reentrant threading.Lock on the first sight of every code object,
+# and stop() takes the same lock; a SIGTERM handler that runs while the
+# main thread is inside that region self-deadlocks the worker, and the
+# parent then waits forever in Pool._terminate_pool -> p.join().
+# Measured once in ~460 spawned workers on 3.14.6. The C tracer takes a
+# lock only while registering a new file.
+#
+# No `patch = subprocess`: with it every spawned child is instrumented
+# twice (the .pth hook at interpreter start and the multiprocessing
+# patch), 82 data files where 22 are expected, and two chained SIGTERM
+# handlers.
+#
+# Not run in CI and no threshold: a gate on a number nobody has yet
+# argued about is a gate on a guess. The invocation is in CLAUDE.md's
+# Commands block; `coverage` ships in the `dev` extra.
+[run]
+source = isocenter
+parallel = True
+concurrency = multiprocessing
+core = ctrace
+sigterm = True
+
+[report]
+show_missing = False
+skip_empty = True

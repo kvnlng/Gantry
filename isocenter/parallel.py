@@ -319,8 +319,10 @@ def _use_threads(force_threads: bool, maxtasksperchild: Optional[int]) -> bool:
                 "implements it, so this run uses processes. "
                 "session.export() always sets maxtasksperchild=25, so it "
                 "runs in processes on every interpreter including "
-                "free-threaded builds; elsewhere, unset "
-                "ISOCENTER_MAX_TASKS_PER_CHILD to get threads.",
+                "free-threaded builds; for audit(), scan_pixel_content() "
+                "and redact(), unset ISOCENTER_MAX_TASKS_PER_CHILD to get "
+                "threads; ingest() runs on the session's executor and "
+                "takes no lever.",
                 "ISOCENTER_FORCE_THREADS" if forced_by_env
                 else "force_threads=True", maxtasksperchild)
         return False

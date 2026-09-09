@@ -108,7 +108,7 @@ phi_tags:
     print("\n[Step 6] Backup Identity")
     t0 = time.time()
     sess.enable_reversible_anonymization()
-    sess.lock_identities(report, auto_persist_chunk_size=200)
+    sess.lock_identities_batch(report, auto_persist_chunk_size=200)
     sess.save()
     duration_backup = time.time() - t0
     print(f"Backup Duration: {duration_backup:.2f}s")

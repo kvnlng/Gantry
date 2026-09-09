@@ -195,7 +195,12 @@ setup(
         # the command it gives contributors has to keep working.
         "dev": [
             "isocenter[tests]",
-            "pylint>=3.0"
+            "pylint>=3.0",
+            # coverage: .coveragerc's spawned-worker measurement (#380);
+            # contributor tooling like pylint, never in tests or
+            # install_requires. >=7.10 because `[run] core` and
+            # `[run] sigterm`, both load-bearing there, exist by then.
+            "coverage>=7.10"
         ]
     }
 )

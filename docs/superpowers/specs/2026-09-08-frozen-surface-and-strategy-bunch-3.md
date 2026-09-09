@@ -1681,6 +1681,79 @@ same commit.
 
 ## 12. Amendments (made during implementation)
 
-None yet. The developer appends here; a clause this bunch's own
-determinations later falsify is struck in place with a front-matter
-line, per CLAUDE.md.
+Appended by the developer, 2026-09-08, against the owner's decisions
+recorded on #379 and #381 the same day (Q1 (a), Q2 (a), Q3 (a), Q4 (a),
+Q5 (a), Q6 (a), **Q7 (b)**, Q8 sentence, Q9 (a)). Nothing above is
+edited; each item names the clause it corrects.
+
+1. **Q7 (b) was taken, and measurement decided its shape.** §0.2 Q7
+   said the developer "would have to measure what passes through
+   `**kwargs` to `lock_identities_batch` today". Measured on 3.12.13:
+   two things. `tags_to_lock`, read on the single-patient path only; and
+   `auto_persist_chunk_size`, forwarded to the batch method. The
+   README's and quickstart's own call, `lock_identities(report,
+   tags_to_lock=[...])`, raised `TypeError:
+   DicomSession.lock_identities_batch() got an unexpected keyword
+   argument 'tags_to_lock'` on 0.9.3 -- the documented reversible step
+   did not run, and `tests/test_documented_api_exists.py` grades method
+   names in fences, not keywords, so nothing saw it. A misspelled keyword
+   on the single path was swallowed. The shape landed: `lock_identities
+   (patient_id, persist=False, verbose=True, tags_to_lock=None)`;
+   `lock_identities_batch(patient_ids, auto_persist_chunk_size=0,
+   tags_to_lock=None)`, forwarding `tags_to_lock` per patient;
+   `_patient_obj` became the argument of a private
+   `_lock_patient_identity(patient, persist, verbose, tags_to_lock)`;
+   `auto_persist_chunk_size` stays the batch method's alone because it
+   does nothing for one patient (a dead argument on that path, CLAUDE.md).
+   The two in-tree callers passing it through `lock_identities`
+   (`tests/test_optimization.py`, `tests/benchmarks/run_stress_test.py`)
+   now call `lock_identities_batch`. **Corrects** §5.3's table rows for
+   `lock_identities` and `lock_identities_batch`, §7.5 T-F1's literal,
+   and §10 step 5's CHANGELOG draft, whose closing clause ("frozen as
+   they stand and their cleanup is filed separately") is false and was
+   not used. Pinned by the new `tests/test_lock_identities_signature.py`.
+   The default tag list moved to a module-level `_DEFAULT_TAGS_TO_LOCK`
+   (private) rather than a class attribute, which would have been a
+   29th public name on `DicomSession`. `verbose` and `tags_to_lock` are
+   **keyword-only**: the third positional slot used to be
+   `_patient_obj`, and without the `*` a caller still filling it would
+   have a `Patient` silently read as `verbose`; with it the call is a
+   `TypeError` naming the positional count.
+2. **§7.2 named the wrong binding.** `ingest()` reaches `run_parallel`
+   through `DicomImporter.import_files`, bound in `isocenter.io_handlers`;
+   `isocenter.session`'s binding never sees an ingest, so a spy there
+   records nothing. The test spies `isocenter.io_handlers.run_parallel`
+   (the file already does, and is already listed under `io_handlers.py`)
+   and additionally asserts `_use_threads(False, None) is True` under
+   the variable, so "read and ignored" is two assertions, not one.
+3. **§7.5 T-F2's "imports no target module" needed one detour.**
+   `IngestSummary` is bound only in `io_handlers`, and naming that
+   module's dotted spelling in the file would make
+   `test_every_test_that_imports_a_target_module_is_listed` demand a
+   `TARGETS` entry -- exactly what Q6 exists to avoid. The pin reaches
+   the class through the facade: `ingest()` on an empty directory
+   returns an `IngestSummary` before any pool starts. `ExportSummary`,
+   `PhiFinding`, `PhiReport`, `LockingResult` and `IsocenterConfiguration`
+   are read as attributes of `isocenter.session`, which binds them. Also,
+   `_ExportOptions` is not a dataclass, so the export-option pin (§9 item
+   6) is `_export_dicom`'s parameter list. The Q9 vocabularies are pinned
+   as quoted literals somewhere under `isocenter/`, and T-F4 also
+   requires `stability.md` to list each word.
+4. **§7.1's fixture, two corrections.** The redaction index keys on
+   `series.equipment.device_serial_number` (`RedactionIndex.index_store`),
+   not on the `(0018,1000)` attribute, so the fixture sets
+   `Series.equipment`. And the pixels are non-zero on a 16x16 frame with
+   a pixel outside the zone asserted unchanged: a zero image redacted to
+   zero is green with the fix reverted. The graph is built in memory and
+   saved rather than written as files and ingested; the failing path
+   (`persist_pixel_data` in the child) is the same. Red with the §1.1
+   message on 3.12.13 and 3.14.7t; green after; the three §7.1
+   mutations killed on 3.12.13.
+5. **§3.3's hardening covers three tests, not two.**
+   `test_run_parallel_maxtasksperchild` has the same shape as the two
+   `disable_gc` tests (one constructor mocked, the other reachable under
+   a reroute) and was hardened the same way.
+6. **The `test_memory_store_redaction_strategy.py` docstring** could not
+   say "not `isocenter.parallel`" in so many words -- the completeness
+   test reads file text and demanded the file the moment it did (§9 item
+   9, now observed rather than predicted). Reworded.

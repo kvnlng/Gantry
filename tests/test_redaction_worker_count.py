@@ -96,3 +96,36 @@ def test_a_usable_override_and_a_malformed_one_behave_as_they_did(
     assert any("ISOCENTER_MAX_WORKERS" in record.message
                and "'banana'" in record.message
                for record in caplog.records)
+
+
+@pytest.mark.parametrize("cpus, expected", [
+    (32, 8), (16, 8), (14, 7), (6, 3), (2, 1), (1, 1), (None, 1)])
+def test_the_default_redaction_worker_count_is_half_the_cpus_capped_at_eight(
+        cpus, expected, monkeypatch):
+    """The second default `docs/environment.md`'s `ISOCENTER_MAX_WORKERS` row states (#363).
+
+    `run_parallel`'s default is one per CPU and
+    `tests/test_parallel_contract.py::test_the_default_worker_count_is_one_per_cpu`
+    holds it still; this is the sibling for `redact()`'s own default,
+    half the CPUs capped at eight and never below one -- a memory ceiling,
+    because each redaction worker holds a decoded frame. The row used to
+    state one default and call `_resolve_strategy` "the only place it is
+    computed", which was true of that expression and false of the
+    default. Characterization: green on the code it was written against,
+    and the row is written from it (the #333 convention).
+
+    **At fixed CPU counts, on purpose.** `_documented_default()` above
+    computes from the live `os.cpu_count()` and stays as the oracle for
+    the *override* tests, where the question is "did the rejected value
+    fall back to this path's default, whatever it is here". It is blind
+    to the cap on any box under sixteen CPUs -- on this 14-CPU box the
+    default is 7 and a `8 -> 16` mutant survives by hardware. Setting the
+    count is what makes each mutation red on any runner: `8 -> 16`
+    (32 -> 16), `// 2 -> // 1` (6 -> 6), `min -> max` (6 -> 8),
+    `max(1, ...)` removed (1 -> 0, None -> 0), `or 1` removed (None ->
+    `TypeError`). The function reads `os.cpu_count()` through the module,
+    so patching `os.cpu_count` is patching what it reads.
+    """
+    monkeypatch.setattr(os, "cpu_count", lambda: cpus)
+
+    assert session_module._redaction_worker_count() == expected
