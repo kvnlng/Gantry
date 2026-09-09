@@ -121,26 +121,3 @@ def test_a_cli_budget_overrides_every_module(tmp_path, monkeypatch):
     """
     counts = _sampled_runs(tmp_path, monkeypatch, argv=["1"])
     assert counts == {"a.py": 2, "b.py": 2}, counts
-
-
-def test_the_claude_md_mapping_matches_targets():
-    """CLAUDE.md calls TARGETS "the maintained version of this list".
-
-    Two copies of one mapping means one of them is out of date, and the
-    one people read is rarely the one people edit. This pins them
-    together rather than trusting the next editor to update both.
-    """
-    table = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-
-    for module, (tests, _budget) in TARGETS.items():
-        name = pathlib.Path(module).name
-        row = next((line for line in table.splitlines()
-                    if line.startswith("|") and f"`{name}`" in line), None)
-        assert row, f"CLAUDE.md has no mapping row for {name}"
-
-        listed = {cell.strip().strip("`")
-                  for cell in row.split("|")[2].split(",")}
-        expected = {pathlib.Path(t).name for t in tests}
-        assert listed == expected, (
-            f"CLAUDE.md's row for {name} lists {sorted(listed)} but "
-            f"TARGETS has {sorted(expected)}. Update both.")

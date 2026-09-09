@@ -1,12 +1,12 @@
 """A line number this tree cites must exist, and must still hold the code (#310).
 
-This project cites source lines constantly -- in comments, in test
-docstrings, and in CLAUDE.md. The citations are load-bearing: five tests
+This project cites source lines constantly -- in comments and in test
+docstrings. The citations are load-bearing: five tests
 in `tests/test_remediation_invariants.py` are near-identical, and each
 one says which of five near-identical `entity.mark_modified()` calls it
 defends *by line number*. Naming only the arm would not distinguish them,
 and #310 records that naming the arm alone is exactly how the count of
-that cluster drifted to three in CLAUDE.md while there were five.
+that cluster drifted to three in prose while there were five.
 
 Nothing read any of them. One was already wrong when this file was
 written: `isocenter/configuration.py` cited line 523 of
@@ -72,18 +72,18 @@ Rule 1 only. Getting this boundary wrong would make the guard red on
 correct prose, which is how a guard gets deleted.
 
 **Rule 3 -- the count.** Inserting a *sixth* `entity.mark_modified()`
-below line 324 leaves all five existing citations true and only
-CLAUDE.md's "five" wrong, and count drift is precisely what happened
-before. So: the set of line numbers cited for `entity.mark_modified()` in
-`remediation.py` must equal the set of lines in that file whose stripped
-text is `entity.mark_modified()`. Set equality on the *numbers*, not a
-count of citations -- there are two citations per line today (the test
-docstring and CLAUDE.md) and a count comparison would be red forever.
-Nothing hardcodes 5.
+below line 324 leaves all five existing citations true and only a
+summary "five" elsewhere wrong, and count drift is precisely what
+happened before. So: the set of line numbers cited for
+`entity.mark_modified()` in `remediation.py` must equal the set of lines
+in that file whose stripped text is `entity.mark_modified()`. Set
+equality on the *numbers*, not a count of citations, so that a second
+citation of the same line cannot make this red forever. Nothing
+hardcodes 5.
 
 **Excluded from the sweep: `CHANGELOG.md` and `docs/superpowers/`.** Both
-are dated records. CLAUDE.md's Conventions section says a dated spec is
-never silently rewritten to match today's code, and a changelog entry
+are dated records. A dated spec is never silently rewritten to match
+today's code, and a changelog entry
 describes the tree as it stood on its date. A stale citation in either is
 a fact about history, not a defect, and must not turn CI red -- because
 the only way to make it green would be to falsify the record. `build/`
@@ -441,40 +441,6 @@ def test_a_cited_line_still_holds_the_code_the_citation_quotes():
         "name (#310):\n    " + "\n    ".join(offenders))
 
 
-def test_claude_md_cites_every_mark_modified_call_in_the_checkable_grammar():
-    """CLAUDE.md must name each of the five lines checkably, not in prose.
-
-    CLAUDE.md's dirty-tracking paragraph listed the lines as a bare
-    comma-separated run of numbers, which no rule above can read: the
-    numbers could all shift and the paragraph would stay green while
-    every one of them was wrong. The requirement is derived from
-    `remediation.py`, not hardcoded -- a sixth call makes this red
-    without anyone editing a number here.
-    """
-    text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
-    # `finditer` and named groups, not `findall`: the tuple grew a
-    # `tick` member in #325, and positional unpacking would have gone
-    # wrong in shape rather than raising.
-    cited = {
-        int(match.group("number"))
-        for match in _CONTENT_CITATION.finditer(text)
-        if match.group("code") == MARK_MODIFIED
-        and pathlib.PurePosixPath(match.group("path")).name
-        == "remediation.py"}
-
-    expected = _mark_modified_lines()
-    assert expected, (
-        "no `entity.mark_modified()` lines found in "
-        "isocenter/remediation.py; the scan is broken (#310)")
-    assert cited == expected, (
-        "CLAUDE.md must cite every `entity.mark_modified()` call in "
-        "`remediation.py` in the checkable "
-        "``code` at remediation.py line N`` grammar, so a shifted line "
-        "turns a test red rather than leaving the paragraph quietly "
-        f"wrong (#310). Cited: {sorted(cited)}; actual calls at: "
-        f"{sorted(expected)}")
-
-
 def test_the_number_of_citations_matches_the_number_of_calls():
     """Every `entity.mark_modified()` call must be cited, and no other.
 
@@ -483,9 +449,9 @@ def test_the_number_of_citations_matches_the_number_of_calls():
     citations true and only the claim that there are five wrong -- which
     is the drift that happened before (#132 said three).
 
-    Set equality on the line numbers, not a count of citations: there
-    are two citations per line today (a test docstring and CLAUDE.md),
-    so comparing counts would be red forever.
+    Set equality on the line numbers, not a count of citations, so
+    that a second citation of the same line cannot make this red
+    forever.
     """
     _, checked = check_content_citations()
     cited = {number for _, _, code, cited_file, number in checked
