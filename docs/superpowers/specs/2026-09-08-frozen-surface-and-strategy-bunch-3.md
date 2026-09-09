@@ -1757,3 +1757,35 @@ edited; each item names the clause it corrects.
    say "not `isocenter.parallel`" in so many words -- the completeness
    test reads file text and demanded the file the moment it did (§9 item
    9, now observed rather than predicted). Reworded.
+7. **Q10 (owner, 2026-09-08, after the PR's review): `persist` and
+   `verbose` are forwarded on the batch path.** Amendment 1's shape
+   forwarded `tags_to_lock` alone, and the batch loop kept its hardcoded
+   `persist=False, verbose=False`, so the README's form with
+   `persist=True` added -- `lock_identities(report, persist=True)` --
+   wrote nothing in silence
+   (reviewer's probe on 3.12.13: no token in the store, the single-ID
+   path reached it). Landed: `lock_identities_batch(patient_ids,
+   auto_persist_chunk_size=0, tags_to_lock=None, *, persist=False,
+   verbose=True)`, both forwarded per patient; `lock_identities` forwards
+   all three. **Corrects** §5.3's `lock_identities_batch` row a second
+   time and amendment 1's batch signature. Three tests, three mutants
+   killed; `docs/api/stability.md`'s Q7 paragraph carries the Q10
+   sentence.
+8. **§7.5 T-F1's pin missed the parameter kind.** The pin was
+   `(name, default)` pairs with a special case for `**options`; the
+   reviewer removed the `*` from `lock_identities` and the freeze stayed
+   green (only `test_lock_identities_signature.py` caught it). The pin
+   is now the signature spelled as §5.3's table spells it -- `*` before
+   the first keyword-only parameter, `/` after positional-only,
+   `**name` -- and T-F4 parses the page's table and compares it to the
+   pins row for row, so the page and the test cannot disagree. Removing
+   either `*` is a red freeze test (0.8 s on 3.12.13).
+9. **§5.3's entity sentences used constructor notation, and it was
+   false.** `Study(study_instance_uid, study_date, study_time,
+   date_shifted, series)` is not the dataclass order (`study_instance_uid,
+   study_date, series, date_shifted, study_time`), and `attributes`,
+   `sequences`, `attribute_vrs`, `date_shifted` on `Instance` are
+   `init=False`, not constructor arguments. The page lists fields in
+   `dataclasses.fields` order with the `init=False` ones marked; T-F1
+   pins which of the nine frozen `Instance` fields `__init__` accepts,
+   and T-F4 pins the page's lists against `dataclasses.fields`.

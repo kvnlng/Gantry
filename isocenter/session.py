@@ -2448,12 +2448,16 @@ class DicomSession:
         Must be called BEFORE anonymization/redaction if recovery is required.
 
         A list of patient IDs, a `PhiReport` or a list of findings is
-        dispatched to `lock_identities_batch()` with the same
-        `tags_to_lock`; chunked persistence (`auto_persist_chunk_size`) is
-        that method's own argument, because it means nothing for one
-        patient. Until 0.9.4 this method took `**kwargs` and forwarded
-        them, and the batch method did not accept `tags_to_lock`, so the
-        call the README teaches -- `lock_identities(report,
+        dispatched to `lock_identities_batch()` with the same `persist`,
+        `verbose` and `tags_to_lock`; chunked persistence
+        (`auto_persist_chunk_size`) is that method's own argument, because
+        it means nothing for one patient. Until 0.9.4 the batch loop
+        hardcoded `persist=False, verbose=False`, so the README's form
+        with `persist=True` added -- `lock_identities(report,
+        persist=True)` -- wrote nothing and said nothing (#379, Q10).
+        Until 0.9.4 this method also took `**kwargs` and forwarded them,
+        and the batch method did not accept `tags_to_lock`, so the call
+        the README teaches -- `lock_identities(report,
         tags_to_lock=[...])` -- raised `TypeError`; a misspelled keyword
         on the single-patient path was swallowed (#379, Q7). `verbose`
         and `tags_to_lock` are keyword-only because the third positional
@@ -2478,7 +2482,8 @@ class DicomSession:
 
         # Dispatch to batch method if a list is provided
         if isinstance(patient_id, (list, tuple, set)) or hasattr(patient_id, 'findings'):
-            return self.lock_identities_batch(patient_id, tags_to_lock=tags_to_lock)
+            return self.lock_identities_batch(
+                patient_id, persist=persist, verbose=verbose, tags_to_lock=tags_to_lock)
 
         patient = next((p for p in self.store.patients if p.patient_id == patient_id), None)
         if not patient:
@@ -2555,7 +2560,10 @@ class DicomSession:
                                                  "PhiReport",
                                                  List["PhiFinding"]],
                               auto_persist_chunk_size: int = 0,
-                              tags_to_lock: Optional[List[str]] = None
+                              tags_to_lock: Optional[List[str]] = None,
+                              *,
+                              persist: bool = False,
+                              verbose: bool = True
                               ) -> Union[List["Instance"], LockingResult]:
         """
         Batch process multiple patients to lock identities.
@@ -2566,6 +2574,15 @@ class DicomSession:
                                            IMPORTANT: Returns an empty list if enabled to prevent OOM.
             tags_to_lock (List[str], optional): Passed to every patient's
                 lock; `lock_identities()`'s five default tags when omitted.
+            persist (bool): Passed to every patient's lock: each patient's
+                instances are written as they are locked. With
+                `auto_persist_chunk_size > 0` as well, an instance is
+                written twice (with its patient, then with its chunk) --
+                redundant, not wrong. Until 0.9.4 the loop hardcoded
+                `False`, so `lock_identities(report, persist=True)` wrote
+                nothing in silence (#379, Q10).
+            verbose (bool): Passed to every patient's lock: one debug line
+                per patient. Until 0.9.4 the loop hardcoded `False`.
 
         Returns:
             Union[List[Instance], LockingResult]: List of all modified instances (if chunking is disabled).
@@ -2604,9 +2621,13 @@ class DicomSession:
             for pid in pbar:
                 p_obj = patient_map.get(pid)
                 if p_obj:
-                    # Use verbose=False to avoid log spam
+                    # Forwarded, not hardcoded: a `PhiReport` is the
+                    # README's form of `lock_identities`, and a loop that
+                    # writes `persist=False` here turns `persist=True` on
+                    # that call into one that writes nothing and says
+                    # nothing (Q10).
                     res = self._lock_patient_identity(
-                        p_obj, persist=False, verbose=False,
+                        p_obj, persist=persist, verbose=verbose,
                         tags_to_lock=tags_to_lock)
 
                     if auto_persist_chunk_size > 0:

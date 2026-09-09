@@ -33,8 +33,10 @@ accepted. `with Session(...) as s:` (`__enter__` returns the session,
 and both threads.
 
 **`Session` methods — all 28 public names, with their parameters.**
-These are the literal pins in `tests/test_frozen_surface.py`
-(`self` omitted).
+These are the literal pins in `tests/test_frozen_surface.py`, row
+for row (the test parses this table): `self` omitted, `*` marks the
+keyword-only boundary, and a parameter moved across it is a different
+call.
 
 | Method | Parameters |
 | --- | --- |
@@ -50,7 +52,7 @@ These are the literal pins in `tests/test_frozen_surface.py`
 | `anonymize` | `findings=None` |
 | `enable_reversible_anonymization` | `key_path='isocenter.key'` |
 | `lock_identities` | `patient_id, persist=False, *, verbose=True, tags_to_lock=None` |
-| `lock_identities_batch` | `patient_ids, auto_persist_chunk_size=0, tags_to_lock=None` |
+| `lock_identities_batch` | `patient_ids, auto_persist_chunk_size=0, tags_to_lock=None, *, persist=False, verbose=True` |
 | `recover_patient_identity` | `patient_id, restore=True` |
 | `redact` | `show_progress=True, force=False` |
 | `redact_by_machine` | `serial_number, roi` |
@@ -79,7 +81,10 @@ only and raises `ValueError` otherwise.
 were stripped before the tag rather than frozen, and `verbose` and
 `tags_to_lock` are keyword-only so a caller still filling the old third
 positional slot gets a `TypeError` rather than a `Patient` read as a
-flag (#379, Q7).
+flag (#379, Q7). `persist` and `verbose` reach every patient on the
+batch path -- `lock_identities(report, persist=True)` writes the rows,
+which until 0.9.4 it silently did not -- and are the batch method's own
+keyword-only parameters with the same defaults (#379, Q10).
 
 **`Session` attributes.** `store` (a `DicomStore` whose `.patients` is
 the `List[Patient]` the quickstart indexes), `configuration` (an
@@ -97,15 +102,18 @@ entity_path)`; `DiscoveryResult.filter(...)`, `.to_zones()`,
 `Dict[str, Counter]`; `redact()`, `reconcile_private_tags()`,
 `auto_remediate_config()` → `int`.
 
-**Entities, as reached from `session.store`.** The graph
-`Patient(patient_id, patient_name, studies)` → `Study(study_instance_uid,
-study_date, study_time, date_shifted, series)` →
-`Series(series_instance_uid, modality, series_number, equipment,
-instances)` → `Instance(sop_instance_uid, sop_class_uid,
-instance_number, file_path, source_path, attributes, sequences,
-attribute_vrs, date_shifted)`; `attributes` keyed by lowercase
-`"gggg,eeee"` strings; `Equipment(manufacturer, model_name,
-device_serial_number)`; on `Instance`: `get_pixel_data()`,
+**Entities, as reached from `session.store`.** The graph is `Patient`
+→ `Study` → `Series` → `Instance`. Fields, in dataclass order (which is
+the positional constructor order, except where marked `init=False`):
+`Patient`: `patient_id, patient_name, studies`. `Study`:
+`study_instance_uid, study_date, series, date_shifted, study_time`.
+`Series`: `series_instance_uid, modality, series_number, equipment,
+instances`. `Instance`: `attributes, sequences, attribute_vrs` (inherited
+from `DicomItem`, `init=False`), then `sop_instance_uid, sop_class_uid,
+instance_number, file_path, source_path`, then `date_shifted`
+(`init=False`; `pixel_array` and `waveform_array` sit between and are
+tier 2). `Equipment`: `manufacturer, model_name, device_serial_number`.
+`attributes` is keyed by lowercase `"gggg,eeee"` strings; on `Instance`: `get_pixel_data()`,
 `set_pixel_data()`, `unload_pixel_data()`, `discard_pixel_data()`,
 `get_waveform_data()`, and the two-names-two-behaviours rule between
 `unload` and `discard` (`unload` refuses an unsaved replacement;

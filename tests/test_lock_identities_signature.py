@@ -41,6 +41,7 @@ import pytest
 from isocenter import session as session_module
 from isocenter.session import DicomSession
 from isocenter.entities import Instance, Patient, Series, Study
+from unittest.mock import MagicMock
 
 PhiFinding = session_module.PhiFinding
 PhiReport = session_module.PhiReport
@@ -63,6 +64,11 @@ def session(tmp_path):
             study.series.append(series)
             patient.studies.append(study)
             s.store.patients.append(patient)
+        # Rows first: `persist=True` writes through `update_attributes`,
+        # which has nothing to update for an instance the store has never
+        # seen -- an unsaved fixture would make the persist test below
+        # red and green look the same.
+        s.save(sync=True)
         yield s
 
 
@@ -134,6 +140,61 @@ def test_the_old_positional_slot_fails_loudly(session):
         session.lock_identities("P1", False, patient)
 
 
+def _reloaded_token(tmp_path, pid):
+    """The identity token as a *fresh* session reads it from the rows."""
+    with DicomSession(str(tmp_path / "lock.db")) as again:
+        again.enable_reversible_anonymization(str(tmp_path / "k.key"))
+        patient = next(p for p in again.store.patients if p.patient_id == pid)
+        inst = patient.studies[0].series[0].instances[0]
+        try:
+            return again.reversibility_service.recover_original_data(inst)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+
+
+def test_persist_reaches_the_store_on_the_batch_path(session, tmp_path):
+    """`lock_identities(report, persist=True)` writes the rows (#379, Q10).
+
+    The README's form is the batch form, and until 0.9.4 the batch loop
+    hardcoded `persist=False`: the documented call with `persist=True`
+    returned the locked instances and wrote nothing, in silence -- a
+    fresh session on the same file found no token. Read through a second
+    session rather than `has_unsaved_changes`, which stays `True` after a
+    working persist (`update_attributes` never marks; filed separately).
+    Killing mutation: `persist` not forwarded from the batch loop.
+    """
+    session.lock_identities(_report_for("P1", "P2"), persist=True, tags_to_lock=TAGS)
+
+    for pid in ("P1", "P2"):
+        recovered = _reloaded_token(tmp_path, pid)
+        assert recovered and recovered["0010,0020"] == pid, (
+            f"{pid}: the token never reached the store: {recovered}")
+
+
+def test_persist_false_on_the_batch_path_writes_nothing(session, tmp_path):
+    """The default is still in memory only, as the single-patient path."""
+    session.lock_identities(_report_for("P1"), persist=False)
+
+    assert _reloaded_token(tmp_path, "P1") is None
+
+
+def test_verbose_reaches_each_patient_on_the_batch_path(session, monkeypatch):
+    """`verbose` is forwarded too; the loop no longer hardcodes `False`.
+
+    Killing mutation: `verbose` not forwarded from the batch loop.
+    """
+    fake = MagicMock()
+    monkeypatch.setattr(session_module, "get_logger", lambda: fake)
+
+    session.lock_identities(["P1", "P2"], verbose=False)
+    assert not [c for c in fake.debug.call_args_list
+                if "Preserving identity" in str(c)], "verbose=False still logged"
+
+    session.lock_identities(["P1", "P2"], verbose=True)
+    logged = [str(c) for c in fake.debug.call_args_list if "Preserving identity" in str(c)]
+    assert len(logged) == 2, logged
+
+
 def test_the_signatures_are_closed():
     """No `**kwargs`, no underscored name, on either method; the rest keyword-only."""
     for method in (DicomSession.lock_identities, DicomSession.lock_identities_batch):
@@ -146,3 +207,10 @@ def test_the_signatures_are_closed():
     params = inspect.signature(DicomSession.lock_identities).parameters
     assert [p.kind for p in params.values()][3:] == [inspect.Parameter.KEYWORD_ONLY] * 2, (
         "verbose and tags_to_lock must be keyword-only (see the docstring)")
+
+    params = inspect.signature(DicomSession.lock_identities_batch).parameters
+    assert list(params)[4:] == ["persist", "verbose"], list(params)
+    assert [p.kind for p in params.values()][4:] == [inspect.Parameter.KEYWORD_ONLY] * 2, (
+        "persist and verbose are keyword-only on the batch method (Q10)")
+    assert [p.default for p in params.values()][4:] == [False, True], (
+        "the batch method's persist/verbose defaults are lock_identities's")
