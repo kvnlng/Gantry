@@ -258,7 +258,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../api/session/" class="md-tabs__link">
+        <a href="../api/stability/" class="md-tabs__link">
           
   
   
@@ -844,6 +844,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../api/stability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API stability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../api/session/" class="md-nav__link">
         
   
@@ -1240,12 +1268,12 @@
 <tr>
 <td style="text-align: left;"><strong><code>ISOCENTER_DB_PATH</code></strong></td>
 <td style="text-align: left;"><code>isocenter.db</code></td>
-<td style="text-align: left;">Path to the SQLite session database.</td>
+<td style="text-align: left;">Path to the SQLite session database, read when <code>Session()</code> is given no <code>persistence_file</code>. <code>:memory:</code> is accepted — here or as <code>Session(":memory:")</code> — and is part of the frozen surface (#379): the index lives in memory, the pixel sidecar in a temporary file the store removes on <code>close()</code>, and <code>redact()</code> runs in threads on every interpreter (#381; see the <code>ISOCENTER_FORCE_PROCESSES</code> and <code>ISOCENTER_MAX_TASKS_PER_CHILD</code> rows).</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong><code>ISOCENTER_MAX_WORKERS</code></strong></td>
 <td style="text-align: left;"><code>os.cpu_count()</code></td>
-<td style="text-align: left;">Override how many workers a parallel run uses — <strong>processes or threads</strong>, whichever the two force rows below resolve to; the same number sizes both pools. The default is <strong>one per CPU</strong>, and <code>1</code> when <code>os.cpu_count()</code> cannot answer. <code>_resolve_strategy</code> in <code>parallel.py</code> owns that expression and is the only place it is computed. An earlier version used <code>CPU_COUNT * 1.5</code> and it was <strong>deliberately abandoned</strong> — predictable beats marginally faster when a run is hours long — so if you remember the 1.5x, it is gone rather than merely undocumented. This row stated it for its whole life with nothing behind it (#333); <code>tests/test_parallel_contract.py</code> now holds the number still. A value <strong>below 1</strong> — <code>0</code> or any negative — is not a worker count: it is reported with a warning naming the variable and the value, and the default is used instead. <code>1</code> is how you ask for a single worker. Until #335, <code>0</code> was discarded silently and a negative was carried into the pool constructor, which raised <code>ValueError: max_workers must be greater than 0</code> without naming this variable. <strong><code>redact()</code> reads this variable too</strong>, in <code>_redaction_worker_count</code> (<code>session.py</code>), and rejects a value below 1 the same way, falling back to that path's own default — until #341 that read clamped <code>0</code> and every negative to a single worker in silence, so the sentence above was true of <code>run_parallel</code> and false of redaction.</td>
+<td style="text-align: left;">Override how many workers a parallel run uses — <strong>processes or threads</strong>, whichever the two force rows below resolve to; the same number sizes both pools. There are <strong>two defaults, one per pool</strong>. <code>run_parallel()</code>'s is <strong>one per CPU</strong> (<code>1</code> when <code>os.cpu_count()</code> cannot answer); <code>_resolve_strategy</code> in <code>parallel.py</code> owns that expression and is the only place <em>it</em> is computed. <strong><code>redact()</code>'s is half the CPUs, capped at eight, never below one</strong> — <code>max(1, min((os.cpu_count() or 1) // 2, 8))</code> in <code>_redaction_worker_count</code> (<code>session.py</code>) — because each redaction worker holds a decoded frame, so that number is a memory ceiling, not a throughput choice: one-per-CPU exhausted memory on large studies. This variable overrides both, with the same floor. <code>tests/test_parallel_contract.py</code> holds the first number still and <code>tests/test_redaction_worker_count.py</code> the second, at fixed CPU counts so the cap is exercised on any box. An earlier version used <code>CPU_COUNT * 1.5</code> and it was <strong>deliberately abandoned</strong> — predictable beats marginally faster when a run is hours long — so if you remember the 1.5x, it is gone rather than merely undocumented. This row stated it for its whole life with nothing behind it (#333); <code>tests/test_parallel_contract.py</code> now holds the number still. A value <strong>below 1</strong> — <code>0</code> or any negative — is not a worker count: it is reported with a warning naming the variable and the value, and the default is used instead. <code>1</code> is how you ask for a single worker. Until #335, <code>0</code> was discarded silently and a negative was carried into the pool constructor, which raised <code>ValueError: max_workers must be greater than 0</code> without naming this variable. <strong><code>redact()</code> reads this variable too</strong>, in <code>_redaction_worker_count</code> (<code>session.py</code>), and rejects a value below 1 the same way, falling back to that path's own default — until #341 that read clamped <code>0</code> and every negative to a single worker in silence, so the sentence above was true of <code>run_parallel</code> and false of redaction.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong><code>ISOCENTER_CHUNKSIZE</code></strong></td>
@@ -1255,7 +1283,7 @@
 <tr>
 <td style="text-align: left;"><strong><code>ISOCENTER_MAX_TASKS_PER_CHILD</code></strong></td>
 <td style="text-align: left;"><em>Unlimited</em></td>
-<td style="text-align: left;">Restart worker processes after N tasks to release memory. Useful if you suspect memory leaks in underlying libraries. Setting it at all <strong>turns threads off</strong> for every call site it reaches, because only <code>multiprocessing.Pool</code> implements recycling — see the ordering note in the <code>ISOCENTER_FORCE_PROCESSES</code> row below. <strong>It cannot reach <code>session.export()</code> in either direction</strong>: <code>_resolve_strategy</code> consults the environment only when the <code>maxtasksperchild</code> argument is <code>None</code>, and the export path always passes <code>25</code>, so neither raising nor lowering this changes what an export does. A value <strong>below 1</strong> — <code>0</code> or any negative — is not a recycling interval: it is reported with a warning naming the variable and the value, and no recycling is used. Until #185, <code>0</code> was carried into <code>multiprocessing.Pool</code>, which raised <code>ValueError: maxtasksperchild must be a positive int or None</code> without naming this variable — the same defect #335 fixed for <code>ISOCENTER_MAX_WORKERS</code>.</td>
+<td style="text-align: left;">Restart worker processes after N tasks to release memory. Useful if you suspect memory leaks in underlying libraries. Setting it at all <strong>turns threads off</strong> for every call site it reaches, because only <code>multiprocessing.Pool</code> implements recycling — see the ordering note in the <code>ISOCENTER_FORCE_PROCESSES</code> row below. That includes the threads <code>redact()</code> asks for on a <code>:memory:</code> store (#381): with this set, that call runs in processes and fails with <code>RedactionError</code> naming <code>no such table: instance_blobs</code>. Unset it, or use a file-backed store. <strong>It cannot reach <code>session.export()</code> in either direction</strong>: <code>_resolve_strategy</code> consults the environment only when the <code>maxtasksperchild</code> argument is <code>None</code>, and the export path always passes <code>25</code>, so neither raising nor lowering this changes what an export does. A value <strong>below 1</strong> — <code>0</code> or any negative — is not a recycling interval: it is reported with a warning naming the variable and the value, and no recycling is used. Until #185, <code>0</code> was carried into <code>multiprocessing.Pool</code>, which raised <code>ValueError: maxtasksperchild must be a positive int or None</code> without naming this variable — the same defect #335 fixed for <code>ISOCENTER_MAX_WORKERS</code>.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong><code>ISOCENTER_DISABLE_GC</code></strong></td>
@@ -1265,12 +1293,12 @@
 <tr>
 <td style="text-align: left;"><strong><code>ISOCENTER_FORCE_THREADS</code></strong></td>
 <td style="text-align: left;"><code>0</code></td>
-<td style="text-align: left;">Set to <code>1</code> to force using Threads instead of Processes (bypass multiprocessing). Useful for debugging or when running in environments that don't support <code>fork</code>. <strong>It does not apply to <code>session.export()</code></strong>, which passes <code>maxtasksperchild=25</code> and therefore runs in processes on every interpreter, free-threaded builds included. That is a decision rather than an oversight: recycling a worker every 25 tasks reclaims memory leaked by the imaging C libraries, and a thread pool has no process to recycle, so the pickling cost is paid on purpose (#185). The request used to be dropped in silence; it is now reported with a warning naming both levers, so <code>export()</code> remains the one path you cannot debug, breakpoint or coverage-measure in the calling process.</td>
+<td style="text-align: left;">Set to <code>1</code> to run in threads instead of processes. Useful for debugging, coverage, or environments without <code>fork</code>. <strong>It reaches <code>audit()</code>, <code>scan_pixel_content()</code> and <code>redact()</code>. It reaches neither <code>export()</code> nor <code>ingest()</code>, for different reasons.</strong> <code>export()</code> passes <code>maxtasksperchild=25</code> and therefore runs in processes on every interpreter, free-threaded builds included — a decision, not an oversight: recycling a worker every 25 tasks reclaims memory leaked by the imaging C libraries, and a thread pool has no process to recycle (#185); the request is reported with a warning naming both levers. <code>ingest()</code> runs on the session's own <code>ProcessPoolExecutor</code>, handed to <code>run_parallel()</code> as <code>executor=</code>, and a caller-supplied executor is used as given: <strong>the variable is read and ignored there, and nothing warns</strong> (#390). <code>discover_redaction_zones()</code> runs in threads regardless (it asks for them itself). So <code>export()</code> and <code>ingest()</code> are the two paths you cannot debug, breakpoint or coverage-measure in the calling process — see <code>.coveragerc</code> for how the spawned workers are measured instead (#380).</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong><code>ISOCENTER_FORCE_PROCESSES</code></strong></td>
 <td style="text-align: left;"><code>0</code></td>
-<td style="text-align: left;">Set to <code>1</code> to force using Processes instead of Threads. The mirror of the row above, and it exists for the free-threaded default: on a free-threaded build <code>run_parallel()</code> picks threads, because there is no GIL to escape and pickling every item across a pipe is pure cost. This pins processes anyway. <strong>The three levers have a fixed order.</strong> <code>ISOCENTER_MAX_TASKS_PER_CHILD</code> (or a <code>maxtasksperchild</code> argument) beats both and always means processes — only <code>multiprocessing.Pool</code> implements worker recycling. Then <code>ISOCENTER_FORCE_THREADS</code>, which <strong>wins</strong> when both force variables are set. Then this one. Then the free-threaded default.</td>
+<td style="text-align: left;">Set to <code>1</code> to force using Processes instead of Threads. The mirror of the row above, and it exists for the free-threaded default: on a free-threaded build <code>run_parallel()</code> picks threads, because there is no GIL to escape and pickling every item across a pipe is pure cost. This pins processes anyway. <strong>Except <code>redact()</code> on a <code>:memory:</code> store</strong>, which runs in threads on every interpreter, this variable notwithstanding: the redaction worker writes redacted frames back to the store, and a process cannot share an in-memory database (#381). <strong>The three levers have a fixed order.</strong> <code>ISOCENTER_MAX_TASKS_PER_CHILD</code> (or a <code>maxtasksperchild</code> argument) beats both and always means processes — only <code>multiprocessing.Pool</code> implements worker recycling. Then <code>ISOCENTER_FORCE_THREADS</code>, which <strong>wins</strong> when both force variables are set. Then this one. Then the free-threaded default.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong><code>ISOCENTER_SHOW_PROGRESS</code></strong></td>
