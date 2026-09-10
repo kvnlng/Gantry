@@ -182,15 +182,24 @@ wrong for four of the thirteen words: it sent a reader looking in the
 audit table for strings that are never written there (#396).
 
 - The **grade**: `PASS`, `REVIEW_REQUIRED`. There is no `FAIL`.
-- The **audit `action_type` strings**, written to the audit table by
-  `log_audit`: `DATA_LOSS`, `ERROR`, `EXPORT`, `RECONCILE_PRIVATE`,
-  `REDACTION`, `REVERSIBLE_EXPORT`, `RISK`, `SCAN_GAP`, `WARNING`.
+- The **audit `action_type` strings**, written to the audit table and
+  counted by type in section 2 of the report: `DATA_LOSS`, `ERROR`,
+  `EXPORT`, `RECONCILE_PRIVATE`, `REDACTION`, `REVERSIBLE_EXPORT`,
+  `RISK`, `SCAN_GAP`, `WARNING`; and the four a remediation writes,
+  `REMEDIATION_REPLACE`, `REMEDIATION_SHIFT_DATE` and
+  `REMEDIATION_REMOVE` when it acts on a proposal and
+  `REMEDIATION_DECLINED` when it declines to, leaving the value it
+  targeted in the graph.
 - The **remediation-proposal `action_type` strings**, carried on
   `PhiFinding.remediation_proposal`: `REMOVE_TAG`, `REPLACE_TAG`,
   `SHIFT_DATE`. These say what a proposal *will* do and are never an
-  audit row; acting on one writes its own word instead.
-- The **report exception category** `COMPLIANCE_CHECK`, synthesised into
-  the report's `exceptions` list at report time.
+  audit row; acting on one writes one of the `REMEDIATION_*` words
+  above instead.
+- The **report exception categories** `COMPLIANCE_CHECK` and
+  `AUDIT_DROP`, synthesised into the report's `exceptions` list at
+  report time and never written to the audit table. The second says
+  audit rows failed to write and were dropped, so the report
+  under-counts what was done; either one costs the run its PASS.
 - The **`loss_scope` strings**: `STANDARD`, `PRIVATE`, `SIGNAL`.
 
 An existing string is never renamed or removed in 1.x; new strings may
@@ -199,8 +208,10 @@ be added with a CHANGELOG entry. The *method* that returns the rows
 the access path is not.
 
 `tests/test_frozen_surface.py` is what makes each of the five checkable:
-it collects the words from the write sites themselves, by AST, and
-compares each vocabulary for set equality. Until 0.9.5 it grepped the
+it collects the words from the write sites themselves, by AST --
+resolving a word passed through a variable or a module constant, as
+remediation passes its four -- and compares each vocabulary for set
+equality. Until 0.9.5 it grepped the
 package for the word as a quoted literal, which a docstring or a SQL
 string satisfied.
 

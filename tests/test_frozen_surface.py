@@ -102,14 +102,16 @@ FROZEN_ALL = ["Session", "Builder", "Equipment", "RedactionError", "ExportError"
 #: category was wrong for four of the thirteen words it listed (#396).
 #: One name per vocabulary; T-F4 reads the union.
 
-#: Written to the audit table, as the `action_type` column, by
-#: `log_audit`. `remediation.py` also writes audit rows, but through a
-#: local variable and a module constant rather than a literal argument,
-#: so its four words are invisible to Pin A by construction. They are
-#: not frozen (#411).
+#: Written to the audit table, as the `action_type` column. The first
+#: nine reach `log_audit` as literal arguments; the four `REMEDIATION_*`
+#: words are written by remediation through a local variable and a
+#: module constant, and joined the freeze at 1.0 (#411) because each is
+#: counted by type in section 2 of the report exactly as the nine are.
 FROZEN_AUDIT_ACTION_TYPES = {
     "DATA_LOSS", "ERROR", "EXPORT", "RECONCILE_PRIVATE", "REDACTION",
-    "REVERSIBLE_EXPORT", "RISK", "SCAN_GAP", "WARNING"}
+    "REVERSIBLE_EXPORT", "RISK", "SCAN_GAP", "WARNING",
+    "REMEDIATION_REPLACE", "REMEDIATION_SHIFT_DATE", "REMEDIATION_REMOVE",
+    "REMEDIATION_DECLINED"}
 
 #: `PhiRemediation.action_type` -- what a *proposal* says it will do,
 #: reaching a user through the frozen `PhiFinding.remediation_proposal`.
@@ -118,14 +120,9 @@ FROZEN_AUDIT_ACTION_TYPES = {
 FROZEN_PROPOSAL_ACTION_TYPES = {"REMOVE_TAG", "REPLACE_TAG", "SHIFT_DATE"}
 
 #: Report exception categories. Synthesised at report time into the
-#: `exceptions` list; never written to the audit table at all.
-FROZEN_REPORT_EXCEPTIONS = {"COMPLIANCE_CHECK"}
-
-#: What Pin E's collector should find. `AUDIT_DROP` is written beside
-#: `COMPLIANCE_CHECK` and is *not* thereby frozen -- whether it and the
-#: four remediation words should join the freeze at 1.0 is #411. Listing
-#: it here is a statement about the code, not a promise to a user.
-REPORT_EXCEPTION_CATEGORIES_WRITTEN = FROZEN_REPORT_EXCEPTIONS | {"AUDIT_DROP"}
+#: `exceptions` list; never written to the audit table at all. Both
+#: cost a run its PASS; `AUDIT_DROP` joined the freeze at 1.0 (#411).
+FROZEN_REPORT_EXCEPTIONS = {"COMPLIANCE_CHECK", "AUDIT_DROP"}
 
 FROZEN_LOSS_SCOPES = ["STANDARD", "PRIVATE", "SIGNAL"]
 FROZEN_GRADES = ["PASS", "REVIEW_REQUIRED"]
@@ -195,35 +192,112 @@ def _calls_named(tree, name):
             if isinstance(n, ast.Call) and _callee_name(n) == name)
 
 
+def _module_string_constants(tree):
+    """`NAME -> "value"` for every module-level `NAME = "value"`."""
+    return {target.id: _string(node.value)
+            for node in tree.body if isinstance(node, ast.Assign)
+            and _string(node.value) is not None
+            for target in node.targets if isinstance(target, ast.Name)}
+
+
+def _enclosing_function(node, parents):
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return node
+    return None
+
+
+def _action_type_words(node, module_constants, parents, where):
+    """The word(s) an `action_type` argument can carry, read from the source.
+
+    A string constant is its own word. A **name** is resolved, because
+    remediation passes its four words that way (#411): first as a
+    module-level `NAME = "str"` (`REMEDIATION_DECLINED`), otherwise as
+    every string constant assigned to that name inside the enclosing
+    function (the local `action_type` in `_apply_single_remediation`).
+
+    Anything else **raises** rather than being skipped. A collector that
+    skips what it cannot read goes quietly vacuous at exactly the site
+    that stopped being readable -- which is how four frozen-in-all-but-
+    name words sat outside this pin until #411 -- so a new call shape is
+    a red test and a decision, not a silence.
+    """
+    if _string(node) is not None:
+        return {_string(node)}
+    if isinstance(node, ast.Name):
+        if node.id in module_constants:
+            return {module_constants[node.id]}
+        function = _enclosing_function(node, parents)
+        assigned = set()
+        for sub in ast.walk(function) if function is not None else ():
+            if isinstance(sub, ast.Assign) and _string(sub.value) is not None and any(
+                    isinstance(t, ast.Name) and t.id == node.id for t in sub.targets):
+                assigned.add(_string(sub.value))
+        # `""` is excluded by name, not by truthiness. It is the
+        # `action_type = ""` initialiser at the top of
+        # `_apply_single_remediation`'s dispatch, and the `if action_type:`
+        # guard in front of both audit writes means it is never written:
+        # an arm that sets no word falls through to the decline instead.
+        # Filtering on truthiness would say the same thing today and
+        # would also swallow any other falsy constant someone assigned.
+        assigned.discard("")
+        if assigned:
+            return assigned
+    raise AssertionError(
+        f"Pin A cannot read the action_type passed at {where}: "
+        f"{ast.unparse(node)!r} is neither a string constant, a module-level "
+        f"string constant, nor a name assigned string constants in its "
+        f"function. Teach _action_type_words the new shape; do not skip it")
+
+
 def _audit_action_types():
-    """Pin A: every `action_type` string constant reaching `log_audit`.
+    """Pin A: every `action_type` word that reaches the audit table, by AST.
 
-    **Both** ways it is called. Twenty sites pass it as the keyword;
-    one passes it positionally, and `log_audit(self, action_type, ...)`
-    makes argument 0 the same parameter. Collecting only the keyword form
-    would leave that one site respellable with this pin green -- the M2
-    shape, at the one place a keyword-only collector is not looking.
+    Three kinds of site:
 
-    Twenty plus one does not account for every `log_audit(` in the
-    package: there are twenty-three call sites, and the remaining two
-    (`remediation.py:345`, `remediation.py:408`) pass a *name* rather
-    than a literal, so no AST collector can read a word out of them.
-    Both carry `REMEDIATION_*` words -- `REMEDIATION_REPLACE`,
-    `REMEDIATION_SHIFT_DATE`, `REMEDIATION_REMOVE`, `REMEDIATION_DECLINED`
-    -- which `docs/api/stability.md` does not freeze, so they are outside
-    what this pin is for. `isocenter/remediation.py` holds their own
-    constants and `tests/test_declined_remediation_is_recorded.py` pins
-    the one that matters; do not add them here to make the arithmetic
-    tidy.
+    - `log_audit(action_type="WORD", ...)`, the keyword form most sites
+      use;
+    - `log_audit("WORD", ...)`, positionally: `log_audit(self,
+      action_type, ...)` makes argument 0 the same parameter, and a
+      keyword-only collector would leave those sites respellable with
+      this pin green -- the M2 shape;
+    - `audit_buffer.append((WORD, ...))`, remediation's batched path,
+      whose tuples `log_audit_batch` writes with element 0 as the
+      `action_type` column. Anchored on the local name `audit_buffer`,
+      the only batch buffer in the package; the `log_audit(action_type,
+      ...)` fallbacks beside each append carry the same words, so a
+      respelling at either write is seen.
+
+    Remediation passes its words through a local variable and a module
+    constant, not a literal. Until #411 this collector read literals
+    only, so all four `REMEDIATION_*` words were invisible to it and
+    respelling any of them was green; `_action_type_words` resolves the
+    names, and raises on one it cannot resolve.
     """
     found = set()
-    for tree in _package_trees():
+    for path in sorted((REPO / "isocenter").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        constants = _module_string_constants(tree)
+        parents = {child: node for node in ast.walk(tree)
+                   for child in ast.iter_child_nodes(node)}
+        rel = path.relative_to(REPO)
         for call in _calls_named(tree, "log_audit"):
+            where = f"{rel}:{call.lineno}"
             for kw in call.keywords:
-                if kw.arg == "action_type" and _string(kw.value) is not None:
-                    found.add(_string(kw.value))
-            if call.args and _string(call.args[0]) is not None:
-                found.add(_string(call.args[0]))
+                if kw.arg == "action_type":
+                    found |= _action_type_words(kw.value, constants, parents, where)
+            if call.args:
+                found |= _action_type_words(call.args[0], constants, parents, where)
+        for call in _calls_named(tree, "append"):
+            target = call.func.value if isinstance(call.func, ast.Attribute) else None
+            if not (isinstance(target, ast.Name) and target.id == "audit_buffer"):
+                continue
+            where = f"{rel}:{call.lineno}"
+            assert len(call.args) == 1 and isinstance(call.args[0], ast.Tuple), (
+                f"audit_buffer.append at {where} is not handed one tuple; "
+                f"Pin A cannot read its action_type")
+            found |= _action_type_words(call.args[0].elts[0], constants, parents, where)
     return found
 
 
@@ -649,8 +723,14 @@ def test_an_unrecognised_row_is_reported_not_skipped():
         _unrecognised_table_lines(clean.replace("Frozen at 1.0", "Frozen"))
 
 
-def test_the_audit_action_types_written_are_exactly_the_frozen_nine():
-    """Pin A (#396): the words `log_audit` is handed, by AST, both call forms.
+def test_the_audit_action_types_written_are_exactly_the_frozen_thirteen():
+    """Pin A (#396, #411): the words the audit table is handed, by AST.
+
+    Nine were pinned by #396; #411 froze the four `REMEDIATION_*` words
+    and taught the collector to read a word passed as a name, which is
+    how remediation passes all four. Killing mutations include a
+    respelling of the local `action_type` in any remediation arm, or of
+    the `REMEDIATION_DECLINED` module constant.
 
     **This replaces a grep**, and the replacement is the fix. The old
     test asked only that each word appear as a quoted literal somewhere
@@ -707,10 +787,10 @@ def test_the_grades_session_assigns_when_it_grades_are_exactly_these_two():
     That is the right scope, not a gap to close: `PENDING` is the absence
     of a grade, `docs/api/stability.md` freezes the two grades, and
     `reporting.py` is careful to say so where the default is written.
-    Unlike `AUDIT_DROP` in Pin E, it is not a candidate for the freeze,
-    so it is not a #411 item. If you widen this collector to other
-    modules, widen `FROZEN_GRADES` with it or this goes red for the wrong
-    reason.
+    Unlike `AUDIT_DROP` in Pin E, which #411 froze because it costs a
+    run its PASS, it is not a candidate for the freeze. If you widen
+    this collector to other modules, widen `FROZEN_GRADES` with it or
+    this goes red for the wrong reason.
     """
     assert _grade_values() == set(FROZEN_GRADES)
 
@@ -718,11 +798,11 @@ def test_the_grades_session_assigns_when_it_grades_are_exactly_these_two():
 def test_the_report_exception_categories_are_exactly_these_two():
     """Pin E (#396): the categories synthesised into the `exceptions` list.
 
-    `AUDIT_DROP` is in the expected set because the code writes it, not
-    because it is frozen; `docs/api/stability.md` names only
-    `COMPLIANCE_CHECK`. Whether it should join the freeze at 1.0 is #411.
+    Both are frozen: `COMPLIANCE_CHECK` since #396 and `AUDIT_DROP` since
+    #411, which ruled that a category costing the run its PASS is
+    something a user reads, not an internal one.
     """
-    assert _report_exception_categories() == REPORT_EXCEPTION_CATEGORIES_WRITTEN
+    assert _report_exception_categories() == FROZEN_REPORT_EXCEPTIONS
 
 
 def test_the_two_pass_behaviours_are_stated_as_contract():
