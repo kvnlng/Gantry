@@ -122,6 +122,12 @@ entity_path)`; `DiscoveryResult.filter(...)`, `.to_zones()`,
 `Dict[str, Counter]`; `redact()`, `reconcile_private_tags()`,
 `auto_remediate_config()` → `int`.
 
+`PhiFinding.entity`, on the findings `audit()` and
+`scan_pixel_content()` return, is the live object in `session.store`
+that the finding names -- the same object whether the pass ran in
+threads or in processes -- or `None` when that object cannot be found
+in the graph; it is never a worker's copy (#412).
+
 **Entities, as reached from `session.store`.** The graph is `Patient`
 → `Study` → `Series` → `Instance`. Fields, in dataclass order (which is
 the positional constructor order, except where marked `init=False`):

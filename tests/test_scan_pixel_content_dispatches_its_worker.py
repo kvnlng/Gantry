@@ -76,9 +76,12 @@ def _threads_not_processes(monkeypatch):
     reach for `ISOCENTER_FORCE_PROCESSES` here: process mode cannot carry
     these assertions at all while `patch` stops at the boundary. The
     pickle round-trip in `test_the_worker_scans_an_instance_that_crossed_a_pickle`
-    is what covers that boundary instead. (`PhiFinding.entity` meaning a
-    live object in threads and a dead copy in processes is #412, and is
-    deliberately untouched here.)
+    is what covers that boundary instead. (`PhiFinding.entity` meant a
+    live object in threads and a dead copy in processes until #412. The
+    processes arm of that fix is pinned in
+    `tests/test_scan_pixel_findings_name_the_live_graph.py`, which can
+    run it because it patches inside the worker rather than around it;
+    the worker's half, dropping the instance, is asserted in T-394a.)
     """
     monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "3")
     monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
@@ -175,6 +178,15 @@ def test_the_worker_scans_an_instance_that_crossed_a_pickle():
 
     assert len(uncovered) == 1, uncovered
     finding = uncovered[0]
+    # 412-b: the worker drops the instance before the finding crosses
+    # back, as `scan_worker` does for `audit()`. The facade puts the live
+    # one back (`tests/test_scan_pixel_findings_name_the_live_graph.py`),
+    # and that test cannot see this line: rehydration overwrites the
+    # copy either way, so a missing strip leaves the identity intact
+    # while every finding pickles the worker's decoded frame back to the
+    # parent. Only this assertion is red for it.
+    assert finding.entity is None, (
+        "the worker returned a finding still carrying its instance")
     assert finding.entity_uid == "1.2.826.0.1.0"
     assert finding.field_name == "PixelData[Frame=0]"
     assert finding.value == "LEAKTEXT"
