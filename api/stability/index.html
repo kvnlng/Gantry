@@ -1474,8 +1474,19 @@ frozen with the method: <code>tests/test_frozen_surface.py</code> pins the <code
 options through <code>_export_dicom</code>'s signature, and
 <code>tests/test_wfdb_privacy.py</code> pins the two <code>wfdb</code> options -- both that
 they are the only two the exporter reads, and that <code>patient_ids</code>
-actually limits what is written.
-<code>generate_report(format=)</code> accepts <code>'markdown'</code> only and raises
+actually limits what is written.</p>
+<p><strong>An option name neither format recognises raises <code>TypeError</code>, and
+nothing is written.</strong> The <code>dicom</code> path has always done this, because
+<code>_export_dicom</code> has a real signature; the <code>wfdb</code> path did not until
+0.9.5, and a mistyped <code>patient_ids</code> therefore exported every patient in
+silence (#410). Because the two formats do not accept the same options,
+a caller forwarding one options dict to both must split it per format.
+<code>tests/test_wfdb_option_strictness.py</code> pins the refusal, the acceptance
+of the two frozen names, that both formats refuse the same typo, and the
+allow-list constant itself -- the last separately, because the AST pin in
+<code>tests/test_wfdb_privacy.py</code> collects the keys the body <em>reads</em> and is
+blind to a name admitted and never used.</p>
+<p><code>generate_report(format=)</code> accepts <code>'markdown'</code> only and raises
 <code>ValueError</code> otherwise.</p>
 <p><code>lock_identities</code> took <code>_patient_obj=None, **kwargs</code> until 0.9.4; both
 were stripped before the tag rather than frozen, and <code>verbose</code> and
