@@ -3798,12 +3798,26 @@ class SidecarPixelLoader:
         reading here; PlanarConfiguration went with #210. The SOP
         Instance UID is compared too, only so that after
         `regenerate_uid` an Integrity Error names the UID the caller now
-        knows the instance by. The float carrier (`PIXEL_DTYPE_ATTR`) is
+        knows the instance by. That is not free: after `regenerate_uid()`
+        with no save to rebind the loader, every read for the rest of the
+        session rebuilds (about 0.6 us each, measured), which the pipeline
+        never sees because it always persists after regenerating a UID.
+        The float carrier (`PIXEL_DTYPE_ATTR`) is
         read from the instance rather than derived, because no DICOM
         descriptor says "float" (#183); `set_attr` lowercases its key
         and so cannot reach it, but a direct write can.
         """
-        attrs = instance.attributes
+        # One snapshot, then every field from it. Seven separate
+        # `attributes.get` calls could straddle a concurrent
+        # `attributes.update(...)` and read one layout's Rows with the
+        # other's Columns -- a geometry neither layout declared. Measured
+        # on 3.14t with the GIL off: a writer flipping between 4x4 and
+        # 2x8, both valid for the stored bytes, made 10.3% of reads raise
+        # an Integrity Error. `dict()` copies a dict's storage in one step
+        # without calling `.get`, so the capture is one layout or the
+        # other. Pinned by tests/test_descriptor_edit_with_pixels_unloaded.py::
+        # test_the_descriptors_are_read_from_one_snapshot.
+        attrs = dict(instance.attributes)
         return (instance.sop_instance_uid,
                 int(attrs.get("0028,0010", 0) or 0),
                 int(attrs.get("0028,0011", 0) or 0),

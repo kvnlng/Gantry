@@ -54,6 +54,9 @@ FRAMES = [np.arange(16, dtype=np.uint8).reshape(4, 4),
           (np.arange(16, dtype=np.uint8) + 100).reshape(4, 4),
           (np.arange(16, dtype=np.uint8) + 200).reshape(4, 4)]
 
+#: GE's private transfer syntax: a real UID pydicom cannot classify.
+PRIVATE_TS = "1.2.840.113619.5.2"
+
 
 def _codestream(frame):
     return imagecodecs.jpeg2k_encode(frame, level=0, codecformat="J2K")
@@ -158,10 +161,13 @@ def test_the_fixtures_carry_the_offset_tables_they_are_named_for():
 def test_the_helper_reports_the_table_and_both_counts():
     """The one comparison both halves of the fix read (#418)."""
     h = imagecodecs_handler.offset_table_frame_count
-    assert h(_dataset(2, 1)) == (2, 1, True, "Basic Offset Table")
-    assert h(_dataset(2, None)) == (2, 1, False, "Basic Offset Table")
+    # The third slot is NumberOfFrames as the file states it, None when
+    # absent -- so a 0 can be reported as a 0, not as the 1 it is read as.
+    assert h(_dataset(2, 1)) == (2, 1, 1, "Basic Offset Table")
+    assert h(_dataset(2, None)) == (2, 1, None, "Basic Offset Table")
+    assert h(_dataset(2, 0)) == (2, 1, 0, "Basic Offset Table")
     assert h(_dataset(2, 1, table="eot")) == (
-        2, 1, True, "Extended Offset Table")
+        2, 1, 1, "Extended Offset Table")
     # Undetectable, and said so: None, not a guess.
     assert h(_dataset(2, 1, table="empty")) is None
     # Native pixel data is not encapsulated: no table to compare.
@@ -174,6 +180,87 @@ def test_the_helper_reports_the_table_and_both_counts():
     bare = Dataset()
     bare.PixelData = FRAMES[0].tobytes()
     assert h(bare) is None
+
+
+@pytest.mark.parametrize("ts", [
+    PRIVATE_TS,                     # GE's private syntax
+    "1.2.840.10008.5.1.4.1.1.7",    # a SOP Class UID in the TS slot
+    "",                             # an empty UID
+])
+def test_the_helper_declines_a_transfer_syntax_it_cannot_classify(ts):
+    """None, never a raise: the check must not be what refuses these files.
+
+    pydicom's `UID.is_encapsulated` raises `ValueError("UID is not a
+    transfer syntax.")` for all three, and the helper runs outside
+    `ingest_worker`'s decode `try` -- so a raise here replaced the
+    decoder's own reason, which names the UID, with one that does not.
+    """
+    ds = _dataset(2, 1)
+    ds.file_meta.TransferSyntaxUID = ts
+    assert imagecodecs_handler.offset_table_frame_count(ds) is None
+    assert imagecodecs_handler.frame_count_mismatch(ds) is None
+
+
+def test_the_helper_declines_a_pixel_element_with_no_value():
+    """`PixelData = None` is present and holds nothing to parse."""
+    ds = _dataset(2, 1)
+    ds.PixelData = None
+    assert imagecodecs_handler.offset_table_frame_count(ds) is None
+
+
+def _private_ts_file(folder):
+    """A native 4x4 file whose transfer syntax no decoder here knows."""
+    ds = _dataset(1, None)
+    ds.file_meta.TransferSyntaxUID = PRIVATE_TS
+    # A fresh element: the one `_dataset` built is marked undefined-length
+    # (encapsulated), and reassigning its value keeps that flag.
+    del ds.PixelData
+    ds.PixelData = FRAMES[0].tobytes()
+    path = os.path.join(folder, "private_ts.dcm")
+    ds.save_as(path, implicit_vr=False, little_endian=True,
+               enforce_file_format=True)
+    return path
+
+
+def test_a_private_transfer_syntax_is_still_refused_in_the_decoders_words(
+        tmp_path):
+    """Ingest and the file arm both still name the UID they cannot decode.
+
+    Before #418 the ingest reason was `Decompression Failed: No pixel data
+    decoders have been implemented for '1.2.840.113619.5.2'` and the file
+    read raised `... '1.2.840.113619.5.2' is not supported`. The pre-check
+    raising first turned both into `UID is not a transfer syntax.`
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+    path = _private_ts_file(str(src))
+
+    session = DicomSession(persistence_file=str(tmp_path / "s.db"))
+    try:
+        summary = session.ingest(str(src))
+    finally:
+        session.close()
+    assert summary.ingested == 0
+    assert len(summary.failures) == 1
+    reason = summary.failures[0][1]
+    assert PRIVATE_TS in reason, reason
+    assert reason.startswith("Decompression Failed:"), reason
+
+    inst = Instance(generate_uid(), "1.2.840.10008.5.1.4.1.1.7", 1,
+                    file_path=path)
+    with pytest.raises(RuntimeError) as exc:
+        inst.get_pixel_data()
+    assert PRIVATE_TS in str(exc.value), str(exc.value)
+
+
+def test_an_explicit_zero_number_of_frames_is_reported_as_zero():
+    """The message says what the file says, not the 1 it is read as."""
+    with pytest.raises(RuntimeError) as exc:
+        imagecodecs_handler.get_pixel_data(_dataset(2, 0))
+    msg = str(exc.value)
+    assert "names 2 frames" in msg
+    assert "NumberOfFrames is 0 (read as 1)" in msg
+    assert "declares 1" not in msg
 
 
 # ---------------------------------------------------------------------------

@@ -95,7 +95,7 @@ def offset_table_frame_count(ds) -> Optional[Tuple[int, int, bool, str]]:
         ds (pydicom.Dataset): A dataset carrying `PixelData`.
 
     Returns:
-        ``(table_frames, declared_frames, declared_present, table_name)``,
+        ``(table_frames, declared_frames, declared_raw, table_name)``,
         or None when there is nothing to compare: the transfer syntax is
         not encapsulated (or cannot be read at all -- a `force=True` read
         of a header-less file has an empty `file_meta`, #281), there is no
@@ -104,27 +104,35 @@ def offset_table_frame_count(ds) -> Optional[Tuple[int, int, bool, str]]:
         the table does not parse. In every None case the caller decodes as
         it did before this check existed; None never means "consistent".
 
-        ``declared_frames`` is ``NumberOfFrames``, read as 1 when absent or
-        zero, and ``declared_present`` says whether it was there, so a
-        message can say "absent, read as 1" rather than put a number in
-        the dataset's mouth. Measured on pydicom 3.0.2: its decoder reads
+        ``declared_frames`` is ``NumberOfFrames`` as the decoder reads it:
+        1 when absent, empty, zero or negative. ``declared_raw`` is the
+        value the file states -- None when absent or empty -- so a message
+        can say "absent (read as 1)" or "is 0 (read as 1)" rather than put
+        a number in the dataset's mouth. Measured on pydicom 3.0.2: its decoder reads
         an absent value as 1 too -- `as_array(ds,
         allow_excess_frames=False)` on a two-offset table with no
         NumberOfFrames returns frame 0 alone.
     """
+    # `ValueError` too: pydicom raises `ValueError("UID is not a transfer
+    # syntax.")` for a UID it cannot classify -- a private syntax such as
+    # GE's 1.2.840.113619.5.2, a SOP Class UID in the TS slot, an empty
+    # UID. That is the decoder's refusal to make, in its own words, which
+    # name the UID; this check runs outside `ingest_worker`'s decode `try`,
+    # so raising here replaced that reason with one that did not.
     try:
         if not ds.file_meta.TransferSyntaxUID.is_encapsulated:
             return None
-    except AttributeError:
+    except (AttributeError, ValueError):
         return None
     if "PixelData" not in ds:
         return None
 
-    declared_present = "NumberOfFrames" in ds
+    raw = getattr(ds, "NumberOfFrames", None)
     try:
-        declared = int(getattr(ds, "NumberOfFrames", 1) or 1)
+        declared_raw = None if raw in (None, "") else int(raw)
     except (TypeError, ValueError):
         return None
+    declared = declared_raw if declared_raw and declared_raw > 0 else 1
 
     # The EOT first: when it is present the BOT is required to be empty
     # (PS3.5 A.4), so a BOT-only count would see nothing. Eight bytes per
@@ -134,18 +142,20 @@ def offset_table_frame_count(ds) -> Optional[Tuple[int, int, bool, str]]:
     eot = ds.get("ExtendedOffsetTable")
     if eot:
         eot_bytes = getattr(eot, "value", eot)
-        return (len(eot_bytes) // 8, declared, declared_present,
+        return (len(eot_bytes) // 8, declared, declared_raw,
                 "Extended Offset Table")
 
     try:
         offsets = parse_basic_offsets(ds.PixelData)
-    except (ValueError, struct.error):
-        # Unparsable: not this check's question. The decoder that runs
-        # next refuses a buffer it cannot parse on its own terms.
+    except (ValueError, struct.error, TypeError, AttributeError):
+        # Unparsable -- including a `PixelData` of None, which
+        # `parse_basic_offsets` meets as `AttributeError: 'NoneType' object
+        # has no attribute 'read'`. Not this check's question: the decoder
+        # that runs next refuses such a buffer on its own terms.
         return None
     if not offsets:
         return None
-    return (len(offsets), declared, declared_present, "Basic Offset Table")
+    return (len(offsets), declared, declared_raw, "Basic Offset Table")
 
 
 def frame_count_mismatch(ds) -> Optional[str]:
@@ -171,11 +181,16 @@ def frame_count_mismatch_words(counted: Tuple[int, int, bool, str]) -> str:
     Args:
         counted: What `offset_table_frame_count` returned.
     """
-    table_frames, declared, declared_present, table_name = counted
-    if declared_present:
-        declared_words = f"NumberOfFrames declares {declared}"
+    table_frames, declared, declared_raw, table_name = counted
+    if declared_raw is None:
+        declared_words = f"NumberOfFrames is absent (read as {declared})"
+    elif declared_raw != declared:
+        # An explicit 0 (or a negative) is read as 1, and saying "declares
+        # 1" would put a number in the file's mouth that it never wrote.
+        declared_words = (f"NumberOfFrames is {declared_raw} "
+                          f"(read as {declared})")
     else:
-        declared_words = "NumberOfFrames is absent (read as 1)"
+        declared_words = f"NumberOfFrames declares {declared}"
     return f"{table_name} names {table_frames} frames; {declared_words}"
 
 

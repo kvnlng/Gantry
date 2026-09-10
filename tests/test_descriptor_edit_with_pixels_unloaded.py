@@ -362,6 +362,50 @@ def test_describes_names_every_field_the_loader_reads(ingested):
     inst.sop_instance_uid = original_uid
 
 
+class _TornAttributes(dict):
+    """Attributes a concurrent writer flips between two valid layouts.
+
+    Both 4x4 and 2x8 hold the stored 16 samples. Each `.get("0028,0010")`
+    moves the dict to the other layout, which is what an
+    `attributes.update(...)` on another thread does between two reads --
+    deterministically, instead of 10% of the time on a free-threaded
+    build. A reader that asks for Rows and then Columns separately gets
+    one layout's Rows and the other's Columns: (4, 8) or (2, 4), which is
+    neither, and the loader refuses it as an Integrity Error.
+    """
+
+    LAYOUTS = ({ROWS: 4, COLS: 4}, {ROWS: 2, COLS: 8})
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._turn = 0
+
+    def get(self, key, default=None):
+        value = super().get(key, default)
+        if key == ROWS:
+            self._turn ^= 1
+            dict.update(self, self.LAYOUTS[self._turn])
+        return value
+
+
+def test_the_descriptors_are_read_from_one_snapshot(ingested):
+    """A read sees one layout or the other, never half of each.
+
+    Measured on 3.14t with the GIL off, before the snapshot: a writer
+    flipping `attributes.update(...)` between 4x4 and 2x8 made 10.3% of
+    reads raise an Integrity Error. The stand-in reproduces that exactly.
+    """
+    _session, inst, _db = ingested
+    inst.attributes = _TornAttributes(inst.attributes)
+
+    rows, cols = SidecarPixelLoader._descriptors_from(inst)[1:3]
+    assert (rows, cols) in ((4, 4), (2, 8)), (rows, cols)
+
+    got = inst.get_pixel_data()
+    assert got.shape in ((4, 4), (2, 8))
+    assert np.array_equal(got, ORIGINAL.reshape(got.shape))
+
+
 # ---------------------------------------------------------------------------
 # A10 -- set_pixel_data -> discard: one answer, whatever the save state
 # ---------------------------------------------------------------------------
