@@ -111,3 +111,62 @@ def test_is_available_success():
     """Test is_available returns True when module is present."""
     with patch('isocenter.imagecodecs_handler.imagecodecs', MagicMock()):
         assert imagecodecs_handler.is_available() is True
+
+
+# Every supported syntax, and the one codec it must reach. Before #414 the
+# suite pinned only the ljpeg and rle arms, so returning None from the
+# JPEG Baseline/Extended arm or the JPEG-LS arm -- or routing one syntax
+# family to another's codec -- left it green.
+_CODEC_FOR = {
+    "1.2.840.10008.1.2.4.57": "ljpeg_decode",   # JPEG Lossless
+    "1.2.840.10008.1.2.4.70": "ljpeg_decode",   # JPEG Lossless SV1
+    "1.2.840.10008.1.2.4.50": "jpeg_decode",    # JPEG Baseline
+    "1.2.840.10008.1.2.4.51": "jpeg_decode",    # JPEG Extended
+    "1.2.840.10008.1.2.4.90": "jpeg2k_decode",  # JPEG 2000 Lossless
+    "1.2.840.10008.1.2.4.91": "jpeg2k_decode",  # JPEG 2000
+    "1.2.840.10008.1.2.4.80": "jpegls_decode",  # JPEG-LS Lossless
+    "1.2.840.10008.1.2.4.81": "jpegls_decode",  # JPEG-LS Near-Lossless
+    "1.2.840.10008.1.2.5": "rle_decode",        # RLE Lossless
+}
+_CODECS = sorted(set(_CODEC_FOR.values()))
+DISPATCH_CHUNK = b"codestream!!"  # even length: no pad byte from encapsulate
+
+
+@pytest.mark.parametrize("syntax", sorted(_CODEC_FOR))
+def test_each_syntax_reaches_its_own_codec_and_returns_its_result(syntax):
+    """One syntax, one codec, and that codec's array is what comes back.
+
+    Each codec returns its own sentinel, so a mutant returning None, a
+    swapped arm, or a fall-through to the wrong family is red here: the
+    identity check catches the first, and `assert_not_called` on every
+    other codec catches the other two.
+    """
+    ds = MagicMock(spec=Dataset)
+    ds.file_meta = MagicMock()
+    ds.file_meta.TransferSyntaxUID = UID(syntax)
+    ds.Rows = 2
+    ds.Columns = 3
+    ds.NumberOfFrames = 1
+    ds.PixelData = encapsulate([DISPATCH_CHUNK])
+    sentinels = {name: np.full((2, 3), i, dtype=np.uint8)
+                 for i, name in enumerate(_CODECS)}
+
+    with patch('isocenter.imagecodecs_handler.imagecodecs') as mock_ic:
+        for name in _CODECS:
+            getattr(mock_ic, name).return_value = sentinels[name]
+        result = imagecodecs_handler.get_pixel_data(ds)
+
+        expected = _CODEC_FOR[syntax]
+        assert result is sentinels[expected]
+        getattr(mock_ic, expected).assert_called_once()
+        assert getattr(mock_ic, expected).call_args[0][0] == DISPATCH_CHUNK
+        for name in _CODECS:
+            if name != expected:
+                getattr(mock_ic, name).assert_not_called()
+
+
+def test_supports_exactly_the_nine_syntaxes():
+    for syntax in _CODEC_FOR:
+        assert imagecodecs_handler.supports_transfer_syntax(UID(syntax)) is True
+    assert imagecodecs_handler.supports_transfer_syntax(
+        UID("1.2.840.10008.1.2.1")) is False  # Explicit VR Little Endian

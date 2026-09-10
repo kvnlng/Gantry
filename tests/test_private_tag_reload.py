@@ -33,6 +33,7 @@ Two things this file deliberately pins rather than fixes:
 """
 import contextlib
 import glob
+import logging
 import os
 import sqlite3
 
@@ -675,6 +676,54 @@ def test_reconcile_on_a_clean_store_is_a_noop(tmp_path):
             "SELECT 1 FROM audit_log WHERE action_type='RECONCILE_PRIVATE'"
         ).fetchall()
     assert rows == []
+
+
+def _reconcile_warnings(records):
+    return [r.getMessage() for r in records
+            if r.levelno == logging.WARNING
+            and "reconcile_private_tags" in r.getMessage()]
+
+
+def test_reconcile_warns_the_caller_what_it_dropped(tmp_path, caplog):
+    """The WARNING is the caller's only in-band word that rows were deleted.
+
+    The return value is a count and the audit row lands in a table the
+    caller has to go and read; the log line is what says, at the moment
+    it happens, that a destructive repair ran and how to undo it. The
+    tests above pinned the count, the graph, a reload and the audit row,
+    and a mutation probe that deleted the warning's statement left every
+    one of them green (#414).
+    """
+    db = str(tmp_path / "legacy.db")
+    SqliteStore(db).save_all([_hand_built_patient(private={})])
+    _stale_row(db)
+
+    session = DicomSession(persistence_file=db)
+    try:
+        with caplog.at_level(logging.WARNING, logger="isocenter"):
+            assert session.reconcile_private_tags() == 1
+    finally:
+        session.close()
+
+    warned = _reconcile_warnings(caplog.records)
+    assert len(warned) == 1, warned
+    assert "dropped 1 stored private-tag row(s) across 1 instance(s)" in warned[0]
+    assert "restore from backup" in warned[0]
+
+
+def test_reconcile_on_a_clean_store_warns_nothing(tmp_path, caplog):
+    """The twin: a warning that fired on every call would say nothing."""
+    db = str(tmp_path / "clean.db")
+    SqliteStore(db).save_all([_hand_built_patient(private={})])
+
+    session = DicomSession(persistence_file=db)
+    try:
+        with caplog.at_level(logging.WARNING, logger="isocenter"):
+            assert session.reconcile_private_tags() == 0
+    finally:
+        session.close()
+
+    assert _reconcile_warnings(caplog.records) == []
 
 
 def test_reconcile_drops_a_legitimate_tier_row_too_and_that_is_the_deal(

@@ -13,11 +13,26 @@ is not an inconvenience but a leak nobody is watching for:
     python -m scripts.mutation_probe 10              # one budget for every module: the cheap pass
     python -m scripts.mutation_probe 30 isocenter/session.py tests/test_session.py
 
-The default run costs about an hour, and most of it is `io_handlers.py`:
-its test list is 56 files and a *surviving* mutant pays the whole list
-(~165s) where a kill exits at the first red test (~45s). The positional
-budget is the override for every module at once; nothing in CI runs this
-script.
+A default run is long, and survivors are what make it so: a surviving
+mutant pays its module's whole test list, where a kill exits at the
+first red test. Measured on 3.12.14, as upper bounds -- every sampled
+mutant surviving:
+
+    default run, before the session/entities/imagecodecs rows   ~3.7 h
+    default run, with them (#414, #419)                         ~8.4 h
+    `python -m scripts.mutation_probe 10`, the cheap pass       ~3.0 h
+
+`session.py` and `entities.py` each list over 120 test files, one full
+pass of ~300s and ~190s. A mutant that hangs costs a further 15 minutes,
+because `run()` times out at 900s and reports it as skipped. A real run
+is much shorter, since most mutants die in seconds, but the survival
+rates any such estimate rests on were sampled too thinly to print here.
+The positional budget is the override for every module at once; nothing
+in CI runs this script.
+
+A default run ends by printing `NOT_PROBED`: the modules it does not
+measure, and why. `tests/test_mutation_probe_targets.py` fails when a
+module under `isocenter/` is in neither `TARGETS` nor `NOT_PROBED`.
 
 **Sampled, not exhaustive.** It walks mutation sites at a fixed stride,
 so the output is "of N representative mutations, M survived" -- evidence
@@ -100,6 +115,7 @@ TARGETS = {
     # after the `force_threads` short-circuit. Extras cost the guard
     # nothing.
     "isocenter/parallel.py": (["tests/test_logging.py",
+                               "tests/test_packaging_contract.py",
                                "tests/test_parallel_config.py",
                                "tests/test_parallel_contract.py",
                                "tests/test_redaction_worker_count.py",
@@ -255,6 +271,7 @@ TARGETS = {
                                   "tests/test_json_serialization.py",
                                   "tests/test_legacy_waveform_hydration.py",
                                   "tests/test_memory_store_unlinks_its_temp_files.py",
+                                  "tests/test_packaging_contract.py",
                                   "tests/test_persistence.py",
                                   "tests/test_persistence_concurrency.py",
                                   "tests/test_persistence_incremental.py",
@@ -277,6 +294,410 @@ TARGETS = {
                                   "tests/test_study_date_roundtrip.py",
                                   "tests/test_vertical_table.py",
                                   "tests/test_worker_start_is_serialised.py"], 30),
+    # 566 sites. Until #414 the facade had no row, so no mutant of
+    # `Session` -- the ingest/audit/anonymize/redact/export ordering,
+    # `_make_lightweight_copy`, `_verify_worker`, the report's boundary
+    # note -- was ever generated.
+    #
+    # Budget 30 is a stride of 18, the same density as io_handlers.py
+    # (533/30, stride 17) and persistence.py (453/30, stride 15); a
+    # different number here would need a reason.
+    #
+    # The list is measured, not curated: every file `_importers` in
+    # tests/test_mutation_probe_targets.py demands, which is 126 of the
+    # suite's 221 -- nearly all of it, because nearly every test drives
+    # the facade. One full pass is ~300s (3.12.14), so a surviving mutant
+    # costs five minutes and a kill costs seconds. Measured sample at
+    # budget 3: 3 of 4 killed; the survivor was the deleted WARNING
+    # `reconcile_private_tags()` logs when it drops stored rows, which was
+    # a real gap and is now pinned by tests/test_private_tag_reload.py.
+    #
+    # Cost: at budget 30 this row is ~2.7 h of a default run as an upper
+    # bound (every mutant surviving). Written down because an unexplained
+    # tripling of the run time is the kind of thing someone later "fixes"
+    # by cutting the budget.
+    "isocenter/session.py": (["tests/test_analysis.py",
+                              "tests/test_analysis_persistence.py",
+                              "tests/test_api_coherence.py",
+                              "tests/test_async_persistence.py",
+                              "tests/test_automation.py",
+                              "tests/test_binary_retention_threshold.py",
+                              "tests/test_check_reversibility.py",
+                              "tests/test_close_does_not_drop_an_orphaned_save.py",
+                              "tests/test_close_warns_about_unsaved_instances.py",
+                              "tests/test_colour_space_at_ingest.py",
+                              "tests/test_compact_refuses_during_a_pass.py",
+                              "tests/test_compact_rewiring_is_locked.py",
+                              "tests/test_compaction.py",
+                              "tests/test_compaction_races_a_concurrent_write.py",
+                              "tests/test_compaction_recovery.py",
+                              "tests/test_configuration_manual.py",
+                              "tests/test_configuration_persistence.py",
+                              "tests/test_dataframe_export.py",
+                              "tests/test_date_shifted_roundtrip.py",
+                              "tests/test_declined_remediation_is_recorded.py",
+                              "tests/test_descriptor_edit_with_pixels_unloaded.py",
+                              "tests/test_discovery_integration.py",
+                              "tests/test_doc_anchors.py",
+                              "tests/test_dtype_only_replacement_survives_the_dedup.py",
+                              "tests/test_empty_sequence_roundtrip.py",
+                              "tests/test_export_atomic_write.py",
+                              "tests/test_export_contract.py",
+                              "tests/test_export_delivery_counters.py",
+                              "tests/test_export_failure_audit.py",
+                              "tests/test_export_flushes_before_it_sweeps.py",
+                              "tests/test_export_loss_audit.py",
+                              "tests/test_export_readback.py",
+                              "tests/test_feature_regression.py",
+                              "tests/test_float_pixel_data_export.py",
+                              "tests/test_frozen_surface.py",
+                              "tests/test_full_logging.py",
+                              "tests/test_import_validation.py",
+                              "tests/test_ingest_failure_audit.py",
+                              "tests/test_ingestion_normalization.py",
+                              "tests/test_io_no_pixels.py",
+                              "tests/test_legacy_waveform_hydration.py",
+                              "tests/test_lock_identities_signature.py",
+                              "tests/test_logging.py",
+                              "tests/test_manifest.py",
+                              "tests/test_memory_redaction.py",
+                              "tests/test_memory_store_redaction_strategy.py",
+                              "tests/test_memory_store_reports_its_processes_lever.py",
+                              "tests/test_metadata_refactor_full.py",
+                              "tests/test_missing_study_date.py",
+                              "tests/test_multiprocessing.py",
+                              "tests/test_murmur_annotations.py",
+                              "tests/test_naming_structure.py",
+                              "tests/test_nested_pixel_carriage.py",
+                              "tests/test_ocr_unavailable_refuses.py",
+                              "tests/test_offset_table_frame_count.py",
+                              "tests/test_optimization.py",
+                              "tests/test_packaging_contract.py",
+                              "tests/test_parallel_contract.py",
+                              "tests/test_parallel_export.py",
+                              "tests/test_persistence.py",
+                              "tests/test_persistence_manager.py",
+                              "tests/test_phi_retention.py",
+                              "tests/test_phi_status.py",
+                              "tests/test_pixel_divergence.py",
+                              "tests/test_pixel_dtype_roundtrip.py",
+                              "tests/test_pixel_export.py",
+                              "tests/test_pixel_geometry_check.py",
+                              "tests/test_pixel_geometry_pipeline.py",
+                              "tests/test_pixel_integrity.py",
+                              "tests/test_private_binary_ingest.py",
+                              "tests/test_private_tag_arity_roundtrip.py",
+                              "tests/test_private_tag_empty_value_roundtrip.py",
+                              "tests/test_private_tag_export.py",
+                              "tests/test_private_tag_reload.py",
+                              "tests/test_private_tag_vr_roundtrip.py",
+                              "tests/test_profile_end_to_end.py",
+                              "tests/test_query_export.py",
+                              "tests/test_redact_error.py",
+                              "tests/test_redact_reports_outcome.py",
+                              "tests/test_redaction_attestation.py",
+                              "tests/test_redaction_consistency.py",
+                              "tests/test_redaction_export.py",
+                              "tests/test_redaction_failure_is_reported.py",
+                              "tests/test_redaction_multizone.py",
+                              "tests/test_redaction_names_its_strategy.py",
+                              "tests/test_redaction_parallel.py",
+                              "tests/test_redaction_reaches_the_exported_file.py",
+                              "tests/test_redaction_uid_capture.py",
+                              "tests/test_redaction_wildcard.py",
+                              "tests/test_redaction_worker_count.py",
+                              "tests/test_reingest_after_redact.py",
+                              "tests/test_release_memory.py",
+                              "tests/test_relock_identity_token.py",
+                              "tests/test_remediation_actions.py",
+                              "tests/test_report_action_evidence.py",
+                              "tests/test_report_export_boundary.py",
+                              "tests/test_reporting_features.py",
+                              "tests/test_reversibility.py",
+                              "tests/test_safe_export.py",
+                              "tests/test_safe_export_feedback.py",
+                              "tests/test_safe_export_jitter.py",
+                              "tests/test_save_all_contract.py",
+                              "tests/test_save_redact_race.py",
+                              "tests/test_scaffold_features.py",
+                              "tests/test_scaffold_profiles.py",
+                              "tests/test_scaffolding.py",
+                              "tests/test_scan_pixel_content_dispatches_its_worker.py",
+                              "tests/test_scan_pixel_findings_name_the_live_graph.py",
+                              "tests/test_session.py",
+                              "tests/test_shared_executor_lifecycle.py",
+                              "tests/test_shipped_resource_is_required.py",
+                              "tests/test_sidecar.py",
+                              "tests/test_sidecar_gate_order.py",
+                              "tests/test_signed_pixels_survive_a_compressed_export.py",
+                              "tests/test_study_date_roundtrip.py",
+                              "tests/test_suggested_config.py",
+                              "tests/test_sync_save_does_not_overlap_an_async_one.py",
+                              "tests/test_waveform_dicom_roundtrip.py",
+                              "tests/test_waveform_ingest.py",
+                              "tests/test_wfdb_conformance.py",
+                              "tests/test_wfdb_option_strictness.py",
+                              "tests/test_wfdb_partial_export_is_audited.py",
+                              "tests/test_wfdb_privacy.py",
+                              "tests/test_wfdb_start_date_honesty.py",
+                              "tests/test_wfdb_writer.py",
+                              "tests/test_worker_loss_is_reported.py"],
+                             30),
+    # 196 sites. Until #419 this module had no row, so the persistence
+    # bookkeeping every CLAUDE.md trap is about -- `mark_modified`,
+    # `mark_persisted`'s `max`, `phi_status`'s revision comparison,
+    # `record_phi_status`'s short-circuit -- and `unload_pixel_data()`'s
+    # #293 refusal were never mutated.
+    #
+    # Budget 30 is a stride of 6, denser than the two largest modules on
+    # purpose: that bookkeeping is what #173 and #307 pin, and at stride
+    # 6 this row costs about the same as session.py's. Budget 12 would
+    # save about an hour of upper bound; it was weighed and not taken.
+    #
+    # The list is measured, not curated (125 files, the `_importers`
+    # demand), and here completeness was shown to matter: flipping the
+    # `or` in `phi_status` to `and` passes the six files that pin the
+    # bookkeeping by name and is killed only by tests/test_phi_status.py
+    # in the full list (two of its tests go red: the edit-after-a-scan
+    # invalidation and the stale status that must not persist as
+    # current). A curated list would have reported a false survivor. One full pass is ~190s (3.12.14).
+    #
+    # Known equivalent survivors: deleting the DEBUG "Identity
+    # regenerated" log (no reader, no contract), and `return None` from
+    # `_write_str_if_changed`, whose only caller discards the result.
+    #
+    # Cost: ~1.8 h of a default run as an upper bound.
+    "isocenter/entities.py": (["tests/test_analysis.py",
+                               "tests/test_api_coherence.py",
+                               "tests/test_async_persistence.py",
+                               "tests/test_audit_suppression.py",
+                               "tests/test_blob_storage.py",
+                               "tests/test_bytes_persistence.py",
+                               "tests/test_check_reversibility.py",
+                               "tests/test_close_does_not_drop_an_orphaned_save.py",
+                               "tests/test_close_warns_about_unsaved_instances.py",
+                               "tests/test_codecs_strict.py",
+                               "tests/test_colour_space_at_ingest.py",
+                               "tests/test_compact_refuses_during_a_pass.py",
+                               "tests/test_compact_rewiring_is_locked.py",
+                               "tests/test_compaction.py",
+                               "tests/test_compaction_races_a_concurrent_write.py",
+                               "tests/test_compaction_reclaims_a_row_instances_does_not_carry.py",
+                               "tests/test_compaction_recovery.py",
+                               "tests/test_compression_deps.py",
+                               "tests/test_concurrency_stress.py",
+                               "tests/test_config_tags_shapes.py",
+                               "tests/test_create_config_output.py",
+                               "tests/test_dataframe_export.py",
+                               "tests/test_declined_remediation_is_recorded.py",
+                               "tests/test_deid_tags.py",
+                               "tests/test_empty_sequence_roundtrip.py",
+                               "tests/test_entities.py",
+                               "tests/test_entity_state_vocabulary.py",
+                               "tests/test_export_atomic_write.py",
+                               "tests/test_export_contract.py",
+                               "tests/test_export_date_error.py",
+                               "tests/test_export_delivery_counters.py",
+                               "tests/test_export_error.py",
+                               "tests/test_export_failure_audit.py",
+                               "tests/test_export_flushes_before_it_sweeps.py",
+                               "tests/test_export_loss_audit.py",
+                               "tests/test_export_merge_shape.py",
+                               "tests/test_export_pixels.py",
+                               "tests/test_export_readback.py",
+                               "tests/test_export_worker_graph_purity.py",
+                               "tests/test_float_pixel_data_export.py",
+                               "tests/test_flush_orphan_recovery.py",
+                               "tests/test_frozen_surface.py",
+                               "tests/test_io.py",
+                               "tests/test_io_no_pixels.py",
+                               "tests/test_legacy_waveform_hydration.py",
+                               "tests/test_lock_identities_signature.py",
+                               "tests/test_memory_redaction.py",
+                               "tests/test_memory_store_redaction_strategy.py",
+                               "tests/test_memory_store_reports_its_processes_lever.py",
+                               "tests/test_murmur_annotations.py",
+                               "tests/test_mutation_gaps.py",
+                               "tests/test_nested_phi_audit.py",
+                               "tests/test_ocr_formal.py",
+                               "tests/test_ocr_unavailable_refuses.py",
+                               "tests/test_offset_table_frame_count.py",
+                               "tests/test_optimization.py",
+                               "tests/test_parallel_export.py",
+                               "tests/test_persistence.py",
+                               "tests/test_persistence_concurrency.py",
+                               "tests/test_persistence_incremental.py",
+                               "tests/test_persistence_manager.py",
+                               "tests/test_phi_retention.py",
+                               "tests/test_phi_status.py",
+                               "tests/test_pixel_analysis.py",
+                               "tests/test_pixel_divergence.py",
+                               "tests/test_pixel_dtype_roundtrip.py",
+                               "tests/test_pixel_geometry_check.py",
+                               "tests/test_pixel_geometry_pipeline.py",
+                               "tests/test_planar_configuration_roundtrip.py",
+                               "tests/test_privacy.py",
+                               "tests/test_private_binary_ingest.py",
+                               "tests/test_private_tag_reload.py",
+                               "tests/test_pydicom_deprecations.py",
+                               "tests/test_query_export.py",
+                               "tests/test_recursive_import.py",
+                               "tests/test_redact_error.py",
+                               "tests/test_redact_reports_outcome.py",
+                               "tests/test_redaction_consistency.py",
+                               "tests/test_redaction_failure_is_reported.py",
+                               "tests/test_redaction_multizone.py",
+                               "tests/test_redaction_names_its_strategy.py",
+                               "tests/test_redaction_optimization.py",
+                               "tests/test_redaction_parallel.py",
+                               "tests/test_redaction_rgb.py",
+                               "tests/test_redaction_robustness.py",
+                               "tests/test_redaction_roi.py",
+                               "tests/test_reingest_after_redact.py",
+                               "tests/test_release_memory.py",
+                               "tests/test_relock_identity_token.py",
+                               "tests/test_remediation.py",
+                               "tests/test_remediation_accounting.py",
+                               "tests/test_remediation_actions.py",
+                               "tests/test_remediation_invariants.py",
+                               "tests/test_reporting_features.py",
+                               "tests/test_reversibility.py",
+                               "tests/test_reversibility_coverage.py",
+                               "tests/test_safe_export.py",
+                               "tests/test_safe_export_jitter.py",
+                               "tests/test_save_all_contract.py",
+                               "tests/test_save_redact_race.py",
+                               "tests/test_save_reparenting.py",
+                               "tests/test_scaffold_features.py",
+                               "tests/test_scaffolding.py",
+                               "tests/test_scan_pixel_content_dispatches_its_worker.py",
+                               "tests/test_scan_pixel_findings_name_the_live_graph.py",
+                               "tests/test_sidecar.py",
+                               "tests/test_sidecar_gate_crosses_processes.py",
+                               "tests/test_sidecar_gate_order.py",
+                               "tests/test_single_frame_encapsulated_decode.py",
+                               "tests/test_sr_anonymization.py",
+                               "tests/test_structured_export.py",
+                               "tests/test_study_date_roundtrip.py",
+                               "tests/test_sync_save_does_not_overlap_an_async_one.py",
+                               "tests/test_tag_key_normalisation.py",
+                               "tests/test_uid_regeneration.py",
+                               "tests/test_verification_logic.py",
+                               "tests/test_voi_lut_integration.py",
+                               "tests/test_waveform_dicom_roundtrip.py",
+                               "tests/test_waveform_ingest.py",
+                               "tests/test_waveform_model.py",
+                               "tests/test_wfdb_conformance.py",
+                               "tests/test_wfdb_start_date_honesty.py",
+                               "tests/test_wfdb_writer.py",
+                               "tests/test_worker_loss_is_reported.py",
+                               "tests/test_worker_start_is_serialised.py"],
+                              30),
+    # 49 sites; budget 60 is stride 1 with headroom, exhaustive because it
+    # is cheap (one full pass is ~5s), like parallel.py's 80.
+    #
+    # Four files, and it takes the widened `_importers` (#419) to see
+    # them: three reach this module as `from isocenter import
+    # imagecodecs_handler`, which the old stem-only scan could not read,
+    # so it demanded one of the four. Without
+    # test_offset_table_frame_count.py, nine of the #418 frame-count
+    # helpers' mutants survive.
+    #
+    # Measured at stride 1: 43 of 49 killed. The six survivors are all
+    # known: the two stderr prints (the module-import failure notice and
+    # the decode-error notice, neither anyone's contract -- the error is
+    # re-raised), and two mutants each in `needs_to_convert_to_RGB` and
+    # `should_change_PhotometricInterpretation_to_RGB`, which return
+    # False and have no caller. The JPEG and JPEG-LS dispatch arms were
+    # survivors too, and are now pinned by
+    # test_imagecodecs_edge_cases.py.
+    "isocenter/imagecodecs_handler.py": (["tests/test_codecs_strict.py",
+                                          "tests/test_imagecodecs_edge_cases.py",
+                                          "tests/test_offset_table_frame_count.py",
+                                          "tests/test_single_frame_encapsulated_decode.py"],
+                                         60),
+}
+
+# Every module under `isocenter/` that has no TARGETS row, and why. Rowed
+# or listed here, never neither and never both:
+# tests/test_mutation_probe_targets.py fails otherwise, so a module that
+# grows into behaviour cannot go unprobed silently again -- which is how
+# persistence.py (#383), session.py (#414), entities.py and
+# imagecodecs_handler.py (#419) each spent releases without a row, found
+# each time by a person noticing rather than by a check.
+#
+# It lives here rather than in the test so the person running the probe
+# sees what it does not measure: a default run prints it last, because the
+# tail of a multi-hour run is what gets read.
+#
+# A reason that starts "0 sites" is recomputed by that test and must stay
+# true. The other numbers are dated notes (measured at 4d34c64 on 3.12.14:
+# sites by `count_ops`, importers by the test's `_importers`, seconds for
+# one pass of those importers), not checked -- an edit that moves them
+# does not make the reason wrong.
+NOT_PROBED = {
+    # Permanently excluded.
+    "isocenter/__init__.py":
+        "1 site, but 217 of 221 test files import the package, so its row "
+        "would run the whole suite for each mutant: a full-suite probe of "
+        "one re-export, not a measurement",
+    "isocenter/_version.py": "0 sites: a version string",
+    "isocenter/utils/__init__.py": "0 sites: an empty package marker",
+    "isocenter/profiles.py":
+        "0 sites: data only, the shipped profile tables; what reads them "
+        "is probed where it lives",
+
+    # Deferred: no test names the module, so the scan demands no list and
+    # a row needs one written by hand (follow-up to #419).
+    "isocenter/store.py":
+        "deferred: 16 sites, 0 importers -- 12 test files reach DicomStore "
+        "by class name, which the import scan cannot see",
+    "isocenter/logger.py":
+        "deferred: 10 sites, 0 importers -- reached only through "
+        "get_logger()",
+    "isocenter/exporters/dicom.py":
+        "deferred: 2 sites, 0 importers -- reached through "
+        "export(format=\"dicom\"), which the import scan cannot see",
+
+    # Deferred: at least 5s per pass of the demanded list (follow-up to #419).
+    "isocenter/services.py": "deferred: 151 sites, 21 importers, 36.9s per pass",
+    "isocenter/pixel_geometry.py": "deferred: 99 sites, 7 importers, 22.8s per pass",
+    "isocenter/persistence_manager.py":
+        "deferred: 99 sites, 7 importers, 18.8s per pass",
+    "isocenter/exporters/wfdb.py": "deferred: 97 sites, 6 importers, 17.6s per pass",
+    "isocenter/waveform.py": "deferred: 69 sites, 5 importers, 15.2s per pass",
+    "isocenter/pixel_analysis.py": "deferred: 34 sites, 10 importers, 13.6s per pass",
+    "isocenter/sidecar.py": "deferred: 19 sites, 5 importers, 17.9s per pass",
+    "isocenter/builders.py": "deferred: 16 sites, 12 importers, 11.2s per pass",
+    "isocenter/blob_kind.py": "deferred: 11 sites, 2 importers, 17.6s per pass",
+    "isocenter/reporting.py": "deferred: 7 sites, 3 importers, 23.5s per pass",
+    "isocenter/exporters/__init__.py":
+        "deferred: 5 sites, 7 importers, 17.6s per pass",
+
+    # Deferred: cheap (seconds per pass), but a row would put unclassified
+    # survivors in every default run's output; classifying them is its own
+    # piece of work (follow-up to #419).
+    "isocenter/automation.py":
+        "deferred: 17 sites, 1 importer, ~0s per pass; killed 17/17 at "
+        "stride 1, rowable as it stands",
+    "isocenter/manifest.py":
+        "deferred: 7 sites, 1 importer, ~0s per pass; killed 6/7, one "
+        "survivor unclassified",
+    "isocenter/configuration.py":
+        "deferred: 31 sites, 4 importers, 0.6s per pass; killed 21/31, ten "
+        "survivors unclassified",
+    "isocenter/discovery.py":
+        "deferred: 77 sites, 4 importers, 0.3s per pass; over 20 survivors "
+        "unclassified, and flipping `visited = [False] * n` to True does "
+        "not terminate, which costs run()'s full 900s timeout",
+    "isocenter/reversibility.py": "deferred: 18 sites, 2 importers, 0.8s per pass; not run",
+    "isocenter/verification.py": "deferred: 23 sites, 4 importers, 0.5s per pass; not run",
+    "isocenter/utils/ctp_parser.py":
+        "deferred: 22 sites, 2 importers, 0.3s per pass; not run",
+    "isocenter/config_manager.py":
+        "deferred: 40 sites, 9 importers, 2.6s per pass; not run",
+    "isocenter/murmur.py": "deferred: 52 sites, 1 importer, 3.0s per pass; not run",
+    "isocenter/validation.py": "deferred: 13 sites, 5 importers, 3.6s per pass; not run",
 }
 
 class Mut(ast.NodeTransformer):
@@ -562,6 +983,17 @@ def main():
                 path.write_text(original)
         n = killed + len(survived)
         print(f"    => killed {killed}/{n}, SURVIVED {len(survived)}/{n}")
+
+    # What the run did not measure, last, where the tail of a long run is
+    # read. Not on a single-module CLI run, which says what it measured.
+    # Deliberately unchecked here against TARGETS or the filesystem:
+    # tests/test_mutation_probe_targets.py does that, and tests patch
+    # TARGETS and REPO under main() with a ledger that matches neither.
+    if len(rest) < 2:
+        print(f"\n### NOT PROBED ({len(NOT_PROBED)} modules -- see NOT_PROBED "
+              f"in scripts/mutation_probe.py)")
+        for mod, why in NOT_PROBED.items():
+            print(f"    {mod} -- {why}")
 
 if __name__ == "__main__":
     main()
