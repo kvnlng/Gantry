@@ -1,7 +1,26 @@
+"""A pixel decoder built on `imagecodecs`, and the frame-count check (#418).
+
+`offset_table_frame_count` compares the frame count an encapsulated
+`PixelData`'s offset table names with the one `NumberOfFrames` declares.
+It is shared by this module's `get_pixel_data`, by
+`Instance.get_pixel_data`'s file arm and by `ingest_worker`, so the three
+cannot disagree about what a mismatch is.
+
+**Its limit, stated.** An *empty* Basic Offset Table with no Extended
+Offset Table is legal (PS3.5 A.4) and names no frames, and the fragments
+alone do not say where one frame ends and the next begins -- one frame
+may legally span several fragments. So a multi-fragment file with an
+empty table cannot be checked, and it is decoded as it always was: the
+single-frame arm yields frame 0. That is a known silence, not a closed
+one.
+"""
+import struct
 import sys
+from typing import Optional, Tuple
+
 import numpy as np
 from pydicom.uid import UID
-from pydicom.encaps import generate_frames
+from pydicom.encaps import generate_frames, parse_basic_offsets
 IMPORT_ERROR = None
 try:
     import imagecodecs
@@ -69,6 +88,97 @@ def supports_transfer_syntax(transfer_syntax):
     return transfer_syntax in SUPPORTED_TRANSFER_SYNTAXES
 
 
+def offset_table_frame_count(ds) -> Optional[Tuple[int, int, bool, str]]:
+    """The frames the offset table names, beside the frames declared (#418).
+
+    Args:
+        ds (pydicom.Dataset): A dataset carrying `PixelData`.
+
+    Returns:
+        ``(table_frames, declared_frames, declared_present, table_name)``,
+        or None when there is nothing to compare: the transfer syntax is
+        not encapsulated (or cannot be read at all -- a `force=True` read
+        of a header-less file has an empty `file_meta`, #281), there is no
+        `PixelData`, the offset table is empty with no Extended Offset
+        Table beside it (the documented limit in the module docstring), or
+        the table does not parse. In every None case the caller decodes as
+        it did before this check existed; None never means "consistent".
+
+        ``declared_frames`` is ``NumberOfFrames``, read as 1 when absent or
+        zero, and ``declared_present`` says whether it was there, so a
+        message can say "absent, read as 1" rather than put a number in
+        the dataset's mouth. Measured on pydicom 3.0.2: its decoder reads
+        an absent value as 1 too -- `as_array(ds,
+        allow_excess_frames=False)` on a two-offset table with no
+        NumberOfFrames returns frame 0 alone.
+    """
+    try:
+        if not ds.file_meta.TransferSyntaxUID.is_encapsulated:
+            return None
+    except AttributeError:
+        return None
+    if "PixelData" not in ds:
+        return None
+
+    declared_present = "NumberOfFrames" in ds
+    try:
+        declared = int(getattr(ds, "NumberOfFrames", 1) or 1)
+    except (TypeError, ValueError):
+        return None
+
+    # The EOT first: when it is present the BOT is required to be empty
+    # (PS3.5 A.4), so a BOT-only count would see nothing. Eight bytes per
+    # frame, one 64-bit offset each. `ds.get` hands back the raw bytes
+    # here rather than a DataElement (measured, pydicom 3.0.2); the
+    # `getattr` takes either, so neither shape reads as "no table".
+    eot = ds.get("ExtendedOffsetTable")
+    if eot:
+        eot_bytes = getattr(eot, "value", eot)
+        return (len(eot_bytes) // 8, declared, declared_present,
+                "Extended Offset Table")
+
+    try:
+        offsets = parse_basic_offsets(ds.PixelData)
+    except (ValueError, struct.error):
+        # Unparsable: not this check's question. The decoder that runs
+        # next refuses a buffer it cannot parse on its own terms.
+        return None
+    if not offsets:
+        return None
+    return (len(offsets), declared, declared_present, "Basic Offset Table")
+
+
+def frame_count_mismatch(ds) -> Optional[str]:
+    """The refusal message when the offset table and NumberOfFrames disagree.
+
+    None when they agree or cannot be compared (see
+    `offset_table_frame_count`). The wording is load-bearing for
+    `Instance.get_pixel_data`: its file arm turns a message containing
+    "no pixel data" into ``return None`` and one containing "decompress"
+    or "missing dependencies" into the codecs-missing message. "names N
+    frames; NumberOfFrames declares M" contains none of the three; keep it
+    that way.
+    """
+    counted = offset_table_frame_count(ds)
+    if counted is None or counted[0] == counted[1]:
+        return None
+    return frame_count_mismatch_words(counted)
+
+
+def frame_count_mismatch_words(counted: Tuple[int, int, bool, str]) -> str:
+    """One spelling of the mismatch, for every refusal and loss row (#418).
+
+    Args:
+        counted: What `offset_table_frame_count` returned.
+    """
+    table_frames, declared, declared_present, table_name = counted
+    if declared_present:
+        declared_words = f"NumberOfFrames declares {declared}"
+    else:
+        declared_words = "NumberOfFrames is absent (read as 1)"
+    return f"{table_name} names {table_frames} frames; {declared_words}"
+
+
 def needs_to_convert_to_RGB(ds):
     """
     Determines if the dataset needs RGB conversion.
@@ -99,13 +209,26 @@ def get_pixel_data(ds):
         np.ndarray: The decoded pixel array.
 
     Raises:
-        RuntimeError: If imagecodecs is missing or decoding fails.
+        RuntimeError: If imagecodecs is missing or decoding fails, or if
+            the offset table names a different number of frames from
+            NumberOfFrames (#418) -- "<table> names N frames;
+            NumberOfFrames declares M".
     """
     if not is_available():
         raise RuntimeError("imagecodecs is not available")
 
     transfer_syntax = ds.file_meta.TransferSyntaxUID
     pixel_bytes = ds.PixelData
+
+    # Before either arm, and outside the `try` below, so the refusal
+    # reaches the caller in its own words rather than prefixed with
+    # "imagecodecs failed to decode". Both arms trust NumberOfFrames:
+    # the single-frame arm asks for one frame and so returned frame 0 of
+    # a two-frame table, and the multi-frame arm returned whatever the
+    # table held -- a silent short read when it named fewer (#418).
+    mismatch = frame_count_mismatch(ds)
+    if mismatch is not None:
+        raise RuntimeError(mismatch)
 
     # Handle encapsulated data (fragments)
 
