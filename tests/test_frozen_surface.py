@@ -229,6 +229,23 @@ def _action_type_words(node, module_constants, parents, where):
         if node.id in module_constants:
             return {module_constants[node.id]}
         function = _enclosing_function(node, parents)
+        # A parameter is a binding the walk below cannot see: its value
+        # is whatever the caller passes, or a default that lives on an
+        # `ast.arg`, not a `Name`. Reading only the body's assignments
+        # would report `{"REMEDIATION_REMOVE"}` for
+        # `def helper(finding, action_type="REMEDIATION_RMV")` and call
+        # the pin complete (measured synthetically on PR #430; no site in
+        # the package has this shape).
+        if function is not None:
+            params = function.args
+            names = [a.arg for a in params.posonlyargs + params.args + params.kwonlyargs]
+            names += [a.arg for a in (params.vararg, params.kwarg) if a is not None]
+            if node.id in names:
+                raise AssertionError(
+                    f"Pin A cannot read the action_type passed at {where}: "
+                    f"{node.id} is a parameter of {function.name}(), so its "
+                    f"word comes from the caller. Teach _action_type_words "
+                    f"the new shape; do not skip it")
         assigned = set()
         for sub in ast.walk(function) if function is not None else ():
             if not (isinstance(sub, ast.Name) and sub.id == node.id
@@ -338,8 +355,26 @@ def _audit_action_types():
 def _audit_buffer_words(tree, constants, parents, rel):
     """Words appended to `audit_buffer`, and how many append sites there were.
 
-    Every `audit_buffer` in the module is classified, not only the ones
-    under an `.append`: a use this cannot read raises (see Pin A).
+    Every `audit_buffer` in the module is classified against an
+    **allow-list**, and anything not on it raises (see Pin A). The list
+    is what the package does with the buffer today:
+
+    - `audit_buffer.append((WORD, ...))`, which is read;
+    - `audit_buffer = []`, the initialiser;
+    - a plain argument to a call, `len(audit_buffer)` included: handed
+      to a callee, which is the accepted residual Pin A names;
+    - `audit_buffer is None` / `is not None`;
+    - a truth test that is the `test` of an `if`/`while`, directly or
+      through `and`/`or`/`not` -- `if self.store_backend and
+      audit_buffer:`.
+
+    A block-list was the first version, and it saw an alias only when
+    `audit_buffer` was the whole right-hand side:
+    `rows = audit_buffer if audit_buffer is not None else []` and
+    `rows, _unused = audit_buffer, None` both survived on both
+    interpreters (PR #430). The truth-test entry is bounded at the
+    statement's test for the same reason -- `rows = audit_buffer or []`
+    is a `BoolOp` too, and must raise.
     """
     found, sites = set(), 0
     for node in ast.walk(tree):
@@ -358,16 +393,34 @@ def _audit_buffer_words(tree, constants, parents, rel):
                 f"Pin A cannot read its action_type")
             found |= _action_type_words(call.args[0].elts[0], constants, parents, where)
             sites += 1
-        elif isinstance(parent, (ast.AugAssign, ast.NamedExpr)) or (
-                isinstance(parent, (ast.Assign, ast.AnnAssign))
-                and parent.value is node) or (
-                isinstance(parent, ast.Subscript)
-                and isinstance(parent.ctx, ast.Store)):
+        elif not _an_allowed_audit_buffer_use(node, parent, parents):
             raise AssertionError(
-                f"audit_buffer at {where} is aliased or written by "
-                f"{ast.unparse(parent)!r}; Pin A reads only "
-                f"`audit_buffer.append((WORD, ...))`")
+                f"audit_buffer at {where} is used as "
+                f"{ast.unparse(parent)!r}, which is not on Pin A's "
+                f"allow-list (append a tuple, `= []`, a call argument, "
+                f"`is (not) None`, an if/while truth test)")
     return found, sites
+
+
+def _an_allowed_audit_buffer_use(node, parent, parents):
+    """The non-append entries of `_audit_buffer_words`' allow-list."""
+    if isinstance(node.ctx, ast.Store):
+        return (isinstance(parent, ast.Assign) and parent.targets == [node]
+                and isinstance(parent.value, ast.List) and not parent.value.elts)
+    if isinstance(parent, ast.Call) and node in parent.args:
+        return True
+    if isinstance(parent, ast.keyword) and isinstance(parents.get(parent), ast.Call):
+        return True
+    if isinstance(parent, ast.Compare):
+        return (all(isinstance(op, (ast.Is, ast.IsNot)) for op in parent.ops)
+                and all(n is node or (isinstance(n, ast.Constant) and n.value is None)
+                        for n in [parent.left, *parent.comparators]))
+    # A truth test: climb through `and`/`or`/`not` to the statement.
+    child, up = node, parent
+    while isinstance(up, ast.BoolOp) or (
+            isinstance(up, ast.UnaryOp) and isinstance(up.op, ast.Not)):
+        child, up = up, parents.get(up)
+    return isinstance(up, (ast.If, ast.While)) and up.test is child
 
 
 def _proposal_action_types():
@@ -488,9 +541,9 @@ def _unrecognised_table_lines(page: str) -> list:
     the parser reads. Looking for lines that *start* with `|` was not
     enough: `` `save` | sync=True ``, with no leading pipe, renders as a
     real row and survived on both interpreters (PR #430). Outside the
-    run, a line starting with `|` (after stripping whitespace) is still
-    reported, so a second table or a stray row cannot sit elsewhere in
-    the section unread.
+    run, any line containing `|` is reported, so a second table -- a
+    pipe-less one included -- or a stray row cannot sit elsewhere in the
+    section unread.
 
     The header is looked up literally and its absence fails, rather than
     returning `[]`: a changed header is a changed table.
@@ -512,7 +565,13 @@ def _unrecognised_table_lines(page: str) -> list:
                 continue
             if not _SIGNATURE_ROW.fullmatch(line):
                 flagged.append(line)
-        elif line.lstrip().startswith("|"):
+        elif "|" in line:
+            # Any pipe outside the recognised table, not only a leading
+            # one: python-markdown renders a pipe-less table
+            # (`Method | Parameters` / `--- | ---` / `` `save` | sync=True ``)
+            # placed after a blank line below the real one, and that
+            # survived a leading-pipe rule on both interpreters (PR #430).
+            # Every `|` in this section today is on a table line.
             flagged.append(line)
     return flagged
 
@@ -819,6 +878,14 @@ def test_an_unrecognised_row_is_reported_not_skipped():
     stray = clean.replace("\n\n## Next", "\n\nProse.\n  | stray |\n\n## Next", 1)
     assert _unrecognised_table_lines(stray) == ["  | stray |"]
 
+    # A second table after a blank line, written without pipes at either
+    # end: python-markdown renders it, so every line of it is reported.
+    second = clean.replace(
+        "| `close` | — |\n",
+        "| `close` | — |\n\nMethod | Parameters\n--- | ---\n`save` | sync=True\n", 1)
+    assert _unrecognised_table_lines(second) == [
+        "Method | Parameters", "--- | ---", "`save` | sync=True"]
+
     # Outside the frozen section is outside the promise.
     assert _unrecognised_table_lines(clean + f"{bad_row}\n") == []
 
@@ -857,6 +924,84 @@ def test_the_audit_action_types_written_are_exactly_the_frozen_thirteen():
     the word is spelled.
     """
     assert _audit_action_types() == FROZEN_AUDIT_ACTION_TYPES
+
+
+def _synthetic(src):
+    tree = ast.parse(src)
+    return tree, {child: node for node in ast.walk(tree)
+                  for child in ast.iter_child_nodes(node)}
+
+
+@pytest.mark.parametrize("signature", [
+    'finding, action_type="REMEDIATION_RMV"',
+    'finding, *, action_type="REMEDIATION_RMV"',
+])
+def test_pin_a_refuses_an_action_type_that_is_a_parameter(signature):
+    """Pin A raises when the resolved name is a parameter of its function.
+
+    Synthetic, because no site in the package has this shape, so there
+    is no production line to mutate. Reading only the body's
+    assignments, the resolver reported `{"REMEDIATION_REMOVE"}` here and
+    never saw the default `REMEDIATION_RMV` a caller would get (PR #430).
+    The keyword-only case keeps the check from reading `args` alone. The
+    control: without the parameter, the same body resolves to its word.
+    """
+    src = (f"def helper({signature}):\n"
+           f"    if finding:\n"
+           f"        action_type = \"REMEDIATION_REMOVE\"\n"
+           f"    log_audit(action_type, 1, 2)\n")
+    tree, parents = _synthetic(src)
+    arg = next(_calls_named(tree, "log_audit")).args[0]
+    with pytest.raises(AssertionError, match="parameter of helper"):
+        _action_type_words(arg, {}, parents, "synthetic")
+
+    tree, parents = _synthetic(src.replace(signature, "finding"))
+    arg = next(_calls_named(tree, "log_audit")).args[0]
+    assert _action_type_words(arg, {}, parents, "synthetic") == {"REMEDIATION_REMOVE"}
+
+
+_ALLOWED_BUFFER_USES = '''
+def apply(self, finding, audit_buffer=None):
+    audit_buffer = []
+    if self.store and audit_buffer:
+        count = len(audit_buffer)
+    if not audit_buffer:
+        pass
+    if audit_buffer is not None:
+        audit_buffer.append(("REMEDIATION_REMOVE", 1, 2, None, None))
+    self.record(finding, audit_buffer)
+    self.record(finding, buffer=audit_buffer)
+    # INSERT
+'''
+
+
+@pytest.mark.parametrize("use", [
+    "rows = audit_buffer if audit_buffer is not None else []",
+    "rows, unused = audit_buffer, None",
+    "rows = audit_buffer or []",
+    "rows = [audit_buffer]",
+    "audit_buffer.extend([])",
+    "audit_buffer += []",
+    "audit_buffer[:] = []",
+    "same = audit_buffer == []",
+    "audit_buffer = list()",
+])
+def test_the_batch_buffer_is_read_through_an_allow_list(use):
+    """`_audit_buffer_words` accepts the package's uses and raises on the rest.
+
+    The allowed shapes are the ones remediation uses today; the refused
+    ones are aliases and writes the first, block-list version of this
+    check read past (the first two survived on both interpreters, PR
+    #430). `rows = audit_buffer or []` is the case that bounds the truth
+    test at an `if`/`while`: it is a `BoolOp` like the allowed
+    `self.store and audit_buffer`, one level up from a binding.
+    """
+    tree, parents = _synthetic(_ALLOWED_BUFFER_USES)
+    assert _audit_buffer_words(tree, {}, parents, "synthetic") == ({"REMEDIATION_REMOVE"}, 1)
+
+    tree, parents = _synthetic(_ALLOWED_BUFFER_USES.replace("# INSERT", use))
+    with pytest.raises(AssertionError, match="audit_buffer"):
+        _audit_buffer_words(tree, {}, parents, "synthetic")
 
 
 def test_the_remediation_proposal_action_types_are_exactly_these_three():
