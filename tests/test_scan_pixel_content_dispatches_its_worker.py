@@ -51,12 +51,28 @@ def _threads_not_processes(monkeypatch):
     """Force the thread arm, and say why it is not decoration.
 
     3.12's default is **processes**, and `unittest.mock.patch` does not
-    cross a process boundary: the child would import the real
-    `analyze_pixels`, which returns `[]` before touching pixels when no
-    `pytesseract` is installed. Every finding assertion in this file
-    would then silently become `0 == 0` -- green, and measuring nothing.
-    Measured on 3.12.14: one finding in threads, zero in processes, for
-    exactly that reason.
+    cross a process boundary: the child imports the real `analyze_pixels`,
+    which returns `[]` before touching pixels when no `pytesseract` is
+    installed. Measured on 3.12.14: one finding in threads, zero in
+    processes, for exactly that reason.
+
+    What that costs without this line is an **interpreter divergence**,
+    not a silent pass. Measured, deleting the `setenv` below: 3.12.14
+    goes `2 failed, 2 passed` (processes, no findings) while 3.14.7t
+    stays `4 passed`, because the free-threaded build already picks
+    threads. The assertions here compare against non-empty expected
+    values, so an empty report reddens them rather than degrading to
+    `0 == 0` -- the failure mode is a file that passes on one gate and
+    fails on the other, which is worse than either, and reads as a flake
+    to whoever meets it first.
+
+    So do not "simplify" this to a `3.14t`-only assumption, and do not
+    reach for `ISOCENTER_FORCE_PROCESSES` here: process mode cannot carry
+    these assertions at all while `patch` stops at the boundary. The
+    pickle round-trip in `test_the_worker_scans_an_instance_that_crossed_a_pickle`
+    is what covers that boundary instead. (`PhiFinding.entity` meaning a
+    live object in threads and a dead copy in processes is #412, and is
+    deliberately untouched here.)
     """
     monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "3")
     monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")

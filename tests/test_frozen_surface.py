@@ -198,11 +198,23 @@ def _calls_named(tree, name):
 def _audit_action_types():
     """Pin A: every `action_type` string constant reaching `log_audit`.
 
-    **Both** ways it is called. Nineteen sites pass it as the keyword;
+    **Both** ways it is called. Twenty sites pass it as the keyword;
     one passes it positionally, and `log_audit(self, action_type, ...)`
     makes argument 0 the same parameter. Collecting only the keyword form
     would leave that one site respellable with this pin green -- the M2
     shape, at the one place a keyword-only collector is not looking.
+
+    Twenty plus one does not account for every `log_audit(` in the
+    package: there are twenty-three call sites, and the remaining two
+    (`remediation.py:345`, `remediation.py:408`) pass a *name* rather
+    than a literal, so no AST collector can read a word out of them.
+    Both carry `REMEDIATION_*` words -- `REMEDIATION_REPLACE`,
+    `REMEDIATION_SHIFT_DATE`, `REMEDIATION_REMOVE`, `REMEDIATION_DECLINED`
+    -- which `docs/api/stability.md` does not freeze, so they are outside
+    what this pin is for. `isocenter/remediation.py` holds their own
+    constants and `tests/test_declined_remediation_is_recorded.py` pins
+    the one that matters; do not add them here to make the arithmetic
+    tidy.
     """
     found = set()
     for tree in _package_trees():
@@ -470,6 +482,17 @@ def test_the_stability_page_names_every_tier_one_session_method():
     for group in (ordered[:3], ordered[3:8], ordered[8:]):
         assert f"`{', '.join(group)}`" in flat, f"stability.md does not list {group} together"
 
+    # The *union* is what is frozen, so the union is what this checks: a
+    # word must appear somewhere on the page, in any of its five bullets.
+    #
+    # Which bullet a word sits under is prose, and deliberately unpinned.
+    # Moving `REMOVE_TAG`/`REPLACE_TAG`/`SHIFT_DATE` back into the audit
+    # bullet -- reinstating the exact miscategorisation #396 corrected --
+    # leaves this file green, measured. That is the correct scope (the
+    # tag promises the words, not the paragraph they are filed under),
+    # but do not read the five bullets as machine-checked: only
+    # `_audit_action_types` and `_proposal_action_types` know the
+    # difference, and they read the package, not the page.
     for word in sorted(FROZEN_VOCABULARY):
         assert f"`{word}`" in page, f"stability.md does not list the vocabulary word {word}"
 
@@ -541,8 +564,25 @@ def test_the_loss_scope_values_are_exactly_the_frozen_three():
     assert _loss_scope_values() == set(FROZEN_LOSS_SCOPES)
 
 
-def test_the_grades_the_report_can_carry_are_exactly_these_two():
-    """Pin D (#396): `validation_status=`'s strings. There is no `FAIL`."""
+def test_the_grades_session_assigns_when_it_grades_are_exactly_these_two():
+    """Pin D (#396): `validation_status=`'s strings. There is no `FAIL`.
+
+    Named for what it collects. The report can also *carry*
+    `"PENDING"` -- `reporting.py`'s field default, which renders into
+    section 1 of the report whenever nothing has graded yet -- and this
+    pin does not see it, because the collector reads `validation_status=`
+    keyword arguments in `isocenter/session.py` and `PENDING` is a
+    dataclass field default in another module. Respelling it is green
+    here, measured.
+
+    That is the right scope, not a gap to close: `PENDING` is the absence
+    of a grade, `docs/api/stability.md` freezes the two grades, and
+    `reporting.py` is careful to say so where the default is written.
+    Unlike `AUDIT_DROP` in Pin E, it is not a candidate for the freeze,
+    so it is not a #411 item. If you widen this collector to other
+    modules, widen `FROZEN_GRADES` with it or this goes red for the wrong
+    reason.
+    """
     assert _grade_values() == set(FROZEN_GRADES)
 
 

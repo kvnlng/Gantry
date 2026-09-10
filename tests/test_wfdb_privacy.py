@@ -804,6 +804,16 @@ def test_the_wfdb_export_options_are_the_two_the_page_freezes():
     documentation of an option the code had stopped reading, which is
     exactly the accident #396 is about.
 
+    **What this pins, exactly:** the literal keys read out of `options`
+    by the four forms collected below -- `.get`, `.pop`, subscript, and
+    `in`. It is not "every option the method reads", and cannot be: a key
+    built at runtime, or reached through a helper the walk does not
+    follow, is invisible to any AST collector. That residual is the price
+    of `**options`, and it is why #410 -- that the wfdb path shrugs at an
+    unknown option where the `dicom` path raises -- is the real fix and is
+    filed rather than done here. Do not narrow this back to `.get` alone:
+    that spelling passed while `options["third"]` reached a third option.
+
     This is the cheap half. The behavioural test above is the one with
     teeth: an option name can be right while the filter behind it is
     inverted.
@@ -819,16 +829,40 @@ def test_the_wfdb_export_options_are_the_two_the_page_freezes():
                     export_fn = member
     assert export_fn is not None, "WfdbExporter.export not found"
 
+    def _is_options(node):
+        return isinstance(node, ast.Name) and node.id == "options"
+
+    def _literal(node):
+        return (node.value if isinstance(node, ast.Constant)
+                and isinstance(node.value, str) else None)
+
+    # Four ways a `**options` dict is read with a literal key. `.get` was
+    # the only one collected until a reviewer showed that
+    # `options["third"]` and `options.pop("third", None)` both reached a
+    # third option with this test green -- the pin claimed "the options
+    # the method reads" while collecting one spelling of reading.
     read = set()
     for node in ast.walk(export_fn):
-        if not (isinstance(node, ast.Call)
+        # options.get("k") / options.pop("k")
+        if (isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "get"
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "options"):
-            continue
-        if node.args and isinstance(node.args[0], ast.Constant):
-            read.add(node.args[0].value)
+                and node.func.attr in ("get", "pop")
+                and _is_options(node.func.value)
+                and node.args):
+            key = _literal(node.args[0])
+            if key is not None:
+                read.add(key)
+        # options["k"]
+        elif isinstance(node, ast.Subscript) and _is_options(node.value):
+            key = _literal(node.slice)
+            if key is not None:
+                read.add(key)
+        # "k" in options / "k" not in options
+        elif isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(
+                node.ops[0], (ast.In, ast.NotIn)) and _is_options(node.comparators[0]):
+            key = _literal(node.left)
+            if key is not None:
+                read.add(key)
 
     assert read == {"patient_ids", "include_annotation_text"}, (
         f"WfdbExporter.export reads {sorted(read)}; the page freezes "
