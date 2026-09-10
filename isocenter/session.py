@@ -94,6 +94,8 @@ def _verify_worker(args):
     Worker for pixel verification.
     Args:
         args: Tuple(Instance, Equipment, List[Rules])
+
+    Returns: List[PhiFinding] (WITHOUT entities)
     """
     from .verification import RedactionVerifier
     instance, equipment, rules = args
@@ -101,7 +103,25 @@ def _verify_worker(args):
         return []
 
     verifier = RedactionVerifier(rules)
-    return verifier.verify_instance(instance, equipment)
+    findings = verifier.verify_instance(instance, equipment)
+
+    # Strip the instance before the findings cross back, as `scan_worker`
+    # does; `scan_pixel_content` puts the live one back (#412). The strip
+    # is not tidiness. OCR decodes the frame first, `get_pixel_data()`
+    # caches it on the instance, and `verify_instance` attaches that
+    # instance to every finding -- so the result carried the decoded
+    # frame back to the parent, once per scanned instance with a finding
+    # (pickle memoises the shared instance, so a second finding on the
+    # same frame adds ~150 bytes, not a frame). Real tesseract, one
+    # 256x256 16-bit frame, two findings, locally: 132519 bytes against
+    # 542 (3.12.14). Rehydration alone would
+    # hide this: it overwrites the copy, so the entity the caller sees is
+    # right while the frame still crosses the pipe. Only
+    # `tests/test_scan_pixel_content_dispatches_its_worker.py`'s T-394a
+    # is red without this loop.
+    for f in findings:
+        f.entity = None
+    return findings
 
 
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -1964,6 +1984,10 @@ class DicomSession:
 
         Returns:
             PhiReport: A report containing findings of filtered (uncovered) burned-in text.
+                Each finding's `entity` is the live `Instance` in
+                `session.store`, whether the scan ran in threads or in
+                processes, or `None` when that instance cannot be found in
+                the graph; never a worker's copy (#412).
 
         Raises:
             RuntimeError: `pixel_analysis.OcrUnavailableError` when the `ocr`
@@ -2036,6 +2060,13 @@ class DicomSession:
         all_findings = []
         for r in results:
             all_findings.extend(r)
+
+        # Unconditionally, in both strategies: the worker strips the
+        # entity, and this is the one path that puts it back, so
+        # `PhiFinding.entity` has one meaning however `run_parallel()`
+        # resolved (#412). Deliberately not `_record_scan_results`: OCR
+        # findings say nothing about an entity's metadata PHI status.
+        self._rehydrate_findings(all_findings)
 
         print(f"OCR Scan Complete. Found {len(all_findings)} suspicious regions (Uncovered).")
         return PhiReport(all_findings)
@@ -4229,11 +4260,17 @@ class DicomSession:
         nested tag onto the instance fabricates a top-level element that
         was never in the file and leaves the real value untouched inside
         the sequence -- an export carrying the PHI plus a decoy.
+
+        Two callers since #412: `audit()` and `scan_pixel_content()`. The
+        warnings say what happens to the *finding* -- its entity is None --
+        and not what remediation will do, because an OCR finding carries
+        no proposal and `auto_remediate_config()` still acts on it through
+        its metadata.
         """
         if instance is None:
             get_logger().warning(
                 f"Finding for {finding.entity_uid} has no matching instance "
-                "in the session; it will not be remediated.")
+                "in the session; its entity will be None.")
             return None
 
         target = resolve_item_path(instance, finding.entity_path)
@@ -4241,7 +4278,7 @@ class DicomSession:
             get_logger().warning(
                 f"The sequence item behind {finding.field_name} on "
                 f"{finding.entity_uid} is gone (path {finding.entity_path}); "
-                "it will not be remediated.")
+                "its entity will be None.")
         return target
 
     def _make_lightweight_copy(self, patient: "Patient") -> "Patient":
