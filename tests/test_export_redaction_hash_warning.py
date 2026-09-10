@@ -25,7 +25,8 @@ Two traps this file has to dodge, stated so nobody "simplifies" them away:
   lose that and the regression test goes green against the bug.
 - **`session.export()` always runs the worker in spawned subprocesses**
   (`export_batch` passes `maxtasksperchild=25`, and worker recycling rules
-  threads out in `_use_threads` however the env is set), so a warning
+  threads out in `_resolve_execution_choice` however the env is set),
+  so a warning
   raised in the worker is invisible to this process's `warnings` machinery.
   The tests therefore call `_export_instance_worker` in-process, on
   contexts built by `_generate_export_contexts` -- the same planner both

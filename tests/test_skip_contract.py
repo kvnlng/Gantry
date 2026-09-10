@@ -121,8 +121,14 @@ class _SkipVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node):
         name = _called_name(node.func)
+        # `skipif` is pytest's decorator spelling and reads as an
+        # `ast.Call` with `attr == "skipif"`, which the four names either
+        # side of it do not cover. Added when the first one appeared
+        # (#384's free-threaded banner test), on this file's own
+        # instruction: the text scan below found it, and the answer to a
+        # form the walk cannot see is to teach the walk.
         if name in {"importorskip", "skip", "skipTest", "skipIf",
-                    "skipUnless"}:
+                    "skipif", "skipUnless"}:
             module = None
             if name == "importorskip" and node.args:
                 first = node.args[0]
@@ -226,7 +232,18 @@ def _decorator_skips():
                 call = dec if isinstance(dec, ast.Call) else None
                 target = call.func if call else dec
                 name = _called_name(target)
-                if name not in {"skip", "skipIf", "skipUnless"}:
+                # `skipif` is here for the same reason it is in
+                # `_SkipVisitor.visit_Call`, and it has to be taught in
+                # both places or the file gets *quieter* rather than
+                # louder: teaching only the visitor makes the text scan
+                # accept `@pytest.mark.skipif(True, ...)` as a known
+                # form while this walk still cannot see it, so a test
+                # skipped in every environment -- the one shape #107
+                # opens by forbidding -- passes both halves. Measured:
+                # such a probe is red at f544989, where the text scan
+                # above catches the unknown form, and green once only
+                # the visitor has learned it.
+                if name not in {"skip", "skipIf", "skipif", "skipUnless"}:
                     continue
                 found.append((path, dec.lineno, name, call))
     return found
@@ -257,7 +274,11 @@ def test_no_test_is_skipped_in_every_environment():
         condition = call.args[0]
         if not isinstance(condition, ast.Constant):
             continue  # a real runtime condition
-        always = bool(condition.value) if name == "skipIf" \
+        # `skipif` and `skipIf` skip when the condition is true;
+        # `skipUnless` is the inverse. Grouping the two spellings here
+        # rather than adding a second branch keeps one answer to "does
+        # this ever run".
+        always = bool(condition.value) if name in {"skipIf", "skipif"} \
             else not bool(condition.value)
         if always:
             offenders.append(

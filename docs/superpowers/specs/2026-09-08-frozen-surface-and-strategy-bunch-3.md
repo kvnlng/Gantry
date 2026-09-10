@@ -1,6 +1,14 @@
 # The Frozen Surface and the Parallel Strategy, Bunch 3: what 1.0 promises, and which lever reaches which pool
 
 **Date:** 2026-09-08
+**Superseded in part:** #384 (2026-09-09). The clause at §3's "A print
+becomes false" and its restatement in §12's Step 1 item 2 — that the
+redaction banner is reworded to `Executing using {max_workers}
+workers...`, with the parenthetical dropped as "a claim the line could
+not keep" — no longer holds. The parenthetical returns, carrying the
+strategy `_resolve_strategy` actually resolved: `(threads)` or
+`(processes)`, read off the `_Strategy` the pool is built from. Both
+clauses are marked in place.
 **Status:** Determinations MADE, with evidence. §1–§5 are the
 recommendations; §0.2 lists the calls that are the owner's, each as
 options with the recommendation first. No production code was changed
@@ -339,9 +347,17 @@ the mechanism `discover_redaction_zones()` already uses
 **A print becomes false.** `session.py:2833` prints
 `Executing using {max_workers} workers (Process Isolation)...`. It is
 already false on 3.14t (threads by default) and becomes false on every
-interpreter for `:memory:`. Reword to
+interpreter for `:memory:`. ~~Reword to
 `Executing using {max_workers} workers...` — the parenthetical was a
-claim the line could not keep. Developer step; no test pins the string.
+claim the line could not keep.~~ Developer step; no test pins the string.
+
+> **Superseded in part by #384 (2026-09-09).** The struck reword landed
+> in 0.9.4 and converted a lie into a *silence*: measured across seven
+> store-and-lever combinations on two interpreters, three dispatch paths
+> printed that one identical sentence. The line now reads
+> `Executing using {max_workers} workers (threads)...` or
+> `(processes)`, taken from the resolved `_Strategy` rather than derived
+> at the print site. A test pins the string now, whole-line.
 
 **Documentation:** one sentence in the `ISOCENTER_FORCE_PROCESSES` row
 (§2.3) — "`redact()` on a `:memory:` store runs in threads on every
@@ -1367,7 +1383,9 @@ next because its new tests are re-run by the probe whose entry it adds;
 
 1. `session.py:2876`: add `force_threads=self.store_backend.db_path ==
    ":memory:",` to the `run_parallel(` call in `_apply_redaction_rules`.
-2. `session.py:2833`: `print(f"Executing using {max_workers} workers...")`.
+2. `session.py:2833`: ~~`print(f"Executing using {max_workers} workers...")`~~
+   — superseded by #384 (2026-09-09); the parenthetical returns as
+   `(threads)`/`(processes)`, read off the resolved strategy.
    Measured: `grep -rn "Process Isolation" docs/ README.md tests/` hits
    only the 2026-09-08 sidecar spec's prose (a historical record, left
    as is); no guide quotes the line and

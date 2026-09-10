@@ -1,6 +1,12 @@
 # The Sidecar Concurrency Contract: a gate, a pass-lock, and what 1.0 promises
 
 **Date:** 2026-09-08
+**Superseded in part:** #384 (2026-09-09). The observation in §14 item 8
+— that `redact()` prints `Executing using N workers (Process
+Isolation)...` unconditionally — was already stale when this spec was
+written: `f0d3bab` (0.9.4, #381) had removed the parenthetical. #384 is
+the issue that retired it, and the line now names the strategy the pool
+was built from. The clause is marked in place.
 **Status:** Determinations MADE, with evidence. The design in §8 is the
 recommendation; §0.2 lists the calls that are the owner's, each as
 options with the recommendation first. No production code was changed;
@@ -1216,9 +1222,17 @@ owner's decision.
    With the refusal assertions in place the mutant is red on both
    interpreters at the first of them, all three tests. Also observed
    while measuring:
-   `redact()` prints `Executing using N workers (Process Isolation)...`
-   unconditionally, including on the threads path; filed as #384, not
+   ~~`redact()` prints `Executing using N workers (Process Isolation)...`
+   unconditionally, including on the threads path~~; filed as #384, not
    fixed here.
+
+   > **Superseded in part by #384 (2026-09-09).** The quoted line was
+   > already gone when this was written — `f0d3bab` (0.9.4, #381)
+   > removed the parenthetical — so the observation was stale rather
+   > than wrong about the defect: what remained was a single sentence
+   > printed by three dispatch paths. #384 replaced it with
+   > `Executing using N workers (threads)...` or `(processes)`, read
+   > off the resolved `_Strategy`.
 9. **§4.4's placement of the refusal is wrong, and item 8 measured its
    symptom rather than its cause.** The review of PR #385 reproduced,
    on 3.12.13 and 3.14.7t under both executors, a pass that opens and

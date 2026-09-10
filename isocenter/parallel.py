@@ -11,7 +11,8 @@ import os
 import sys
 import multiprocessing
 from dataclasses import dataclass
-from typing import Callable, Iterable, Iterator, Any, Optional, TypeVar
+from typing import (Callable, Iterable, Iterator, Any, NamedTuple,
+                    Optional, TypeVar)
 
 from tqdm import tqdm
 
@@ -125,12 +126,52 @@ def _trailing_exception(iterator):
         yield exc
 
 
+class _Choice(NamedTuple):
+    """What the threads-or-processes ranking decided, and who asked.
+
+    `_resolve_execution_choice` returns three facts where it used to
+    return one bool, because the bool is not enough to report on: a
+    caller that wants to say *why* it is running the way it is would
+    otherwise have to rank the levers a second time, and a second
+    implementation of the order is a second thing that can disagree with
+    it (#384, #400).
+
+    `processes_requested_by` names the lever that **asked** for
+    processes, whether or not it got them, and is `None` when nobody
+    asked. Two different silences share that `None` and both are
+    deliberate: nothing was set at all, and the operator's own
+    `ISOCENTER_FORCE_THREADS` superseded their `ISOCENTER_FORCE_PROCESSES`
+    by the documented order -- in which case their effective request was
+    threads and nothing has been denied. A *default* is likewise not a
+    request: on a GIL build with no lever set the ranking ends in
+    processes and this field is `None`, which is the single line that
+    keeps `Session(":memory:")` working out of the box on the floor
+    interpreter.
+
+    `threads_request_overridden_by` names the threads lever that lost to
+    worker recycling -- `"ISOCENTER_FORCE_THREADS"` or
+    `"force_threads=True"` -- and is `None` otherwise. It carries what
+    #185's warning needs so the warning can be emitted at *dispatch*
+    rather than here; see `_resolve_execution_choice`.
+    """
+    use_threads: bool
+    processes_requested_by: Optional[str]
+    threads_request_overridden_by: Optional[str]
+
+
 @dataclass(frozen=True)
 class _Strategy:
     """How one `run_parallel` call will actually be executed.
 
     Resolved once, before any work starts, so the three execution paths
     below read settings rather than each deriving their own.
+
+    The two attribution fields carry `_Choice`'s answer out to callers
+    that report on the decision. `redact()` is the one that does:
+    it resolves a strategy itself, prints the parenthetical on
+    `Executing using N workers (...)` from `use_threads`, and reads
+    `processes_requested_by` to decide whether an operator's lever was
+    ignored (#384, #400).
     """
     max_workers: int
     chunksize: int
@@ -140,6 +181,8 @@ class _Strategy:
     show_progress: bool
     desc: str
     total: Optional[int]
+    processes_requested_by: Optional[str]
+    threads_request_overridden_by: Optional[str]
 
     @property
     def worker_initializer(self):
@@ -256,6 +299,12 @@ def _resolve_strategy(max_workers, chunksize, maxtasksperchild, disable_gc,
         configured = _env_int("ISOCENTER_CHUNKSIZE", minimum=1)
         chunksize = configured if configured is not None else 1
 
+    # Which spelling of the recycling lever supplied the value, for the
+    # attribution below. This is the only place that knows, because it
+    # is the only place that chooses between them -- the same choice the
+    # #185 warning already makes for the threads side.
+    recycling_lever = ("the maxtasksperchild argument"
+                       if maxtasksperchild is not None else None)
     if maxtasksperchild is None:
         # Deliberately inside `if maxtasksperchild is None`, so an
         # explicit `maxtasksperchild=0` argument still reaches the pool
@@ -265,77 +314,137 @@ def _resolve_strategy(max_workers, chunksize, maxtasksperchild, disable_gc,
         # which is `None` -- the same `None` `_env_int` returns for it.
         maxtasksperchild = _env_int("ISOCENTER_MAX_TASKS_PER_CHILD",
                                     minimum=1)
+        if maxtasksperchild is not None:
+            recycling_lever = "ISOCENTER_MAX_TASKS_PER_CHILD"
 
     disable_gc = disable_gc or _env_is("ISOCENTER_DISABLE_GC", ("1",))
 
     if show_progress and _env_is("ISOCENTER_SHOW_PROGRESS", _FALSEY):
         show_progress = False
 
+    choice = _resolve_execution_choice(force_threads, maxtasksperchild,
+                                       recycling_lever)
     return _Strategy(
         max_workers=max_workers,
         chunksize=chunksize,
         maxtasksperchild=maxtasksperchild,
         disable_gc=disable_gc,
-        use_threads=_use_threads(force_threads, maxtasksperchild),
+        use_threads=choice.use_threads,
         show_progress=show_progress,
         desc=desc,
-        total=total)
+        total=total,
+        processes_requested_by=choice.processes_requested_by,
+        threads_request_overridden_by=choice.threads_request_overridden_by)
 
 
-def _use_threads(force_threads: bool, maxtasksperchild: Optional[int]) -> bool:
-    """Whether to run in threads rather than processes.
+def _resolve_execution_choice(
+        force_threads: bool, maxtasksperchild: Optional[int],
+        recycling_lever: Optional[str]) -> _Choice:
+    """Whether to run in threads rather than processes, and who asked.
 
     Worker recycling has the last word: only `multiprocessing.Pool`
     implements `maxtasksperchild`, so asking for it rules threads out
-    however the rest of the environment is set.
+    however the rest of the environment is set. This is the whole of the
+    precedence, and the whole of it lives here: any second reading of
+    these variables anywhere else would be a second copy of the order,
+    which is the defect class #384 and #400 are both instances of.
 
-    This is also where that override is **announced** (#185). It is the
-    only place that knows both halves -- `_resolve_strategy` calls it
-    once per `run_parallel`, in the parent process, where the caller's
-    logger is reachable -- and it is the whole of the precedence, so a
-    warning anywhere else would be a second copy of this rule.
+    **This function emits nothing.** It used to announce #185's
+    recycling override itself, and could not go on doing so once
+    `redact()` began resolving a strategy *before* deciding whether to
+    run at all: the one configuration it refuses is exactly the one
+    whose resolution warned "so this run uses processes", which would
+    have put that sentence one line above a refusal of a run that never
+    starts. The attribution travels on `_Choice` instead and
+    `run_parallel` speaks at dispatch, where the strategy is used.
+    Frequency is unchanged for every path that exists today: resolution
+    and dispatch are one-to-one inside `run_parallel`.
 
-    The warning fires when, and only when, threads were actually asked
-    for. `session.export()` passes `maxtasksperchild=25` on every
-    export and asks for nothing else, so the ordinary path is silent; a
-    line on every export would be noise that teaches readers to filter
-    this logger.
+    `recycling_lever` is which spelling supplied `maxtasksperchild` --
+    `"ISOCENTER_MAX_TASKS_PER_CHILD"` or `"the maxtasksperchild
+    argument"`. `_resolve_strategy` is the only caller that knows, so it
+    passes it in rather than this function reading the environment a
+    second time to find out.
     """
+    forced_by_env = _env_is("ISOCENTER_FORCE_THREADS", ("1",))
+    processes_by_env = _env_is("ISOCENTER_FORCE_PROCESSES", ("1",))
+
+    # Attribution is settled on the way *through* the ranks and before
+    # any of them short-circuits, which is the whole trick. Computed
+    # after the fact -- from the resolved `use_threads`, say -- it would
+    # be `None` on every `redact()` call against a `:memory:` store,
+    # because that path passes `force_threads=True` and so always ends
+    # in threads however the environment is set. That is precisely the
+    # path whose ignored lever #400 is about.
     if maxtasksperchild is not None:
-        forced_by_env = _env_is("ISOCENTER_FORCE_THREADS", ("1",))
-        if force_threads or forced_by_env:
-            # Name both levers and quote the value, the way `_env_int`'s
-            # and `ISOCENTER_MAX_WORKERS`' warnings do: a message that
-            # says only "these conflict" cannot be matched against what
-            # was typed. It says which lever to unset, because with
-            # `ISOCENTER_MAX_TASKS_PER_CHILD` and
-            # `ISOCENTER_FORCE_THREADS` both set this fires on EVERY
-            # `run_parallel` call -- ingest, the PHI scan, OCR
-            # verification, zone discovery, redaction -- which is
-            # correct and is a lot of output on a long run.
-            get_logger().warning(
-                "%s was set, but worker recycling (maxtasksperchild=%s) "
-                "was also asked for and only multiprocessing.Pool "
-                "implements it, so this run uses processes. "
-                "session.export() always sets maxtasksperchild=25, so it "
-                "runs in processes on every interpreter including "
-                "free-threaded builds; for audit(), scan_pixel_content() "
-                "and redact(), unset ISOCENTER_MAX_TASKS_PER_CHILD to get "
-                "threads; ingest() runs on the session's executor and "
-                "takes no lever.",
-                "ISOCENTER_FORCE_THREADS" if forced_by_env
-                else "force_threads=True", maxtasksperchild)
-        return False
-    if force_threads or _env_is("ISOCENTER_FORCE_THREADS", ("1",)):
-        return True
-    if _env_is("ISOCENTER_FORCE_PROCESSES", ("1",)):
-        return False
+        processes_requested_by = recycling_lever
+    elif forced_by_env:
+        # The operator's own threads lever supersedes their processes
+        # lever by the documented order, so their effective request is
+        # threads and nothing has been denied.
+        processes_requested_by = None
+    elif processes_by_env:
+        processes_requested_by = "ISOCENTER_FORCE_PROCESSES"
+    else:
+        # Rank 4 below is a default, and a default is not a request.
+        processes_requested_by = None
+
+    if maxtasksperchild is not None:
+        overridden_by = None
+        if forced_by_env:
+            overridden_by = "ISOCENTER_FORCE_THREADS"
+        elif force_threads:
+            overridden_by = "force_threads=True"
+        return _Choice(False, processes_requested_by, overridden_by)
+    if force_threads or forced_by_env:
+        return _Choice(True, processes_requested_by, None)
+    if processes_by_env:
+        return _Choice(False, processes_requested_by, None)
     # On a free-threaded build there is no GIL to escape, so threads keep
     # the parallelism without paying to pickle every item across a pipe.
     # `sys._is_gil_enabled` is underscored but is the only way to ask, and
     # is absent on builds that have always had a GIL -- hence the hasattr.
-    return (hasattr(sys, "_is_gil_enabled")
-            and not sys._is_gil_enabled())  # pylint: disable=protected-access
+    return _Choice(
+        hasattr(sys, "_is_gil_enabled")
+        and not sys._is_gil_enabled(),  # pylint: disable=protected-access
+        processes_requested_by, None)
+
+
+def _announce_recycling_override(strategy: _Strategy) -> None:
+    """Says that worker recycling beat a request for threads (#185).
+
+    Emitted at **dispatch**, from `run_parallel`, rather than where the
+    ranking is resolved: a strategy that is resolved and then not run
+    has nothing to report, and `redact()` is the one caller that can
+    resolve without running. See `_resolve_execution_choice`.
+
+    Fires when, and only when, threads were actually asked for.
+    `session.export()` passes `maxtasksperchild=25` on every export and
+    asks for nothing else, so the ordinary path is silent; a line on
+    every export would be noise that teaches readers to filter this
+    logger.
+    """
+    if strategy.threads_request_overridden_by is None:
+        return
+    # Name both levers and quote the value, the way `_env_int`'s and
+    # `ISOCENTER_MAX_WORKERS`' warnings do: a message that says only
+    # "these conflict" cannot be matched against what was typed. It says
+    # which lever to unset, because with `ISOCENTER_MAX_TASKS_PER_CHILD`
+    # and `ISOCENTER_FORCE_THREADS` both set this fires on EVERY
+    # `run_parallel` call -- ingest, the PHI scan, OCR verification, zone
+    # discovery, redaction -- which is correct and is a lot of output on
+    # a long run.
+    get_logger().warning(
+        "%s was set, but worker recycling (maxtasksperchild=%s) "
+        "was also asked for and only multiprocessing.Pool "
+        "implements it, so this run uses processes. "
+        "session.export() always sets maxtasksperchild=25, so it "
+        "runs in processes on every interpreter including "
+        "free-threaded builds; for audit(), scan_pixel_content() "
+        "and redact(), unset ISOCENTER_MAX_TASKS_PER_CHILD to get "
+        "threads; ingest() runs on the session's executor and "
+        "takes no lever.",
+        strategy.threads_request_overridden_by, strategy.maxtasksperchild)
 
 
 def _progress_total(strategy, items) -> Optional[int]:
@@ -435,7 +544,8 @@ def run_parallel(
     progress: bool = None,  # Alias for show_progress
     disable_gc: bool = False,  # Disable GC in worker processes
     return_generator: bool = False,  # Implement streaming
-    yield_exceptions: bool = False  # Exceptions come back as values
+    yield_exceptions: bool = False,  # Exceptions come back as values
+    strategy: Optional[_Strategy] = None  # Already resolved by the caller
 ) -> Any:  # Union[List[R], Iterator[R]]
     """
     Executes `func(item)` in parallel using multiple processes or threads.
@@ -445,7 +555,7 @@ def run_parallel(
     `ISOCENTER_MAX_TASKS_PER_CHILD`, `ISOCENTER_DISABLE_GC`) and presence of GIL.
     Defaults to `ProcessPoolExecutor`. `docs/environment.md` carries the whole
     table, including the order the three threads-or-processes levers resolve in
-    (`_use_threads` is where that order lives).
+    (`_resolve_execution_choice` is where that order lives).
 
     Args:
         func (Callable[[T], R]): The worker function.
@@ -475,6 +585,18 @@ def run_parallel(
             so under `maxtasksperchild` that case hangs rather than
             yielding -- ordinary task exceptions still come back as values
             there.
+        strategy (optional): A `_Strategy` the caller has already
+            resolved with `_resolve_strategy`. When given it is used as
+            it stands and **every resolution keyword above is ignored**
+            -- `max_workers`, `chunksize`, `maxtasksperchild`,
+            `disable_gc`, `force_threads`, `show_progress`, `progress`,
+            `desc` and `total` -- because the caller has settled them
+            already. `redact()` is the one caller that does, so that the
+            strategy it *names* on the console and the pool it *gets*
+            are two readings of one object rather than two resolutions
+            that can disagree (#384). `executor`, `return_generator` and
+            `yield_exceptions` are not resolution settings and still
+            apply.
 
     Returns:
         Union[List[R], Iterator[R]]: The results of the parallel execution.
@@ -482,12 +604,20 @@ def run_parallel(
     if progress is not None:
         show_progress = progress
 
-    strategy = _resolve_strategy(
-        max_workers, chunksize, maxtasksperchild, disable_gc, force_threads,
-        show_progress, desc, total)
+    if strategy is None:
+        strategy = _resolve_strategy(
+            max_workers, chunksize, maxtasksperchild, disable_gc,
+            force_threads, show_progress, desc, total)
 
     if yield_exceptions:
         func = _ExceptionAsResult(func)
+
+    # Before the three paths and after both ways of obtaining a
+    # strategy, so a strategy handed in as `strategy=` announces its
+    # #185 override exactly as one resolved here does -- and so a
+    # strategy resolved by a caller that then declines to run says
+    # nothing at all.
+    _announce_recycling_override(strategy)
 
     if executor is not None:
         results = _run_on_shared_executor(executor, func, items, strategy)
