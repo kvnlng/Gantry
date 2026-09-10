@@ -1114,13 +1114,21 @@ the half of #399 that reaches the exported file: a store still holding
 two items still ships two, and test 1 measures only memory. It is kept.
 
 **What this does not change:** the two single-test kills the brief calls
-the point of the exercise both hold. **M2 (delete `mark_modified()`)
-reddens test 3 and nothing else** -- measured `1 failed, 16 passed`,
-failing at `assert inst.has_unsaved_changes` with
+the point of the exercise both hold. Every count below is over the same
+**17-test set** -- `tests/test_relock_identity_token.py` (5),
+`tests/test_reversibility_coverage.py` (9) and
+`tests/test_reversibility.py` (3) in one run -- named because a count
+whose file set is not stated cannot be reproduced from this log (see
+A5, S2). **M2 (delete `mark_modified()`) reddens test 3 and nothing
+else** -- `1 failed, 16 passed`, failing at
+`assert inst.has_unsaved_changes` with
 `_revision=14, _persisted_revision=14`, which is the §5.4 middle row
 exactly. **M4 (`items[-1]`) reddens test 5 and nothing else** --
-measured `1 failed, 16 passed`. M1 (revert to the append) reddens tests
-1, 2, 3 and 4 with test 5 green, exactly as predicted.
+`1 failed, 16 passed`. M1 (revert to the append) reddens tests 1, 2, 3
+and 4 with test 5 green, exactly as predicted. The reviewer re-ran M2
+and M4 against the **whole suite** and got `1 failed, 1831 passed` for
+each, with the same single red in both cases -- so "and nothing else"
+survives widening here, which is exactly what it did not do for RM3.
 
 ### A2 -- the two §12 candidates that did not materialise
 
@@ -1172,12 +1180,11 @@ was not.
   `tests/test_wfdb_writer.py::test_a_waveform_with_no_samples_does_not_cost_the_run_its_pass`.
   `show_progress` appears **once** in that file, and the whole-suite
   runs below confirm it is the only site in the repository.
-- **The four mutations land where §6.3 says.** RM1 (delete the
-  `if unknown: raise`) -> R1 and R3 red, `2 failed, 41 passed`. RM2
-  (invert to `if not unknown:`) -> R1, R2 and R3 red, R4 green. RM3
-  (`- _WFDB_OPTIONS` becomes `- set()`) -> **R2 red and nothing else**.
-  RM4 (`"show_progress"` added to `_WFDB_OPTIONS`) -> **R4 red and
-  nothing else**, `1 failed, 53 passed`.
+- **The four mutations land where §6.3 says**, with one qualification
+  A5 corrects: the counts first recorded here came from three different
+  unnamed file sets and RM3's "and nothing else" was true only of a run
+  confined to the strictness file. Every mutation is re-measured in A5
+  over one named set.
 - **§4's measured claim about the existing AST pin is confirmed
   independently.** Under RM4 --- a third name admitted by the constant
   and read nowhere ---
@@ -1196,10 +1203,106 @@ Line 688 holds `written = session.export(str(tmp_path / "out"),
 format="wfdb",` and the argument itself is on 689. The citation names
 the call, which is the useful thing to name.
 
+### A5 -- what the review found, and the mutation table redone with its file set named
+
+Three findings from the review of PR #421. None blocking; the first is a
+hole in this PR's own machinery and is the milestone's theme recursing
+one level.
+
+**S1 -- `R4` pinned the constant and nothing pinned the check.**
+`_WFDB_OPTIONS` exists, by its own comment, so the check and the
+refusal message cannot drift apart. Nothing said so. The reviewer left
+the constant untouched and inlined a three-name set literal in the
+check --
+
+```python
+unknown = sorted(set(options) - {"patient_ids",
+                                 "include_annotation_text",
+                                 "show_progress"})
+```
+
+-- and the **whole suite stayed green at `1832 passed, 2 skipped`**,
+byte-identical to the unmutated tree: R1-R4 green (R4 reads the
+constant, which was untouched), the AST pin green (a set literal inside
+a `BinOp` is none of its five collected forms), frozen surface green.
+On that tree `show_progress=False` exported both patients while the
+refusal message still recited `_WFDB_OPTIONS` -- so the exception text
+was the thing lying about which options were really accepted, and that
+text is what the CHANGELOG quotes as *the exact exception*.
+
+Compounding it: after this PR deleted the one line in the repository
+that passed a `dicom` name to the wfdb path (`show_progress=False` in
+`tests/test_wfdb_writer.py`), **no test anywhere passed one**, while the
+CHANGELOG's "what breaks" paragraph promises the refusal for six names.
+The documented breaking change was unmeasured by the suite shipping it.
+
+Closed with the behavioural option (a):
+`test_every_dicom_only_option_is_refused_by_the_wfdb_path`, parametrized
+over `use_compression`, `check_burned_in`, `check_reversibility`,
+`show_progress`, `subset` and `verify_readback`, asserting `TypeError`
+*and* that the message names the option the caller passed -- the second
+half being what catches the message/check drift rather than merely the
+missing refusal. The AST option (b) was not also taken: one spelling per
+behaviour, and (a) additionally discharges the CHANGELOG promise, which
+(b) would not.
+
+**S2 -- RM3's "and nothing else" was not reproducible, and no count
+named its file set.** Confirmed here: over the four-file set below, RM3
+gives **`3 failed, 57 passed`** -- R2 plus
+`test_wfdb_privacy.py::test_annotation_text_is_present_when_opted_in_end_to_end`
+and `::test_the_wfdb_export_patient_ids_option_limits_the_export`, both
+of which pass a *valid* option that `- set()` now rejects. The original
+claim was true only of a run confined to
+`tests/test_wfdb_option_strictness.py`. The error was in the safe
+direction and the headline above it read "every prediction held", which
+is the bunch D failure mode; it is corrected rather than softened.
+
+**The table redone.** One file set for every row --
+`tests/test_wfdb_option_strictness.py`,
+`tests/test_wfdb_privacy.py`, `tests/test_wfdb_writer.py` and
+`tests/test_frozen_surface.py`, **60 passed** unmutated -- so each count
+below is reproducible from this line alone.
+
+| mutation | measured over the 60-test set |
+| --- | --- |
+| RM1 delete the `if unknown: raise` | `8 failed, 52 passed` -- R1, R3 and all six R5 cases |
+| RM2 invert to `if not unknown:` | `26 failed, 34 passed` -- every valid wfdb export in the set now raises |
+| RM3 `- _WFDB_OPTIONS` becomes `- set()` | `3 failed, 57 passed` -- R2 and the two `test_wfdb_privacy.py` tests that pass a valid option |
+| RM4 `"show_progress"` added to `_WFDB_OPTIONS` | `2 failed, 58 passed` -- R4 and `R5[show_progress]` |
+| **RM5** the reviewer's: check inlined, constant untouched | **`1 failed, 59 passed` -- `R5[show_progress]` alone** |
+
+RM5 is the row that did not exist before this review. It was green on
+the whole suite; it is now a single-test kill.
+
+**S3 -- the AST pin's docstring said #410 was unfixed.**
+`tests/test_wfdb_privacy.py`'s
+`test_the_wfdb_export_options_are_the_two_the_page_freezes` read
+"...#410 -- that the wfdb path shrugs at an unknown option where the
+`dicom` path raises -- is the real fix and is filed rather than done
+here." False on this tree, and it is the docstring making the case for
+the second pin, so a reader arriving there was told the wfdb path still
+shrugs. Corrected in place: the residual it describes is real, but it no
+longer reaches a caller as a silently dropped option.
+
+Two cosmetic notes taken at the same time: a missing blank line before
+`` `generate_report(format=)` `` in `docs/api/stability.md`, which the
+#410 prose block had glued to an unrelated paragraph, and a trailing
+blank line at the end of this file.
+
+**Confirmed by the review and deliberately not changed:** A1's extra
+count assertion in test 3 is load-bearing rather than a duplicate --
+test 1 counts in memory, test 3 counts on the reloaded store; brief
+item 4 came back clean end to end (a source file carrying a foreign
+`(0400,0500)`, ingested, locked, exported, `dcmread` -> one item, and
+re-ingesting recovers the original); and the case §3's ruling turns on
+that no probe covered was measured too -- a stored 0.9.4-style
+three-item sequence, reloaded, re-locked, saved and reloaded, comes back
+at `items = 1`, so `items[:] = [item]` cleans up the stored tail across
+the save boundary.
+
 ### A3 -- an environment note, not a correction to the brief
 
 The bash sandbox in this worktree refuses `PYTHONPATH=... python ...`
 written as a plain command; the same command prefixed with `env` runs.
 The recipe in CLAUDE.md is otherwise unchanged and
 `isocenter.__file__` resolved to this worktree on every run.
-

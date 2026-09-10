@@ -812,7 +812,14 @@ def test_the_wfdb_export_options_are_the_two_the_page_freezes():
     `options` itself, not a Call), is invisible to any AST collector. That
     residual is the price of `**options`, and it is why #410 -- that the
     wfdb path shrugs at an unknown option where the `dicom` path raises --
-    is the real fix and is filed rather than done here. Do not narrow the
+    was the real fix. It is **done** as of 0.9.5: the exporter now refuses
+    an unrecognised name with `TypeError` before writing anything, so the
+    residual this paragraph describes no longer reaches a caller as a
+    silently dropped option. This pin still collects only what the body
+    *reads*, and is blind to a name admitted by `_WFDB_OPTIONS` and never
+    used -- measured, a third name there leaves this test green -- which
+    is why `tests/test_wfdb_option_strictness.py` pins the allow-list and
+    the refusal separately. Do not narrow the
     list back: `.get` alone passed while `options["third"]` reached a
     third option, and `.get`/`.pop`/subscript/`in` passed while
     `options.setdefault("third", None)` did.

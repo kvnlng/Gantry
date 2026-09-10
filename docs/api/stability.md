@@ -91,6 +91,7 @@ of the two frozen names, that both formats refuse the same typo, and the
 allow-list constant itself -- the last separately, because the AST pin in
 `tests/test_wfdb_privacy.py` collects the keys the body *reads* and is
 blind to a name admitted and never used.
+
 `generate_report(format=)` accepts `'markdown'` only and raises
 `ValueError` otherwise.
 

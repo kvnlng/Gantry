@@ -143,6 +143,66 @@ def test_both_formats_refuse_the_same_typo(tmp_path):
         session.close()
 
 
+@pytest.mark.parametrize("dicom_only", ["use_compression", "check_burned_in",
+                                        "check_reversibility", "show_progress",
+                                        "subset", "verify_readback"])
+def test_every_dicom_only_option_is_refused_by_the_wfdb_path(tmp_path, dicom_only):
+    """The six names the CHANGELOG promises are refused, one per case.
+
+    Two holes this closes, and they are the same hole seen from two
+    sides.
+
+    **The CHANGELOG's "what breaks" paragraph** names exactly these six
+    `dicom`-only options and promises the wfdb path now raises for each.
+    Nothing pinned that promise. After #410 deleted the one line in this
+    repository that passed a `dicom` name to the wfdb path
+    (`show_progress=False` in `tests/test_wfdb_writer.py`), **no test
+    anywhere passed one** -- so the documented breaking change was
+    unmeasured by the suite that shipped it.
+
+    **The allow-list's own reason for existing was unpinned.**
+    `_WFDB_OPTIONS` exists, by its own comment, so the check and the
+    message cannot drift apart. A reviewer left the constant alone and
+    inlined a three-name set literal in the check --
+
+        unknown = sorted(set(options) - {"patient_ids",
+                                         "include_annotation_text",
+                                         "show_progress"})
+
+    -- and the entire suite stayed green at `1832 passed, 2 skipped`,
+    R4 included: R4 reads the constant, which was untouched. On that
+    tree `show_progress=False` exported both patients while the refusal
+    message still recited `_WFDB_OPTIONS`, so the exception text was the
+    thing lying about which options were really accepted -- and that
+    text is what the CHANGELOG quotes as the exact exception. This test
+    is red on `show_progress` there.
+
+    The message assertion is not decoration: "it raised" would be
+    satisfied by a refusal that names something other than what the
+    caller passed, which is precisely the drift shape above.
+    """
+    src = tmp_path / "src"
+    first, _ = _two_patient_fixture(src)
+
+    session = DicomSession(persistence_file=str(tmp_path / "dicom_only.db"))
+    try:
+        session.ingest(str(src))
+        assert session.store.patients, (
+            "precondition: an empty store would let a refusal that never "
+            "ran look the same as one that did")
+
+        with pytest.raises(TypeError) as excinfo:
+            session.export(str(tmp_path / "out"), format="wfdb",
+                           **{dicom_only: False})
+    finally:
+        session.close()
+
+    message = str(excinfo.value)
+    assert re.search(rf"\b{re.escape(dicom_only)}\b", message), (
+        f"the refusal must name {dicom_only!r}, the option the caller "
+        f"passed; got {message!r}")
+
+
 def test_the_admitted_options_are_the_two_the_page_freezes():
     """`_WFDB_OPTIONS` is exactly what `docs/api/stability.md` freezes.
 
