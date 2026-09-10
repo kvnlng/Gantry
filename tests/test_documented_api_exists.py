@@ -308,8 +308,8 @@ def test_the_readme_documents_zone_discovery_and_its_density_matrix_limit():
 
     Checked, in order of how badly getting each one wrong costs the
     reader: the section exists at all; it names the entry point and the
-    result type; it names the `ocr` extra, without which the scan reads
-    nothing and reports an empty result rather than an error; and it says
+    result type; it names the `ocr` extra, without which the scan cannot read
+    the pixels and refuses with `OcrUnavailableError` (#422); and it says
     somewhere in the section that the density matrix is not in image
     coordinates.
     """

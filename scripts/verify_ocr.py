@@ -61,7 +61,7 @@ def verify_ocr():
     if len(report_filtered) < len(report_baseline):
         print("\nSUCCESS: Some text was filtered out by the rule!")
     elif len(report_baseline) == 0:
-         print("\nWARNING: Baseline found nothing (OCR missing?), so filtering test is inconclusive.")
+         print("\nWARNING: Baseline found nothing, so filtering test is inconclusive.")
     else:
         print("\nFAILURE: Filtering didn't reduce findings. Check rule matching.")
 

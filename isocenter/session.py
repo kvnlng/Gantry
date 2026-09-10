@@ -1964,7 +1964,18 @@ class DicomSession:
 
         Returns:
             PhiReport: A report containing findings of filtered (uncovered) burned-in text.
+
+        Raises:
+            RuntimeError: `pixel_analysis.OcrUnavailableError` when the `ocr`
+                extra is not installed or the `tesseract` binary does not
+                answer, before any worker is dispatched and before the graph
+                is read (#422). An empty report means OCR ran and found
+                nothing uncovered, never that it could not run.
         """
+        # First, before the graph is read: a scaffolded config would
+        # otherwise answer "nothing to scan" without OCR, and the missing
+        # extra would surface only once zones were filled in (#422).
+        pixel_analysis._require_ocr("scan_pixel_content()")  # pylint: disable=protected-access
         get_logger().info("Scanning pixel content for text (OCR)...")
         print("Scanning pixel content for text (OCR)...")
 
@@ -2074,7 +2085,17 @@ class DicomSession:
         Returns:
             DiscoveryResult: Object containing all detected text candidates.
             Call .to_zones() on the result to get grouped redaction zones.
+
+        Raises:
+            RuntimeError: `pixel_analysis.OcrUnavailableError` when the `ocr`
+                extra is not installed or the `tesseract` binary does not
+                answer, before any worker is dispatched and before the graph
+                is read (#422).
         """
+        # First, and read through the module at call time -- never a copy
+        # of `HAS_OCR` imported into this module, which a patch or a later
+        # install would not reach (#422).
+        pixel_analysis._require_ocr("discover_redaction_zones()")  # pylint: disable=protected-access
         from isocenter.discovery import DiscoveryResult, DiscoveryCandidate, ZoneDiscoverer
 
         get_logger().info(f"Discovering zones for {serial_number}...")

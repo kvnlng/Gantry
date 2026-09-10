@@ -94,6 +94,10 @@ class RedactionVerifier:
         - If text is fully matched (>= 80% coverage): considered Safe (Ignored).
         - If text is partially matched (> 0% but < 80%): Reported as PARTIAL_LEAK.
         - If text is not matched (0%): Reported as NEW_LEAK.
+
+        Also returns `[]` when OCR is unavailable, which is not "nothing
+        leaks": `Session.scan_pixel_content()` checks first and refuses
+        instead (#422).
         """
         text_regions = analyze_pixels(instance)
 

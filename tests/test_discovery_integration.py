@@ -36,12 +36,18 @@ class TestDiscoveryIntegration(unittest.TestCase):
         # redaction zones from burned-in pixel text, so without it every
         # machine yields zero zones and the assertions below are vacuous.
         # pytesseract also needs the `tesseract` system binary, which pip
-        # cannot supply -- hence a real skip rather than a failure.
-        from isocenter.pixel_analysis import HAS_OCR
-        if not HAS_OCR:
+        # cannot supply -- hence a real skip rather than a failure. The skip
+        # reads the same probe `discover_redaction_zones()` refuses on, not
+        # `HAS_OCR`: that flag means only "pytesseract imported", so with
+        # pytesseract installed and no binary it would let this test run
+        # into the refusal and error instead of skipping (#422).
+        from isocenter import pixel_analysis
+        reason = pixel_analysis._ocr_unavailable_reason()
+        if reason is not None:
             self.skipTest(
                 "Requires the 'ocr' extra (pytesseract) and a `tesseract` "
-                "binary on PATH: this test reads burned-in pixel text.")
+                f"binary on PATH: this test reads burned-in pixel text. "
+                f"OCR is unavailable here: {reason}")
 
         self.test_dir = tempfile.mkdtemp()
         self.db_path = os.path.join(self.test_dir, "test.db")

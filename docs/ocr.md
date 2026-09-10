@@ -12,7 +12,14 @@ The OCR module uses **Tesseract** to scan pixel data for text. It allows you to:
 
 ## Prerequisites
 
-To use OCR features, you must have the Tesseract binary installed on your system:
+OCR needs two things. The `ocr` extra, which brings `pytesseract` (quoted,
+because zsh expands unquoted brackets):
+
+```bash
+pip install "isocenter[ocr]"
+```
+
+and the Tesseract binary, which pip cannot install:
 
 === "macOS"
     ```bash
@@ -23,6 +30,12 @@ To use OCR features, you must have the Tesseract binary installed on your system
     ```bash
     sudo apt-get install tesseract-ocr
     ```
+
+Without either, `scan_pixel_content()` and `discover_redaction_zones()` raise
+`OcrUnavailableError`, a `RuntimeError`, naming what is missing, before they scan
+anything. Neither reports an empty result for OCR it could not run.
+`pixel_analysis.HAS_OCR` says only whether `pytesseract` imported; it does not
+check the binary.
 
 ## Intelligent Verification
 
@@ -153,7 +166,7 @@ Discovery uses a tiered approach to classify text:
 2. **NLP (Optional)**: If you install the optional NLP extras, Isocenter uses **spaCy** for high-precision Named Entity Recognition (NER). This improves detection of names in natural formats (e.g., "John Smith" without carets).
 
     ```bash
-    pip install isocenter[nlp]
+    pip install "isocenter[nlp]"
     python -m spacy download en_core_web_sm
     ```
 
