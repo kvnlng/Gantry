@@ -79,6 +79,18 @@ options through `_export_dicom`'s signature, and
 `tests/test_wfdb_privacy.py` pins the two `wfdb` options -- both that
 they are the only two the exporter reads, and that `patient_ids`
 actually limits what is written.
+
+**An option name neither format recognises raises `TypeError`, and
+nothing is written.** The `dicom` path has always done this, because
+`_export_dicom` has a real signature; the `wfdb` path did not until
+0.9.5, and a mistyped `patient_ids` therefore exported every patient in
+silence (#410). Because the two formats do not accept the same options,
+a caller forwarding one options dict to both must split it per format.
+`tests/test_wfdb_option_strictness.py` pins the refusal, the acceptance
+of the two frozen names, that both formats refuse the same typo, and the
+allow-list constant itself -- the last separately, because the AST pin in
+`tests/test_wfdb_privacy.py` collects the keys the body *reads* and is
+blind to a name admitted and never used.
 `generate_report(format=)` accepts `'markdown'` only and raises
 `ValueError` otherwise.
 
