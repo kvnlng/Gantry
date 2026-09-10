@@ -152,9 +152,18 @@ def test_a_dtype_only_replacement_reloads_as_the_dtype_the_caller_set(tmp_path):
         session.ingest(str(src))
         inst = _only_instance(session)
         session.save(sync=True)
+        before_size = os.path.getsize(_sidecar(db))
 
         inst.set_pixel_data(replacement)
         session.save(sync=True)
+
+        # Every test in this file carries this guard, on its own fixture.
+        # Test 1 proves the shape is reachable; it cannot speak for a
+        # fixture it does not use, and a replacement whose byte length
+        # differed would quietly take the write arm below the dedup and
+        # pass anyway.
+        assert os.path.getsize(_sidecar(db)) == before_size, (
+            "the dedup arm was not entered")
 
         # A precondition, not a courtesy: `unload_pixel_data()` refuses an
         # array replaced through `set_pixel_data()` and not since written
@@ -193,9 +202,13 @@ def test_a_geometry_only_replacement_reloads_at_the_geometry_the_caller_set(tmp_
         session.ingest(str(src))
         inst = _only_instance(session)
         session.save(sync=True)
+        before_size = os.path.getsize(_sidecar(db))
 
         inst.set_pixel_data(replacement)
         session.save(sync=True)
+
+        assert os.path.getsize(_sidecar(db)) == before_size, (
+            "the dedup arm was not entered")
 
         assert inst.unload_pixel_data() is True
         assert inst.pixel_array is None
@@ -297,12 +310,22 @@ def test_the_same_export_compressed_refuses_instead_of_writing_a_float_file(tmp_
     # caller sees and the row a maintainer reads afterwards.
     assert "wrote 0 of 1 planned instances" in message, message
     refusal = "\n".join([message] + errors)
-    # `\b` on purpose: `"int32" in "uint32"` is True, and a fix that
-    # patched only `pixel_dtype` leaves PixelRepresentation stale, which
-    # makes this same refusal read `uint32`. A bare substring check would
-    # pass on that.
+    # `\b` on purpose, and this one assertion is the whole kill for a
+    # `pixel_dtype`-only fix: `"int32" in "uint32"` is True, so a bare
+    # substring check passes on that mutant and it survives.
+    #
+    # What moves to `uint32` is the `{arr.dtype}` token of
+    # `_refuse_unencodable_j2k_frame`'s message -- `arr` is the frame the
+    # loader rebuilt, and its dtype comes from `_integer_dtype(self.bits,
+    # self.pixel_representation)`, the loader's own stale snapshot. The
+    # message's *PixelRepresentation* token does NOT move: it is read
+    # with `getattr(ds, 'PixelRepresentation', ...)` off the live export
+    # dataset, which the export built from `attributes`, and it reads `1`
+    # on every tree here. So do not add an assertion on it -- there is
+    # nothing for one to catch, and a reader who added one would be
+    # pinning the wrong variable. The loader's state itself is pinned
+    # independently, and directly, by tests 2 and 3.
     assert re.search(r"\bint32\b", refusal), refusal
-    assert "PixelRepresentation 1" in refusal, refusal
 
     assert not glob.glob(os.path.join(out, "**", "*.dcm"), recursive=True), (
         "a file was written despite the refusal")

@@ -168,6 +168,21 @@ def get_pixel_data(ds):
                 frames = list(generate_frames(pixel_bytes,
                                               number_of_frames=1))
                 if not frames:
+                    # Unreachable against pydicom 3.x, and kept anyway as
+                    # a pin on its contract rather than on a log line
+                    # anyone will read. Measured: `generate_frames(buf,
+                    # number_of_frames=1)` yields at least one frame for
+                    # every buffer that parses at all -- an empty offset
+                    # table alone, an empty table plus an empty fragment,
+                    # and a populated table alone all come back as
+                    # `[b""]` -- and a buffer too short to parse raises
+                    # `struct.error` above this line instead. So `frames`
+                    # is never `[]` today. What this costs is one branch;
+                    # what it buys is that if that contract ever changes,
+                    # the log says which dataset had no frame instead of
+                    # `IndexError: list index out of range`. Do not
+                    # write a test for it: there is no input that reaches
+                    # it (#407).
                     raise RuntimeError(
                         "encapsulated PixelData holds no frame")
                 codestream = frames[0]

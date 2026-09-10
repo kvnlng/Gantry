@@ -1064,3 +1064,91 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$W /Users/kevin/Developer/Isocenter/.venv31
 ```
 
 One PR, two `Fixes` lines.
+
+---
+
+## 12. Amendments
+
+Corrections made **during** implementation (PR #420), in the register the
+project reserves for them: what the brief predicted, what the tree actually
+did, and the measurement. These are not `**Superseded in part:**` entries --
+nothing later falsified a clause; the brief was simply out by a detail in six
+places, and every one of them was found by running what it asked for. The
+predictions above are left standing so the two can be compared.
+
+**A1 -- §5.5 test 5 and §5.6 M2: the `uint32` comes from the dtype token, not
+from a stale `PixelRepresentation`.** The brief says a `pixel_dtype`-only fix
+leaves "the stale `PixelRepresentation 0`", which "makes the refusal read
+`uint32`". Half right. Measured under M2, the refusal reads:
+
+```
+cannot carry uint32 pixel data at 1 sample(s) per pixel
+(BitsAllocated 32, PixelRepresentation 1)
+```
+
+`PixelRepresentation` does **not** move. It is read with
+`getattr(ds, 'PixelRepresentation', ...)` off the live export dataset, which
+the export built from `attributes`, and it is `1` on every tree in play. What
+moves is the `{arr.dtype}` token: `arr` is the frame the loader rebuilt, and
+its dtype comes from `_integer_dtype(self.bits, self.pixel_representation)` --
+the *loader's* stale snapshot, not the dataset's descriptor.
+
+The brief's conclusion survives intact and its assertion is the right one:
+`re.search(r"\bint32\b", ...)` is the entire kill for M2, and a bare
+`"int32" in msg` leaves the mutant alive. But an assertion on
+`PixelRepresentation 1` is decoration -- it passes on every mutant, and on the
+two where the export raises earlier it is never reached at all. It was written
+into the first cut of test 5 on the strength of this paragraph and removed in
+review. A reader who trusted the original text would have strengthened the
+test against the wrong variable.
+
+**A2 -- §5.6 M3 is killed in three places, not one.** The brief predicts "test
+1 red, tests 2--5 green". Measured: tests 1, 4 and 5 red. Tests 4 and 5 carry
+their own sidecar-growth guards, so the workaround reddens them too. Stronger
+than designed, and it does not change M3's purpose.
+
+**A3 -- §5.6 M4 also kills test 5.** The brief predicts tests 2, 3 and 4.
+Measured: 2, 3, 4 and 5.
+
+**A4 -- §5.5's "prove it entered the arm" was under-delivered by the brief's
+own test list.** Only tests 1, 4 and 5 were specified with a growth assertion;
+tests 2 and 3 were not, and test 3's fixture (`uint8` 4x4 -> 2x8) was covered
+by nothing. It does enter the arm today -- measured, sidecar 24 -> 24 bytes,
+`_pixel_hash` unchanged -- so this was never a live hole. But change that
+replacement's byte length and it moves silently to the write arm and passes
+anyway, which is the exact shape test 1 exists to prevent. All five tests now
+carry the guard on their own fixture.
+
+**A5 -- §6.6 M1 does not redden test 3.** The brief predicts "tests 1, 2, 3, 5
+red". Measured: 1, 2 and 5, plus both rewritten mocks. Test 3 stays green,
+and correctly so: its hand-built `_item(b"") + _item(...) + _item(...)`
+fixture has an **empty** offset table, and §6.1 already establishes that the
+join is accidentally correct in that case. The two halves of the brief
+disagree with each other; §6.1 is the one that is right.
+
+**A6 -- §6.6 M4's guard is unreachable, not merely unkillable.** The brief
+says the empty-frames guard "has no named kill" because an `IndexError` and
+the named `RuntimeError` wrap into the same outer message. True, and it
+understates the case: against pydicom 3.x there is no input that reaches the
+guard at all. Measured -- `generate_frames(buf, number_of_frames=1)` yields
+at least one frame for every buffer that parses (`item(b"")` -> `[b""]`,
+`item(b"") + item(b"")` -> `[b""]`, `item(b"\x00\x00\x00\x00")` -> `[b""]`),
+and a buffer too short to parse raises `struct.error` before the guard is
+reached. So `frames` is never `[]`, and the brief's framing -- "the guard is
+there for the message a maintainer reads in the log" -- describes a log line
+nobody can produce. The guard is kept, because it pins pydicom's contract
+rather than a behaviour, and its comment now says that in those words instead
+of implying a reachable path.
+
+**A7 -- §6.3's table is out by four.** "fix applied, import kept: `1 failed,
+9 passed`" for a file holding seven tests. The neighbouring row ("import
+deleted: `2 failed, 5 passed`") is exact, and is the one the sequencing
+depends on. An arithmetic slip, recorded only so a reader does not go looking
+for two tests that were never there.
+
+**Not amended, deliberately.** §3's required comment paragraph contains a
+literal `#(new)` for the `_decode_pixels` fallback issue; it was filed as
+**#416** and the comment names that number. §5.4's advice to cite by function
+name rather than line number proved right twice over: the `io_handlers.py`
+comment edit shifted every line below ~3430, and `tests/test_source_citations.py`
+would have graded a stale in-range citation as green.
