@@ -74,8 +74,13 @@ are `use_compression=True, check_burned_in=False,
 check_reversibility=True, patient_ids=None, show_progress=True,
 subset=None, verify_readback=False`; the `wfdb` options are
 `patient_ids` and `include_annotation_text`. Those option names are
-frozen with the method. `generate_report(format=)` accepts `'markdown'`
-only and raises `ValueError` otherwise.
+frozen with the method: `tests/test_frozen_surface.py` pins the `dicom`
+options through `_export_dicom`'s signature, and
+`tests/test_wfdb_privacy.py` pins the two `wfdb` options -- both that
+they are the only two the exporter reads, and that `patient_ids`
+actually limits what is written.
+`generate_report(format=)` accepts `'markdown'` only and raises
+`ValueError` otherwise.
 
 `lock_identities` took `_patient_obj=None, **kwargs` until 0.9.4; both
 were stripped before the tag rather than frozen, and `verbose` and
@@ -152,15 +157,33 @@ key: the tags `(0400,0500)`, `(0400,0510)`, `(0400,0520)` and the key
 file's format (raw Fernet key bytes). Date jitter stays deterministic
 per patient.
 
-**Output vocabularies.** The grade (`PASS`, `REVIEW_REQUIRED`; there is
-no `FAIL`), the audit `action_type` strings (`DATA_LOSS`, `ERROR`,
-`EXPORT`, `RECONCILE_PRIVATE`, `REDACTION`, `REMOVE_TAG`, `REPLACE_TAG`,
-`REVERSIBLE_EXPORT`, `RISK`, `SCAN_GAP`, `SHIFT_DATE`, `WARNING`,
-`COMPLIANCE_CHECK`) and the `loss_scope` strings (`STANDARD`, `PRIVATE`,
-`SIGNAL`). An existing string is never renamed or removed in 1.x; new
-strings may be added with a CHANGELOG entry. The *method* that returns
-the rows (`store_backend.get_audit_losses()`) is tier 2: the words are
-frozen, the access path is not.
+**Output vocabularies.** These are five separate vocabularies, not one
+list. The page conflated them until 0.9.5, and the category it gave was
+wrong for four of the thirteen words: it sent a reader looking in the
+audit table for strings that are never written there (#396).
+
+- The **grade**: `PASS`, `REVIEW_REQUIRED`. There is no `FAIL`.
+- The **audit `action_type` strings**, written to the audit table by
+  `log_audit`: `DATA_LOSS`, `ERROR`, `EXPORT`, `RECONCILE_PRIVATE`,
+  `REDACTION`, `REVERSIBLE_EXPORT`, `RISK`, `SCAN_GAP`, `WARNING`.
+- The **remediation-proposal `action_type` strings**, carried on
+  `PhiFinding.remediation_proposal`: `REMOVE_TAG`, `REPLACE_TAG`,
+  `SHIFT_DATE`. These say what a proposal *will* do and are never an
+  audit row; acting on one writes its own word instead.
+- The **report exception category** `COMPLIANCE_CHECK`, synthesised into
+  the report's `exceptions` list at report time.
+- The **`loss_scope` strings**: `STANDARD`, `PRIVATE`, `SIGNAL`.
+
+An existing string is never renamed or removed in 1.x; new strings may
+be added with a CHANGELOG entry. The *method* that returns the rows
+(`store_backend.get_audit_losses()`) is tier 2: the words are frozen,
+the access path is not.
+
+`tests/test_frozen_surface.py` is what makes each of the five checkable:
+it collects the words from the write sites themselves, by AST, and
+compares each vocabulary for set equality. Until 0.9.5 it grepped the
+package for the word as a quoted literal, which a docstring or a SQL
+string satisfied.
 
 **Behaviours.** The call order the README documents and its
 consequences (a report generated before any export carries a boundary
