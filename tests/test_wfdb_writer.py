@@ -685,8 +685,12 @@ def test_a_waveform_with_no_samples_does_not_cost_the_run_its_pass(tmp_path):
             "the instance still has samples, so this test is measuring "
             "an ordinary export")
 
-        written = session.export(str(tmp_path / "out"), format="wfdb",
-                                 show_progress=False)
+        # No `show_progress=False` here. It is a `dicom` option and the
+        # wfdb path never read it -- it was this test's own convenience,
+        # carried by the shrug #410 removed. The wfdb exporter now
+        # refuses an option it does not recognise, and this was the only
+        # site in the whole repository relying on that shrug.
+        written = session.export(str(tmp_path / "out"), format="wfdb")
 
         assert len(written) == 1, (
             f"the surviving waveform must still be written; got {written!r}")

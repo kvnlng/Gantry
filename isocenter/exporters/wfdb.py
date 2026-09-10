@@ -22,6 +22,23 @@ WAVEFORM_SEQUENCE_TAG = "5400,0100"
 WFDB_FORMAT = 16
 WFDB_ADC_ZERO = 0
 
+# The options `WfdbExporter.export` honours, and the set every other name
+# handed to it is measured against. `docs/api/stability.md` freezes both
+# names with the method.
+#
+# This constant is the **only** place in this module the two names are
+# spelled as a pair: spelling the allow-list inline in the check would
+# leave two lists to keep in step and pin only one of them.
+#
+# `tests/test_wfdb_option_strictness.py` pins it against that page, and
+# it needs its own pin because the AST pin in `tests/test_wfdb_privacy.py`
+# structurally cannot see this. That one collects the literal keys the
+# body *touches* by five syntactic forms -- `.get`, `.pop`,
+# `.setdefault`, subscript and `in` -- and a name sitting in a frozenset
+# is none of them: measured, adding a third name here leaves it green.
+# One pin on what is read, one on what is admitted (#410).
+_WFDB_OPTIONS = frozenset({"patient_ids", "include_annotation_text"})
+
 
 def signal_checksum(channel_samples) -> int:
     """16-bit signed sum of a signal's samples, as `header(5)` defines it.
@@ -315,10 +332,42 @@ class WfdbExporter(Exporter):
                 release. Concepts from a published coding scheme are
                 unaffected either way.
 
+                Those two are the whole set. Any other name raises
+                `TypeError` before anything is written -- see `Raises:`
+                below.
+
         Returns:
             List[str]: Paths of the `.hea` files written.
+
+        Raises:
+            TypeError: If `options` carries any name outside
+                `_WFDB_OPTIONS`. Until #410 an unrecognised option was
+                dropped without a word, so a mistyped `patient_ids`
+                exported every patient. Nothing is written when this
+                raises.
         """
         logger = get_logger()
+        # First thing, before `patient_ids` is read and before any file
+        # is written. Placement is the whole fix: a refusal raised after
+        # the walk arrives with the cohort already on disk, which is the
+        # silence #410 is about wearing an exception's clothes.
+        #
+        # `TypeError`, not `ValueError`: it is what Python raises for an
+        # unexpected keyword, and it is what the `dicom` path already
+        # raises for this exact mistake, because `_export_dicom` has a
+        # real signature. Until #410 a one-character typo on
+        # `patient_ids` was a loud error on one format and a full-cohort
+        # export on the other, and closing that gap is the issue.
+        #
+        # `sorted`, so the message is deterministic and a test can assert
+        # on it.
+        unknown = sorted(set(options) - _WFDB_OPTIONS)
+        if unknown:
+            raise TypeError(
+                f"export(format='wfdb') got unexpected keyword argument(s) "
+                f"{', '.join(repr(name) for name in unknown)}; the wfdb "
+                f"options are "
+                f"{', '.join(repr(name) for name in sorted(_WFDB_OPTIONS))}.")
         patient_ids = options.get("patient_ids")
         # Off by default: (0070,0006) is free-text clinical commentary, and
         # a site-defined Concept Name's Code Meaning is operator-typed too.

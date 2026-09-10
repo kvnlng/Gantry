@@ -29,16 +29,25 @@ def test_generate_token_empty(rev_service):
     assert rev_service.generate_identity_token(None) == b""
     assert rev_service.generate_identity_token({}) == b""
 
+# The three tests below watch `add_sequence`, which is the call
+# `embed_identity_token` makes since #399; it appended through
+# `add_sequence_item` before. Only the exception one goes red on that
+# change -- the two `assert_not_called()` tests stay green while
+# asserting the absence of a call the code can no longer make, which is
+# a test that passes and pins nothing. All three moved together, and
+# what the empty-token path *does* is unchanged: it still returns
+# before touching the instance at all.
+
 def test_embed_token_empty(rev_service, mock_instance):
     # Should do nothing and return None
     assert rev_service.embed_identity_token(mock_instance, None) is None
     assert rev_service.embed_identity_token(mock_instance, b"") is None
-    mock_instance.add_sequence_item.assert_not_called()
+    mock_instance.add_sequence.assert_not_called()
 
 def test_embed_token_exception(rev_service, mock_instance):
     token = b"valid_token"
-    # Mock add_sequence_item to raise exception
-    mock_instance.add_sequence_item.side_effect = Exception("Embed fail")
+    # Mock add_sequence to raise exception
+    mock_instance.add_sequence.side_effect = Exception("Embed fail")
 
     with pytest.raises(Exception, match="Embed fail"):
         rev_service.embed_identity_token(mock_instance, token)
@@ -46,7 +55,7 @@ def test_embed_token_exception(rev_service, mock_instance):
 def test_embed_original_data_empty(rev_service, mock_instance):
     rev_service.embed_original_data(mock_instance, None)
     rev_service.embed_original_data(mock_instance, {})
-    mock_instance.add_sequence_item.assert_not_called()
+    mock_instance.add_sequence.assert_not_called()
 
 def test_embed_original_data_exception(rev_service, mock_instance):
     # Mock generate_identity_token to fail or subsequent embed to fail

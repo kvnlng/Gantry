@@ -3517,6 +3517,14 @@ class DicomSession:
 
         Raises:
             ValueError: If `format` is not a registered export format.
+            TypeError: For an option name the selected exporter does not
+                recognise. The `dicom` path has always raised this,
+                because `_export_dicom` has a real signature; the `wfdb`
+                path raises it as of #410, where it previously dropped
+                the option in silence and a mistyped `patient_ids`
+                exported every patient. Nothing is written either way.
+                The two formats do not accept the same options, so a
+                caller forwarding one dict to both must split it.
             io_handlers.ExportError: From the DICOM exporter, when zero
                 of N planned instances reached disk and at least one
                 failed. An empty plan -- zero of zero -- does not raise:
