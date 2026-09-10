@@ -1437,8 +1437,15 @@ package:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>brew<span class="w"> </span>install<span class="w"> </span>tesseract<span class="w">        </span><span class="c1"># macOS</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>apt-get<span class="w"> </span>install<span class="w"> </span>tesseract-ocr<span class="w"> </span><span class="c1"># Debian/Ubuntu</span>
 </code></pre></div>
-<p>Without it, <code>isocenter.pixel_analysis</code> sets <code>HAS_OCR = False</code> and the rest
-of Isocenter works normally — OCR-dependent features are simply skipped.</p>
+<p>Without the extra or the binary the rest of Isocenter works normally, but
+the two methods that read burned-in text — <code>scan_pixel_content()</code> and
+<code>discover_redaction_zones()</code> — raise <code>OcrUnavailableError</code>, a
+<code>RuntimeError</code>, naming what is missing, before they scan anything. The
+check is made in the calling process, before the scan starts. A frame
+whose OCR fails after it passes — for example in a worker process that
+cannot find a binary the caller could — is still logged and not reported
+(#423). <code>isocenter.pixel_analysis.HAS_OCR</code> is <code>False</code> when <code>pytesseract</code>
+did not import; it does not check the binary.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>The <code>imagecodecs</code> dependency is included and strongly recommended for handling JPEG Lossless and other compressed Transfer Syntaxes.</p>
