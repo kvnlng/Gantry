@@ -393,7 +393,8 @@ def test_the_descriptors_are_read_from_one_snapshot(ingested):
 
     Measured on 3.14t with the GIL off, before the snapshot: a writer
     flipping `attributes.update(...)` between 4x4 and 2x8 made 10.3% of
-    reads raise an Integrity Error. The stand-in reproduces that exactly.
+    reads raise an Integrity Error. The stand-in forces the same tear
+    deterministically; it does not reproduce a rate.
     """
     _session, inst, _db = ingested
     inst.attributes = _TornAttributes(inst.attributes)

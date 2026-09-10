@@ -1974,7 +1974,7 @@ class DicomImporter:
                     # (tests/test_frozen_surface.py).
                     excess = meta.get('offset_table_excess')
                     if excess:
-                        table_frames, declared, _present, _table = excess
+                        table_frames, declared, _declared_raw, _table = excess
                         detail = (f"{frame_count_mismatch_words(excess)}. "
                                   f"Kept the first {declared} and discarded "
                                   f"{table_frames - declared}.")

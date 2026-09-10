@@ -263,6 +263,43 @@ def test_an_explicit_zero_number_of_frames_is_reported_as_zero():
     assert "declares 1" not in msg
 
 
+def test_a_negative_number_of_frames_is_reported_as_invalid():
+    """pydicom's decoder refuses a negative count; it reads nothing as 1.
+
+    Measured on pydicom 3.0.2: "must be greater than or equal to 1". So
+    "(read as 1)" would describe a reading no decoder makes.
+    """
+    with pytest.raises(RuntimeError) as exc:
+        imagecodecs_handler.get_pixel_data(_dataset(2, -1))
+    msg = str(exc.value)
+    assert "names 2 frames" in msg
+    assert "NumberOfFrames is -1 (invalid)" in msg
+    assert "read as" not in msg
+
+
+@pytest.mark.parametrize("empty", ["", None], ids=["in-memory", "from-file"])
+def test_an_empty_number_of_frames_is_reported_as_empty_not_absent(empty):
+    """Present with no value is not absent, and it is not read as 1.
+
+    Measured on pydicom 3.0.2: its decoder refuses an empty count
+    ("invalid literal for int()"), so "absent (read as 1)" was wrong
+    twice. Both spellings: an empty value assigned in memory is `""`, and
+    the same element written and read back from a file is `None` -- still
+    present (`"NumberOfFrames" in ds`), so presence cannot be read off
+    the value.
+    """
+    ds = _dataset(2, 1)
+    ds.NumberOfFrames = empty
+    assert "NumberOfFrames" in ds
+    with pytest.raises(RuntimeError) as exc:
+        imagecodecs_handler.get_pixel_data(ds)
+    msg = str(exc.value)
+    assert "names 2 frames" in msg
+    assert "NumberOfFrames is empty" in msg
+    assert "absent" not in msg
+    assert "read as" not in msg
+
+
 # ---------------------------------------------------------------------------
 # T1-T8 -- imagecodecs_handler.get_pixel_data
 # ---------------------------------------------------------------------------

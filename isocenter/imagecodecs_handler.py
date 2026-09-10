@@ -16,7 +16,7 @@ one.
 """
 import struct
 import sys
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import numpy as np
 from pydicom.uid import UID
@@ -88,7 +88,14 @@ def supports_transfer_syntax(transfer_syntax):
     return transfer_syntax in SUPPORTED_TRANSFER_SYNTAXES
 
 
-def offset_table_frame_count(ds) -> Optional[Tuple[int, int, bool, str]]:
+#: What `offset_table_frame_count` returns: ``(table_frames,
+#: declared_frames, declared_raw, table_name)``. ``declared_raw`` is
+#: NumberOfFrames as the file states it -- an int, ``""`` when the element
+#: is present and empty, None when it is absent.
+FrameCount = Tuple[int, int, Optional[Union[int, str]], str]
+
+
+def offset_table_frame_count(ds) -> Optional[FrameCount]:
     """The frames the offset table names, beside the frames declared (#418).
 
     Args:
@@ -104,14 +111,22 @@ def offset_table_frame_count(ds) -> Optional[Tuple[int, int, bool, str]]:
         the table does not parse. In every None case the caller decodes as
         it did before this check existed; None never means "consistent".
 
-        ``declared_frames`` is ``NumberOfFrames`` as the decoder reads it:
-        1 when absent, empty, zero or negative. ``declared_raw`` is the
-        value the file states -- None when absent or empty -- so a message
-        can say "absent (read as 1)" or "is 0 (read as 1)" rather than put
-        a number in the dataset's mouth. Measured on pydicom 3.0.2: its decoder reads
-        an absent value as 1 too -- `as_array(ds,
-        allow_excess_frames=False)` on a two-offset table with no
-        NumberOfFrames returns frame 0 alone.
+        ``declared_frames`` is ``NumberOfFrames`` as the decoder reads it,
+        which is 1 when the element is absent or 0. Measured on pydicom
+        3.0.2: `as_array(ds, allow_excess_frames=False)` on a two-offset
+        table with no NumberOfFrames returns frame 0 alone. The decoder
+        reads nothing else as 1: it *refuses* a negative value ("must be
+        greater than or equal to 1") and an empty one ("invalid literal
+        for int()"). For those two, ``declared_frames`` is 1 only so the
+        table has a number to be compared with; it is not a reading.
+
+        ``declared_raw`` is the value the file states -- an int, ``""``
+        when the element is present and empty, None when it is absent --
+        so a message says "absent (read as 1)", "is 0 (read as 1)", "is -1
+        (invalid)" or "is empty" rather than put a number in the dataset's
+        mouth. Presence is asked of the dataset, not read off the value:
+        an empty element assigned in memory is ``""`` but written and read
+        back is None, and it is present either way.
     """
     # `ValueError` too: pydicom raises `ValueError("UID is not a transfer
     # syntax.")` for a UID it cannot classify -- a private syntax such as
@@ -127,12 +142,18 @@ def offset_table_frame_count(ds) -> Optional[Tuple[int, int, bool, str]]:
     if "PixelData" not in ds:
         return None
 
-    raw = getattr(ds, "NumberOfFrames", None)
-    try:
-        declared_raw = None if raw in (None, "") else int(raw)
-    except (TypeError, ValueError):
-        return None
-    declared = declared_raw if declared_raw and declared_raw > 0 else 1
+    if "NumberOfFrames" not in ds:
+        declared_raw = None
+    elif ds.NumberOfFrames in (None, ""):
+        declared_raw = ""
+    else:
+        try:
+            declared_raw = int(ds.NumberOfFrames)
+        except (TypeError, ValueError):
+            return None
+    declared = (declared_raw
+                if isinstance(declared_raw, int) and declared_raw > 0
+                else 1)
 
     # The EOT first: when it is present the BOT is required to be empty
     # (PS3.5 A.4), so a BOT-only count would see nothing. Eight bytes per
@@ -175,20 +196,25 @@ def frame_count_mismatch(ds) -> Optional[str]:
     return frame_count_mismatch_words(counted)
 
 
-def frame_count_mismatch_words(counted: Tuple[int, int, bool, str]) -> str:
+def frame_count_mismatch_words(counted: FrameCount) -> str:
     """One spelling of the mismatch, for every refusal and loss row (#418).
 
     Args:
         counted: What `offset_table_frame_count` returned.
     """
     table_frames, declared, declared_raw, table_name = counted
+    # "(read as 1)" only where the decoder does read 1 -- absent and 0.
+    # Saying "declares 1" for either would put a number in the file's mouth
+    # that it never wrote; saying "read as 1" for an empty or negative
+    # value would describe a reading the decoder refuses to make.
     if declared_raw is None:
         declared_words = f"NumberOfFrames is absent (read as {declared})"
-    elif declared_raw != declared:
-        # An explicit 0 (or a negative) is read as 1, and saying "declares
-        # 1" would put a number in the file's mouth that it never wrote.
-        declared_words = (f"NumberOfFrames is {declared_raw} "
-                          f"(read as {declared})")
+    elif declared_raw == "":
+        declared_words = "NumberOfFrames is empty"
+    elif declared_raw == 0:
+        declared_words = f"NumberOfFrames is 0 (read as {declared})"
+    elif declared_raw < 0:
+        declared_words = f"NumberOfFrames is {declared_raw} (invalid)"
     else:
         declared_words = f"NumberOfFrames declares {declared}"
     return f"{table_name} names {table_frames} frames; {declared_words}"
