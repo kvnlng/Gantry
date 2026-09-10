@@ -1097,15 +1097,25 @@ The brief's conclusion survives intact and its assertion is the right one:
 `re.search(r"\bint32\b", ...)` is the entire kill for M2, and a bare
 `"int32" in msg` leaves the mutant alive. But an assertion on
 `PixelRepresentation 1` is decoration -- it passes on every mutant, and on the
-two where the export raises earlier it is never reached at all. It was written
+two where the export does **not** raise (M1 and M4) the test dies at
+`pytest.raises` and it is never reached at all. Those two are the defect
+itself: the export succeeds, writes `FloatPixelData`, and reports `wrote 1 of
+1`, so line 297 fails with `DID NOT RAISE ExportError` before the refusal text
+is ever read. It was written
 into the first cut of test 5 on the strength of this paragraph and removed in
 review. A reader who trusted the original text would have strengthened the
 test against the wrong variable.
 
 **A2 -- §5.6 M3 is killed in three places, not one.** The brief predicts "test
-1 red, tests 2--5 green". Measured: tests 1, 4 and 5 red. Tests 4 and 5 carry
-their own sidecar-growth guards, so the workaround reddens them too. Stronger
-than designed, and it does not change M3's purpose.
+1 red, tests 2--5 green". Measured at the time: tests 1, 4 and 5 red -- tests 4
+and 5 carry their own sidecar-growth guards, so the workaround reddens them
+too. Then A4 gave tests 2 and 3 the same guard, and **on the tree this log
+ships in M3 reddens all five**, each on its own guard line (126, 165, 210, 248,
+294). That is correct by construction rather than a loss of discrimination: M3
+*is* "the arm was not entered", so the arm-entry guard is the assertion that
+should speak. Under M1, M2 and M4 the guards do not fire and every test still
+dies on its own reason. Stronger than designed, and it does not change M3's
+purpose.
 
 **A3 -- §5.6 M4 also kills test 5.** The brief predicts tests 2, 3 and 4.
 Measured: 2, 3, 4 and 5.
