@@ -1152,6 +1152,50 @@ next reader as "the brief was wrong there".
   second lock is real rather than accidental, and the test would have
   caught a fixture that was dirty for its own reasons.
 
+### A4 -- #410 branch R: every prediction held, including the one that mattered most
+
+The ruling arrived as **raise** (owner comment on #410, 2026-09-10),
+so §6.3 is the branch implemented. Recorded here because the brief has
+been wrong somewhere in every bunch this milestone and this half of it
+was not.
+
+- **§6.1's probe output is reproduced verbatim** on this branch's tip
+  (`b60ad4f`, which carries #399 and no #410 work):
+  `wfdb patient_ids=['WFPAT-A'] -> ['WFPAT-A_1_0.hea']`,
+  `wfdb patient_id=['WFPAT-A'] -> ['WFPAT-A_1_0.hea', 'WFPAT-B_1_0.hea']`,
+  the same for a name that is not an option at all, and
+  `dicom patient_id=[...] -> TypeError: DicomSession._export_dicom() got
+  an unexpected keyword argument 'patient_id'`.
+- **§6.3's "one existing test breaks" is exact.** The eight
+  wfdb-touching files under the fix: `1 failed, 123 passed`, and the
+  failure is
+  `tests/test_wfdb_writer.py::test_a_waveform_with_no_samples_does_not_cost_the_run_its_pass`.
+  `show_progress` appears **once** in that file, and the whole-suite
+  runs below confirm it is the only site in the repository.
+- **The four mutations land where §6.3 says.** RM1 (delete the
+  `if unknown: raise`) -> R1 and R3 red, `2 failed, 41 passed`. RM2
+  (invert to `if not unknown:`) -> R1, R2 and R3 red, R4 green. RM3
+  (`- _WFDB_OPTIONS` becomes `- set()`) -> **R2 red and nothing else**.
+  RM4 (`"show_progress"` added to `_WFDB_OPTIONS`) -> **R4 red and
+  nothing else**, `1 failed, 53 passed`.
+- **§4's measured claim about the existing AST pin is confirmed
+  independently.** Under RM4 --- a third name admitted by the constant
+  and read nowhere ---
+  `tests/test_wfdb_privacy.py::test_the_wfdb_export_options_are_the_two_the_page_freezes`
+  stays **green**. That is the whole case for the second pin, and it is
+  now measured twice by two different people.
+- **§4's reading of `tests/test_frozen_surface.py` holds.** The
+  `docs/api/stability.md` edit is prose outside the Session table, and
+  the frozen-surface pin is green after it. The brief flagged that as a
+  reading of the parser rather than a measurement; it is a measurement
+  now.
+
+One citation drifts by a line and nothing turns on it: §6.3 and §7 cite
+`tests/test_wfdb_writer.py:688` for the `show_progress=False` argument.
+Line 688 holds `written = session.export(str(tmp_path / "out"),
+format="wfdb",` and the argument itself is on 689. The citation names
+the call, which is the useful thing to name.
+
 ### A3 -- an environment note, not a correction to the brief
 
 The bash sandbox in this worktree refuses `PYTHONPATH=... python ...`
