@@ -1091,4 +1091,71 @@ here, named in advance so the developer knows what to watch:
   the assertion pass without the `mark_modified()` line. If so, the fixture
   is wrong, not the assertion.
 
-*(No amendments recorded yet.)*
+### A1 -- M3 reddens test 3 as well, on an assertion §5.5 does not name
+
+**Predicted (§5.6, M3):** `sequence.items[:] = [item]` becomes
+`sequence.items.insert(0, item)` -> "test 1 red (count 2), tests 2, 3
+and 5 green, test 4 red on the count assertion only."
+
+**Measured, on the fixed tree with M3 alone
+(`tests/test_relock_identity_token.py`, `test_reversibility_coverage.py`
+and `test_reversibility.py` in one run):** `3 failed, 14 passed`. Tests
+1, **3** and 4 red; tests 2 and 5 green. Test 3 fails at
+`assert len(_items(stored)) == 1` -- not at either of its
+`has_unsaved_changes` assertions, both of which pass under M3.
+
+**Why:** test 3 as written pins the item count on the *reloaded* graph
+as well as what the stored recovery answers with. §5.5's sketch for it
+names only "assert `has_unsaved_changes` is True ... and assert the
+stored recovery answers with the second capture", and under M3 the
+stored recovery does answer with the second capture, because the new
+token is at index 0. The count assertion was added because the count is
+the half of #399 that reaches the exported file: a store still holding
+two items still ships two, and test 1 measures only memory. It is kept.
+
+**What this does not change:** the two single-test kills the brief calls
+the point of the exercise both hold. **M2 (delete `mark_modified()`)
+reddens test 3 and nothing else** -- measured `1 failed, 16 passed`,
+failing at `assert inst.has_unsaved_changes` with
+`_revision=14, _persisted_revision=14`, which is the §5.4 middle row
+exactly. **M4 (`items[-1]`) reddens test 5 and nothing else** --
+measured `1 failed, 16 passed`. M1 (revert to the append) reddens tests
+1, 2, 3 and 4 with test 5 green, exactly as predicted.
+
+### A2 -- the two §12 candidates that did not materialise
+
+Recorded because "the brief was right here" is worth as much to the
+next reader as "the brief was wrong there".
+
+- **§5.6 M1's blast radius** was predicted correct: test 4's hand-built
+  fixture does enter `embed_identity_token`, and M1 reddens it.
+- **§5.4's post-fix probe output is reproduced verbatim.**
+  `probe_399_relock_token_items.py` on the fixed tree: `lock #1/#2/#3:
+  items = 1`, `recover -> {'0010,0010': 'CHANGED^Value', '0010,0020':
+  'REV_399'}` after the second lock, `after reload: items = 1`,
+  **`exported sequence items: 1`**. That last line is the disclosure
+  half of #399 and no test in `tests/test_relock_identity_token.py`
+  reaches it -- the tests stop at the store round trip -- so the probe
+  is what carries it.
+- **`probe_399_foreign_sequence_at_ingest.py` on the fixed tree**
+  confirms the §5.3 case on the real ingest path, which test 4
+  deliberately skips: `after ingest, graph items: 1`, `recover before
+  any lock -> None`, then `after lock, graph items: 1` and
+  `recover -> {'0010,0010': 'Foreign^Source', '0010,0020':
+  'FOREIGN_399'}`. Before the fix this line read `after lock, graph
+  items: 2` and `recover -> None`.
+- **§5.5 test 3's `has_unsaved_changes` assertion** holds on the
+  hand-built graph as designed. On `df0feea` the instance is 16/16
+  after the first `save(sync=True)` and 17/16 after the second lock
+  (`probe_399_relock_dirty_and_persisted.py`, re-run here and matching
+  the brief's row exactly), so the "not dirty" precondition before the
+  second lock is real rather than accidental, and the test would have
+  caught a fixture that was dirty for its own reasons.
+
+### A3 -- an environment note, not a correction to the brief
+
+The bash sandbox in this worktree refuses `PYTHONPATH=... python ...`
+written as a plain command; the same command prefixed with `env` runs.
+The recipe in CLAUDE.md is otherwise unchanged and
+`isocenter.__file__` resolved to this worktree on every run.
+
