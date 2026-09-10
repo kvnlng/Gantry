@@ -206,6 +206,72 @@ TARGETS = {
                                   "tests/test_wfdb_conformance.py",
                                   "tests/test_wfdb_writer.py",
                                   "tests/test_worker_loss_is_reported.py"], 30),
+    # 453 sites. Until #383 this module had no row at all, so no mutant
+    # of `_hold_sidecar_gate`, `_hold_pass_lock`, `_refuse_while_pass_open`,
+    # `_flock_within`, `_SIDECAR_GATE_TIMEOUT_S`, the `:memory:` temp-file
+    # ownership flag or `compact_sidecar()` was ever generated -- the
+    # sidecar gate and the pass-lock #368 put here were invisible to the
+    # probe.
+    #
+    # Budget 30 matches io_handlers.py deliberately: 453 sites at 30 is a
+    # stride of 15, and io_handlers.py's 519 at 30 is a stride of 17, so
+    # the two largest modules are sampled at comparable density. A
+    # different number here would need a reason.
+    #
+    # This row roughly doubles a default probe run: 14 of the 42 files
+    # alone take 19s (77 tests, 3.12.14), and all 42 run well over a
+    # minute, so this target is ~30-45 minutes at budget 30. That is the
+    # same order as io_handlers.py, and the probe is a by-hand tool
+    # rather than CI, so it is affordable -- written down because an
+    # unexplained doubling of the run time is the kind of thing someone
+    # later "fixes" by cutting the budget.
+    #
+    # The list is measured, not curated: every file whose text matches
+    # `isocenter\.persistence\b` (the `\b` correctly excludes
+    # persistence_manager). #383 named eight; all eight are here and so
+    # are 34 others, each of which the guard demands.
+    "isocenter/persistence.py": (["tests/test_api_coherence.py",
+                                  "tests/test_async_persistence.py",
+                                  "tests/test_audit_drop_accounting.py",
+                                  "tests/test_audit_read_barrier.py",
+                                  "tests/test_audit_worker_does_not_pin_its_store.py",
+                                  "tests/test_blob_storage.py",
+                                  "tests/test_bytes_persistence.py",
+                                  "tests/test_close_does_not_drop_an_orphaned_save.py",
+                                  "tests/test_compact_refuses_during_a_pass.py",
+                                  "tests/test_compaction_races_a_concurrent_write.py",
+                                  "tests/test_compaction_reclaims_a_row_instances_does_not_carry.py",
+                                  "tests/test_concurrency_stress.py",
+                                  "tests/test_dataframe_export.py",
+                                  "tests/test_declined_remediation_is_recorded.py",
+                                  "tests/test_export_flushes_before_it_sweeps.py",
+                                  "tests/test_float_pixel_data_export.py",
+                                  "tests/test_flush_orphan_recovery.py",
+                                  "tests/test_json_serialization.py",
+                                  "tests/test_legacy_waveform_hydration.py",
+                                  "tests/test_memory_store_unlinks_its_temp_files.py",
+                                  "tests/test_persistence.py",
+                                  "tests/test_persistence_concurrency.py",
+                                  "tests/test_persistence_incremental.py",
+                                  "tests/test_persistence_manager.py",
+                                  "tests/test_persistence_worker_does_not_pin_its_manager.py",
+                                  "tests/test_phi_retention.py",
+                                  "tests/test_pixel_divergence.py",
+                                  "tests/test_pixel_geometry_check.py",
+                                  "tests/test_planar_configuration_roundtrip.py",
+                                  "tests/test_private_tag_arity_roundtrip.py",
+                                  "tests/test_private_tag_empty_value_roundtrip.py",
+                                  "tests/test_private_tag_reload.py",
+                                  "tests/test_private_tag_vr_roundtrip.py",
+                                  "tests/test_save_all_contract.py",
+                                  "tests/test_save_redact_race.py",
+                                  "tests/test_save_reparenting.py",
+                                  "tests/test_services.py",
+                                  "tests/test_sidecar_gate_crosses_processes.py",
+                                  "tests/test_sidecar_gate_order.py",
+                                  "tests/test_study_date_roundtrip.py",
+                                  "tests/test_vertical_table.py",
+                                  "tests/test_worker_start_is_serialised.py"], 30),
 }
 
 class Mut(ast.NodeTransformer):
