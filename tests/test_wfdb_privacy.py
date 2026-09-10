@@ -1,9 +1,13 @@
+import ast
 import os
+import pathlib
 
 import pytest
 
 from isocenter.session import DicomSession
 from scripts.generate_waveform_test_data import build_ecg_dataset, add_annotation, write_fixture
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
@@ -716,3 +720,116 @@ def test_annotations_source_carries_no_device_serial(tmp_path):
         assert serial not in source, f"device serial leaked into source: {source!r}"
         assert "AcmeCart" in source, (
             f"manufacturer provenance was lost from source: {source!r}")
+
+
+def _write_two_patient_waveform_fixture(src):
+    """Two patients, one waveform-bearing instance each.
+
+    Deliberately *not* anonymized by the test below: `record_name_for`
+    builds the record name from `patient.patient_id`, so leaving the
+    ingested ids alone keeps the subset assertion about the filter
+    rather than about which pseudonym anonymization happened to mint.
+    """
+    write_fixture(str(src / "a.dcm"), num_samples=64,
+                  patient_id="WFPAT-A", patient_name="Alpha^Ann")
+    write_fixture(str(src / "b.dcm"), num_samples=64,
+                  patient_id="WFPAT-B", patient_name="Beta^Bob")
+    return "WFPAT-A", "WFPAT-B"
+
+
+def test_the_wfdb_export_patient_ids_option_limits_the_export(tmp_path):
+    """`export(format="wfdb", patient_ids=[...])` writes only those patients.
+
+    `docs/api/stability.md` froze this option name, and until #397
+    nothing in the repo passed `patient_ids=` to the wfdb path at all --
+    every one of the thirty `format="wfdb"` call sites exported
+    everything. So the name was unpinned *and* the subset filter behind
+    it was never exercised: a filter that silently stopped filtering
+    would export every patient's waveforms to a caller who asked for
+    one, with the suite green.
+
+    Measured on 0.9.4, both of these were green mutations across
+    `tests/test_wfdb_*.py` and `tests/test_murmur_annotations.py`:
+    reading the option under a misspelled key, and inverting the
+    membership test so the filter keeps exactly the wrong patient.
+
+    Both directions are asserted. A filter that rejects everything
+    satisfies "the second patient is absent" on its own, and a filter
+    that rejects nothing satisfies "the first patient is present".
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+    first, second = _write_two_patient_waveform_fixture(src)
+
+    session = DicomSession(persistence_file=str(tmp_path / "subset.db"))
+    try:
+        session.ingest(str(src))
+        # Precondition: both patients really are in the store, so
+        # neither assertion below can pass on an empty export.
+        assert {p.patient_id for p in session.store.patients} == {first, second}
+
+        everyone = session.export(str(tmp_path / "all"), format="wfdb")
+        only_first = session.export(str(tmp_path / "one"), format="wfdb",
+                                    patient_ids=[first])
+    finally:
+        session.close()
+
+    all_names = {os.path.basename(p) for p in everyone}
+    first_names = {n for n in all_names if n.startswith(f"{first}_")}
+    second_names = {n for n in all_names if n.startswith(f"{second}_")}
+    # The unfiltered export is the control: one record per patient. If
+    # that ever stops holding, the subset comparison below is measuring
+    # something other than the filter.
+    assert len(first_names) == 1, all_names
+    assert len(second_names) == 1, all_names
+
+    written = {os.path.basename(p) for p in only_first}
+    assert written == first_names, (
+        f"patient_ids=[{first!r}] wrote {sorted(written)}, expected "
+        f"{sorted(first_names)}")
+    assert not written & second_names, (
+        f"patient_ids=[{first!r}] leaked {second}'s records: {sorted(written)}")
+
+
+def test_the_wfdb_export_options_are_the_two_the_page_freezes():
+    """The options `WfdbExporter.export` reads are exactly the frozen two.
+
+    Set equality, not membership: `docs/api/stability.md` says the wfdb
+    options *are* `patient_ids` and `include_annotation_text`, so a third
+    option read without being frozen should be red for the same reason a
+    new public `Session` method is.
+
+    Read by AST rather than by grepping the file, because the method's
+    own docstring names both options -- a text search would pass on the
+    documentation of an option the code had stopped reading, which is
+    exactly the accident #396 is about.
+
+    This is the cheap half. The behavioural test above is the one with
+    teeth: an option name can be right while the filter behind it is
+    inverted.
+    """
+    module = ast.parse(
+        (REPO / "isocenter" / "exporters" / "wfdb.py").read_text(encoding="utf-8"))
+
+    export_fn = None
+    for node in module.body:
+        if isinstance(node, ast.ClassDef) and node.name == "WfdbExporter":
+            for member in node.body:
+                if isinstance(member, ast.FunctionDef) and member.name == "export":
+                    export_fn = member
+    assert export_fn is not None, "WfdbExporter.export not found"
+
+    read = set()
+    for node in ast.walk(export_fn):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "options"):
+            continue
+        if node.args and isinstance(node.args[0], ast.Constant):
+            read.add(node.args[0].value)
+
+    assert read == {"patient_ids", "include_annotation_text"}, (
+        f"WfdbExporter.export reads {sorted(read)}; the page freezes "
+        f"patient_ids and include_annotation_text")

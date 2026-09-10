@@ -74,8 +74,13 @@ are `use_compression=True, check_burned_in=False,
 check_reversibility=True, patient_ids=None, show_progress=True,
 subset=None, verify_readback=False`; the `wfdb` options are
 `patient_ids` and `include_annotation_text`. Those option names are
-frozen with the method. `generate_report(format=)` accepts `'markdown'`
-only and raises `ValueError` otherwise.
+frozen with the method: `tests/test_frozen_surface.py` pins the `dicom`
+options through `_export_dicom`'s signature, and
+`tests/test_wfdb_privacy.py` pins the two `wfdb` options -- both that
+they are the only two the exporter reads, and that `patient_ids`
+actually limits what is written.
+`generate_report(format=)` accepts `'markdown'` only and raises
+`ValueError` otherwise.
 
 `lock_identities` took `_patient_obj=None, **kwargs` until 0.9.4; both
 were stripped before the tag rather than frozen, and `verbose` and
