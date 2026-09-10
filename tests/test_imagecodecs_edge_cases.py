@@ -3,6 +3,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 import numpy as np
 from pydicom.dataset import Dataset, FileMetaDataset
+from pydicom.encaps import encapsulate
 from pydicom.uid import UID
 from isocenter import imagecodecs_handler
 
@@ -35,38 +36,48 @@ def test_unsupported_transfer_syntax(mock_dataset):
             imagecodecs_handler.get_pixel_data(mock_dataset)
 
 
-def test_decode_error_handling(mock_dataset):
-    """Test that decode exceptions are caught and raised as RuntimeErrors."""
-    # Use a mock UID to control properties
-    mock_uid = MagicMock(spec=UID)
-    mock_uid.__eq__.side_effect = lambda x: x == JPEGLossless # Allow comparison
-    mock_dataset.file_meta.TransferSyntaxUID = JPEGLossless
+# Even-length on purpose: `encapsulate` pads an odd-length fragment with a
+# trailing null (items must be even, PS3.5 7.5), and a padded payload would
+# make the "handed exactly this" assertions below read `b"chunk\x00"`.
+CHUNK = b"ljpeg_chunk!"
+RLE_CHUNK = b"rle_chunk!"
 
-    # Mock generate_fragments (used by single frame path)
-    with patch('isocenter.imagecodecs_handler.generate_fragments', return_value=[b"chunk"]):
-        # Unconditionally patch the local reference to imagecodecs in the handler
-        with patch('isocenter.imagecodecs_handler.imagecodecs') as mock_ic:
-            mock_ic.ljpeg_decode.side_effect = ValueError("Bad data")
-            with pytest.raises(RuntimeError, match="imagecodecs failed to decode"):
-                imagecodecs_handler.get_pixel_data(mock_dataset)
+
+def test_decode_error_handling(mock_dataset):
+    """A codec exception is wrapped as a RuntimeError, on real bytes.
+
+    The encapsulated `PixelData` is built with `encapsulate()` rather than
+    mocked, because the version of this test that patched
+    `generate_fragments` proved nothing about the arm it names: the real
+    call also raised on `b"fake_pixel_data"`, so it passed whether or not
+    the codec was ever reached (#407).
+    """
+    mock_dataset.file_meta.TransferSyntaxUID = JPEGLossless
+    mock_dataset.PixelData = encapsulate([CHUNK])
+
+    # Unconditionally patch the local reference to imagecodecs in the handler
+    with patch('isocenter.imagecodecs_handler.imagecodecs') as mock_ic:
+        mock_ic.ljpeg_decode.side_effect = ValueError("Bad data")
+        with pytest.raises(RuntimeError, match="imagecodecs failed to decode"):
+            imagecodecs_handler.get_pixel_data(mock_dataset)
+        # The codec saw the fragment alone: had the Basic Offset Table been
+        # joined in front of it, this would be four zero bytes longer.
+        assert mock_ic.ljpeg_decode.call_args[0][0] == CHUNK
 
 def test_rle_lossless_handling(mock_dataset):
     """Test RLE Lossless specific path."""
-    # Mock UID to allow setting is_encapsulated
-    mock_uid = MagicMock()
-    mock_uid.is_encapsulated = True
-    # We need equality check to pass for the handler's if-check
-    mock_uid.__eq__.side_effect = lambda x: x == RLELossless
-
-    mock_dataset.file_meta.TransferSyntaxUID = mock_uid
+    mock_dataset.file_meta.TransferSyntaxUID = RLELossless
+    mock_dataset.PixelData = encapsulate([RLE_CHUNK])
     expected_output = np.zeros((10, 10), dtype=np.uint8)
 
-    with patch('isocenter.imagecodecs_handler.generate_fragments', return_value=[b"rle_chunk"]):
-        with patch('isocenter.imagecodecs_handler.imagecodecs') as mock_ic:
-            mock_ic.rle_decode.return_value = expected_output
-            result = imagecodecs_handler.get_pixel_data(mock_dataset)
-            mock_ic.rle_decode.assert_called_once()
-            assert result is expected_output
+    with patch('isocenter.imagecodecs_handler.imagecodecs') as mock_ic:
+        mock_ic.rle_decode.return_value = expected_output
+        result = imagecodecs_handler.get_pixel_data(mock_dataset)
+        mock_ic.rle_decode.assert_called_once()
+        # #407: the codec is handed the fragment, not the Basic Offset
+        # Table and the fragment joined together.
+        assert mock_ic.rle_decode.call_args[0][0] == RLE_CHUNK
+        assert result is expected_output
 
 def test_multi_frame_handling(mock_dataset):
     """Test multi-frame image decoding logic."""

@@ -930,14 +930,25 @@ class Instance(DicomItem):
                         self.pixel_array = arr
                         # A fresh read from the store or the file: the resident
                         # array now IS what is stored, so it is freeable again
-                        # (#293). Unlike its two siblings above, this clear
-                        # SURVIVES DELETION UNTESTED: reaching it needs a
-                        # transfer syntax pydicom cannot decode and imagecodecs
-                        # can, on an instance whose array has diverged, and
-                        # nothing in the suite constructs that. It is here
-                        # because the two arms above are pinned and a read path
-                        # that disagreed with them about whether a read counts
-                        # as a write would be a second answer to one question.
+                        # (#293). This clear used to say it SURVIVED DELETION
+                        # UNTESTED, because reaching it needs a transfer syntax
+                        # pydicom cannot decode and imagecodecs can, on an
+                        # instance whose array has diverged -- and until #407
+                        # `imagecodecs_handler`'s single-frame arm could not
+                        # decode anything at all, so no such transfer syntax
+                        # existed and nothing in the suite could construct one.
+                        # #407 fixed that arm, and the sequence is now pinned by
+                        # tests/test_single_frame_encapsulated_decode.py::
+                        # test_the_imagecodecs_fallback_reads_a_frame_pydicom_cannot:
+                        # a 16-bit multi-sample JPEG 2000 file (Pillow refuses
+                        # it, imagecodecs reads it bit-exactly), then
+                        # `set_pixel_data` -> `discard_pixel_data` ->
+                        # `get_pixel_data`, and `unload_pixel_data()` must come
+                        # back True. Delete this line and that last assertion
+                        # goes red. It is here, as it always was, because the
+                        # two arms above are pinned and a read path that
+                        # disagreed with them about whether a read counts as a
+                        # write would be a second answer to one question.
                         self._pixel_array_unwritten = False
                         return self.pixel_array
                 except (ImportError, AttributeError, RuntimeError):

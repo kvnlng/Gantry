@@ -3428,6 +3428,21 @@ class _J2kFrameRefusal(RuntimeError):
 #: library can read back, which is the same standard the 32-bit cell is
 #: judged by. A deny-list would have had to anticipate both cells, and
 #: would have anticipated neither.
+#:
+#: **#407 does not move the `(2, True)` cell, and the reason is worth
+#: reading before deleting it.** #407 fixed `imagecodecs_handler`'s
+#: single-frame decode (it had been joining the Basic Offset Table into
+#: the codestream), so `Instance.get_pixel_data()`'s imagecodecs fallback
+#: **does** now read a 16-bit multi-sample J2K frame back bit-exactly.
+#: That is one door, and it is not the one this rule is about.
+#: `ingest_worker` reads pixels through `_decode_pixels`, which is
+#: `get_decoder(ts).as_array(ds)` -- pydicom's own backend, whose only
+#: JPEG 2000 plugin here is Pillow, and which has no imagecodecs
+#: fallback. Measured at #407: `session.ingest()` on such a file still
+#: returns `ingested=0` with a `Decompression Failed` row. The round trip
+#: this rule is about is export -> ingest, and it is still broken.
+#: Widening the cell means giving `_decode_pixels` a fallback, which is
+#: #416 -- a capability decision, not a change to this frozenset.
 _J2K_ENCODABLE_FRAMES = frozenset({
     (1, False),
     (1, True),

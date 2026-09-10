@@ -1,7 +1,7 @@
 import sys
 import numpy as np
 from pydicom.uid import UID
-from pydicom.encaps import generate_fragments, generate_frames
+from pydicom.encaps import generate_frames
 IMPORT_ERROR = None
 try:
     import imagecodecs
@@ -140,7 +140,37 @@ def get_pixel_data(ds):
         # Single-Frame Handling
         else:
             if ds.file_meta.TransferSyntaxUID.is_encapsulated:
-                codestream = b"".join(generate_fragments(pixel_bytes))
+                # `generate_fragments` yields EVERY item of the
+                # encapsulated pixel data, and the first item is the
+                # Basic Offset Table (PS3.5 A.4). Joining them therefore
+                # prefixed the codestream with the BOT's own bytes -- four
+                # zeros ahead of `ff4f ff51` for a single-frame file --
+                # and `imagecodecs` refused the result with `not a J2K or
+                # JP2 data stream`, so this arm had never decoded
+                # anything. It failed identically on the JP2 container
+                # this project wrote before #404, so it is not that
+                # container's fault and predates it (#407).
+                #
+                # Only a *populated* offset table breaks the join, which
+                # is why nothing noticed: with an empty table the join is
+                # accidentally correct. `pydicom.encaps.encapsulate`
+                # writes a populated one by default and `_compress_j2k`
+                # calls it that way, so every file this project
+                # compresses hit it -- and a hand-built
+                # `item(b"") + item(codestream)` fixture would pass
+                # without this fix.
+                #
+                # `generate_frames` is what the multi-frame arm above
+                # already uses, and it is the right answer here for a
+                # second reason as well as the BOT: one frame may legally
+                # be split across several fragments, so "take the last
+                # fragment" would decode the tail of such a frame.
+                frames = list(generate_frames(pixel_bytes,
+                                              number_of_frames=1))
+                if not frames:
+                    raise RuntimeError(
+                        "encapsulated PixelData holds no frame")
+                codestream = frames[0]
             else:
                 codestream = pixel_bytes
 
