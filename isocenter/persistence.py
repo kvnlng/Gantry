@@ -3511,6 +3511,41 @@ class SqliteStore:
             if (getattr(inst, '_pixel_hash', None) == digest
                     and isinstance(loader, SidecarPixelLoader)):
                 inst._pixel_hash = digest
+                # The bytes are the loader's bytes; the DESCRIPTORS may
+                # not be. `SidecarPixelLoader.__init__` snapshots rows,
+                # columns, samples, frames, BitsAllocated,
+                # PixelRepresentation and the `_ISOCENTER_PIXEL_DTYPE`
+                # carrier at construction and rebuilds every frame from
+                # that snapshot, so a `set_pixel_data()` that changes only
+                # the *type* of the pixels -- a `float32` frame handed
+                # back as `int32`, an unsigned frame as signed -- leaves
+                # the bytes bit-identical, hits this dedup, and is written
+                # off by a commit that never re-read the instance. The
+                # loader then rebuilds the frame under the superseded
+                # dtype, and because the export picks its pixel container
+                # from `arr.dtype.kind` (`_export_instance_worker`'s
+                # `arr.dtype.kind == 'f'` test) rather than from
+                # `attributes`, a float instance whose pixels were
+                # replaced with integers exported as `FloatPixelData`
+                # beside an audit row reading `wrote 1 of 1` (#406).
+                #
+                # Rebuilt, not patched: the same window is open on every
+                # field the snapshot holds, geometry included -- a
+                # replacement of the same byte length at a new
+                # Rows/Columns reloads at the old shape, measured. One
+                # rebuild answers all eight; a `loader.pixel_dtype = ...`
+                # answers one and leaves the rest.
+                #
+                # This sits *above* the revision guard below, so it reads
+                # `inst.attributes` as they are now rather than as they
+                # were at the caller's capture. That is pre-existing and
+                # harmless: a moved revision leaves the instance dirty
+                # against the capture, the next save rebuilds again from
+                # the same source, and the offsets handed back are the
+                # loader's own, so nothing is poisoned.
+                inst._pixel_loader = self._create_pixel_loader(
+                    loader.offset, loader.length, loader.alg, inst,
+                    pixel_hash=digest)
                 # These exact bytes are already in the sidecar and the
                 # loader already points at them, so the resident array
                 # is recoverable and freeable again (#293).
