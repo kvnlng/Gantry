@@ -14,14 +14,20 @@ dotted module name anywhere in a test file. Naming one here would charge
 this file to every one of that module's mutants for no kill signal.
 
 **What this file deliberately does not test.** The child's pixel
-hydration. `analyze_pixels` returns before `instance.get_pixel_data()`
-when `pixel_analysis.HAS_OCR` is false, which it is on both local gate
-interpreters (neither has `pytesseract`) and is *not* in CI, which
-installs the `ocr` extra and the tesseract binary. A test whose result
-depends on real OCR passes for different reasons in the two places,
-which is the definition of an unreliable pin. The process boundary is
-covered instead by an explicit pickle round-trip, which is deterministic
-everywhere.
+hydration. Neither local gate interpreter has `pytesseract`, and CI
+installs the `ocr` extra and the tesseract binary, so a test whose
+result depends on real OCR passes for different reasons in the two
+places, which is the definition of an unreliable pin. The facade tests
+therefore patch `analyze_pixels` out entirely, and the process boundary
+is covered instead by an explicit pickle round-trip, which is
+deterministic everywhere.
+
+**Why the facade tests take `ocr_present`.** Since #422 the facade
+refuses before reading the graph when OCR cannot run, which it cannot on
+either local interpreter. `ocr_present` (in `conftest.py`) patches both
+`HAS_OCR` and `pytesseract` itself: the refusal probes the binary through
+the latter, so patching only the flag would be red here and green in CI.
+The refusal itself is pinned in `tests/test_ocr_unavailable_refuses.py`.
 """
 import pickle
 from datetime import date
@@ -183,7 +189,8 @@ def test_the_worker_scans_an_instance_that_crossed_a_pickle():
     assert session_module._verify_worker((None, None, [])) == []
 
 
-def test_the_facade_dispatches_its_worker_and_applies_its_four_filters(tmp_path):
+def test_the_facade_dispatches_its_worker_and_applies_its_four_filters(
+        tmp_path, ocr_present):
     """T-394b: exactly the configured series reach the pool.
 
     Four arms, each with two instances so a count can tell them apart:
@@ -227,7 +234,7 @@ def test_the_facade_dispatches_its_worker_and_applies_its_four_filters(tmp_path)
     assert {f.entity_uid for f in report} == set(scanned)
 
 
-def test_the_serial_number_argument_narrows_the_scan(tmp_path):
+def test_the_serial_number_argument_narrows_the_scan(tmp_path, ocr_present):
     """T-394c: `scan_pixel_content(serial_number=)` filters, and filters *down*.
 
     Both calls are asserted. Asserting only the narrowed one is green on
@@ -254,7 +261,7 @@ def test_the_serial_number_argument_narrows_the_scan(tmp_path):
 
 
 def test_a_session_with_no_configured_equipment_scans_nothing_and_says_so(
-        tmp_path, capsys):
+        tmp_path, capsys, ocr_present):
     """T-394d: the empty path returns an empty report and counts the skips."""
     session = _session_with(
         tmp_path, "empty", [_series("SE_1", 1, None, ["1.1", "1.2", "1.3"])], [])

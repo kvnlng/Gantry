@@ -185,7 +185,7 @@ def test_the_warning_does_not_name_a_knob_the_operator_did_not_set(
 
 
 def test_the_warning_fires_once_for_a_whole_session_of_passes(
-        monkeypatch, caplog):
+        monkeypatch, caplog, ocr_present):
     """Once per `redact()` call, not once per `run_parallel`.
 
     #185's warning fires on every parallel pass in the process when both

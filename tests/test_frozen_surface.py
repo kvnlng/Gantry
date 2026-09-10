@@ -602,8 +602,12 @@ def test_the_two_pass_behaviours_are_stated_as_contract():
     Weak by design: it pins that the promise is *stated* in the three
     docstrings, as the #368 CHANGELOG entry says it is; the behaviour
     itself is pinned by `tests/test_compact_refuses_during_a_pass.py`.
+    The #422 OCR refusal is held to the same standard in the `Raises:`
+    of `scan_pixel_content` and `discover_redaction_zones`; its
+    behaviour is pinned by `tests/test_ocr_unavailable_refuses.py`.
     """
-    for name in ("compact", "redact", "ingest"):
+    for name in ("compact", "redact", "ingest",
+                 "scan_pixel_content", "discover_redaction_zones"):
         doc = inspect.getdoc(getattr(DicomSession, name)) or ""
         assert "RuntimeError" in doc, f"Session.{name}'s docstring does not name RuntimeError"
     assert "pass" in inspect.getdoc(DicomSession.compact)

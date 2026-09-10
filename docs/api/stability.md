@@ -17,7 +17,9 @@ one; they exist so a reader can see the seams, not so a program can
 lean on them. **Private (tier 3)** names — everything with a leading
 underscore, and every module not listed below — may change without
 notice. Optional extras (`ocr`, `nlp`) degrade to the documented
-fallback; the fallback is frozen, the extra's internals are not.
+fallback; the fallback is frozen, the extra's internals are not. For
+`ocr`, the fallback of `scan_pixel_content()` and
+`discover_redaction_zones()` is a `RuntimeError` (see Exceptions).
 
 ## Frozen at 1.0
 
@@ -152,7 +154,11 @@ folder=None)`, a `RuntimeError`, raised last and only when zero of N
 reached disk. `compact()` raises `RuntimeError` while a pass is open
 (below); `redact()` raises `RuntimeError` on a `:memory:` store when
 the environment asks for worker recycling, after the persistence
-drain and before any work is done (#400). `ValueError` from
+drain and before any work is done (#400). `scan_pixel_content()` and
+`discover_redaction_zones()` raise `RuntimeError` when the `ocr` extra
+or the `tesseract` binary is unavailable to the calling process, before
+any worker is dispatched and before either method reads the graph
+(#422). `ValueError` from
 `generate_report` on an unknown format.
 
 **Environment.** Every `ISOCENTER_*` name in
@@ -257,7 +263,8 @@ in a 1.x release with a CHANGELOG entry naming both spellings:
   `RedactionVerifier` (`__init__`, `get_matching_rule`, `is_covered`,
   `verify_instance`), `ConfigAutomator.suggest_config_updates`,
   `pixel_analysis.analyze_pixels`, `pixel_analysis.detect_text_regions`,
-  `pixel_analysis.HAS_OCR`; `DiscoveryResult.get_density_matrix`,
+  `pixel_analysis.HAS_OCR`, `pixel_analysis.OcrUnavailableError`;
+  `DiscoveryResult.get_density_matrix`,
   `visualize_heatmap`, `analyze_temporal_stability`, `inspect_clusters`.
 - **`DicomExporter.write_tree()`** (the serializer alone, used by the
   fixture generators) and the exporter registry `Exporter`,

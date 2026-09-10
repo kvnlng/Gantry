@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from dataclasses import dataclass
 import logging
 import pydicom
@@ -20,7 +20,11 @@ from PIL import Image
 try:
     import pytesseract
     HAS_OCR = True
-except ImportError:
+    #: Why `import pytesseract` failed, or `None` when it did not. Bound on
+    #: both arms: `_ocr_unavailable_reason()` reads it on every machine,
+    #: including CI's, which has pytesseract.
+    _OCR_IMPORT_ERROR = None
+except ImportError as _exc:
     # Bind the name anyway, as isocenter/imagecodecs_handler.py does. OCR is
     # a supported optional configuration, not an edge case, and a module
     # attribute that exists only sometimes is a trap for anything that
@@ -28,9 +32,75 @@ except ImportError:
     # AttributeError rather than skipping.
     pytesseract = None
     HAS_OCR = False
-    logger.warning(
-        "pytesseract not installed. OCR features are disabled; "
-        "install with `pip install isocenter[ocr]`.")
+    _OCR_IMPORT_ERROR = str(_exc)
+    # No warning here, deliberately (#422). One used to fire at import --
+    # once on `from isocenter import Session`, then again in every
+    # spawned worker, where OCR is never used -- while the thread-pooled
+    # `discover_redaction_zones()`, which does use it, printed nothing.
+    # The methods that need OCR now refuse with the reason, this import
+    # error included, so the signal lands where it can be acted on.
+
+
+class OcrUnavailableError(RuntimeError):
+    """OCR was asked for and cannot run; nothing was scanned (#422).
+
+    Raised by `Session.scan_pixel_content()` and
+    `Session.discover_redaction_zones()` before any worker is dispatched,
+    when `pytesseract` does not import or the `tesseract` binary does not
+    answer. The frozen promise is `RuntimeError`; this subclass is tier 2,
+    and exists so a script that treats OCR as optional can catch "OCR is
+    missing" by name without matching message text, which is not frozen.
+    `HAS_OCR` cannot answer that question: it does not cover the binary.
+    """
+
+
+def _ocr_unavailable_reason() -> Optional[str]:
+    """`None` when OCR can run, otherwise why it cannot.
+
+    "Can run" includes the binary. `HAS_OCR` means only that pytesseract
+    imported, and a machine that ran `pip install` but not `brew install`
+    has that and still reads nothing: measured before #422, 0 findings
+    and 0 candidates behind one `OCR failed` ERROR per frame.
+
+    Reads the module globals at call time, so `patch.object` on this
+    module reaches it; a caller that copied `HAS_OCR` at import would not
+    see the patch, or a later install.
+    """
+    if not HAS_OCR:
+        return f"pytesseract could not be imported ({_OCR_IMPORT_ERROR})"
+    try:
+        pytesseract.get_tesseract_version()
+    # Broad on purpose, and no broader. The probe's only question is
+    # "can OCR run", and pytesseract answers a too-old or unparseable
+    # binary with `SystemExit`, not an Exception -- letting that through
+    # would exit the caller's script from inside a scan. `BaseException`
+    # would also swallow KeyboardInterrupt, which is not an answer.
+    except (Exception, SystemExit) as exc:  # pylint: disable=broad-exception-caught
+        return ("pytesseract is installed but the tesseract binary is "
+                f"unusable ({exc})")
+    return None
+
+
+def _require_ocr(operation: str) -> None:
+    """Raise `OcrUnavailableError` naming `operation` unless OCR can run.
+
+    Called first thing by both Session methods that need OCR, before they
+    read the graph: "this method needs OCR" holds whatever the graph
+    contains, and a scaffolded config would otherwise answer "nothing to
+    scan" without OCR and surface the missing extra only later.
+    """
+    reason = _ocr_unavailable_reason()
+    if reason is None:
+        return
+    raise OcrUnavailableError(
+        f"{operation} needs OCR and OCR is unavailable: {reason}. "
+        "Nothing was scanned.\n"
+        # Quoted: zsh globs unquoted brackets and answers
+        # `zsh: no matches found: isocenter[ocr]`.
+        'Install the extra with: pip install "isocenter[ocr]"\n'
+        "and the tesseract binary: brew install tesseract (macOS) / "
+        "apt-get install tesseract-ocr (Debian/Ubuntu).")
+
 
 @dataclass
 class TextRegion:
@@ -109,7 +179,10 @@ def detect_text_regions(pixel_data: np.ndarray, frame_idx: int = 0) -> List[Text
         frame_idx (int): The frame index associated with this data.
 
     Returns:
-        List[TextRegion]: Detected text regions.
+        List[TextRegion]: Detected text regions. Also `[]` when OCR is
+        unavailable, so `[]` here does not mean "no text";
+        `Session.scan_pixel_content()` and `discover_redaction_zones()`
+        check first and refuse instead (#422).
     """
     regions = []
     if not HAS_OCR:
@@ -172,6 +245,10 @@ def analyze_pixels(instance: Instance) -> List[TextRegion]:
     Analyzes the pixel data of a DICOM Instance for burned-in text.
     Returns list of TextRegion objects (raw findings, not filtered).
     Caller is responsible for filtered results.
+
+    Also returns `[]` when OCR is unavailable, which is not "no text":
+    the Session methods that call this check first and refuse instead
+    (#422).
     """
     all_regions = []
 

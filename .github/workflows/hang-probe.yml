@@ -162,7 +162,9 @@ jobs:
       # same suite the gate runs.
       #
       # pytesseract is a wrapper; the OCR itself is a system binary pip
-      # cannot supply. Without it `pixel_analysis.HAS_OCR` is False and
+      # cannot supply. Without it `pixel_analysis.HAS_OCR` is still True
+      # (it means only that pytesseract imported), but the OCR probe
+      # (`pixel_analysis._ocr_unavailable_reason()`, #422) fails and
       # tests/test_discovery_integration.py skips -- which is how that
       # test went unrun for months while the suite looked healthy (#44).
       # A skip caused by a missing system package is indistinguishable
@@ -193,8 +195,11 @@ jobs:
         # setup.py is the single source of truth for dependencies; there is
         # deliberately no requirements.txt to drift from it.
         # `ocr` is installed here but stays an optional extra for users:
-        # the graceful-degradation path is covered by patching HAS_OCR
-        # (tests/test_pixel_analysis.py), not by leaving it uninstalled.
+        # the no-OCR paths are covered by patching, not by leaving it
+        # uninstalled: the tier-2 degradation by patching HAS_OCR
+        # (tests/test_pixel_analysis.py), and the Session methods'
+        # refusal by patching HAS_OCR and pytesseract together
+        # (tests/test_ocr_unavailable_refuses.py, #422).
         pip install -e ".[tests,ocr]"
 
     - name: Loop the suite until it hangs or the budget runs out

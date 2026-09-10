@@ -29,7 +29,7 @@ The behaviours that matter most are refusals, so they come first.
 - **Object model.** `Patient`, `Study`, `Series`, and `Instance` objects over pydicom, with attributes keyed by tag. Pixel and waveform data load lazily and can be released.
 - **Persistent session.** Metadata is indexed in SQLite and heavy bytes in an append-only sidecar, so a 10,000-instance cohort reopens without rescanning, and a job can be paused and resumed. Every action is written to an audit log.
 - **Protocol-conformant de-identification.** A profile decides which tags go, are replaced, or are date-shifted; a field the protocol permits stays. PHI detection walks nested sequences structurally, not only the top level. Date jitter is deterministic per patient so intervals survive.
-- **Machine-specific pixel redaction.** Redaction zones are keyed by device, because the same model in the same room burns identifiers into the same place every time. An optional OCR pass (`pip install isocenter[ocr]`) finds where text actually lands, and existing CTP `DicomPixelAnonymizer.script` rules import directly.
+- **Machine-specific pixel redaction.** Redaction zones are keyed by device, because the same model in the same room burns identifiers into the same place every time. An optional OCR pass (`pip install "isocenter[ocr]"`) finds where text actually lands, and existing CTP `DicomPixelAnonymizer.script` rules import directly.
 - **Reversible anonymization, if you choose it.** Original identities can be encrypted under a Fernet key and stored in a private tag before anonymization, and recovered later by whoever holds the key. The export discloses when recoverable identities are present.
 - **Codecs.** JPEG Lossless, JPEG 2000, JPEG-LS, RLE, and baseline JPEG, through `imagecodecs`, with strict validation on the way out.
 - **Waveforms.** DICOM waveform IODs (ECG, hemodynamic) ingest alongside images and export as PhysioNet WFDB records, with a `<record>.annotations.json` bridge to [Murmur Studio](https://github.com/kvnlng/Murmur).
@@ -225,9 +225,12 @@ OCRs a random sample of one machine's instances and reports where text was found
 so you can write redaction zones from what the data actually does rather than from
 one screenshot.
 
-The scan itself needs the `ocr` extra (`pip install isocenter[ocr]`, which brings
-`pytesseract`; `isocenter.pixel_analysis.HAS_OCR` reports whether it is available).
-Without it there is nothing to read the pixels with and the scan finds nothing.
+The scan itself needs the `ocr` extra (`pip install "isocenter[ocr]"`, which brings
+`pytesseract`) and the `tesseract` binary, which pip cannot install. Without either,
+`discover_redaction_zones()` raises `OcrUnavailableError`, a `RuntimeError`, naming
+what is missing, instead of reporting that it found nothing; `scan_pixel_content()`
+does the same. `isocenter.pixel_analysis.HAS_OCR` reports only whether `pytesseract`
+imported, not whether the binary is there.
 Everything on the returned `DiscoveryResult` — filtering, the DataFrame, the zone
 grouping — is plain Python and needs no extra.
 

@@ -252,6 +252,39 @@ def redirect_logging(tmp_path):
     if "ISOCENTER_LOG_FILE" in os.environ:
         del os.environ["ISOCENTER_LOG_FILE"]
 
+
+@pytest.fixture
+def ocr_present(monkeypatch):
+    """OCR that can run, whatever this interpreter has installed (#422).
+
+    `scan_pixel_content()` and `discover_redaction_zones()` refuse up
+    front when OCR cannot run, so a test that wants either one to reach
+    its pool has to say OCR is present. **Patching `HAS_OCR` alone is not
+    enough, and the failure is an environment divergence rather than a
+    red test:** the refusal also probes the tesseract binary through
+    `pixel_analysis.pytesseract.get_tesseract_version()`, and locally
+    `pytesseract` is `None` (neither gate interpreter has it) while CI
+    installs the real one. A test patching only the flag goes red here and
+    stays green there.
+
+    `image_to_data` answers with no text, so a test that lets the real
+    `analyze_pixels` run sees zero regions rather than an `OCR failed`
+    ERROR per frame. Tests that need regions patch `analyze_pixels`
+    itself. Threads only: `monkeypatch` does not cross a process boundary.
+    """
+    from types import SimpleNamespace
+    from isocenter import pixel_analysis
+    stub = SimpleNamespace(
+        get_tesseract_version=lambda: "5.5.3",
+        image_to_data=lambda *a, **k: {"text": [], "conf": [], "left": [],
+                                       "top": [], "width": [], "height": []},
+        Output=SimpleNamespace(DICT="dict"),
+    )
+    monkeypatch.setattr(pixel_analysis, "HAS_OCR", True)
+    monkeypatch.setattr(pixel_analysis, "pytesseract", stub)
+    return stub
+
+
 @pytest.fixture
 def dummy_pixel_array_2d():
     """A signed frame, deliberately: `int16` is CT and MR.

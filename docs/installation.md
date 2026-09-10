@@ -45,8 +45,15 @@ brew install tesseract        # macOS
 apt-get install tesseract-ocr # Debian/Ubuntu
 ```
 
-Without it, `isocenter.pixel_analysis` sets `HAS_OCR = False` and the rest
-of Isocenter works normally — OCR-dependent features are simply skipped.
+Without the extra or the binary the rest of Isocenter works normally, but
+the two methods that read burned-in text — `scan_pixel_content()` and
+`discover_redaction_zones()` — raise `OcrUnavailableError`, a
+`RuntimeError`, naming what is missing, before they scan anything. The
+check is made in the calling process, before the scan starts. A frame
+whose OCR fails after it passes — for example in a worker process that
+cannot find a binary the caller could — is still logged and not reported
+(#423). `isocenter.pixel_analysis.HAS_OCR` is `False` when `pytesseract`
+did not import; it does not check the binary.
 
 !!! note
     The `imagecodecs` dependency is included and strongly recommended for handling JPEG Lossless and other compressed Transfer Syntaxes.
