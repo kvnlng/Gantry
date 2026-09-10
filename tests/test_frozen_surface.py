@@ -301,6 +301,72 @@ def _report_exception_categories():
     return found
 
 
+#: One row of `docs/api/stability.md`'s Session table: a backticked
+#: method name and a backticked parameter list, or `—` for none. Shared
+#: by `_signature_rows` and `_unrecognised_table_lines` so that what the
+#: parser reads and what the companion accepts cannot drift apart.
+_SIGNATURE_ROW = re.compile(r"^\| `(\w+)` \| (?:`([^`]*)`|—) \|$", re.MULTILINE)
+
+#: The two table lines that are not rows, spelled literally: a changed
+#: header is a changed table, and should be red until someone reads it.
+_SIGNATURE_TABLE_FRAME = ("| Method | Parameters |", "| --- | --- |")
+
+
+def _frozen_section(page: str) -> str:
+    """The page from `## Frozen at 1.0` to the next `## ` heading.
+
+    Fails rather than returning `""` when the heading is gone: a renamed
+    section would otherwise hand every caller an empty string, and an
+    empty string has no unrecognised lines in it.
+    """
+    heading = "## Frozen at 1.0"
+    assert heading in page, f"stability.md has no {heading!r} section"
+    section = page.split(heading, 1)[1]
+    return section.split("\n## ", 1)[0]
+
+
+def _unrecognised_table_lines(page: str) -> list:
+    """Every pipe-table line in the frozen section `_SIGNATURE_ROW` cannot read.
+
+    **The companion to `_signature_rows`, and the fix for #415.** The
+    regex is also the definition of a row, so a row it does not match is
+    not a failure, it is nothing: `| `save` | sync=True |` placed above
+    the true row -- parameters unbackticked -- left this file green while
+    the published page showed a `save` signature no test had read
+    (measured on 0.9.5). The same holds for a trailing space, an
+    unbackticked method name, and an indented row. Here any line that
+    looks like a table line and is neither the header, the separator,
+    nor a row the parser reads is reported, so the next formatting
+    variant fails loud as well as this one.
+
+    Leading whitespace is stripped only to *find* the line; the match is
+    on the line as written, so an indented row is reported, not read.
+
+    Rejected: a structural parser splitting on `|`. It would read this
+    row, but it would also silently normalise the next variant, which
+    is the failure this function exists to prevent.
+    """
+    return [line for line in _frozen_section(page).splitlines()
+            if line.lstrip().startswith("|")
+            and line not in _SIGNATURE_TABLE_FRAME
+            and not _SIGNATURE_ROW.fullmatch(line)]
+
+
+def _output_vocabulary_block(page: str) -> str:
+    """The page from `**Output vocabularies.**` to the next bold lead-in or heading.
+
+    Bounded at whichever of `\\n**` and `\\n## ` comes first, so the
+    block cannot run on into the next section, where a backticked
+    frozen word would be a second mention for the wrong reason. Fails
+    rather than returning `""` when the lead-in is gone.
+    """
+    lead = "**Output vocabularies.**"
+    assert lead in page, f"stability.md has no {lead!r} block"
+    block = page.split(lead, 1)[1]
+    ends = [i for i in (block.find("\n**"), block.find("\n## ")) if i != -1]
+    return block[:min(ends)] if ends else block
+
+
 def _signature_rows(page: str) -> dict:
     """`docs/api/stability.md`'s Session table as `name -> params`.
 
@@ -317,7 +383,7 @@ def _signature_rows(page: str) -> dict:
     Row *order* stays unpinned: the comparison is a dict and the page
     claims no order, so two swapped rows are green and correctly so.
     """
-    pairs = re.findall(r"^\| `(\w+)` \| (?:`([^`]*)`|—) \|$", page, re.MULTILINE)
+    pairs = _SIGNATURE_ROW.findall(page)
     names = [name for name, _ in pairs]
     duplicated = sorted({n for n in names if names.count(n) > 1})
     assert not duplicated, (
@@ -482,8 +548,22 @@ def test_the_stability_page_names_every_tier_one_session_method():
     for group in (ordered[:3], ordered[3:8], ordered[8:]):
         assert f"`{', '.join(group)}`" in flat, f"stability.md does not list {group} together"
 
-    # The *union* is what is frozen, so the union is what this checks: a
-    # word must appear somewhere on the page, in any of its five bullets.
+    # The *union* is what is frozen, so the union is what this checks:
+    # each word appears **exactly once**, backticked, inside the Output
+    # vocabularies block.
+    #
+    # Not "somewhere on the page", which is what this asked until #415:
+    # `DATA_LOSS` is also named in the Behaviours paragraph, so deleting
+    # it from the list of frozen audit words left this file green
+    # (measured). Scoped to the block, and exactly once within it, a word
+    # dropped from its bullet is red whatever else the page says. One
+    # direction only: the block may backtick more than the freeze (it
+    # names `FAIL` to say there is none).
+    #
+    # The residual, accepted: two coordinated edits -- a second mention
+    # added inside the block, then the one in the list deleted -- stay
+    # green, because the word is still named in the frozen block, which
+    # is what the tag promises.
     #
     # Which bullet a word sits under is prose, and deliberately unpinned.
     # Moving `REMOVE_TAG`/`REPLACE_TAG`/`SHIFT_DATE` back into the audit
@@ -493,8 +573,12 @@ def test_the_stability_page_names_every_tier_one_session_method():
     # but do not read the five bullets as machine-checked: only
     # `_audit_action_types` and `_proposal_action_types` know the
     # difference, and they read the package, not the page.
+    block = _output_vocabulary_block(page)
     for word in sorted(FROZEN_VOCABULARY):
-        assert f"`{word}`" in page, f"stability.md does not list the vocabulary word {word}"
+        assert block.count(f"`{word}`") == 1, (
+            f"stability.md's Output vocabularies block names the frozen word "
+            f"{word} {block.count(f'`{word}`')} times, backticked; it must "
+            f"name it exactly once")
 
     nav = (REPO / "mkdocs.yml").read_text(encoding="utf-8")
     assert "api/stability.md" in nav, "docs/api/stability.md is not in mkdocs.yml's nav"
@@ -518,6 +602,51 @@ def test_a_duplicate_signature_row_is_not_silently_collapsed():
     duplicated = "| `save` | `wrong=True` |\n| `save` | `sync=False` |\n"
     with pytest.raises(AssertionError, match="repeats"):
         _signature_rows(duplicated)
+
+
+def test_every_pipe_line_in_the_frozen_section_is_a_recognised_row():
+    """#415: the Session table holds nothing `_signature_rows` did not read.
+
+    The live page, whole: `_signature_rows` is what compares the rows to
+    the pins, and this is what says there was nothing else to compare.
+    Killing mutation: `| `save` | sync=True |` inserted above the true
+    row, which T-F4 alone reads past (#415, measured on 0.9.5).
+    """
+    page = (REPO / "docs" / "api" / "stability.md").read_text(encoding="utf-8")
+    assert _unrecognised_table_lines(page) == [], (
+        "stability.md's frozen section has table lines the signature parser "
+        "cannot read, so no test checked what they say")
+
+
+def test_an_unrecognised_row_is_reported_not_skipped():
+    """#415: the companion flags what the parser skips, and only that.
+
+    Two halves, the #401 shape. The bad half alone is satisfied by a
+    helper that flags every line; the clean half alone by one that flags
+    nothing. The clean table carries the frame lines and a `—` row, so
+    a helper that forgot either exception is red here too.
+    """
+    heading = "## Frozen at 1.0\n\n"
+    clean = (heading + "| Method | Parameters |\n| --- | --- |\n"
+             "| `save` | `sync=False` |\n| `close` | — |\n\n## Next\n")
+    assert _unrecognised_table_lines(clean) == []
+
+    bad_row = "| `save` | sync=True |"
+    bad = clean.replace("| `save` | `sync=False` |",
+                        f"{bad_row}\n| `save` | `sync=False` |", 1)
+    assert _signature_rows(bad) == {"save": "sync=False", "close": ""}, (
+        "the parser read the unbackticked row; this test's premise is gone")
+    assert _unrecognised_table_lines(bad) == [bad_row]
+
+    # Indented: found despite the indent, and reported rather than read.
+    indented = clean.replace("| `close` | — |", "  | `close` | — |", 1)
+    assert _unrecognised_table_lines(indented) == ["  | `close` | — |"]
+
+    # Outside the frozen section is outside the promise.
+    assert _unrecognised_table_lines(clean + f"{bad_row}\n") == []
+
+    with pytest.raises(AssertionError, match="Frozen at 1.0"):
+        _unrecognised_table_lines(clean.replace("Frozen at 1.0", "Frozen"))
 
 
 def test_the_audit_action_types_written_are_exactly_the_frozen_nine():
