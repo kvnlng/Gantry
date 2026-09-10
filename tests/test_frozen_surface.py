@@ -314,10 +314,14 @@ def _audit_action_types():
     rather than trusting the anchor: an alias (`rows = audit_buffer`), a
     method other than `.append` (`.extend`), `+=`, or a slice write all
     raise, and so does the name vanishing from the package altogether.
-    Each of those survived before (PR #430). The residual, accepted:
-    the buffer handed to a helper whose parameter has another name. The
-    two callees that take it today both call their parameter
-    `audit_buffer`.
+    Each of those survived before (PR #430). The buffer may be handed
+    only to `len()` and to the three callees in `_AUDIT_BUFFER_CALLEES`,
+    matched by name. The residual, accepted, is exactly what a callee
+    does with it out of this collector's sight: a method by one of
+    those names whose parameter is not called `audit_buffer` (today
+    both remediation methods call it that, so their appends are read),
+    and `log_audit_batch` itself, which writes the tuples it is given
+    and is not read here.
 
     Remediation passes its words through a local variable and a module
     constant, not a literal. Until #411 this collector read literals
@@ -361,8 +365,10 @@ def _audit_buffer_words(tree, constants, parents, rel):
 
     - `audit_buffer.append((WORD, ...))`, which is read;
     - `audit_buffer = []`, the initialiser;
-    - a plain argument to a call, `len(audit_buffer)` included: handed
-      to a callee, which is the accepted residual Pin A names;
+    - an argument to `len()` or to one of `_AUDIT_BUFFER_CALLEES`
+      (`log_audit_batch`, `_apply_single_remediation`,
+      `_record_decline`), positional or keyword -- the accepted
+      residual Pin A names;
     - `audit_buffer is None` / `is not None`;
     - a truth test that is the `test` of an `if`/`while`, directly or
       through `and`/`or`/`not` -- `if self.store_backend and
@@ -397,9 +403,28 @@ def _audit_buffer_words(tree, constants, parents, rel):
             raise AssertionError(
                 f"audit_buffer at {where} is used as "
                 f"{ast.unparse(parent)!r}, which is not on Pin A's "
-                f"allow-list (append a tuple, `= []`, a call argument, "
-                f"`is (not) None`, an if/while truth test)")
+                f"allow-list (append a tuple, `= []`, an argument to len() or "
+                f"{sorted(_AUDIT_BUFFER_CALLEES)}, `is (not) None`, an "
+                f"if/while truth test)")
     return found, sites
+
+
+#: The calls the package hands `audit_buffer` to today, enumerated from
+#: the tree: `len()` reads it, `log_audit_batch` writes its tuples, and
+#: the two remediation methods take it as a parameter *named*
+#: `audit_buffer`, so their own appends are read here too. "Any call"
+#: was the first version, and `list.append(audit_buffer, ("WORD", ...))`
+#: -- an append this collector does not read -- survived on both
+#: interpreters (PR #430).
+_AUDIT_BUFFER_CALLEES = {
+    "log_audit_batch", "_apply_single_remediation", "_record_decline"}
+
+
+def _a_listed_buffer_callee(call):
+    if isinstance(call.func, ast.Name) and call.func.id == "len":
+        return True
+    return (isinstance(call.func, ast.Attribute)
+            and call.func.attr in _AUDIT_BUFFER_CALLEES)
 
 
 def _an_allowed_audit_buffer_use(node, parent, parents):
@@ -408,9 +433,9 @@ def _an_allowed_audit_buffer_use(node, parent, parents):
         return (isinstance(parent, ast.Assign) and parent.targets == [node]
                 and isinstance(parent.value, ast.List) and not parent.value.elts)
     if isinstance(parent, ast.Call) and node in parent.args:
-        return True
+        return _a_listed_buffer_callee(parent)
     if isinstance(parent, ast.keyword) and isinstance(parents.get(parent), ast.Call):
-        return True
+        return _a_listed_buffer_callee(parents[parent])
     if isinstance(parent, ast.Compare):
         return (all(isinstance(op, (ast.Is, ast.IsNot)) for op in parent.ops)
                 and all(n is node or (isinstance(n, ast.Constant) and n.value is None)
@@ -969,8 +994,9 @@ def apply(self, finding, audit_buffer=None):
         pass
     if audit_buffer is not None:
         audit_buffer.append(("REMEDIATION_REMOVE", 1, 2, None, None))
-    self.record(finding, audit_buffer)
-    self.record(finding, buffer=audit_buffer)
+    self._record_decline(finding, "reason", audit_buffer)
+    self._apply_single_remediation(finding, audit_buffer=audit_buffer)
+    self.store.log_audit_batch(audit_buffer)
     # INSERT
 '''
 
@@ -985,6 +1011,8 @@ def apply(self, finding, audit_buffer=None):
     "audit_buffer[:] = []",
     "same = audit_buffer == []",
     "audit_buffer = list()",
+    'list.append(audit_buffer, ("REMEDIATION_RMV", 1, 2, None, None))',
+    "self.record(finding, buffer=audit_buffer)",
 ])
 def test_the_batch_buffer_is_read_through_an_allow_list(use):
     """`_audit_buffer_words` accepts the package's uses and raises on the rest.
