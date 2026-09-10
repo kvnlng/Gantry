@@ -804,15 +804,18 @@ def test_the_wfdb_export_options_are_the_two_the_page_freezes():
     documentation of an option the code had stopped reading, which is
     exactly the accident #396 is about.
 
-    **What this pins, exactly:** the literal keys read out of `options`
-    by the four forms collected below -- `.get`, `.pop`, subscript, and
-    `in`. It is not "every option the method reads", and cannot be: a key
-    built at runtime, or reached through a helper the walk does not
-    follow, is invisible to any AST collector. That residual is the price
-    of `**options`, and it is why #410 -- that the wfdb path shrugs at an
-    unknown option where the `dicom` path raises -- is the real fix and is
-    filed rather than done here. Do not narrow this back to `.get` alone:
-    that spelling passed while `options["third"]` reached a third option.
+    **What this pins, exactly:** the literal keys touched on `options`
+    by the five forms collected below -- `.get`, `.pop`, `.setdefault`,
+    subscript, and `in`. It is not "every option the method reads", and
+    cannot be: a key built at runtime, or reached through a helper the
+    walk does not follow (`dict(options).get("third")` -- the walk wants
+    `options` itself, not a Call), is invisible to any AST collector. That
+    residual is the price of `**options`, and it is why #410 -- that the
+    wfdb path shrugs at an unknown option where the `dicom` path raises --
+    is the real fix and is filed rather than done here. Do not narrow the
+    list back: `.get` alone passed while `options["third"]` reached a
+    third option, and `.get`/`.pop`/subscript/`in` passed while
+    `options.setdefault("third", None)` did.
 
     This is the cheap half. The behavioural test above is the one with
     teeth: an option name can be right while the filter behind it is
@@ -836,17 +839,25 @@ def test_the_wfdb_export_options_are_the_two_the_page_freezes():
         return (node.value if isinstance(node, ast.Constant)
                 and isinstance(node.value, str) else None)
 
-    # Four ways a `**options` dict is read with a literal key. `.get` was
-    # the only one collected until a reviewer showed that
+    # Five ways a `**options` dict is touched with a literal key. `.get`
+    # was the only one collected until a reviewer showed that
     # `options["third"]` and `options.pop("third", None)` both reached a
     # third option with this test green -- the pin claimed "the options
     # the method reads" while collecting one spelling of reading.
+    # `setdefault` joined on the re-check for the same reason: same shape,
+    # same literal key, one string away from the tuple below. Do not narrow
+    # the tuple back; each name in it was added because its absence let a
+    # third option through green.
+    #
+    # "touched", not "read": `ast.walk` sees a Subscript regardless of its
+    # ctx, so `options["third"] = 1` is collected too. That is deliberate --
+    # injecting an unfrozen key is a change the freeze should notice.
     read = set()
     for node in ast.walk(export_fn):
-        # options.get("k") / options.pop("k")
+        # options.get("k") / options.pop("k") / options.setdefault("k")
         if (isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
-                and node.func.attr in ("get", "pop")
+                and node.func.attr in ("get", "pop", "setdefault")
                 and _is_options(node.func.value)
                 and node.args):
             key = _literal(node.args[0])
