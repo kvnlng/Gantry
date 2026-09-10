@@ -23,6 +23,7 @@ amended for Q7 (`lock_identities` stripped of `_patient_obj` and
 `**kwargs` before the tag). They are literals on purpose: a pin derived
 from the code would be green on any code.
 """
+import ast
 import dataclasses
 import inspect
 import pathlib
@@ -96,14 +97,43 @@ FROZEN_INSTANCE_FIELDS = [
 FROZEN_ALL = ["Session", "Builder", "Equipment", "RedactionError", "ExportError"]
 
 #: Words that reach users through tier-1 outputs (spec Q9): never renamed
-#: or removed in 1.x. Pinned as literals the package still spells.
-FROZEN_ACTION_TYPES = [
+#: or removed in 1.x. These are **three** vocabularies and not one, which
+#: `docs/api/stability.md` had conflated -- and the page's single
+#: category was wrong for four of the thirteen words it listed (#396).
+#: One name per vocabulary; T-F4 reads the union.
+
+#: Written to the audit table, as the `action_type` column, by
+#: `log_audit`. `remediation.py` also writes audit rows, but through a
+#: local variable and a module constant rather than a literal argument,
+#: so its four words are invisible to Pin A by construction. They are
+#: not frozen (#411).
+FROZEN_AUDIT_ACTION_TYPES = {
     "DATA_LOSS", "ERROR", "EXPORT", "RECONCILE_PRIVATE", "REDACTION",
-    "REMOVE_TAG", "REPLACE_TAG", "REVERSIBLE_EXPORT", "RISK", "SCAN_GAP",
-    "SHIFT_DATE", "WARNING", "COMPLIANCE_CHECK",
-]
+    "REVERSIBLE_EXPORT", "RISK", "SCAN_GAP", "WARNING"}
+
+#: `PhiRemediation.action_type` -- what a *proposal* says it will do,
+#: reaching a user through the frozen `PhiFinding.remediation_proposal`.
+#: Never an audit row: acting on one writes `REMEDIATION_REPLACE`,
+#: `REMEDIATION_SHIFT_DATE` or `REMEDIATION_REMOVE` instead.
+FROZEN_PROPOSAL_ACTION_TYPES = {"REMOVE_TAG", "REPLACE_TAG", "SHIFT_DATE"}
+
+#: Report exception categories. Synthesised at report time into the
+#: `exceptions` list; never written to the audit table at all.
+FROZEN_REPORT_EXCEPTIONS = {"COMPLIANCE_CHECK"}
+
+#: What Pin E's collector should find. `AUDIT_DROP` is written beside
+#: `COMPLIANCE_CHECK` and is *not* thereby frozen -- whether it and the
+#: four remediation words should join the freeze at 1.0 is #411. Listing
+#: it here is a statement about the code, not a promise to a user.
+REPORT_EXCEPTION_CATEGORIES_WRITTEN = FROZEN_REPORT_EXCEPTIONS | {"AUDIT_DROP"}
+
 FROZEN_LOSS_SCOPES = ["STANDARD", "PRIVATE", "SIGNAL"]
 FROZEN_GRADES = ["PASS", "REVIEW_REQUIRED"]
+
+#: The union T-F4 requires the page to name.
+FROZEN_VOCABULARY = (
+    FROZEN_AUDIT_ACTION_TYPES | FROZEN_PROPOSAL_ACTION_TYPES
+    | FROZEN_REPORT_EXCEPTIONS | set(FROZEN_LOSS_SCOPES) | set(FROZEN_GRADES))
 
 
 def _spell(method):
@@ -132,6 +162,131 @@ def _spell(method):
                 i + 1 == len(params) or params[i + 1].kind is not kinds.POSITIONAL_ONLY):
             out.append("/")
     return ", ".join(out)
+
+
+def _package_trees():
+    """Every package module, parsed -- **read by path, never imported**.
+
+    Not a style preference. `tests/test_mutation_probe_targets._importers`
+    matches the *text* of a dotted module name anywhere in a test file,
+    comments included, and would drag this file into that module's
+    `TARGETS` row: re-run against every one of its mutants for zero kill
+    signal, and falsifying this file's own docstring. Package modules are
+    named in prose here, or spelled as separate path segments.
+    """
+    for path in sorted((REPO / "isocenter").rglob("*.py")):
+        yield ast.parse(path.read_text(encoding="utf-8"))
+
+
+def _callee_name(call):
+    fn = call.func
+    return fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+
+
+def _string(node):
+    """The value of a `str` constant, or `None` for anything else."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _calls_named(tree, name):
+    return (n for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and _callee_name(n) == name)
+
+
+def _audit_action_types():
+    """Pin A: every `action_type` string constant reaching `log_audit`.
+
+    **Both** ways it is called. Nineteen sites pass it as the keyword;
+    one passes it positionally, and `log_audit(self, action_type, ...)`
+    makes argument 0 the same parameter. Collecting only the keyword form
+    would leave that one site respellable with this pin green -- the M2
+    shape, at the one place a keyword-only collector is not looking.
+    """
+    found = set()
+    for tree in _package_trees():
+        for call in _calls_named(tree, "log_audit"):
+            for kw in call.keywords:
+                if kw.arg == "action_type" and _string(kw.value) is not None:
+                    found.add(_string(kw.value))
+            if call.args and _string(call.args[0]) is not None:
+                found.add(_string(call.args[0]))
+    return found
+
+
+def _proposal_action_types():
+    """Pin B: `action_type` string constants passed to `PhiRemediation`."""
+    found = set()
+    for tree in _package_trees():
+        for call in _calls_named(tree, "PhiRemediation"):
+            for kw in call.keywords:
+                if kw.arg == "action_type" and _string(kw.value) is not None:
+                    found.add(_string(kw.value))
+    return found
+
+
+def _module_tree(*parts):
+    return ast.parse((REPO.joinpath(*parts)).read_text(encoding="utf-8"))
+
+
+def _loss_scope_values():
+    """Pin C: the *values* of the module-level `LOSS_SCOPE_*` assignments.
+
+    The names are deliberately not asserted. That module is tier 3
+    wholesale on `docs/api/stability.md`; what a user reads is the three
+    strings, not the identifiers the package spells them with, so
+    renaming a constant is a green mutation and should be. The prefix
+    dependence is a red-and-update of the `test_source_citations` kind --
+    the cheap price of not pinning a private name.
+    """
+    tree = _module_tree("isocenter", "io_handlers.py")
+    return {_string(node.value)
+            for node in tree.body if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+            and target.id.startswith("LOSS_SCOPE_")
+            and _string(node.value) is not None}
+
+
+def _grade_values():
+    """Pin D: string constants inside a `validation_status=` argument.
+
+    The value is an `IfExp`, so this walks the subtree rather than
+    reading a constant directly.
+    """
+    found = set()
+    for call in (n for n in ast.walk(_module_tree("isocenter", "session.py"))
+                 if isinstance(n, ast.Call)):
+        for kw in call.keywords:
+            if kw.arg != "validation_status":
+                continue
+            for node in ast.walk(kw.value):
+                if _string(node) is not None:
+                    found.add(_string(node))
+    return found
+
+
+def _report_exception_categories():
+    """Pin E: string constants that are direct `Tuple.elts` of an
+    `exceptions.append(...)` argument.
+
+    `ast.walk` is wrong here and would be the over-broad collector this
+    file exists to remove: each of those tuples carries an f-string whose
+    `JoinedStr` parts are `Constant` nodes, so a walk collects `' - '`
+    and a sentence of prose alongside the two categories, and the
+    expected set becomes soup nobody can read. Measured, not guessed.
+    """
+    found = set()
+    for call in (n for n in ast.walk(_module_tree("isocenter", "session.py"))
+                 if isinstance(n, ast.Call) and _callee_name(n) == "append"):
+        target = call.func.value if isinstance(call.func, ast.Attribute) else None
+        if not (isinstance(target, ast.Name) and target.id == "exceptions"):
+            continue
+        for arg in call.args:
+            if isinstance(arg, ast.Tuple):
+                found.update(v for v in map(_string, arg.elts) if v is not None)
+    return found
 
 
 def _signature_rows(page: str) -> dict:
@@ -315,7 +470,7 @@ def test_the_stability_page_names_every_tier_one_session_method():
     for group in (ordered[:3], ordered[3:8], ordered[8:]):
         assert f"`{', '.join(group)}`" in flat, f"stability.md does not list {group} together"
 
-    for word in FROZEN_ACTION_TYPES + FROZEN_LOSS_SCOPES + FROZEN_GRADES:
+    for word in sorted(FROZEN_VOCABULARY):
         assert f"`{word}`" in page, f"stability.md does not list the vocabulary word {word}"
 
     nav = (REPO / "mkdocs.yml").read_text(encoding="utf-8")
@@ -342,18 +497,63 @@ def test_a_duplicate_signature_row_is_not_silently_collapsed():
         _signature_rows(duplicated)
 
 
-def test_the_output_vocabularies_are_still_spelled_by_the_package():
-    """Q9: an existing grade, `action_type` or `loss_scope` string is never renamed.
+def test_the_audit_action_types_written_are_exactly_the_frozen_nine():
+    """Pin A (#396): the words `log_audit` is handed, by AST, both call forms.
 
-    Pinned as quoted literals somewhere under `isocenter/` -- the
-    cheapest honest check that the word the report prints is still the
-    word the code writes. Killing mutation: any of them respelled.
+    **This replaces a grep**, and the replacement is the fix. The old
+    test asked only that each word appear as a quoted literal somewhere
+    under the package -- which a docstring, a comment, a SQL string or a
+    log-level map satisfies. Measured on 0.9.4: respelling
+    `action_type="WARNING"` at its *only* write site left that test at
+    `6 passed`, because the level map in the logging module still spelled
+    the word.
+
+    Set equality, so a single-site respelling of a word other sites still
+    spell is red: the mutant word enters the collected set even though
+    the original stays in it.
+
+    **A set, not a census.** A census (`word -> number of sites`) would
+    also catch a deleted write site, and would go red on every honest
+    refactor that adds or merges one. Deleting a write site is a
+    *behavioural* change -- an audit row that stops being written -- and
+    belongs to the test asserting that row exists, not to a pin on how
+    the word is spelled.
     """
-    source = "\n".join(p.read_text(encoding="utf-8")
-                       for p in (REPO / "isocenter").rglob("*.py"))
-    for word in FROZEN_ACTION_TYPES + FROZEN_LOSS_SCOPES + FROZEN_GRADES:
-        assert f'"{word}"' in source or f"'{word}'" in source, (
-            f"the package no longer spells {word!r} as a literal")
+    assert _audit_action_types() == FROZEN_AUDIT_ACTION_TYPES
+
+
+def test_the_remediation_proposal_action_types_are_exactly_these_three():
+    """Pin B (#396): `PhiRemediation.action_type`, a different vocabulary.
+
+    The page called these "the audit `action_type` strings" until #396.
+    They are never an audit row; they are what a proposal says it will
+    do, reaching a user on the frozen `PhiFinding.remediation_proposal`.
+    """
+    assert _proposal_action_types() == FROZEN_PROPOSAL_ACTION_TYPES
+
+
+def test_the_loss_scope_values_are_exactly_the_frozen_three():
+    """Pin C (#396): the `loss_scope` strings, by value.
+
+    Renaming a `LOSS_SCOPE_*` constant is deliberately green -- see
+    `_loss_scope_values`. Respelling one of the three strings is not.
+    """
+    assert _loss_scope_values() == set(FROZEN_LOSS_SCOPES)
+
+
+def test_the_grades_the_report_can_carry_are_exactly_these_two():
+    """Pin D (#396): `validation_status=`'s strings. There is no `FAIL`."""
+    assert _grade_values() == set(FROZEN_GRADES)
+
+
+def test_the_report_exception_categories_are_exactly_these_two():
+    """Pin E (#396): the categories synthesised into the `exceptions` list.
+
+    `AUDIT_DROP` is in the expected set because the code writes it, not
+    because it is frozen; `docs/api/stability.md` names only
+    `COMPLIANCE_CHECK`. Whether it should join the freeze at 1.0 is #411.
+    """
+    assert _report_exception_categories() == REPORT_EXCEPTION_CATEGORIES_WRITTEN
 
 
 def test_the_two_pass_behaviours_are_stated_as_contract():
