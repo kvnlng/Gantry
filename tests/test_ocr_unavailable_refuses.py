@@ -77,8 +77,7 @@ def _threads_not_processes(monkeypatch):
 def _no_pytesseract(monkeypatch):
     monkeypatch.setattr(pixel_analysis, "HAS_OCR", False)
     monkeypatch.setattr(pixel_analysis, "pytesseract", None)
-    monkeypatch.setattr(pixel_analysis, "_OCR_IMPORT_ERROR", IMPORT_FAILED,
-                        raising=False)
+    monkeypatch.setattr(pixel_analysis, "_OCR_IMPORT_ERROR", IMPORT_FAILED)
 
 
 def _pytesseract_whose_probe_raises(monkeypatch, exc):
@@ -185,6 +184,42 @@ def test_the_refusal_names_the_method_the_cause_and_both_installs(
     assert 'pip install "isocenter[ocr]"' in msg, msg
     assert "brew install tesseract" in msg, msg
     assert "apt-get install tesseract-ocr" in msg, msg
+
+
+def test_a_scaffolded_config_is_refused_before_the_graph_is_read(
+        session, monkeypatch, capsys):
+    """A rule with no zones yet still needs OCR to be scanned later.
+
+    Without the check first, `scan_pixel_content()` walks the graph, finds
+    no configured instance with zones, prints "No matching configured
+    instances found to scan." and returns an empty report -- never
+    reaching a guard placed at the pool -- so the missing extra surfaces
+    only once the zones are filled in. Empty stdout is what pins "before
+    the graph is read": the banner and the skip line are both prints.
+    Killing edit: the guard moved to just above `run_parallel`.
+    """
+    _no_pytesseract(monkeypatch)
+    session.configuration.rules = [
+        {"serial_number": SERIAL, "redaction_zones": []}]
+    capsys.readouterr()
+    with pytest.raises(pixel_analysis.OcrUnavailableError):
+        session.scan_pixel_content()
+    assert capsys.readouterr().out == ""
+
+
+def test_discovery_for_an_unknown_serial_is_refused_before_the_graph_is_read(
+        session, monkeypatch, capsys):
+    """"No instances found for serial" is an answer that needs no OCR.
+
+    A guard below that early return lets discovery answer it without OCR,
+    so a typo'd serial and a missing extra read the same until the serial
+    is corrected. Killing edit: the guard moved below that return.
+    """
+    _no_pytesseract(monkeypatch)
+    capsys.readouterr()
+    with pytest.raises(pixel_analysis.OcrUnavailableError):
+        session.discover_redaction_zones("SN-NOBODY")
+    assert capsys.readouterr().out == ""
 
 
 def test_the_refusal_is_a_runtime_error():

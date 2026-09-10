@@ -1968,9 +1968,11 @@ class DicomSession:
         Raises:
             RuntimeError: `pixel_analysis.OcrUnavailableError` when the `ocr`
                 extra is not installed or the `tesseract` binary does not
-                answer, before any worker is dispatched and before the graph
-                is read (#422). An empty report means OCR ran and found
-                nothing uncovered, never that it could not run.
+                answer in the calling process, before any worker is
+                dispatched and before the graph is read (#422). The check
+                covers only that: a frame whose OCR fails after it passes --
+                including in a spawned worker that cannot find a binary the
+                caller could -- is logged and not reported (#423).
         """
         # First, before the graph is read: a scaffolded config would
         # otherwise answer "nothing to scan" without OCR, and the missing

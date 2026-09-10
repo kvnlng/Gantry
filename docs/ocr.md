@@ -33,7 +33,8 @@ and the Tesseract binary, which pip cannot install:
 
 Without either, `scan_pixel_content()` and `discover_redaction_zones()` raise
 `OcrUnavailableError`, a `RuntimeError`, naming what is missing, before they scan
-anything. Neither reports an empty result for OCR it could not run.
+anything. The check is made in the calling process, before the scan starts; a
+frame whose OCR fails after it passes is still logged and not reported (#423).
 `pixel_analysis.HAS_OCR` says only whether `pytesseract` imported; it does not
 check the binary.
 

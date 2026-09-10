@@ -155,10 +155,10 @@ reached disk. `compact()` raises `RuntimeError` while a pass is open
 (below); `redact()` raises `RuntimeError` on a `:memory:` store when
 the environment asks for worker recycling, after the persistence
 drain and before any work is done (#400). `scan_pixel_content()` and
-`discover_redaction_zones()` raise `RuntimeError` (the tier-2 subclass
-`pixel_analysis.OcrUnavailableError`) when the `ocr` extra or the
-`tesseract` binary is unavailable, before any worker is dispatched and
-before either method reads the graph (#422). `ValueError` from
+`discover_redaction_zones()` raise `RuntimeError` when the `ocr` extra
+or the `tesseract` binary is unavailable to the calling process, before
+any worker is dispatched and before either method reads the graph
+(#422). `ValueError` from
 `generate_report` on an unknown format.
 
 **Environment.** Every `ISOCENTER_*` name in
