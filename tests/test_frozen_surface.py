@@ -28,6 +28,8 @@ import inspect
 import pathlib
 import re
 
+import pytest
+
 import isocenter
 from isocenter import session as session_module
 from isocenter.discovery import DiscoveryResult
@@ -130,6 +132,31 @@ def _spell(method):
                 i + 1 == len(params) or params[i + 1].kind is not kinds.POSITIONAL_ONLY):
             out.append("/")
     return ", ".join(out)
+
+
+def _signature_rows(page: str) -> dict:
+    """`docs/api/stability.md`'s Session table as `name -> params`.
+
+    The duplicate check is here and not in the caller on purpose.
+    `dict()` keeps the *last* match for a repeated key, so a false row
+    placed above the true one leaves the page carrying a wrong signature
+    with the pin green (#401, measured on 0.9.4: `6 passed`). Asserting
+    on the pairs before the dict exists is the only place the second row
+    is still visible -- the natural one-liner
+    `len(rows) == len(FROZEN_SESSION_METHODS)` is green *with* the
+    duplicate present, because `dict()` collapsed the two rows before
+    anything counted them.
+
+    Row *order* stays unpinned: the comparison is a dict and the page
+    claims no order, so two swapped rows are green and correctly so.
+    """
+    pairs = re.findall(r"^\| `(\w+)` \| (?:`([^`]*)`|—) \|$", page, re.MULTILINE)
+    names = [name for name, _ in pairs]
+    duplicated = sorted({n for n in names if names.count(n) > 1})
+    assert not duplicated, (
+        f"stability.md's Session table repeats {duplicated}; `dict()` keeps "
+        f"the last, so a false row above the true one would be invisible")
+    return dict(pairs)
 
 
 def _frozen_instance_fields_in_dataclass_order():
@@ -267,7 +294,7 @@ def test_the_stability_page_names_every_tier_one_session_method():
 
     # The page's table *is* the pin, row for row: a `| `name` | `params` |`
     # row per method, `—` for no parameters.
-    rows = dict(re.findall(r"^\| `(\w+)` \| (?:`([^`]*)`|—) \|$", page, re.MULTILINE))
+    rows = _signature_rows(page)
     assert rows == FROZEN_SESSION_METHODS, (
         "stability.md's Session table and the pins disagree: "
         f"{ {k: (rows.get(k), v) for k, v in FROZEN_SESSION_METHODS.items() if rows.get(k) != v} }")
@@ -293,6 +320,26 @@ def test_the_stability_page_names_every_tier_one_session_method():
 
     nav = (REPO / "mkdocs.yml").read_text(encoding="utf-8")
     assert "api/stability.md" in nav, "docs/api/stability.md is not in mkdocs.yml's nav"
+
+
+def test_a_duplicate_signature_row_is_not_silently_collapsed():
+    """T-F4's parser must see a second row for a method, not keep the last.
+
+    The defect this pins (#401): `dict(re.findall(...))` keeps the last
+    match, so a false `| `save` | `wrong=True` |` row inserted *above*
+    the true one left this file at `6 passed` while the page a user
+    reads carried a signature the code does not have.
+
+    The clean half is not decoration: a `_signature_rows` that raised
+    unconditionally would satisfy the `pytest.raises` half alone, and a
+    duplicate-detector that rejects every page detects nothing.
+    """
+    clean = "| `save` | `sync=False` |\n| `close` | — |\n"
+    assert _signature_rows(clean) == {"save": "sync=False", "close": ""}
+
+    duplicated = "| `save` | `wrong=True` |\n| `save` | `sync=False` |\n"
+    with pytest.raises(AssertionError, match="repeats"):
+        _signature_rows(duplicated)
 
 
 def test_the_output_vocabularies_are_still_spelled_by_the_package():
