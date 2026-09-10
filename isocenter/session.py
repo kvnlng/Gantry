@@ -109,9 +109,12 @@ def _verify_worker(args):
     # does; `scan_pixel_content` puts the live one back (#412). The strip
     # is not tidiness. OCR decodes the frame first, `get_pixel_data()`
     # caches it on the instance, and `verify_instance` attaches that
-    # instance to every finding -- so each finding pickled the decoded
-    # frame back to the parent, once per finding: 132206 bytes against
-    # 399 for one 256x256 16-bit frame (3.12.14). Rehydration alone would
+    # instance to every finding -- so the result carried the decoded
+    # frame back to the parent, once per scanned instance with a finding
+    # (pickle memoises the shared instance, so a second finding on the
+    # same frame adds ~150 bytes, not a frame). Real tesseract, one
+    # 256x256 16-bit frame, two findings, locally: 132519 bytes against
+    # 542 (3.12.14). Rehydration alone would
     # hide this: it overwrites the copy, so the entity the caller sees is
     # right while the frame still crosses the pipe. Only
     # `tests/test_scan_pixel_content_dispatches_its_worker.py`'s T-394a
@@ -4257,11 +4260,17 @@ class DicomSession:
         nested tag onto the instance fabricates a top-level element that
         was never in the file and leaves the real value untouched inside
         the sequence -- an export carrying the PHI plus a decoy.
+
+        Two callers since #412: `audit()` and `scan_pixel_content()`. The
+        warnings say what happens to the *finding* -- its entity is None --
+        and not what remediation will do, because an OCR finding carries
+        no proposal and `auto_remediate_config()` still acts on it through
+        its metadata.
         """
         if instance is None:
             get_logger().warning(
                 f"Finding for {finding.entity_uid} has no matching instance "
-                "in the session; it will not be remediated.")
+                "in the session; its entity will be None.")
             return None
 
         target = resolve_item_path(instance, finding.entity_path)
@@ -4269,7 +4278,7 @@ class DicomSession:
             get_logger().warning(
                 f"The sequence item behind {finding.field_name} on "
                 f"{finding.entity_uid} is gone (path {finding.entity_path}); "
-                "it will not be remediated.")
+                "its entity will be None.")
         return target
 
     def _make_lightweight_copy(self, patient: "Patient") -> "Patient":

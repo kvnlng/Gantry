@@ -183,8 +183,10 @@ def test_the_worker_scans_an_instance_that_crossed_a_pickle():
     # one back (`tests/test_scan_pixel_findings_name_the_live_graph.py`),
     # and that test cannot see this line: rehydration overwrites the
     # copy either way, so a missing strip leaves the identity intact
-    # while every finding pickles the worker's decoded frame back to the
-    # parent. Only this assertion is red for it.
+    # while the worker's result still carries its decoded frame back to
+    # the parent -- once per scanned instance with a finding, since
+    # pickle memoises the instance the findings share. Only this
+    # assertion is red for it.
     assert finding.entity is None, (
         "the worker returned a finding still carrying its instance")
     assert finding.entity_uid == "1.2.826.0.1.0"

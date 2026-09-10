@@ -126,7 +126,10 @@ entity_path)`; `DiscoveryResult.filter(...)`, `.to_zones()`,
 `scan_pixel_content()` return, is the live object in `session.store`
 that the finding names -- the same object whether the pass ran in
 threads or in processes -- or `None` when that object cannot be found
-in the graph; it is never a worker's copy (#412).
+in the graph; it is never a worker's copy (#412). The object is found
+by its UID, so findings on an SOP Instance UID that more than one
+instance in the graph carries all resolve to a single one of those
+instances (#431).
 
 **Entities, as reached from `session.store`.** The graph is `Patient`
 → `Study` → `Series` → `Instance`. Fields, in dataclass order (which is

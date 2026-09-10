@@ -231,9 +231,31 @@ def _action_type_words(node, module_constants, parents, where):
         function = _enclosing_function(node, parents)
         assigned = set()
         for sub in ast.walk(function) if function is not None else ():
-            if isinstance(sub, ast.Assign) and _string(sub.value) is not None and any(
-                    isinstance(t, ast.Name) and t.id == node.id for t in sub.targets):
-                assigned.add(_string(sub.value))
+            if not (isinstance(sub, ast.Name) and sub.id == node.id
+                    and isinstance(sub.ctx, ast.Store)):
+                continue
+            # **Every** binding of the name is read, and one that is not a
+            # plain `name = "WORD"` raises. Reading only the constant ones
+            # and skipping the rest was the fail-loud rule applied to the
+            # argument and not to what flows into it:
+            # `action_type = str("REMEDIATION_SET")` and
+            # `action_type = "REMEDIATION_" + "SET"` both survived this
+            # file on both interpreters (measured on PR #430). The same
+            # rule covers `+=` (an `AugAssign`), tuple unpacking, a `for`
+            # target and a walrus: none is an `Assign` or `AnnAssign` with
+            # the name as a whole target, so each raises.
+            binding = parents.get(sub)
+            whole_target = (
+                (isinstance(binding, ast.Assign) and sub in binding.targets)
+                or (isinstance(binding, ast.AnnAssign) and binding.target is sub))
+            if not whole_target or _string(binding.value) is None:
+                raise AssertionError(
+                    f"Pin A cannot read the action_type passed at {where}: "
+                    f"{node.id} is bound at line {sub.lineno} by "
+                    f"{ast.unparse(binding)!r}, which is not `{node.id} = "
+                    f"\"WORD\"`. Teach _action_type_words the new shape; do "
+                    f"not skip it")
+            assigned.add(_string(binding.value))
         # `""` is excluded by name, not by truthiness. It is the
         # `action_type = ""` initialiser at the top of
         # `_apply_single_remediation`'s dispatch, and the `if action_type:`
@@ -264,10 +286,21 @@ def _audit_action_types():
       this pin green -- the M2 shape;
     - `audit_buffer.append((WORD, ...))`, remediation's batched path,
       whose tuples `log_audit_batch` writes with element 0 as the
-      `action_type` column. Anchored on the local name `audit_buffer`,
-      the only batch buffer in the package; the `log_audit(action_type,
-      ...)` fallbacks beside each append carry the same words, so a
-      respelling at either write is seen.
+      `action_type` column. A batched-only respelling is seen **only**
+      here: the `log_audit(action_type, ...)` fallback beside each append
+      carries the local variable, not the tuple (measured on PR #430:
+      respelling the tuple alone is red here, and green with this
+      collection removed).
+
+    That last collection is anchored on the name `audit_buffer`, so
+    `_audit_buffer_words` refuses every use of the name it cannot read
+    rather than trusting the anchor: an alias (`rows = audit_buffer`), a
+    method other than `.append` (`.extend`), `+=`, or a slice write all
+    raise, and so does the name vanishing from the package altogether.
+    Each of those survived before (PR #430). The residual, accepted:
+    the buffer handed to a helper whose parameter has another name. The
+    two callees that take it today both call their parameter
+    `audit_buffer`.
 
     Remediation passes its words through a local variable and a module
     constant, not a literal. Until #411 this collector read literals
@@ -276,6 +309,7 @@ def _audit_action_types():
     names, and raises on one it cannot resolve.
     """
     found = set()
+    buffer_sites = 0
     for path in sorted((REPO / "isocenter").rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         constants = _module_string_constants(tree)
@@ -289,16 +323,51 @@ def _audit_action_types():
                     found |= _action_type_words(kw.value, constants, parents, where)
             if call.args:
                 found |= _action_type_words(call.args[0], constants, parents, where)
-        for call in _calls_named(tree, "append"):
-            target = call.func.value if isinstance(call.func, ast.Attribute) else None
-            if not (isinstance(target, ast.Name) and target.id == "audit_buffer"):
-                continue
-            where = f"{rel}:{call.lineno}"
+        words, sites = _audit_buffer_words(tree, constants, parents, rel)
+        found |= words
+        buffer_sites += sites
+    # The floor: a collector anchored on a name is vacuous the day the
+    # name changes, and green while it is.
+    assert buffer_sites >= 1, (
+        "Pin A found no `audit_buffer.append((...))` in the package; the "
+        "batch buffer was renamed or removed, and a batched-only respelling "
+        "is now invisible. Re-anchor _audit_buffer_words")
+    return found
+
+
+def _audit_buffer_words(tree, constants, parents, rel):
+    """Words appended to `audit_buffer`, and how many append sites there were.
+
+    Every `audit_buffer` in the module is classified, not only the ones
+    under an `.append`: a use this cannot read raises (see Pin A).
+    """
+    found, sites = set(), 0
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Name) and node.id == "audit_buffer"):
+            continue
+        parent = parents.get(node)
+        where = f"{rel}:{node.lineno}"
+        if isinstance(parent, ast.Attribute):
+            call = parents.get(parent)
+            assert (parent.attr == "append" and isinstance(call, ast.Call)
+                    and call.func is parent), (
+                f"audit_buffer.{parent.attr} at {where}: Pin A reads only "
+                f"`audit_buffer.append((WORD, ...))`")
             assert len(call.args) == 1 and isinstance(call.args[0], ast.Tuple), (
                 f"audit_buffer.append at {where} is not handed one tuple; "
                 f"Pin A cannot read its action_type")
             found |= _action_type_words(call.args[0].elts[0], constants, parents, where)
-    return found
+            sites += 1
+        elif isinstance(parent, (ast.AugAssign, ast.NamedExpr)) or (
+                isinstance(parent, (ast.Assign, ast.AnnAssign))
+                and parent.value is node) or (
+                isinstance(parent, ast.Subscript)
+                and isinstance(parent.ctx, ast.Store)):
+            raise AssertionError(
+                f"audit_buffer at {where} is aliased or written by "
+                f"{ast.unparse(parent)!r}; Pin A reads only "
+                f"`audit_buffer.append((WORD, ...))`")
+    return found, sites
 
 
 def _proposal_action_types():
@@ -413,17 +482,39 @@ def _unrecognised_table_lines(page: str) -> list:
     nor a row the parser reads is reported, so the next formatting
     variant fails loud as well as this one.
 
-    Leading whitespace is stripped only to *find* the line; the match is
-    on the line as written, so an indented row is reported, not read.
+    **The table is the unbroken run of non-blank lines from its header**,
+    which is how python-markdown's tables extension reads it, and every
+    line in that run other than the header and separator must be a row
+    the parser reads. Looking for lines that *start* with `|` was not
+    enough: `` `save` | sync=True ``, with no leading pipe, renders as a
+    real row and survived on both interpreters (PR #430). Outside the
+    run, a line starting with `|` (after stripping whitespace) is still
+    reported, so a second table or a stray row cannot sit elsewhere in
+    the section unread.
+
+    The header is looked up literally and its absence fails, rather than
+    returning `[]`: a changed header is a changed table.
 
     Rejected: a structural parser splitting on `|`. It would read this
     row, but it would also silently normalise the next variant, which
     is the failure this function exists to prevent.
     """
-    return [line for line in _frozen_section(page).splitlines()
-            if line.lstrip().startswith("|")
-            and line not in _SIGNATURE_TABLE_FRAME
-            and not _SIGNATURE_ROW.fullmatch(line)]
+    lines = _frozen_section(page).splitlines()
+    header, separator = _SIGNATURE_TABLE_FRAME
+    assert header in lines, f"stability.md's frozen section has no {header!r} line"
+    start = end = lines.index(header)
+    while end < len(lines) and lines[end].strip():
+        end += 1
+    flagged = []
+    for i, line in enumerate(lines):
+        if start <= i < end:
+            if i == start or (i == start + 1 and line == separator):
+                continue
+            if not _SIGNATURE_ROW.fullmatch(line):
+                flagged.append(line)
+        elif line.lstrip().startswith("|"):
+            flagged.append(line)
+    return flagged
 
 
 def _output_vocabulary_block(page: str) -> str:
@@ -716,11 +807,25 @@ def test_an_unrecognised_row_is_reported_not_skipped():
     indented = clean.replace("| `close` | — |", "  | `close` | — |", 1)
     assert _unrecognised_table_lines(indented) == ["  | `close` | — |"]
 
+    # No leading pipe: python-markdown renders it as a row, so it is one
+    # (PR #430). Caught because it sits in the table's run of lines.
+    pipeless_row = "`save` | sync=True"
+    pipeless = clean.replace("| `save` | `sync=False` |",
+                             f"{pipeless_row}\n| `save` | `sync=False` |", 1)
+    assert _unrecognised_table_lines(pipeless) == [pipeless_row]
+
+    # In the section but after the table's run: still a table line, and
+    # found through its indent.
+    stray = clean.replace("\n\n## Next", "\n\nProse.\n  | stray |\n\n## Next", 1)
+    assert _unrecognised_table_lines(stray) == ["  | stray |"]
+
     # Outside the frozen section is outside the promise.
     assert _unrecognised_table_lines(clean + f"{bad_row}\n") == []
 
     with pytest.raises(AssertionError, match="Frozen at 1.0"):
         _unrecognised_table_lines(clean.replace("Frozen at 1.0", "Frozen"))
+    with pytest.raises(AssertionError, match="Method"):
+        _unrecognised_table_lines(clean.replace("| Parameters |", "| Signature |"))
 
 
 def test_the_audit_action_types_written_are_exactly_the_frozen_thirteen():
