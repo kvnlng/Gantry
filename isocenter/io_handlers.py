@@ -185,6 +185,8 @@ from .pixel_geometry import (
     resolve_pixel_geometry,
 )
 from .blob_kind import serialize_blob_kind
+from .imagecodecs_handler import (frame_count_mismatch_words,
+                                  offset_table_frame_count)
 from .parallel import run_parallel
 from .validation import IODValidator
 from .sidecar import SidecarManager
@@ -1289,7 +1291,7 @@ def process_sequence(tag, elem, parent_item, dropped: list = None,
         parent_item.add_sequence_item(tag, seq_item)
 
 
-def _decode_pixels(ds) -> Tuple[np.ndarray, str]:
+def _decode_pixels(ds, *, allow_excess_frames=None) -> Tuple[np.ndarray, str]:
     """The array `Dataset.pixel_array` returns, and the colour space it is in.
 
     `pixel_array` calls exactly this -- `as_array` on `get_decoder(ts)`,
@@ -1312,11 +1314,24 @@ def _decode_pixels(ds) -> Tuple[np.ndarray, str]:
     would turn that into a decode under Explicit VR LE -- a file
     ingested with garbage geometry and no row at all.
 
-    All frames (`index=None`), the same as `pixel_array`; a helper that
-    decoded frame 0 would carry a multi-frame source as one frame.
+    By default, every frame `pixel_array` returns (`index=None`); a
+    helper that decoded frame 0 would carry a multi-frame source as one
+    frame. That includes frames an encapsulated offset table names beyond
+    NumberOfFrames, which is pydicom's default. `allow_excess_frames=False`
+    keeps only the declared frames, and only `ingest_worker`'s top-level
+    decode passes it, only when `offset_table_frame_count` has reported an
+    excess -- the caller whose `meta` carries the DATA_LOSS row (#418).
+
+    The keyword is forwarded only when it was given. Measured on pydicom
+    3.0.2: `as_array(ds, allow_excess_frames=None)` truncates exactly as
+    `False` does, so passing the default through would silently truncate
+    every decode, nested icons included.
     """
     ts = ds.file_meta.TransferSyntaxUID
-    arr, meta = get_decoder(ts).as_array(ds)
+    kwargs = {}
+    if allow_excess_frames is not None:
+        kwargs["allow_excess_frames"] = allow_excess_frames
+    arr, meta = get_decoder(ts).as_array(ds, **kwargs)
     return np.ascontiguousarray(arr), meta["photometric_interpretation"]
 
 
@@ -1513,10 +1528,39 @@ def ingest_worker(fp: str) -> Tuple:
         p_alg = None
 
         if "PixelData" in ds:
+            # The offset table against NumberOfFrames, before the decode
+            # (#418). Asked here, not left to the decoder: pydicom returns
+            # every frame the table names, so an excess used to be stored
+            # whole under a header that declared fewer, and the instance
+            # was accepted with no row and could never be read back -- the
+            # loader refused it later with an Integrity Error, against
+            # the wrong cause.
+            #
+            # Excess: keep the declared frames. NumberOfFrames is the
+            # dataset's declared shape, and frames beyond it are not
+            # addressable by any conformant reader of this object;
+            # refusing would throw away a readable image. What was dropped
+            # rides `meta`, like `waveform_groups` below, because this may
+            # be a subprocess with no store handle -- `import_files`
+            # writes the DATA_LOSS row.
+            #
+            # Fewer frames than declared: refused, with a reason naming
+            # both counts. There is no frame to keep for the ones the
+            # table does not name, and the decoder's own refusal was
+            # pydicom's message-less StopIteration -- an ERROR row reading
+            # `Decompression Failed: ` and nothing else.
+            decode_kwargs = {}
+            counted = offset_table_frame_count(ds)
+            if counted is not None and counted[0] != counted[1]:
+                if counted[0] < counted[1]:
+                    return ({'path': fp}, None, None, None, None, None, None,
+                            frame_count_mismatch_words(counted))
+                decode_kwargs['allow_excess_frames'] = False
+                meta['offset_table_excess'] = counted
             try:
                 # Always decompress to raw bytes to ensure sidecar has consistent format (SidecarPixelLoader expects raw)
                 # This handles RLE/JPEG/J2K by decoding them now.
-                arr, decoded_pi = _decode_pixels(ds)
+                arr, decoded_pi = _decode_pixels(ds, **decode_kwargs)
                 p_bytes = arr.tobytes()
                 p_alg = 'zlib'  # Always compress the raw bytes
                 # The label has to say what the bytes are, and the bytes
@@ -1918,6 +1962,29 @@ class DicomImporter:
                         inst._pixel_loader = SidecarPixelLoader(
                             sidecar_manager.filepath, off, leng, p_alg, instance=inst)
                         inst._pixel_hash = p_hash
+
+                    # The frames `ingest_worker` dropped because the
+                    # offset table named more than NumberOfFrames
+                    # declares (#418). Scoped SIGNAL, as the multiplex
+                    # groups below are: what was discarded is acquired
+                    # image data, so the run is reported AND graded, and
+                    # an instance that silently lost frames does not
+                    # PASS. SIGNAL rather than a new scope word, because
+                    # the scope vocabulary is frozen
+                    # (tests/test_frozen_surface.py).
+                    excess = meta.get('offset_table_excess')
+                    if excess:
+                        table_frames, declared, _declared_raw, _table = excess
+                        detail = (f"{frame_count_mismatch_words(excess)}. "
+                                  f"Kept the first {declared} and discarded "
+                                  f"{table_frames - declared}.")
+                        logger.warning(f"{inst.sop_instance_uid}: {detail}")
+                        if store_backend is not None:
+                            store_backend.log_audit(
+                                action_type="DATA_LOSS",
+                                entity_uid=inst.sop_instance_uid,
+                                details=detail,
+                                loss_scope=LOSS_SCOPE_SIGNAL)
 
                     # Silent truncation is the defect here, not the
                     # missing multi-rate support -- that is deferred on
@@ -3711,21 +3778,89 @@ class SidecarPixelLoader:
             self.pixel_hash = metadata.get("pixel_hash", None)
             self.pixel_dtype = metadata.get("pixel_dtype", None)
         elif instance:
-            self.sop_instance_uid = instance.sop_instance_uid
-            # Extract attributes safely
-            self.rows = int(instance.attributes.get("0028,0010", 0) or 0)
-            self.cols = int(instance.attributes.get("0028,0011", 0) or 0)
-            self.samples = int(instance.attributes.get("0028,0002", 1) or 1)
-            self.frames = int(instance.attributes.get("0028,0008", 0) or 0)
-            self.bits = int(instance.attributes.get("0028,0100", 8) or 8)
-            self.pixel_representation = int(instance.attributes.get("0028,0103", 0) or 0)
+            (self.sop_instance_uid, self.rows, self.cols, self.samples,
+             self.frames, self.bits, self.pixel_representation,
+             self.pixel_dtype) = self._descriptors_from(instance)
             self.pixel_hash = pixel_hash or getattr(instance, "_pixel_hash", None)
-            # The dtype of the frame, when it is floating-point. Read
-            # from the instance rather than derived, because no DICOM
-            # descriptor says "float" (#183).
-            self.pixel_dtype = instance.attributes.get(PIXEL_DTYPE_ATTR)
         else:
             raise ValueError("SidecarPixelLoader requires either 'instance' or 'metadata'")
+
+    @staticmethod
+    def _descriptors_from(instance) -> tuple:
+        """Every descriptor `__call__` reads, as the instance holds it now.
+
+        The one place the capture is taken, so `__init__` and `describes`
+        cannot drift apart: a field added to one and not the other would
+        be a descriptor the loader reads and never re-checks (#417).
+
+        Exactly the fields `__call__` reads, and no others.
+        PhotometricInterpretation, BitsStored and HighBit change no
+        reading here; PlanarConfiguration went with #210. The SOP
+        Instance UID is compared too, only so that after
+        `regenerate_uid` an Integrity Error names the UID the caller now
+        knows the instance by. That is not free: after `regenerate_uid()`
+        with no save to rebind the loader, every read for the rest of the
+        session rebuilds (about 0.6 us each, measured), which the pipeline
+        never sees because it always persists after regenerating a UID.
+        The float carrier (`PIXEL_DTYPE_ATTR`) is
+        read from the instance rather than derived, because no DICOM
+        descriptor says "float" (#183); `set_attr` lowercases its key
+        and so cannot reach it, but a direct write can.
+        """
+        # One snapshot, then every field from it. Seven separate
+        # `attributes.get` calls could straddle a concurrent
+        # `attributes.update(...)` and read one layout's Rows with the
+        # other's Columns -- a geometry neither layout declared. Measured
+        # on 3.14t with the GIL off: a writer flipping between 4x4 and
+        # 2x8, both valid for the stored bytes, made 10.3% of reads raise
+        # an Integrity Error. `dict()` copies a dict's storage in one step
+        # without calling `.get`, so the capture is one layout or the
+        # other. Pinned by tests/test_descriptor_edit_with_pixels_unloaded.py::
+        # test_the_descriptors_are_read_from_one_snapshot.
+        attrs = dict(instance.attributes)
+        return (instance.sop_instance_uid,
+                int(attrs.get("0028,0010", 0) or 0),
+                int(attrs.get("0028,0011", 0) or 0),
+                int(attrs.get("0028,0002", 1) or 1),
+                int(attrs.get("0028,0008", 0) or 0),
+                int(attrs.get("0028,0100", 8) or 8),
+                int(attrs.get("0028,0103", 0) or 0),
+                attrs.get(PIXEL_DTYPE_ATTR))
+
+    def describes(self, instance) -> bool:
+        """Whether this loader's capture still matches `instance` (#417).
+
+        The capture is taken once, at construction, and `__call__`
+        rebuilds every frame from it rather than from the instance. A
+        descriptor written since -- by `set_attr`, or by any of the
+        writers that go straight to `attributes` -- leaves the capture
+        describing an instance that no longer exists, and the live
+        session then read the stored bytes differently from the same
+        store reopened. `Instance.get_pixel_data` asks this on every
+        read and, on False, reads through `for_instance` instead.
+        """
+        return (self.sop_instance_uid, self.rows, self.cols, self.samples,
+                self.frames, self.bits, self.pixel_representation,
+                self.pixel_dtype) == self._descriptors_from(instance)
+
+    def for_instance(self, instance) -> "SidecarPixelLoader":
+        """The same stored bytes, read under `instance`'s descriptors now.
+
+        The hash is **copied, not re-derived** -- including a None. The
+        bytes at this offset did not move, so the integrity question is
+        the one this loader was already answering. It is assigned after
+        construction rather than passed as `pixel_hash=`, because the
+        constructor treats a falsy hash as missing and falls back to
+        `instance._pixel_hash`, which can drift from the bytes at this
+        offset; that fallback produced #212 once already.
+
+        Not stored on the instance by anything: see the loader arm of
+        `Instance.get_pixel_data` for why a read must not write the slot.
+        """
+        fresh = SidecarPixelLoader(self.sidecar_path, self.offset,
+                                   self.length, self.alg, instance=instance)
+        fresh.pixel_hash = self.pixel_hash
+        return fresh
 
     def __call__(self):
         mgr = SidecarManager(self.sidecar_path)

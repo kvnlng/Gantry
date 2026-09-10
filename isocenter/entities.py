@@ -751,7 +751,10 @@ class Instance(DicomItem):
         a name that says what it does. It is for the caller who means to
         throw the resident array away -- the redaction `finally` blocks,
         where a partially-zeroed array must be dropped so the next
-        `get_pixel_data()` reloads the original through the loader.
+        `get_pixel_data()` reloads the stored bytes through the loader,
+        read under the instance's *current* descriptors (#417). Those are
+        the descriptors a `set_pixel_data()` wrote, if one ran: discard
+        drops the array, not the attributes it set.
 
         Two behaviours, two names. This is not an alias for
         `unload_pixel_data()` and must not become one: "one spelling per
@@ -800,16 +803,71 @@ class Instance(DicomItem):
         Raises:
             RuntimeError: If loading fails due to transfer syntax issues,
                 missing codecs, or a pixel element the reader could not
-                decode.
+                decode. Also, from a file, when an encapsulated pixel
+                element's offset table names a different number of frames
+                from NumberOfFrames -- "Lazy load failed for <path>:
+                <table> names N frames; NumberOfFrames declares M" (#418).
+                From the sidecar, when a descriptor written since the
+                loader was built asks for a reading the stored bytes
+                cannot satisfy (BitsAllocated 16 -> 8, or Rows x Columns
+                smaller than the stored samples) -- "Pixel Loader failed
+                for <uid>: Integrity Error: ..." (#417). A reopened session
+                gives the same refusal.
             FileNotFoundError: If the file path does not exist.
         """
         if self.pixel_array is not None:
             return self.pixel_array
 
-        if self._pixel_loader:
+        # One read of the slot. `_apply_redaction_outcomes` rebinds it
+        # under the store's `_pixel_swap_lock`; this arm never writes it.
+        loader = self._pixel_loader
+        if loader:
             try:
+                # A loader captures the pixel descriptors once, when it is
+                # built, and reads every frame from that capture. A
+                # descriptor written since -- by `set_attr` or by any of
+                # the writers that go straight to `attributes` -- left the
+                # live session reading the old way while the same store,
+                # reopened, read the new way or refused: PixelRepresentation
+                # 0 -> 1 still read uint16, Rows/Columns 4x4 -> 2x8 still
+                # read (4, 4), and export wrote the old Rows back out (#417).
+                # So compare on every read and, when the capture is stale,
+                # read the same stored, hash-checked bytes through a loader
+                # built from the instance as it is now.
+                #
+                # Here rather than in `_persist_pixels`: a read before any
+                # save was measured identical to one after it, so a fix in
+                # the save path leaves the first reads stale. And on the
+                # read rather than refusing the write: `set_attr` is
+                # generic, a two-step edit (Rows, then Columns) passes
+                # through a state with no valid reading, and eight writers
+                # bypass `set_attr` altogether. A comparison where the
+                # bytes are read catches every one of them.
+                #
+                # **Not stored back.** The rebuilt loader serves this read
+                # and is dropped; the next read compares again (one tuple
+                # compare, and one small object when stale). Writing it to
+                # `_pixel_loader` here, outside `_pixel_swap_lock`, could
+                # publish a stale loader over the one
+                # `_apply_redaction_outcomes` just bound to the redacted
+                # frame -- #274's shape, unredacted pixels under a full
+                # redaction attestation.
+                #
+                # **Not gated on `_pixel_array_unwritten`.** After
+                # `set_pixel_data(x)` -> `discard_pixel_data()` a gate would
+                # read the old way once, the new way on the next read with
+                # no save between, and the new way after a save and a
+                # reopen: two answers to one question. Ungated, every read
+                # agrees with the reopened store.
+                #
+                # Duck-typed: tests install a bare lambda as the loader,
+                # and a loader with no `describes` has no capture to go
+                # stale.
+                describes = getattr(loader, "describes", None)
+                if describes is not None and not describes(self):
+                    loader = loader.for_instance(self)
                 # Invoke callback (e.g. sidecar read)
-                arr = self._pixel_loader()
+                arr = loader()
                 # A read must not write. This used to call set_pixel_data
                 # "to ensure attributes (rows, cols) are synced", and the
                 # sync could only ever disagree: SidecarPixelLoader reshaped
@@ -856,6 +914,27 @@ class Instance(DicomItem):
                     # a population that a forcing ingest had already
                     # accepted.
                     ds = pydicom.dcmread(self.file_path, force=True)
+
+                    # Before `ds.pixel_array`, which returns every frame
+                    # the offset table names -- (2, 4, 4) under a
+                    # one-frame header -- and before the imagecodecs
+                    # fallback below, which would decode frame 0 alone.
+                    # Here rather than in the handler only: the fallback
+                    # swallows the handler's RuntimeError and re-raises
+                    # the *original* error, so a handler-only refusal
+                    # would be hidden behind whatever pydicom said (#418).
+                    #
+                    # The wording trap. This rides the outer `except`
+                    # into "Lazy load failed for <path>: ...", and on the
+                    # way it passes two message matches: "no pixel data"
+                    # (just below) turns into `return None`, a silent
+                    # nothing, and "decompress" / "missing dependencies"
+                    # turn into the codecs-missing message. The helper's
+                    # "<table> names N frames; NumberOfFrames declares M"
+                    # contains none of them. Do not reword it into one.
+                    mismatch = h.frame_count_mismatch(ds)
+                    if mismatch is not None:
+                        raise RuntimeError(mismatch)
 
                     # Cache it in memory. Assigned, not set through
                     # set_pixel_data: pydicom shaped this array from the

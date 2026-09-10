@@ -3496,6 +3496,20 @@ class SqliteStore:
                 # pass. Recording the loader's frame is correct under all
                 # three. Do not relax that refusal, or add a fourth
                 # nulling site, without revisiting this arm.
+                #
+                # The loader recorded here may carry a *stale capture*: a
+                # descriptor written with the pixels unloaded never passes
+                # through a rebuild, so its Rows, BitsAllocated or
+                # PixelRepresentation can describe an instance that no
+                # longer exists. That is deliberately not repaired here.
+                # This arm hands back only the offset, length, algorithm
+                # and hash, none of which a descriptor edit changes, and
+                # the descriptors reach the store from `attributes`. The
+                # staleness is in how the bytes are *read*, and a read
+                # before any save was measured identical to one after it,
+                # so the check lives on the read: `Instance.get_pixel_data`
+                # compares the capture with the instance on every read
+                # (`SidecarPixelLoader.describes`) (#417).
                 if isinstance(loader, SidecarPixelLoader):
                     return _StoredFrame(loader.offset, loader.length,
                                         loader.alg,
