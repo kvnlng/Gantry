@@ -48,9 +48,14 @@ def _dotted(module_path: str) -> str:
 def _imported_names(tree: ast.AST) -> set:
     """Every dotted name an absolute import statement in `tree` binds.
 
-    `from pkg import mod` yields both `pkg` and `pkg.mod`, because the alias may be the module or
-    a name inside the package and the scan cannot tell which from syntax.
-    Relative imports (`level > 0`) name nothing in `isocenter` from a test.
+    The load-bearing form is `from pkg import mod`, yielded as `pkg.mod`:
+    the alias may be a module or a name inside the package, the scan
+    cannot tell which from syntax, and the text half never sees that
+    dotted name. `import pkg.mod` and the `from pkg.mod import f` module
+    name are collected too, but the text half already matches both, so
+    dropping either leaves the union unchanged -- an equivalent mutant,
+    not a gap. Relative imports (`level > 0`) name nothing in `isocenter`
+    from a test, whatever module they spell.
     """
     names = set()
     for node in ast.walk(tree):
@@ -72,9 +77,11 @@ def _importers(module_path: str, tests_dir: pathlib.Path = ROOT / "tests") -> se
     `\\b` keeps a module from matching a longer name that starts with
     its own (`persistence` against `persistence_manager`).
 
-    **The import half** reads the file's import statements, which is what
-    sees `from <package> import <module>` -- a form the text half cannot,
-    since the dotted name never appears in it. Before #419
+    **The import half** reads the file's import statements. Its one
+    load-bearing contribution is `from <package> import <module>` -- a
+    form the text half cannot see, since the dotted name never appears in
+    it. The other import forms it collects spell the dotted name in the
+    text, so the text half has them already. Before #419
     this function was the text half alone, keyed on the file's stem, and
     so demanded one of the four test files that kill
     `imagecodecs_handler.py` mutants and read `exporters/wfdb.py` as a
@@ -125,7 +132,9 @@ def test_importers_sees_every_import_form(tmp_path):
         "test_decoy_longer_name.py": "from isocenter import codecs_extra\n"
                                      "import isocenter.codecs_extra\n",
         "test_decoy_in_a_string.py": 'SRC = """\nfrom isocenter import codec\n"""\n',
-        "test_decoy_relative.py": "from . import codec\n",
+        # Relative: `level == 1`, `module == "isocenter"`, so only the
+        # level guard stops this reading as the absolute import it spells.
+        "test_decoy_relative.py": "from .isocenter import codec\n",
     }
     for name, text in {**demanded, **not_demanded}.items():
         (tmp_path / name).write_text(text, encoding="utf-8")

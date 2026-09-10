@@ -693,21 +693,32 @@ def test_reconcile_warns_the_caller_what_it_dropped(tmp_path, caplog):
     tests above pinned the count, the graph, a reload and the audit row,
     and a mutation probe that deleted the warning's statement left every
     one of them green (#414).
+
+    The fixture makes the two counts differ -- one VM=3 stale value is
+    three rows on one instance -- so a warning that swapped them, or
+    printed either count in both places, is red here. With one row on one
+    instance it was not: both numbers were 1.
     """
     db = str(tmp_path / "legacy.db")
     SqliteStore(db).save_all([_hand_built_patient(private={})])
-    _stale_row(db)
+    with sqlite3.connect(db) as conn:
+        for atom, value in enumerate(("a", "b", "c")):
+            conn.execute(
+                "INSERT INTO instance_attributes (instance_uid, group_id,"
+                " element_id, atom_index, value_rep, value_text)"
+                " VALUES ('P1.INST.0', '0009', '1002', ?, 'UN', ?)",
+                (atom, value))
 
     session = DicomSession(persistence_file=db)
     try:
         with caplog.at_level(logging.WARNING, logger="isocenter"):
-            assert session.reconcile_private_tags() == 1
+            assert session.reconcile_private_tags() == 3
     finally:
         session.close()
 
     warned = _reconcile_warnings(caplog.records)
     assert len(warned) == 1, warned
-    assert "dropped 1 stored private-tag row(s) across 1 instance(s)" in warned[0]
+    assert "dropped 3 stored private-tag row(s) across 1 instance(s)" in warned[0]
     assert "restore from backup" in warned[0]
 
 
