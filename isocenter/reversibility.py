@@ -50,7 +50,9 @@ class ReversibilityService:
         Embeds a pre-calculated encrypted token into the instance.
 
         Wraps the token in an Encrypted Attributes Sequence item with the
-        appropriate Transfer Syntax UID.
+        appropriate Transfer Syntax UID, and **replaces** whatever
+        `(0400,0500)` held: after any call the sequence carries exactly
+        one item, however many times the instance has been locked (#399).
 
         Args:
             instance (Instance): The target instance.
@@ -67,12 +69,33 @@ class ReversibilityService:
             item.set_attr(self.TAG_ENCRYPTED_CONTENT, token)
             item.set_attr(self.TAG_TRANSFER_SYNTAX_UID, self.PAYLOAD_TRANSFER_SYNTAX)
 
-            # Embed into attributes dict via Sequence helper
-            # TODO: Check if sequence already exists and has items.
-            # Currently, this appends a new item. If called twice (e.g. on already anonymized data),
-            # it will append a second (likely incorrect) token. Recovery uses the first item, so it's safe,
-            # but we should probably clear existing items or warn.
-            instance.add_sequence_item(self.TAG_ENCRYPTED_ATTRS_SEQ, item)
+            # `add_sequence()` plus a slice assignment rather than
+            # `add_sequence_item()`, which appends: this sequence holds
+            # exactly one item, and that item is the token this call was
+            # handed. `recover_original_data` below reads items[0], and
+            # until #399 the two disagreed -- so a second lock was
+            # accepted, reported as success, persisted and exported while
+            # recovery kept answering with the *first* capture, and every
+            # stale token shipped in the file. Whatever the sequence held
+            # is replaced, including an Encrypted Attributes Sequence the
+            # source file carried: such an instance was not recoverable at
+            # all before this, because the foreign blob sat at index 0.
+            #
+            # `mark_modified()` is NOT redundant and must not be tidied
+            # away. `add_sequence()` marks the instance modified **only
+            # when it creates** -- `self.mark_modified()` at
+            # `entities.py` line 360 sits under `if sequence is None`,
+            # #186's rule -- and this path reaches into `items` in place
+            # rather than through `add_sequence_item()`, which marks on
+            # every call. Without the line below the second and later
+            # locks advance no revision, `has_unsaved_changes` stays
+            # False, the next `save()` skips the instance, and the new
+            # token never reaches the store: memory answers with capture
+            # #2 and a reopened session answers with capture #1, with
+            # nothing saying so. That is #173's shape one module over.
+            sequence = instance.add_sequence(self.TAG_ENCRYPTED_ATTRS_SEQ)
+            sequence.items[:] = [item]
+            instance.mark_modified()
 
             # self.logger.debug(f"Embedded token into {instance.sop_instance_uid}.")
 
@@ -111,6 +134,16 @@ class ReversibilityService:
 
         Locates the Encrypted Attributes Sequence, decrypts the first item's
         Encrypted Content, and deserializes the JSON.
+
+        **Item 0, and not the last item.** Since #399 every sequence this
+        library writes holds exactly one item, so `items[0]` and
+        `items[-1]` are the same expression on every file it will write
+        again -- but they are not the same on a file written by 0.9.4 or
+        earlier, which carries one item per lock and whose *first* one is
+        what that release's recovery answered with.
+        `docs/api/stability.md` promises those files stay recoverable, so
+        this index is a compatibility commitment rather than a detail;
+        `tests/test_relock_identity_token.py` holds it.
 
         Args:
             instance (Instance): The anonymized instance.
