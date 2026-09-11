@@ -854,6 +854,39 @@ def test_a_jpeg_ls_near_lossless_icon_is_carried(tmp_path, photometric):
     assert int(np.abs(got.astype(int) - source.astype(int)).max()) <= 2
 
 
+def test_a_ybr_full_jpeg_ls_icon_is_carried_as_rgb(tmp_path):
+    """N3: an 8-bit `YBR_FULL` JPEG-LS icon is carried, relabelled RGB.
+
+    The top level's #448 conversion at nested depth, through the same
+    `_decode_pixels`: the fallback converts and returns `RGB`, and
+    `_decode_nested_pixels` relabels the item from it. Without the
+    JPEG-LS row the icon is refused and files its loss row.
+    """
+    import imagecodecs
+    from pydicom.encaps import encapsulate
+    from pydicom.pixels import convert_color_space
+    from pydicom.uid import JPEGLSNearLossless
+
+    ybr = convert_color_space(NEAR_ICON_RGB, "RGB", "YBR_FULL")
+    icon = _icon_item(
+        payload=encapsulate([imagecodecs.jpegls_encode(ybr, level=2)]),
+        rows=4, cols=4, samples=3, photometric="YBR_FULL", planar=0,
+        encapsulated=True)
+    db, _src = _ingest(tmp_path, "near_ybr", icons=[icon],
+                       transfer_syntax=JPEGLSNearLossless,
+                       top_level_pixels=False)
+
+    assert not [d for d, _s in _data_loss_rows(db) if "7fe0,0010" in d], \
+        _data_loss_rows(db)
+    out = tmp_path / "out"
+    _export(db, out)
+    exported = _exported(out).IconImageSequence[0]
+    assert exported.PhotometricInterpretation == "RGB"
+    got = np.frombuffer(exported.PixelData, dtype=np.uint8).reshape(4, 4, 3)
+    # NEAR 2 on the YBR samples, then a colour conversion: a few levels.
+    assert int(np.abs(got.astype(int) - NEAR_ICON_RGB.astype(int)).max()) <= 6
+
+
 def test_the_gate_refuses_a_syntax_it_does_not_name(monkeypatch):
     """N4: the allow-list gate refuses, in behaviour, and only it does.
 

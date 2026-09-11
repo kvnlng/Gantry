@@ -42,6 +42,7 @@ import pydicom
 import pytest
 from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
 from pydicom.encaps import encapsulate
+from pydicom.pixels import convert_color_space
 from pydicom.sequence import Sequence
 from pydicom.uid import generate_uid
 
@@ -545,13 +546,14 @@ def test_the_colour_spaces_the_fallback_labels_are_chosen_per_syntax():
     Every syntax has a row. A label maps to itself where the decode is
     measured to leave it true: greyscale and palette everywhere, RGB under
     all three families (JPEG Lossless since #387, Y5). It maps to another
-    where the decode changes it: JPEG 2000's `YBR_RCT` and `YBR_ICT` come
-    back RGB (Y1, #448).
+    where the stored samples are not in the declared space: JPEG 2000's
+    `YBR_RCT` and `YBR_ICT` come back RGB from the decoder (Y1, #448), and
+    8-bit `YBR_FULL` JPEG-LS is converted to RGB by the fallback (Y2).
     """
     grey = {label: label for label in _GREY}
     assert set(_FALLBACK_PHOTOMETRICS) == _IMAGECODECS_FALLBACK_SYNTAXES
     j2k = {**grey, "RGB": "RGB", "YBR_RCT": "RGB", "YBR_ICT": "RGB"}
-    jpegls = {**grey, "RGB": "RGB"}
+    jpegls = {**grey, "RGB": "RGB", "YBR_FULL": "RGB"}
     ljpeg = {**grey, "RGB": "RGB"}
     assert {ts: dict(labels) for ts, labels in
             _FALLBACK_PHOTOMETRICS.items()} == {
@@ -621,6 +623,49 @@ def test_a_ybr_jpeg_lossless_file_is_refused_naming_space_and_syntax(
     why = _fallback_reason(summary)
     assert "'YBR_FULL'" in why, why
     assert ts in why, why
+
+
+#: 8-bit YBR_FULL samples of `RGB8`, and what pydicom's own conversion
+#: makes of them: the bytes pydicom's door stores for this file with
+#: pyjpegls installed (measured), and the reference Y2 compares with.
+YBR8 = convert_color_space(RGB8, "RGB", "YBR_FULL")
+YBR8_AS_RGB = convert_color_space(YBR8, "YBR_FULL", "RGB")
+
+
+@pytest.mark.parametrize("ts", [JPEGLS, JPEGLS_NEAR])
+def test_an_8_bit_ybr_full_jpeg_ls_frame_is_stored_as_rgb(ingest, ts):
+    """Y2: converted and relabelled, as pydicom's door does (#448, Q2).
+
+    A JPEG-LS stream carries no colour transform, and `jpegls_decode`
+    returns the YBR samples as stored. pydicom with pyjpegls converts them
+    with `convert_color_space` and labels the result RGB, and so does the
+    native door since #372; this stores the same bytes under the same
+    label. Owner question Q2, answered with the recommendation pending
+    confirmation. Near-lossless is encoded at NEAR 0, so exact.
+    """
+    ds = _dataset(ts, [YBR8], photometric="YBR_FULL")
+    session, summary, _db = ingest(ds)
+    assert (summary.ingested, summary.failures) == (1, [])
+    inst, got = _stored(session)
+    assert got.dtype == np.dtype("uint8")
+    assert got.tolist() == YBR8_AS_RGB.tolist()
+    assert int(np.abs(got.astype(int) - RGB8.astype(int)).max()) <= 2
+    assert inst.attributes["0028,0004"] == "RGB"
+
+
+def test_a_16_bit_ybr_full_jpeg_ls_frame_is_refused_naming_its_depth(ingest):
+    """Y3: pydicom cannot convert 16-bit YBR either, and neither does this.
+
+    `convert_color_space` refuses `uint16` ("Invalid ndarray.dtype 'uint16'
+    for color space conversion"), at pydicom's door as here. Refused before
+    the decode, in this library's words, naming the space and the depth.
+    """
+    _session, summary, _db = ingest(_dataset(JPEGLS, [RGB16["uint16"]],
+                                             photometric="YBR_FULL"))
+    assert summary.ingested == 0
+    why = _fallback_reason(summary)
+    assert "'YBR_FULL'" in why, why
+    assert "16-bit" in why, why
 
 
 @pytest.mark.parametrize("ts", [JPEGLS, JPEGLS_NEAR])

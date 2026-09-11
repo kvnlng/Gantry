@@ -154,7 +154,7 @@ import numpy as np
 import imagecodecs
 from imagecodecs import jpeg2k_encode
 from pydicom.dataset import FileDataset, FileMetaDataset
-from pydicom.pixels import get_decoder
+from pydicom.pixels import convert_color_space, get_decoder
 from pydicom.uid import ImplicitVRLittleEndian, JPEG2000Lossless
 from pydicom.tag import Tag
 from pydicom.datadict import dictionary_VR
@@ -408,11 +408,23 @@ _IMAGECODECS_FALLBACK_SYNTAXES = frozenset({
 #:   output RGB too. Repeating the declared label over RGB samples is
 #:   #372's defect; refusing it, as this table did first, turned away a
 #:   file both doors can read.
+#: - **8-bit `YBR_FULL` maps to RGB under JPEG-LS** (#448, owner question
+#:   Q2, answered with the recommendation pending confirmation). A JPEG-LS
+#:   stream has no colour transform, and `jpegls_decode` returns the YBR
+#:   samples as stored, so here the *fallback* converts, with pydicom's
+#:   `convert_color_space` -- the function pydicom's door applies (#372),
+#:   and what pydicom with pyjpegls stores for the same file. 16-bit is
+#:   refused before the decode: `convert_color_space` refuses `uint16`,
+#:   at pydicom's door as here.
+#:
+#: Which relabels the decoder has already done is data, not a branch on
+#: syntax: `_FALLBACK_DECODER_CONVERTS`. A relabel under any other syntax
+#: is a conversion this fallback makes itself, 8-bit only.
 _FALLBACK_GREY = {label: label for label in
                   ("MONOCHROME1", "MONOCHROME2", "PALETTE COLOR")}
 _FALLBACK_J2K = {**_FALLBACK_GREY, "RGB": "RGB",
                  "YBR_RCT": "RGB", "YBR_ICT": "RGB"}
-_FALLBACK_JPEGLS = {**_FALLBACK_GREY, "RGB": "RGB"}
+_FALLBACK_JPEGLS = {**_FALLBACK_GREY, "RGB": "RGB", "YBR_FULL": "RGB"}
 _FALLBACK_LJPEG = {**_FALLBACK_GREY, "RGB": "RGB"}
 _FALLBACK_PHOTOMETRICS = {
     "1.2.840.10008.1.2.4.57": _FALLBACK_LJPEG,
@@ -422,6 +434,12 @@ _FALLBACK_PHOTOMETRICS = {
     "1.2.840.10008.1.2.4.90": _FALLBACK_J2K,
     "1.2.840.10008.1.2.4.91": _FALLBACK_J2K,
 }
+#: The syntaxes whose decoder returns the stored label's colour space
+#: itself, so a relabel there is a label change only (see above).
+_FALLBACK_DECODER_CONVERTS = frozenset({
+    "1.2.840.10008.1.2.4.90",
+    "1.2.840.10008.1.2.4.91",
+})
 
 
 #: The descriptors a nested payload is reshaped from, in a fixed order, with
@@ -1515,6 +1533,16 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
             f"what colour space or sample layout it decoded to, so the "
             f"declared label is repeated only where a decode under that "
             f"syntax has been measured to match it") from pydicom_error
+    stored_label = labels[photometric]
+    convert = (stored_label != photometric
+               and str(ts) not in _FALLBACK_DECODER_CONVERTS)
+    bits = int(ds.BitsAllocated)
+    if convert and bits != 8:
+        raise refused(
+            f"its declared colour space {photometric!r} is {bits}-bit, and "
+            f"the conversion to {stored_label} this fallback would make, "
+            f"pydicom's `convert_color_space`, takes 8-bit samples only") \
+            from pydicom_error
 
     counted = offset_table_frame_count(ds)
     if counted is not None and counted[0] != counted[1]:
@@ -1533,7 +1561,6 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
     except Exception as exc:  # pylint: disable=broad-except
         raise refused(f"{type(exc).__name__}: {exc}") from exc
 
-    bits = int(ds.BitsAllocated)
     representation = int(ds.PixelRepresentation)
     kind = "i" if representation == 1 else "u"
     if arr.dtype.itemsize * 8 != bits or arr.dtype.kind != kind:
@@ -1561,7 +1588,12 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
             f"it decoded {arr.size} samples, where {frames} frame(s) of "
             f"{rows}x{cols}x{samples} need {int(np.prod(shape))}") \
             from pydicom_error
-    return np.ascontiguousarray(arr.reshape(shape)), labels[photometric]
+    arr = arr.reshape(shape)
+    if convert:
+        # After every check, on the header's shape: the conversion reads
+        # the last axis as the three samples.
+        arr = convert_color_space(arr, photometric, stored_label)
+    return np.ascontiguousarray(arr), stored_label
 
 
 def _item_path_words(path) -> str:
