@@ -462,11 +462,12 @@ def _sign_extend(arr, ds, precision=None):
     # its precision: 3296 for -800's pattern. A stream narrower than
     # BitsStored (precision 12 under BitsStored 16) is read by its 12 bits
     # the same way, -800. The BitsStored check above stays even so. A
-    # precision-8 stream under BitsStored 12 decodes to `uint8`, and
-    # extended from 8 it would come back `int8` here, while ingest's dtype
-    # guard refused it against BitsAllocated 16: two doors, two answers.
-    # pydicom widens the container and returns int16. This refuses at
-    # every door, as it did before #478, and S6 pins that.
+    # precision-8 stream under BitsStored 12 and BitsAllocated 16 reaches
+    # here already widened to `uint16` (`_in_declared_container`, #454),
+    # so it is extended from 8 inside `int16`, pydicom's answer. Until
+    # #454 it arrived as `uint8`, and every door refused it. The check
+    # above is now for a container that cannot hold BitsStored at all:
+    # BitsStored 12 under BitsAllocated 8, which S6 pins.
     width = precision or bits_stored
     if not 1 <= width <= bits:
         # Unreachable for a stream CharLS decoded: it returns a container
@@ -480,6 +481,37 @@ def _sign_extend(arr, ds, precision=None):
     # signed: numpy's `>>` is arithmetic on a signed dtype and logical on
     # an unsigned one, so the order is the whole of the sign extension.
     return (arr << shift).view(np.dtype(f"i{arr.dtype.itemsize}")) >> shift
+
+
+def _in_declared_container(arr, ds):
+    """A JPEG Lossless or JPEG-LS decode, in the container the header declares (#454).
+
+    lj92, libjpeg-turbo and CharLS return the narrowest container that
+    holds the stream's precision: `uint8` for a precision of 8 or less,
+    whatever BitsAllocated says. So a precision-8 stream under
+    BitsAllocated 16 came back as `uint8` (or `int8`, once
+    `_sign_extend` had it) from both read doors, with the right values,
+    while ingest's dtype guard refused the same file against
+    BitsAllocated 16. One file, two answers. pydicom with pyjpegls widens
+    the same stream to `uint16`, or `int16` when it is signed (measured),
+    and so all three doors do now. For JPEG Lossless pydicom with
+    pylibjpeg-libjpeg raises on these files, so there the doors agree with
+    each other and not with pydicom.
+
+    Exact, since every 8-bit sample fits in 16 bits. Called before
+    `_sign_extend`, so a signed sample is sign-extended inside the
+    declared container rather than the codec's. A stream of precision 8
+    under BitsStored 12 then reads as pydicom reads it, where it used to be
+    refused at every door.
+
+    It only widens, and only a `uint8` decode under BitsAllocated 16. A
+    decode wider than its container, a precision-16 stream under
+    BitsAllocated 8, is left alone, so the dtype guard still refuses it.
+    Read with `getattr`, never `ds.get`, for `_sign_extend`'s reason.
+    """
+    if arr.dtype == np.uint8 and int(getattr(ds, "BitsAllocated", 0) or 0) == 16:
+        return arr.astype(np.uint16)
+    return arr
 
 
 def _decode_frame(transfer_syntax, bitstream, ds):
@@ -504,7 +536,8 @@ def _decode_frame(transfer_syntax, bitstream, ds):
         if len(bitstream) % 2:
             bitstream = bytes(bitstream) + b"\x00"
         return _sign_extend(
-            imagecodecs.ljpeg_decode(bitstream), ds)
+            _in_declared_container(imagecodecs.ljpeg_decode(bitstream), ds),
+            ds)
     if transfer_syntax in [JPEGBaseline, JPEGExtended]:
         return imagecodecs.jpeg_decode(bitstream)
     if transfer_syntax in [JPEG2000Lossless, JPEG2000]:
@@ -516,8 +549,8 @@ def _decode_frame(transfer_syntax, bitstream, ds):
         # the last frame's precision to every frame; its per-frame read
         # does what this does.
         return _sign_extend(
-            imagecodecs.jpegls_decode(bitstream), ds,
-            _jpegls_precision(bitstream))
+            _in_declared_container(imagecodecs.jpegls_decode(bitstream), ds),
+            ds, _jpegls_precision(bitstream))
     raise RuntimeError(f"Unsupported syntax: {transfer_syntax}")
 
 
@@ -567,7 +600,10 @@ def get_pixel_data(ds):
         1) JPEG Lossless or JPEG-LS frame comes back signed (#446), where
         it used to come back as its unsigned bit pattern: sign-extended
         from BitsStored for JPEG Lossless, and from each JPEG-LS frame's
-        own precision (#478). An 8-bit YBR_FULL JPEG-LS frame comes back
+        own precision (#478). A JPEG Lossless or JPEG-LS stream of
+        precision 8 or less under BitsAllocated 16 comes back in that
+        16-bit container, `uint16` or `int16` (#454), where it came back
+        `uint8` or `int8`. An 8-bit YBR_FULL JPEG-LS frame comes back
         converted to RGB, **and `ds.PhotometricInterpretation` is set to
         `RGB`** (#464): this mutates the dataset it is given, so the label
         stays true of the bytes. A JPEG 2000 `YBR_RCT` or `YBR_ICT` frame,
