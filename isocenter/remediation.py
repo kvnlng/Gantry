@@ -771,7 +771,8 @@ class RemediationService:
         offset = (val % span) + min_days
         return offset
 
-    def _shift_date_string(self, date_val, days: int) -> Optional[str]:
+    @staticmethod
+    def _shift_date_string(date_val, days: int) -> Optional[str]:
         """
         Shifts a date by `days`.
 
@@ -929,3 +930,28 @@ class RemediationService:
             seq.items.append(item)
 
         entity.sequences["0012,0064"] = seq
+
+
+def _date_shift_declines(value) -> bool:
+    """True when the SHIFT_DATE arm would record a decline for `value` (#498).
+
+    The inspector asks this of a SHIFT/JITTER value on an entity already
+    `date_shifted`. That flag is the entity's, not the value's: it says a
+    shift landed somewhere on the instance or its study, and a value the
+    arm could not parse in the same pass sits beside it unshifted. The
+    scan may skip a value the shift could apply to (moving it again would
+    shift it twice), but not one it cannot, or a second `anonymize()`
+    records CLEARED over a value the pipeline never touched.
+
+    The answer is the arm's own parser rather than a second one, so the
+    scan re-raises exactly what the arm declines: a DA range, a
+    multi-valued DA, and a DT with a UTC offset are declined here the same
+    as `'notadate'`. Blank is False because the arm skips a blank value
+    without a decline -- nothing is left behind -- and re-raising it would
+    take a clean instance to IDENTIFIED on every re-audit.
+    """
+    if value is None or not str(value).strip():
+        return False
+    # The class's own module; the parser is private to it, not to the class.
+    return RemediationService._shift_date_string(  # pylint: disable=protected-access
+        value, 0) is None
