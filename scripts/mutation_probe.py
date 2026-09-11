@@ -874,11 +874,12 @@ TARGETS = {
                                "tests/test_ybr_jpegls_read_doors.py",
                                "tests/test_ybr_read_door_labels.py"],
                               30),
-    # 79 sites; budget 60 is stride 1 (79 // 60), so every site is
+    # 81 sites; budget 60 is stride 1 (81 // 60), so every site is
     # probed, exhaustive because it is cheap, like parallel.py's 80. It
     # stays stride 1 until the module passes 119 sites.
     #
-    # Seven files (the seventh, test_ybr_jpegls_read_doors.py, is #483's),
+    # Eight files -- the seventh, test_ybr_jpegls_read_doors.py, is
+    # #483's, and the eighth, test_ybr_read_door_labels.py, is #482's --
     # and it takes the widened `_importers` (#419) to see them: several
     # reach this module as `from isocenter import
     # imagecodecs_handler`, which the old stem-only scan could not read.
@@ -903,6 +904,14 @@ TARGETS = {
     #   - the print in `is_available()` is equivalent now. It was the only
     #     place the import failure's cause reached anyone until #444 put
     #     the cause in the raise itself.
+    # #482 then added 2 sites, taking the module to 81: `DECODER_RELABELS`
+    # and the lookup that reads it. They are NOT in the 77/79 above, which
+    # was measured before them, and this row's figures are deliberately
+    # left at that measurement rather than restated over a count nothing
+    # re-ran. Both new sites were killed by real edits on this branch and
+    # not by the probe: the relabel emptied to `pass` (M2), and the
+    # `YBR_ICT` row dropped from the .91 table (M3), each red in
+    # tests/test_ybr_read_door_labels.py on 3.12.14 and 3.14.7t.
     # The RLE arm, which no mutant could reach through a real decode, is
     # gone (#447).
     "isocenter/imagecodecs_handler.py": (["tests/test_codecs_strict.py",
