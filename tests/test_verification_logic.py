@@ -167,3 +167,36 @@ class TestVerifierReadsZoneSpace(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_text_clear_of_a_zone_has_zero_coverage_never_a_negative_one():
+    """Text clear of a zone on either axis has coverage exactly 0.0 (#439).
+
+    `_coverage` returns 0.0 as soon as the boxes are disjoint on *either*
+    axis. Weakened to *both* (`or` to `and`), a box clear of the zone on
+    one axis only falls through to the area product with one negative
+    span: the text beside the zone below scores -9.0, outside the
+    0.0-1.0 range `is_covered` documents, and `is_covered(...,
+    threshold=0.0)`, true for every box on the real code, turns false
+    for it. `_findings_for` is immune -- its best coverage starts at 0.0
+    and only rises -- so this pins the public contract, not a leak. The
+    probe reported the mutant as a survivor of the verification.py row:
+    nothing asserted a disjoint box's coverage directly.
+
+    The one-axis asserts are the ones that kill it, and they go through
+    `_coverage` so the result must be exactly 0.0, not merely below a
+    threshold. The diagonal asserts (clear on both axes) are green under
+    the mutant too, since the weakened guard still returns 0.0 when both
+    axes are disjoint; they pin the contract, not this mutant.
+    """
+    verifier = RedactionVerifier()
+    text_box = (0, 0, 10, 10)            # OCR (x, y, w, h): x 0..10, y 0..10
+
+    diagonal = (100, 110, 100, 110)      # zone (y1, y2, x1, x2): clear on both axes
+    assert verifier._coverage(text_box, diagonal) == 0.0
+    assert verifier.is_covered(text_box, diagonal) is False
+
+    beside = (0, 10, 100, 110)           # same rows, columns clear
+    below = (100, 110, 0, 10)            # same columns, rows clear
+    assert verifier._coverage(text_box, beside) == 0.0
+    assert verifier._coverage(text_box, below) == 0.0
