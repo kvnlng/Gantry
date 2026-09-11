@@ -229,7 +229,8 @@ TARGETS = {
                                   "tests/test_waveform_model.py",
                                   "tests/test_wfdb_conformance.py",
                                   "tests/test_wfdb_writer.py",
-                                  "tests/test_worker_loss_is_reported.py"], 30),
+                                  "tests/test_worker_loss_is_reported.py",
+                                  "tests/test_ybr_jpegls_read_doors.py"], 30),
     # 453 sites. Until #383 this module had no row at all, so no mutant
     # of `_hold_sidecar_gate`, `_hold_pass_lock`, `_refuse_while_pass_open`,
     # `_flock_within`, `_SIDECAR_GATE_TIMEOUT_S`, the `:memory:` temp-file
@@ -460,7 +461,8 @@ TARGETS = {
                               "tests/test_wfdb_privacy.py",
                               "tests/test_wfdb_start_date_honesty.py",
                               "tests/test_wfdb_writer.py",
-                              "tests/test_worker_loss_is_reported.py"],
+                              "tests/test_worker_loss_is_reported.py",
+                              "tests/test_ybr_jpegls_read_doors.py"],
                              30),
     # 196 sites. Until #419 this module had no row, so the persistence
     # bookkeeping every CLAUDE.md trap is about -- `mark_modified`,
