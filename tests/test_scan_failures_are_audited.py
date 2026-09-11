@@ -43,6 +43,7 @@ Discovery forces threads, so its processes arm is the recycling pool:
 """
 import multiprocessing
 import os
+import re
 import sqlite3
 from datetime import date
 from types import SimpleNamespace
@@ -281,3 +282,45 @@ def test_a_clean_scan_writes_no_row_and_still_grades_pass(
     assert rows == []
     content = report.read_text(encoding="utf-8")
     assert PASS_LINE in content, content
+
+
+def _image_to_data_with_markup(img, *_args, **_kwargs):
+    """A reason carrying the two characters a markdown table row cannot hold."""
+    if np.asarray(img).flat[0] == FAILING_FILL:
+        raise RuntimeError(f"tesseract said:\nbox 3 | conf -1 (pid={os.getpid()})")
+    return WORD
+
+
+@OPS
+def test_a_reason_with_a_newline_and_a_pipe_is_one_escaped_report_row(
+        tmp_path, monkeypatch, ocr_present, op):
+    """R5: the row reaches section 4 as one table row, with the pipe escaped.
+
+    The report writes each exception as `| ts | action | details |` and
+    renders `details` as given, so the flattening and the pipe-escape in
+    `_audit_unread_instances` are all that keep a reason off a second
+    line or out of a fourth column. Nothing else pinned them: an OCR
+    error is free text, and every other reason in this file is one line
+    with no pipe. Dropping either step kills this test and no other.
+    """
+    _use("threads", op, monkeypatch, ocr_present)
+    ocr_present.image_to_data = _image_to_data_with_markup
+    session = _session(tmp_path, [FAILING_FILL, READABLE_FILL])
+    report = tmp_path / "report.md"
+    try:
+        _run(op, session)
+        victim = _failing_uids(session)[0]
+        session.generate_report(str(report))
+    finally:
+        session.close()
+
+    section = report.read_text(encoding="utf-8").split("## 4. Exceptions & Errors")[1]
+    section = section.split("\n## ")[0]
+    rows = [line for line in section.splitlines() if victim in line]
+    assert len(rows) == 1, section
+    row = rows[0]
+    # Flattened: the text after the newline is on the victim's own line.
+    assert "tesseract said: box 3 \\| conf -1" in row, row
+    # Escaped: an unescaped pipe would add a column to this row.
+    cells = re.split(r"(?<!\\)\|", row)
+    assert len(cells) == 5 and cells[2].strip() == "WARNING", cells

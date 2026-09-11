@@ -42,8 +42,11 @@ in `report.failures` and warns with the count. `discover_redaction_zones()` warn
 the same way and counts only the instances it read in `n_sources`. Both write one
 `WARNING` audit row per instance they could not read, naming it and the reason, so
 the compliance report grades the run `REVIEW_REQUIRED` and lists each one under
-"Exceptions & Errors" (#479). If either could read none of the instances it
-tried, it raises `PixelScanError`, also a `RuntimeError`, after the pass and the
+"Exceptions & Errors" (#479). The rows stay in the store's audit log, as
+export-failure rows do: a rescan that reads everything after you fix the cause
+reports no failures but does not remove them, so the run still grades
+`REVIEW_REQUIRED`; only a new store starts clean. If either could read none of
+the instances it tried, it raises `PixelScanError`, also a `RuntimeError`, after the pass and the
 audit rows (#423).
 `pixel_analysis.HAS_OCR` says only whether `pytesseract` imported; it does not
 check the binary.
