@@ -777,6 +777,42 @@ def test_a_tampered_frame_is_refused_right_after_ingest(pair):
         a.get_pixel_data()
 
 
+
+def test_a_tampered_frame_is_refused_after_a_reopen(pair):
+    """T3: `load_all()` builds the loader with the stored `pixel_hash`.
+
+    Measured on c9e9938, a reopened session did not check either: both
+    hydration sites built the loader with no hash, and hydration never
+    sets `inst._pixel_hash` for the loader's fallback to find. The row
+    had the hash all along (`SELECT *` puts it in `r['pixel_hash']`).
+    """
+    session, a, b, db = pair
+    session.save(sync=True)
+    a_loader, b_loader, uid = a._pixel_loader, b._pixel_loader, a.sop_instance_uid
+    session.close()
+    _swap_in(a_loader, b_loader)
+
+    reopened = DicomSession(persistence_file=db)
+    try:
+        a2 = _instances_by_uid(reopened)[uid]
+        assert a2.pixel_array is None
+        with pytest.raises(RuntimeError, match="hash mismatch"):
+            a2.get_pixel_data()
+    finally:
+        reopened.close()
+
+
+def test_load_patient_wires_the_stored_hash(pair):
+    """T4: the second hydration site, which duplicates `load_all`'s."""
+    session, a, _b, _db = pair
+    session.save(sync=True)
+    patient = session.store_backend.load_patient("PA")
+    (loaded,) = [i for st in patient.studies for se in st.series
+                 for i in se.instances]
+    assert loaded._pixel_loader.pixel_hash == a._pixel_hash
+    assert loaded._pixel_loader.pixel_hash is not None
+
+
 # ---------------------------------------------------------------------------
 # F9 -- the loader names a message-less read failure (#435)
 # ---------------------------------------------------------------------------

@@ -1898,8 +1898,20 @@ class SqliteStore:
                         # Wait, we populate attributes right after this.
                         # So the lambda calls self.instance methods? No, lambda binds early.
 
+                        # The stored hash goes to the loader, explicitly. A
+                        # loader built with none has no integrity check, and
+                        # the fallback to `inst._pixel_hash` finds nothing
+                        # here: hydration never sets it (and
+                        # `tests/test_blob_storage.py` depends on that). So
+                        # every reopened session read another frame's bytes
+                        # at this offset as this instance's pixels (#436).
+                        # Passed rather than set on the instance for #212's
+                        # reason: an explicit hash has no ordering to get
+                        # wrong. `load_patient` below does the same; change
+                        # them together.
                         inst._pixel_loader = self._create_pixel_loader(
-                            r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
+                            r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst,
+                            pixel_hash=r['pixel_hash'])
 
                     self._wire_waveform_loader(inst, wave_refs.get(r['sop_instance_uid']))
                     self._wire_nested_pixel_refs(
@@ -2051,8 +2063,11 @@ class SqliteStore:
                             # construction below; the two have drifted apart
                             # before, so change them together.
                             if r['pixel_offset'] is not None and r['pixel_length'] is not None:
+                                # With the stored hash, as `load_all` does
+                                # and for its reason (#436).
                                 inst._pixel_loader = self._create_pixel_loader(
-                                    r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
+                                    r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst,
+                                    pixel_hash=r['pixel_hash'])
 
                             self._wire_waveform_loader(
                                 inst, wave_refs.get(r['sop_instance_uid']))
