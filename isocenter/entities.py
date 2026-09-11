@@ -973,6 +973,12 @@ class Instance(DicomItem):
             when the instance genuinely carries no pixel element. "Could
             not decode" is *not* None -- it raises (#226).
 
+        An 8-bit `YBR_FULL` JPEG-LS file read through the imagecodecs
+        fallback comes back converted to RGB, as `ingest()` stores it. An
+        instance that carries a PhotometricInterpretation is relabelled
+        `RGB` to match, which advances its revision (#464). This is the
+        one write a read makes, and it is made only for that conversion.
+
         Raises:
             RuntimeError: If loading fails due to transfer syntax issues,
                 missing codecs, or a pixel element the reader could not
@@ -1190,9 +1196,25 @@ class Instance(DicomItem):
                 try:
                     if ds is not None and h.supports_transfer_syntax(
                             ds.file_meta.TransferSyntaxUID):
+                        declared = str(getattr(
+                            ds, "PhotometricInterpretation", "") or "")
                         arr = h.get_pixel_data(ds)
+                        # The handler converts 8-bit YBR_FULL JPEG-LS to
+                        # RGB and says so by relabelling `ds` (#464). Asked
+                        # of `ds`, before and after, rather than of the
+                        # file's label against the instance's: only a
+                        # conversion is a statement this door makes about
+                        # colour. A hand-built label that disagrees with
+                        # the file for any other reason is not this read's
+                        # to correct.
+                        decoded = str(getattr(
+                            ds, "PhotometricInterpretation", "") or "")
+                        if decoded != declared:
+                            self._relabel_to_decoded_colour(decoded)
                         # Same reasoning as the two branches above: a read
-                        # must not write (#186).
+                        # must not write (#186). The relabel just above is
+                        # the one exception, and it is a label, not a
+                        # geometry: it states a conversion this read made.
                         self.pixel_array = arr
                         # A fresh read from the store or the file: the resident
                         # array now IS what is stored, so it is freeable again
@@ -1347,6 +1369,42 @@ class Instance(DicomItem):
             return False
         self.set_attr(tag, value)
         return True
+
+    def _relabel_to_decoded_colour(self, label: str) -> None:
+        """`get_pixel_data()`'s imagecodecs arm converted: say so (#464).
+
+        The handler converted the frame this read is about to publish
+        (8-bit YBR_FULL JPEG-LS to RGB) and relabelled its dataset. The
+        instance's PhotometricInterpretation follows, as ingest's does.
+        Otherwise the door returns RGB bytes under a YBR label, which is
+        #372's defect at a new door. It bumps the revision, because a new
+        label is a change the store should hold.
+
+        **Only when the instance already carries a label.** A bare
+        `Instance(file_path=...)` holds no descriptors, so nothing on it
+        is false. The pydicom arm of the same door never adds one, and a
+        lone PhotometricInterpretation beside no Rows would be a write no
+        read has made before. After `ingest()` the label is RGB already,
+        so on that path this writes nothing. It is for hand-built graphs.
+
+        **Under `PIXEL_STATE_LOCK`, and only while `pixel_array` is
+        still None.** The read arms publish their frame without the lock,
+        so a `set_pixel_data()` landing during the load loses its pixels
+        (#465, open). This must not also take the set's descriptors. A set
+        that lands before this section has already made the array
+        resident, and the relabel is skipped. A set that lands after it
+        writes its own label over this one. Either way the set's label
+        stands.
+        The array publish and the flag clear stay where #465 has them, and
+        they are that issue's to fix: moving them in here would be a
+        one-arm half of its fix, and would change the shape the site
+        detector in `tests/test_sidecar_gate_order.py` pins. `set_attr`
+        takes no lock and logs nothing, and `set_pixel_data` already calls
+        it under this leaf, so this stays a leaf section.
+        """
+        with PIXEL_STATE_LOCK:
+            if self.pixel_array is None and "0028,0004" in self.attributes:
+                self._write_str_if_changed("0028,0004", label)
 
     @staticmethod
     def _accepted_pixel_array(array: np.ndarray) -> np.ndarray:

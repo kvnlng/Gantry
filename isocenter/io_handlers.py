@@ -155,7 +155,7 @@ import numpy as np
 import imagecodecs
 from imagecodecs import jpeg2k_encode
 from pydicom.dataset import FileDataset, FileMetaDataset
-from pydicom.pixels import convert_color_space, get_decoder
+from pydicom.pixels import get_decoder
 from pydicom.uid import ImplicitVRLittleEndian, JPEG2000Lossless
 from pydicom.tag import Tag
 from pydicom.datadict import dictionary_VR
@@ -186,7 +186,8 @@ from .pixel_geometry import (
     resolve_pixel_geometry,
 )
 from .blob_kind import serialize_blob_kind
-from .imagecodecs_handler import (decode_declared_frames,
+from .imagecodecs_handler import (colour_conversion, convert_colour,
+                                  decode_declared_frames,
                                   frame_count_mismatch_words,
                                   offset_table_frame_count)
 from .parallel import run_parallel, _resolve_strategy
@@ -409,18 +410,20 @@ _IMAGECODECS_FALLBACK_SYNTAXES = frozenset({
 #:   output RGB too. Repeating the declared label over RGB samples is
 #:   #372's defect; refusing it, as this table did first, turned away a
 #:   file both doors can read.
-#: - **8-bit `YBR_FULL` maps to RGB under JPEG-LS** (#448, owner question
-#:   Q2, answered with the recommendation pending confirmation). A JPEG-LS
-#:   stream has no colour transform, and `jpegls_decode` returns the YBR
-#:   samples as stored, so here the *fallback* converts, with pydicom's
-#:   `convert_color_space` -- the function pydicom's door applies (#372),
-#:   and what pydicom with pyjpegls stores for the same file. 16-bit is
-#:   refused before the decode: `convert_color_space` refuses `uint16`,
-#:   at pydicom's door as here.
+#: - **8-bit `YBR_FULL` maps to RGB under JPEG-LS** (#448, confirmed by
+#:   the owner with #464). A JPEG-LS stream has no colour transform, and
+#:   `jpegls_decode` returns the YBR samples as stored, so the *handler*
+#:   converts, with pydicom's `convert_color_space`. That is the function
+#:   pydicom's door applies (#372), and what pydicom with pyjpegls stores
+#:   for the same file. The conversion is `imagecodecs_handler.CONVERTS_TO`
+#:   and not this module's since #464, so the read doors make it too. 16-bit is refused
+#:   here before the decode: `convert_color_space` refuses `uint16`. The
+#:   read doors return a 16-bit frame as stored under its own label, and
+#:   #461 decides that case.
 #:
 #: Which relabels the decoder has already done is data, not a branch on
 #: syntax: `_FALLBACK_DECODER_CONVERTS`. A relabel under any other syntax
-#: is a conversion this fallback makes itself, 8-bit only.
+#: is a conversion the handler makes (`CONVERTS_TO`), 8-bit only.
 _FALLBACK_GREY = {label: label for label in
                   ("MONOCHROME1", "MONOCHROME2", "PALETTE COLOR")}
 _FALLBACK_J2K = {**_FALLBACK_GREY, "RGB": "RGB",
@@ -1559,11 +1562,26 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
                and str(ts) not in _FALLBACK_DECODER_CONVERTS)
     bits = int(ds.BitsAllocated)
     if convert and bits != 8:
+        # Ingest's own refusal, and only ingest's: the read doors return a
+        # 16-bit YBR_FULL frame as stored under its own label, which is
+        # true of it. Whether 16-bit is converted or recorded as a limit
+        # is #461, deliberately left open by #464.
         raise refused(
             f"its declared colour space {photometric!r} is {bits}-bit, and "
             f"the conversion to {stored_label} this fallback would make, "
             f"pydicom's `convert_color_space`, takes 8-bit samples only") \
             from pydicom_error
+    # The conversion itself, and the refusal of a signed 8-bit frame, are
+    # the handler's (#464), so ingest and both read doors make them by one
+    # rule. When this module converted for itself, ingest stored RGB and
+    # the read doors returned the YBR samples. `convert` above and the
+    # handler's `CONVERTS_TO` must name the same rows;
+    # `test_the_handler_converts_exactly_the_relabels_ingest_leaves_to_it`
+    # holds them together.
+    try:
+        conversion = colour_conversion(ds)
+    except RuntimeError as exc:
+        raise refused(str(exc)) from pydicom_error
 
     counted = offset_table_frame_count(ds)
     if counted is not None and counted[0] != counted[1]:
@@ -1610,10 +1628,10 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
             f"{rows}x{cols}x{samples} need {int(np.prod(shape))}") \
             from pydicom_error
     arr = arr.reshape(shape)
-    if convert:
+    if conversion is not None:
         # After every check, on the header's shape: the conversion reads
         # the last axis as the three samples.
-        arr = convert_color_space(arr, photometric, stored_label)
+        arr = convert_colour(arr, conversion)
     return np.ascontiguousarray(arr), stored_label
 
 
