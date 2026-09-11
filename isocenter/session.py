@@ -104,20 +104,59 @@ class _ScanOutcome(NamedTuple):
     failure: Optional[str]
 
 
+def _caller_tesseract_cmd() -> Optional[str]:
+    """The `tesseract_cmd` this process's pytesseract runs, or `None` (#458).
+
+    Read in the caller, after `_require_ocr` has probed that very binary,
+    and sent with each work item: a spawned worker imports a fresh
+    pytesseract whose `tesseract_cmd` is the bare `"tesseract"`, looked
+    up on `PATH`, so a caller who configured the binary rather than
+    installing it on `PATH` passed the probe and then had every worker
+    fail. `getattr` all the way down because pytesseract is optional and
+    a stand-in for it need not carry the submodule; `None` means "adopt
+    nothing".
+    """
+    inner = getattr(pixel_analysis.pytesseract, "pytesseract", None)
+    return getattr(inner, "tesseract_cmd", None)
+
+
+def _adopt_tesseract_cmd(cmd: Optional[str]) -> None:
+    """Point this process's pytesseract at the caller's binary (#458).
+
+    **Writes only when the value differs**, and that is what keeps the
+    threads path untouched rather than an optimisation. A worker thread
+    shares the caller's module, so it already reads the caller's value
+    and the comparison is equal; writing it back from every worker thread
+    would be worker threads mutating module state the caller owns, which
+    is the shape that leaked a stand-in across tests in #466. In a
+    spawned child the module is the child's own, and the write is the fix.
+    Guarded like `_caller_tesseract_cmd`: a worker whose `pytesseract` is
+    `None` or a stand-in without the submodule adopts nothing, and its
+    OCR fails -- or not -- exactly as it would have.
+    """
+    if cmd is None:
+        return
+    inner = getattr(pixel_analysis.pytesseract, "pytesseract", None)
+    if inner is not None and getattr(inner, "tesseract_cmd", None) != cmd:
+        inner.tesseract_cmd = cmd
+
+
 def _verify_worker(args):
     """
     Worker for pixel verification.
     Args:
-        args: Tuple(Instance, Equipment, List[Rules])
+        args: Tuple(Instance, Equipment, List[Rules], Optional[str]) --
+            the last is the caller's `tesseract_cmd` (#458).
 
     Returns: `_ScanOutcome` -- the instance's findings (WITHOUT entities),
     whether any frame was read, and why it could not be read in full.
     """
     from .verification import RedactionVerifier
-    instance, equipment, rules = args
+    instance, equipment, rules, tesseract_cmd = args
     if not instance:
         return _ScanOutcome(None, [], False, None)
     uid = instance.sop_instance_uid
+    _adopt_tesseract_cmd(tesseract_cmd)
 
     # A boundary catch, and it must return an outcome rather than
     # re-raise: `run_parallel` re-raises a worker's exception by default,
@@ -159,8 +198,15 @@ def _verify_worker(args):
     return _ScanOutcome(uid, findings, ocr.read, ocr.failure)
 
 
-def _discover_worker(instance):
+def _discover_worker(args):
     """Worker for zone discovery: `(entity_uid, _InstanceOcr)` for one instance.
+
+    `args` is `(instance, tesseract_cmd)`. Discovery passes
+    `force_threads=True`, and #458 first read that as "always threads, so
+    it needs no `tesseract_cmd`"; but `ISOCENTER_MAX_TASKS_PER_CHILD`
+    outranks `force_threads=True` (`parallel._resolve_execution_choice`),
+    and under it discovery runs in spawned processes and failed every
+    instance exactly as the scan did -- measured on both gate builds.
 
     Discovery read through `pixel_analysis.analyze_pixels` until #423's
     rule reached it, and that function logs a failed load or frame and
@@ -170,7 +216,9 @@ def _discover_worker(instance):
     `_verify_worker`; the same boundary catch, so one unexpected error
     costs one instance rather than the pass.
     """
+    instance, tesseract_cmd = args
     uid = instance.sop_instance_uid
+    _adopt_tesseract_cmd(tesseract_cmd)
     try:
         return uid, pixel_analysis._ocr_instance(instance)  # pylint: disable=protected-access
     except Exception as e:  # pylint: disable=broad-exception-caught
@@ -192,6 +240,37 @@ def _warn_unread_instances(operation, failures, attempted, where):
         f"{operation}: {len(failures)} of {attempted} instance(s) could not "
         f"be read in full, so their text was not (or not all) scanned; see "
         f"{where}. First: {uid}: {reason}")
+
+
+def _audit_unread_instances(store_backend, operation, failures):
+    """One `WARNING` audit row per instance an OCR pass could not read (#479).
+
+    The owner's ruling on #423's third question, and the mirror of
+    `DicomExporter._report_export_failures`: a failure the caller was told
+    about but the audit log was not left the compliance report grading a
+    run `PASS` whose verification never looked at some of its pixels,
+    beside "No exceptions or errors were recorded".
+
+    `WARNING` rather than export's `ERROR`, as the ruling names it: a
+    pass that read some instances returns a result, and nothing was
+    written wrong. The two grade alike -- `get_audit_errors()` selects
+    both, and any row it returns costs the run its PASS -- and both are in
+    the frozen audit vocabulary, so this adds no word.
+
+    The UID is in `details` as well as `entity_uid` because the report
+    renders `(timestamp, action_type, details)` and nothing else; without
+    it the exceptions section would say an instance failed and not which.
+    Flattened and pipe-escaped for the same markdown table row export's
+    rows go into. Called before the warning and before any raise, so a
+    caller who catches `PixelScanError` has an audit log that already
+    holds every row.
+    """
+    for uid, reason in failures:
+        detail = (f"{operation} could not read {uid} in full, so its "
+                  f"burned-in text was not (or not all) checked: {reason}")
+        detail = " ".join(detail.split()).replace("|", "\\|")
+        store_backend.log_audit(action_type="WARNING",
+                                entity_uid=uid or "UNKNOWN", details=detail)
 
 
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -2085,11 +2164,14 @@ class DicomSession:
                 processes, or `None` when that instance cannot be found in
                 the graph; never a worker's copy (#412). Its `failures`
                 lists `(entity_uid, reason)` for each instance whose pixels
-                could not be loaded or whose OCR raised on any frame --
-                including in a spawned worker that cannot find a binary the
-                caller could -- and a WARNING gives the count (#423). An
-                instance with no pixel element is neither scanned nor a
-                failure.
+                could not be loaded or whose OCR raised on any frame, and a
+                WARNING gives the count (#423). Each failure is also written
+                as one `WARNING` audit row naming the instance and the
+                reason, so the compliance report grades the run
+                `REVIEW_REQUIRED` (#479). An instance with no pixel element
+                is neither scanned nor a failure. A worker process runs the
+                `pytesseract.pytesseract.tesseract_cmd` the caller set, the
+                binary the up-front check probed (#458).
 
         Raises:
             RuntimeError: `pixel_analysis.OcrUnavailableError` when the `ocr`
@@ -2097,13 +2179,17 @@ class DicomSession:
                 answer in the calling process, before any worker is
                 dispatched and before the graph is read (#422).
                 `pixel_analysis.PixelScanError`, carrying `.failures` and
-                `.attempted`, after the pass and the warning, when at least
-                one instance failed and none could be read (#423).
+                `.attempted`, after the pass, the audit rows and the
+                warning, when at least one instance failed and none could
+                be read (#423, #479).
         """
         # First, before the graph is read: a scaffolded config would
         # otherwise answer "nothing to scan" without OCR, and the missing
         # extra would surface only once zones were filled in (#422).
         pixel_analysis._require_ocr("scan_pixel_content()")  # pylint: disable=protected-access
+        # Right after the probe, so the workers run the binary it checked
+        # (#458); see `_caller_tesseract_cmd`.
+        tesseract_cmd = _caller_tesseract_cmd()
         get_logger().info("Scanning pixel content for text (OCR)...")
         print("Scanning pixel content for text (OCR)...")
 
@@ -2148,7 +2234,7 @@ class DicomSession:
                         continue
 
                     for inst in se.instances:
-                        worker_items.append((inst, equip, current_rules))
+                        worker_items.append((inst, equip, current_rules, tesseract_cmd))
 
         if not worker_items:
             msg = "No matching configured instances found to scan."
@@ -2176,6 +2262,10 @@ class DicomSession:
         # findings say nothing about an entity's metadata PHI status.
         self._rehydrate_findings(all_findings)
 
+        # Before the warning and the raise, so every exit from here --
+        # the report returned or `PixelScanError` -- leaves the rows (#479).
+        _audit_unread_instances(self.store_backend, "scan_pixel_content()",
+                                failures)
         _warn_unread_instances("scan_pixel_content()", failures,
                                len(worker_items), "report.failures")
         summary = f"OCR Scan Complete. Found {len(all_findings)} suspicious regions (Uncovered)"
@@ -2243,21 +2333,27 @@ class DicomSession:
             `n_sources` counts only the sampled instances that were read
             (at least one frame through OCR), so an instance that could
             not be read does not dilute a zone's occurrence rate. Each one
-            that failed is logged at ERROR and counted in a WARNING (#423).
+            that failed is logged at ERROR and counted in a WARNING (#423),
+            and written as one `WARNING` audit row naming the instance and
+            the reason, which grades the run `REVIEW_REQUIRED` (#479). A
+            worker process runs the caller's `tesseract_cmd` (#458).
 
         Raises:
             RuntimeError: `pixel_analysis.OcrUnavailableError` when the `ocr`
                 extra is not installed or the `tesseract` binary does not
                 answer, before any worker is dispatched and before the graph
                 is read (#422). `pixel_analysis.PixelScanError`, carrying
-                `.failures` and `.attempted`, after the pass and the warning,
-                when at least one sampled instance failed and none could be
-                read (#423).
+                `.failures` and `.attempted`, after the pass, the audit rows
+                and the warning, when at least one sampled instance failed
+                and none could be read (#423, #479).
         """
         # First, and read through the module at call time -- never a copy
         # of `HAS_OCR` imported into this module, which a patch or a later
         # install would not reach (#422).
         pixel_analysis._require_ocr("discover_redaction_zones()")  # pylint: disable=protected-access
+        # Not only for show: `force_threads=True` below does not hold under
+        # `ISOCENTER_MAX_TASKS_PER_CHILD` (#458; see `_discover_worker`).
+        tesseract_cmd = _caller_tesseract_cmd()
         from isocenter.discovery import DiscoveryResult, DiscoveryCandidate, ZoneDiscoverer
 
         get_logger().info(f"Discovering zones for {serial_number}...")
@@ -2286,7 +2382,7 @@ class DicomSession:
         # 3. Analyze
         outcomes = run_parallel(
             _discover_worker,
-            sample,
+            [(inst, tesseract_cmd) for inst in sample],
             desc="Discovery Scan",
             force_threads=True
         )
@@ -2324,6 +2420,12 @@ class DicomSession:
                     )
                     candidates.append(cand)
 
+        # Before the warning and the raise, as in `scan_pixel_content()`
+        # (#479). Discovery reads nothing into the configuration, but a
+        # session whose discovery could not read an instance has the same
+        # gap in what it looked at, and the ruling covers both methods.
+        _audit_unread_instances(self.store_backend,
+                                "discover_redaction_zones()", failures)
         _warn_unread_instances("discover_redaction_zones()", failures,
                                len(sample), "the ERROR log above")
         # After the warning, and on `ExportError`'s rule, as in

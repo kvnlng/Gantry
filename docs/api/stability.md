@@ -137,7 +137,10 @@ on such a UID all resolve to a single one of those instances.
 `PhiReport.failures` is a list of `(entity_uid, reason)`, one per
 instance `scan_pixel_content()` could not read in full, and is always a
 list; `audit()`'s is always empty, because a failure in its workers
-raises (#423).
+raises (#423). Each instance `scan_pixel_content()` or
+`discover_redaction_zones()` could not read also writes one `WARNING`
+audit row naming it and the reason, before any raise, so a run with a
+scan failure grades `REVIEW_REQUIRED` (#479).
 
 **Entities, as reached from `session.store`.** The graph is `Patient`
 → `Study` → `Series` → `Instance`. Fields, in dataclass order (which is
@@ -178,7 +181,9 @@ drain and before any work is done (#400). `scan_pixel_content()` and
 `discover_redaction_zones()` raise `RuntimeError` when the `ocr` extra
 or the `tesseract` binary is unavailable to the calling process, before
 any worker is dispatched and before either method reads the graph
-(#422). That check covers only the calling process: both methods also
+(#422). A worker process runs the `tesseract_cmd` the caller set, so it
+uses the binary that check probed (#458). The check still covers only
+the calling process's view of OCR: both methods also
 raise `RuntimeError` after the pass when at least one instance failed
 and none could be read (#423); a scan that read some instances returns
 its report with the others in `failures`, and discovery counts only the

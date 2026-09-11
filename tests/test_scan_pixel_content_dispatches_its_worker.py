@@ -167,7 +167,7 @@ def test_the_worker_scans_an_instance_that_crossed_a_pickle():
             # The pool's real case: the loader crosses, not the array.
             instance.unload_pixel_data()
 
-            args = (instance, series.equipment, session.configuration.rules)
+            args = (instance, series.equipment, session.configuration.rules, None)
             revived = pickle.loads(pickle.dumps(args))
 
             assert np.array_equal(revived[0].get_pixel_data(), resident), (
@@ -208,7 +208,7 @@ def test_the_worker_scans_an_instance_that_crossed_a_pickle():
     assert covered == [], covered
 
     # The only line of the worker the two cases above miss.
-    assert session_module._verify_worker((None, None, [])) == (
+    assert session_module._verify_worker((None, None, [], None)) == (
         session_module._ScanOutcome(None, [], False, None))
 
 
