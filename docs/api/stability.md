@@ -175,10 +175,11 @@ drain and before any work is done (#400). `scan_pixel_content()` and
 `discover_redaction_zones()` raise `RuntimeError` when the `ocr` extra
 or the `tesseract` binary is unavailable to the calling process, before
 any worker is dispatched and before either method reads the graph
-(#422). That check covers only the calling process: `scan_pixel_content()`
-also raises `RuntimeError` after the pass when at least one instance
-failed and none could be read (#423); a scan that read some instances
-returns its report with the others in `failures`. `ValueError` from
+(#422). That check covers only the calling process: both methods also
+raise `RuntimeError` after the pass when at least one instance failed
+and none could be read (#423); a scan that read some instances returns
+its report with the others in `failures`, and discovery counts only the
+instances it read in `n_sources`. `ValueError` from
 `generate_report` on an unknown format.
 
 **Environment.** Every `ISOCENTER_*` name in

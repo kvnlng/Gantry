@@ -584,3 +584,99 @@ def test_an_unexpected_worker_error_is_a_failure_not_a_lost_pass(ocr_present, mo
     assert uid == victim_uid
     assert "MemoryError" in reason and "could not allocate" in reason, reason
     assert {f.entity_uid for f in report} == {i.sop_instance_uid for i in others}
+
+
+# --- discovery (#423, owner question Q1, recommended answer (b)) ----------
+#
+# Discovery has no failure field -- growing `DiscoveryResult` was the other
+# half of the 0.9.5 decision the #423 ruling reversed for `PhiReport` only --
+# so the same rule reaches it through the warning, `n_sources` and the raise.
+
+
+def _discover(instances):
+    session = _session(instances)
+    try:
+        return session.discover_redaction_zones(SERIAL)
+    finally:
+        session.close()
+
+
+#: An instance with no pixel element, added to a sample by the arms below:
+#: neither read nor failed, so it is not a source and it does not stand
+#: between a sample whose every *read* failed and the raise.
+#: A count rather than the instance itself, so each test builds its own
+#: rather than two sessions sharing one live object built at import.
+WITH_PIXELLESS = pytest.mark.parametrize(
+    "n_pixelless", [0, 1], ids=["all_have_pixels", "one_has_no_pixel_element"])
+
+
+def _pixelless(n):
+    return [_instance(f"1.2.826.0.1.423.12.9{k}") for k in range(n)]
+
+
+@WITH_PIXELLESS
+def test_discovery_that_read_nothing_raises(ocr_present, n_pixelless):
+    """E10: every sampled instance failed, so discovery raises rather than
+    returning an empty result for a scan that saw nothing.
+
+    The pixel-less arm is the rule's own wording, "failed and none read":
+    a raise conditioned on every sampled instance failing would not fire
+    there, since the pixel-less instance did not fail.
+    """
+    _one_word_per_frame(ocr_present)
+    pixelless = _pixelless(n_pixelless)
+    failing = [_unreadable(f"1.2.826.0.1.423.12.{n}") for n in range(3)]
+    with pytest.raises(RuntimeError) as raised:
+        _discover(failing + pixelless)
+    exc = raised.value
+    assert isinstance(exc, pixel_analysis.PixelScanError), type(exc)
+    assert len(exc.failures) == 3
+    assert exc.attempted == 3 + len(pixelless)
+
+
+@WITH_PIXELLESS
+def test_discovery_counts_only_instances_it_read(ocr_present, caplog, n_pixelless):
+    """E11: one of four failed, so three are sources, and the count is warned.
+
+    `n_sources` is the denominator of every zone's occurrence rate. Counting
+    the instance nobody read made a zone on every readable frame look like
+    a zone on three quarters of them -- and that holds for the instance
+    with no pixel element as much as for the one that failed.
+    """
+    _one_word_per_frame(ocr_present)
+    pixelless = _pixelless(n_pixelless)
+    instances = [_unreadable("1.2.826.0.1.423.13.0")] + [
+        _instance(f"1.2.826.0.1.423.13.{n}", _frame(1)) for n in (1, 2, 3)]
+    with caplog.at_level(logging.WARNING):
+        result = _discover(instances + pixelless)
+    assert result.n_sources == 3
+    assert len(result) == 3
+    expected = f"1 of {4 + len(pixelless)}"
+    warned = [r.getMessage() for r in caplog.records
+              if r.levelno == logging.WARNING and expected in r.getMessage()]
+    assert len(warned) == 1, [r.getMessage() for r in caplog.records]
+
+
+def test_an_unexpected_discovery_error_costs_one_instance(ocr_present, monkeypatch):
+    """E17: discovery's boundary catch, as E12 is the scan's.
+
+    `run_parallel` re-raises a worker's exception, so without the catch in
+    `_discover_worker` one instance failing outside `_ocr_instance`'s own
+    catches would end the discovery; with it, that instance is a failure
+    and the other three are sources.
+    """
+    _one_word_per_frame(ocr_present)
+    real = pixel_analysis._ocr_instance  # pylint: disable=protected-access
+    victim_uid = "1.2.826.0.1.423.17.0"
+
+    def ocr_instance(instance):
+        if instance.sop_instance_uid == victim_uid:
+            raise MemoryError("could not allocate the decoded frame")
+        return real(instance)
+    monkeypatch.setattr(pixel_analysis, "_ocr_instance", ocr_instance)
+
+    result = _discover([_instance(victim_uid, _frame(1))] + [
+        _instance(f"1.2.826.0.1.423.17.{n}", _frame(1)) for n in (1, 2, 3)])
+
+    assert result.n_sources == 3
+    assert len(result) == 3

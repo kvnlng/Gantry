@@ -37,8 +37,9 @@ anything. The check is made in the calling process, before the scan starts. Afte
 it passes, `scan_pixel_content()` lists each instance whose pixels could not be
 loaded, or whose OCR failed on any frame, in `report.failures` and warns with the
 count -- a worker process that cannot find a binary the caller could is one way
-to get there. If it could read none of the instances it tried, it raises
-`PixelScanError`, also a `RuntimeError`, after the pass (#423).
+to get there. `discover_redaction_zones()` warns the same way and counts only the
+instances it read in `n_sources`. If either could read none of the instances it
+tried, it raises `PixelScanError`, also a `RuntimeError`, after the pass (#423).
 `pixel_analysis.HAS_OCR` says only whether `pytesseract` imported; it does not
 check the binary.
 

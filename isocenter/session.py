@@ -158,6 +158,25 @@ def _verify_worker(args):
     return _ScanOutcome(uid, findings, ocr.read, ocr.failure)
 
 
+def _discover_worker(instance):
+    """Worker for zone discovery: `(entity_uid, _InstanceOcr)` for one instance.
+
+    Discovery read through `pixel_analysis.analyze_pixels` until #423's
+    rule reached it, and that function logs a failed load or frame and
+    returns `[]`, so an instance nobody read counted as a source with no
+    text, and diluted every zone's occurrence rate. Module scope, and
+    `_ocr_instance` reached through the module, for the same reasons as
+    `_verify_worker`; the same boundary catch, so one unexpected error
+    costs one instance rather than the pass.
+    """
+    uid = instance.sop_instance_uid
+    try:
+        return uid, pixel_analysis._ocr_instance(instance)  # pylint: disable=protected-access
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        return uid, pixel_analysis._InstanceOcr(  # pylint: disable=protected-access
+            [], False, pixel_analysis._describe_failure(e))  # pylint: disable=protected-access
+
+
 def _warn_unread_instances(operation, failures, attempted, where):
     """Warn how many instances an OCR pass could not read (#423).
 
@@ -2212,11 +2231,19 @@ class DicomSession:
             DiscoveryResult: Object containing all detected text candidates.
             Call .to_zones() on the result to get grouped redaction zones.
 
+            `n_sources` counts only the sampled instances that were read
+            (at least one frame through OCR), so an instance that could
+            not be read does not dilute a zone's occurrence rate. Each one
+            that failed is logged at ERROR and counted in a WARNING (#423).
+
         Raises:
             RuntimeError: `pixel_analysis.OcrUnavailableError` when the `ocr`
                 extra is not installed or the `tesseract` binary does not
                 answer, before any worker is dispatched and before the graph
-                is read (#422).
+                is read (#422). `pixel_analysis.PixelScanError`, carrying
+                `.failures` and `.attempted`, after the pass and the warning,
+                when at least one sampled instance failed and none could be
+                read (#423).
         """
         # First, and read through the module at call time -- never a copy
         # of `HAS_OCR` imported into this module, which a patch or a later
@@ -2248,19 +2275,33 @@ class DicomSession:
             sample = target_instances
 
         # 3. Analyze
-        # We reuse the parallel analysis logic
-        raw_regions_lists = run_parallel(
-            pixel_analysis.analyze_pixels,
+        outcomes = run_parallel(
+            _discover_worker,
             sample,
             desc="Discovery Scan",
             force_threads=True
         )
 
         candidates = []
+        failures = []
+        n_read = 0
 
-        for i, regions in enumerate(raw_regions_lists):
-            # i serves as the unique source index
-            for r in regions:
+        for uid, ocr in outcomes:
+            if ocr.failure is not None:
+                # Kept at ERROR, as `analyze_pixels` logged it: with no
+                # failure field on `DiscoveryResult`, the log is where each
+                # one is named, and the warning below counts them.
+                get_logger().error(f"Failed to analyze pixels for {uid}: {ocr.failure}")
+                failures.append((uid, ocr.failure))
+            # Only a read instance is a source. One that failed outright,
+            # or carries no pixel element, saw no text because nobody
+            # looked, and counting it in `n_sources` lowered every zone's
+            # occurrence rate (#423).
+            if not ocr.read:
+                continue
+            i = n_read
+            n_read += 1
+            for r in ocr.regions:
                 if r.confidence >= min_confidence:
                     # Classify immediately (or could be lazy)
                     cls = ZoneDiscoverer._classify_text(r.text)
@@ -2274,7 +2315,13 @@ class DicomSession:
                     )
                     candidates.append(cand)
 
-        result = DiscoveryResult(candidates, len(sample))
+        _warn_unread_instances("discover_redaction_zones()", failures,
+                               len(sample), "the ERROR log above")
+        # After the warning, and on `ExportError`'s rule, as in
+        # `scan_pixel_content()`: nothing read at all is not a result.
+        if failures and n_read == 0:
+            raise pixel_analysis.PixelScanError(failures, len(sample))
+        result = DiscoveryResult(candidates, n_read)
         print(f"Discovery complete. Found {len(candidates)} raw candidates.")
         return result
 

@@ -57,10 +57,12 @@ class OcrUnavailableError(RuntimeError):
 class PixelScanError(RuntimeError):
     """An OCR pass could read none of the instances it tried (#423).
 
-    Raised by `Session.scan_pixel_content()` **after** the pass, and after
-    the warning that counts the failures, when at least one instance
-    failed and none was read. Not on a partial scan: an instance read is a
-    result, and the others are in `PhiReport.failures`. This is
+    Raised by `Session.scan_pixel_content()` and
+    `Session.discover_redaction_zones()` **after** the pass, and after the
+    warning that counts the failures, when at least one instance failed
+    and none was read. Not on a partial scan: an instance read is a
+    result, and the others are in `PhiReport.failures` (or, for discovery,
+    which has no failure field, in the log). This is
     `ExportError`'s rule (#191) -- a partial result is returned and
     nothing-at-all is not -- and it keeps `ExportError`'s reason for being
     a subclass rather than a bare `RuntimeError`: raising bare would throw

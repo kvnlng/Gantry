@@ -53,9 +53,10 @@ check is made in the calling process, before the scan starts. After it
 passes, `scan_pixel_content()` lists each instance whose pixels could not
 be loaded, or whose OCR failed on any frame — for example in a worker
 process that cannot find a binary the caller could — in
-`report.failures` and warns with the count; if it could read none of the
-instances it tried, it raises `PixelScanError`, also a `RuntimeError`
-(#423). `isocenter.pixel_analysis.HAS_OCR` is `False` when `pytesseract`
+`report.failures` and warns with the count, and
+`discover_redaction_zones()` warns the same way and counts only the
+instances it read. If either could read none of the instances it tried,
+it raises `PixelScanError`, also a `RuntimeError` (#423). `isocenter.pixel_analysis.HAS_OCR` is `False` when `pytesseract`
 did not import; it does not check the binary.
 
 !!! note

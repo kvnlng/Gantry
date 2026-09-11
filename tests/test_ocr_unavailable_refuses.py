@@ -263,8 +263,12 @@ def test_discovery_still_dispatches_when_ocr_is_present(
     above. The expected count is non-empty on purpose: `0 == 0` would be
     green on a discovery that never dispatched.
     """
-    monkeypatch.setattr(pixel_analysis, "analyze_pixels", lambda _instance: [
-        TextRegion("LEAKTEXT", (200, 200, 50, 50), 90.0)])
+    # `_ocr_instance`, not `analyze_pixels`: discovery reads through the
+    # former since #423, so a patch on the latter would be inert and the
+    # count below would come from the stub's empty OCR.
+    monkeypatch.setattr(pixel_analysis, "_ocr_instance", lambda _instance: (
+        pixel_analysis._InstanceOcr(  # pylint: disable=protected-access
+            [TextRegion("LEAKTEXT", (200, 200, 50, 50), 90.0)], True, None)))
     result = session.discover_redaction_zones(SERIAL)
     assert len(result) == len(UIDS)
 
