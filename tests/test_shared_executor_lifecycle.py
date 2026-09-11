@@ -134,8 +134,14 @@ def _lever_records(caplog):
     Read from `caplog`, which hangs on the root logger: `configure_logger()`
     resets the `isocenter` logger's own handlers when a session opens, so
     a handler attached there before the session would count nothing.
+
+    "had no effect" is matched as well as the variable's prefix, so a
+    warning that fires with no lever to name -- printing `None` where the
+    variable belongs -- is still counted rather than filtered out.
     """
-    return [r for r in caplog.records if "ISOCENTER_" in r.getMessage()]
+    return [r for r in caplog.records
+            if "ISOCENTER_" in r.getMessage()
+            or "had no effect" in r.getMessage()]
 
 
 def _spy_on_dispatch(monkeypatch, caplog, recorded):

@@ -173,7 +173,11 @@ class _Choice(NamedTuple):
 
 
 @dataclass(frozen=True)
-class _Strategy:
+class _Strategy:  # pylint: disable=too-many-instance-attributes
+    # Eight settings and three attribution fields, each read by name by a
+    # caller that reports on the decision (#384, #400, #393). Grouping
+    # them to satisfy the count would hide which fields exist -- the
+    # reason `_resolve_strategy` keeps one parameter per knob.
     """How one `run_parallel` call will actually be executed.
 
     Resolved once, before any work starts, so the three execution paths
