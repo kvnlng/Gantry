@@ -15,7 +15,9 @@ from typing import Dict, List, Optional
 from tqdm import tqdm
 import numpy as np
 
-from .entities import Instance, DicomItem, DicomSequence
+from .entities import (Instance, DicomItem, DicomSequence, PhiStatus,
+                       SOURCE_SOP_UID_ATTR, _SET_PIXEL_DATA_TAGS,
+                       iter_item_tree)
 from .pixel_geometry import PixelGeometry, resolve_pixel_geometry
 from .store import DicomStore
 from .logger import describe_exception, get_logger
@@ -167,6 +169,101 @@ def _report_redaction_failures(failures, store_backend=None):
             store_backend.log_audit(action_type="ERROR", entity_uid=uid,
                                     details=detail)
     return reported
+
+
+#: What pixel redaction writes to an instance itself, and so may change
+#: without invalidating the instance's tag-scan conclusion (#486; pending
+#: owner confirmation). `_apply_redaction_flags` writes ImageType,
+#: BurnedInAnnotation, DerivationDescription and the Derivation Code
+#: Sequence; `regenerate_uid()` writes the SOP Instance UID and records
+#: the one it replaced; the attestation hash; and `set_pixel_data()` the
+#: descriptors in `_SET_PIXEL_DATA_TAGS`. **A tag added here is a tag an
+#: edit to which, by anyone, during a pass, will be carried past the
+#: revision rule** -- so add one only for a value redaction authors and
+#: that identifies no one.
+_REDACTION_OWN_ATTRS = frozenset({
+    "0008,0008",                    # ImageType
+    "0028,0301",                    # BurnedInAnnotation
+    "0008,2111",                    # DerivationDescription
+    "0008,0018",                    # SOPInstanceUID, from regenerate_uid()
+    SOURCE_SOP_UID_ATTR,            # the UID regenerate_uid() replaced
+    "_ISOCENTER_REDACTION_HASH",    # the attestation
+    *_SET_PIXEL_DATA_TAGS,
+})
+_REDACTION_OWN_SEQUENCES = frozenset({"0008,9215"})   # Derivation Code Sequence
+
+#: Only an assurance is worth carrying. UNSCANNED has nothing to carry, and
+#: IDENTIFIED is not an assurance; both are left to the revision rule.
+_CARRIED_STATUSES = (PhiStatus.REMEDIATED, PhiStatus.CLEARED)
+
+
+def _metadata_outside_redaction(inst: Instance) -> tuple:
+    """Everything a tag scan could conclude from, minus redaction's own writes.
+
+    The whole tree, not the top level: an edit inside a nested item is as
+    much an edit the scan has not seen as one at the top, and #57 is what
+    a nested value skipped by a top-level-only view cost once. `repr`
+    because values include lists, and comparison is all this is for.
+    Sequence keys are included per item, so an emptied or added sequence
+    counts as a change even though it holds no attribute.
+    """
+    def flat(item, skip_attrs=frozenset(), skip_seqs=frozenset()):
+        return (tuple(sorted((tag, repr(value))
+                             for tag, value in item.attributes.items()
+                             if tag not in skip_attrs)),
+                tuple(sorted(tag for tag in item.sequences
+                             if tag not in skip_seqs)))
+
+    nested = []
+    for tag in sorted(inst.sequences):
+        if tag in _REDACTION_OWN_SEQUENCES:
+            continue
+        for index, item in enumerate(inst.sequences[tag].items):
+            for sub, path in iter_item_tree(item, ((tag, index),)):
+                nested.append((path, flat(sub)))
+    return (flat(inst, _REDACTION_OWN_ATTRS, _REDACTION_OWN_SEQUENCES),
+            tuple(nested))
+
+
+def capture_phi_status_for_redaction(inst: Instance) -> Optional[tuple]:
+    """What to carry across a redaction pass, read before the pass (#486).
+
+    Returns `(status, metadata)` when the instance's status is REMEDIATED
+    or CLEARED at its current revision, else None. **Call it before
+    dispatch**: under threads the worker writes to the live instance, so a
+    status read when the outcome lands is already UNSCANNED.
+
+    Pending owner confirmation: this is option 2 on #486. Without it,
+    `redact()`'s own writes move every redacted instance to UNSCANNED --
+    measured, revision 12 to 19 -- and the documented anonymize -> redact
+    -> export path produces a manifest saying `"anonymized": false` for
+    every instance it redacted.
+    """
+    status = inst.phi_status
+    if status not in _CARRIED_STATUSES:
+        return None
+    return status, _metadata_outside_redaction(inst)
+
+
+def carry_phi_status_across_redaction(inst: Instance, captured) -> bool:
+    """Re-record a captured status if only redaction touched the instance.
+
+    **The guard is the point.** The revision rule exists so an edit nobody
+    re-scanned cannot inherit an assurance; this is the one place that
+    overrides it, and it does so only when every attribute and nested item
+    outside `_REDACTION_OWN_ATTRS` and `_REDACTION_OWN_SEQUENCES` is
+    exactly as captured. Any other change -- a concurrent `set_attr` of
+    another tag, top-level or nested -- and nothing is recorded, so the
+    instance stays UNSCANNED as the rule requires. Returns whether it
+    re-recorded.
+    """
+    if captured is None:
+        return False
+    status, before = captured
+    if _metadata_outside_redaction(inst) != before:
+        return False
+    inst.record_phi_status(status)
+    return True
 
 
 class RedactionService:
@@ -745,6 +842,9 @@ class RedactionService:
                 unit="img",
                 disable=not show_progress):
             original_uid = inst.sop_instance_uid  # Capture before mutation
+            # Before the pass touches it, as `_apply_redaction_rules`
+            # does for the parallel path (#486; pending owner confirmation).
+            captured = capture_phi_status_for_redaction(inst)
             failed = False
             # Bound before the `try`: every `continue` below and the
             # exception path reach the `finally`, which reads it.
@@ -848,6 +948,13 @@ class RedactionService:
                 # the loader, and `unload_pixel_data()` now refuses exactly
                 # that case (#293). Byte-for-byte the pre-#293 behaviour.
                 inst.discard_pixel_data()
+
+            # After the `finally`, not inside `if modified:` -- the persist
+            # and `discard_pixel_data()` above can move the revision too,
+            # and a carry made before them would be undone by them. A skip
+            # (`continue` above) never reaches here and needs nothing: it
+            # wrote nothing, so its status never moved.
+            carry_phi_status_across_redaction(inst, captured)
 
         # After the pass and before the raise, for the same reason the
         # ERROR rows are: a caller that catches `RedactionError` still

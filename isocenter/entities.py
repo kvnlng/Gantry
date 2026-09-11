@@ -93,6 +93,19 @@ class PhiStatus(Enum):
     about earlier content says nothing about the current content -- and a
     stale REMEDIATED reads as an assurance, which is worse than admitting
     nothing is known.
+
+    **One exception, and it is an edit whose content is known.** Pixel
+    redaction re-records an instance's REMEDIATED or CLEARED after its own
+    writes -- the pixels, their descriptors, ImageType, BurnedInAnnotation,
+    DerivationDescription, the Derivation Code Sequence, the new SOP
+    Instance UID and its bookkeeping -- because those are values redaction
+    authors itself and none identifies anyone. It re-records only when
+    every other attribute and every other nested item is exactly as it was
+    before the pass; anything else changed, by anyone, and the status is
+    left UNSCANNED as the rule above requires. Without it, the documented
+    anonymize -> redact -> export path left every redacted instance
+    UNSCANNED (#486; pending owner confirmation). See
+    `services.capture_phi_status_for_redaction`.
     """
 
     #: Never inspected, or inspected before the entity's current revision.

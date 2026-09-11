@@ -19,6 +19,8 @@ from .io_handlers import (DicomImporter, DicomExporter, ExportContext,
                           GRADED_LOSS_SCOPES, redaction_in_effect)
 from .store import DicomStore
 from .services import (RedactionService, RedactionOutcome, RedactionError,
+                       capture_phi_status_for_redaction,
+                       carry_phi_status_across_redaction,
                        _report_redaction_failures)
 from .config_manager import ConfigLoader, require_package_resource
 from .privacy import PhiInspector, PhiFinding, PhiReport
@@ -2108,6 +2110,11 @@ class DicomSession:
         and would report UNSCANNED for every session, which reads as a
         gap rather than as "not applicable".
 
+        `redact()` is the one edit that keeps an instance's status: an
+        instance REMEDIATED or CLEARED before the pass reads the same
+        after it, provided nothing but redaction's own writes changed
+        (#486; pending owner confirmation). See `PhiStatus`.
+
         Returns:
             Dict[str, Counter]: Keyed "patients", "studies", "instances";
             each a Counter of PhiStatus to how many carry it.
@@ -3532,6 +3539,14 @@ class DicomSession:
         # `ISOCENTER_FORCE_PROCESSES` by the documented order and loses to
         # worker recycling, which is why that combination is refused
         # before this point rather than failing here (#400).
+        # Before dispatch, not when each outcome lands: under threads the
+        # worker writes to the live instance, so by the time the parent
+        # sees an outcome the status it would read is already UNSCANNED.
+        # See `capture_phi_status_for_redaction` for what is kept and why
+        # (#486; pending owner confirmation).
+        captured = {sop: capture_phi_status_for_redaction(inst)
+                    for sop, inst in instances.items()}
+
         mutations = run_parallel(
             service.execute_redaction_task,
             tasks,
@@ -3541,6 +3556,14 @@ class DicomSession:
 
         applied, failures = self._apply_redaction_outcomes(
             mutations, instances, self.store_backend, passes)
+
+        # Every instance, landed or not, and before the raise below: a
+        # skipped instance was not written to and records the status it
+        # already carries, which `record_phi_status` ignores; a failed one
+        # may have been half-written under threads, and the guard decides
+        # on what actually changed, not on the outcome's word for it.
+        for sop, inst in instances.items():
+            carry_phi_status_across_redaction(inst, captured[sop])
 
         # The audit row for every pass that targeted anything, written in
         # the parent (#126) and before the failure raise below, exactly
