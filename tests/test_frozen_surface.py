@@ -332,19 +332,8 @@ def _audit_action_types():
     found = set()
     buffer_sites = 0
     for path in sorted((REPO / "isocenter").rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        constants = _module_string_constants(tree)
-        parents = {child: node for node in ast.walk(tree)
-                   for child in ast.iter_child_nodes(node)}
-        rel = path.relative_to(REPO)
-        for call in _calls_named(tree, "log_audit"):
-            where = f"{rel}:{call.lineno}"
-            for kw in call.keywords:
-                if kw.arg == "action_type":
-                    found |= _action_type_words(kw.value, constants, parents, where)
-            if call.args:
-                found |= _action_type_words(call.args[0], constants, parents, where)
-        words, sites = _audit_buffer_words(tree, constants, parents, rel)
+        words, sites = _audit_words_in(
+            ast.parse(path.read_text(encoding="utf-8")), path.relative_to(REPO))
         found |= words
         buffer_sites += sites
     # The floor: a collector anchored on a name is vacuous the day the
@@ -354,6 +343,29 @@ def _audit_action_types():
         "batch buffer was renamed or removed, and a batched-only respelling "
         "is now invisible. Re-anchor _audit_buffer_words")
     return found
+
+
+def _audit_words_in(tree, rel):
+    """Pin A's reading of one module: `(words, audit_buffer append sites)`.
+
+    The per-file half of `_audit_action_types`, split out so the #429 pin
+    reads remediation's words through the same sites Pin A reads, and the
+    two can never disagree about what a module writes. The package-level
+    `buffer_sites >= 1` floor stays in the fold, where it means something.
+    """
+    constants = _module_string_constants(tree)
+    parents = {child: node for node in ast.walk(tree)
+               for child in ast.iter_child_nodes(node)}
+    found = set()
+    for call in _calls_named(tree, "log_audit"):
+        where = f"{rel}:{call.lineno}"
+        for kw in call.keywords:
+            if kw.arg == "action_type":
+                found |= _action_type_words(kw.value, constants, parents, where)
+        if call.args:
+            found |= _action_type_words(call.args[0], constants, parents, where)
+    words, sites = _audit_buffer_words(tree, constants, parents, rel)
+    return found | words, sites
 
 
 def _audit_buffer_words(tree, constants, parents, rel):
@@ -1009,6 +1021,117 @@ def test_pin_a_refuses_an_action_type_that_is_a_parameter(signature):
     tree, parents = _synthetic(src.replace(signature, "finding"))
     arg = next(_calls_named(tree, "log_audit")).args[0]
     assert _action_type_words(arg, {}, parents, "synthetic") == {"REMEDIATION_REMOVE"}
+
+
+#: Remediation's module, as path segments: this file never spells a probe
+#: target's dotted name (see `_package_trees`).
+_REMEDIATION = REPO / "isocenter" / "remediation.py"
+
+
+def _remediation_evidence_set(tree):
+    """`REMEDIATION_ACTION_TYPES`'s members, read from the module's AST.
+
+    Only `NAME = frozenset({"WORD", ...})` at module level is read, and
+    anything else **raises**, naming the shape. Returning an empty set for
+    a shape it cannot read would make the pin below compare against
+    nothing: red for the wrong reason, or green if the collector also went
+    empty. The same fail-loud rule `_action_type_words` follows.
+    """
+    bindings = [node for node in tree.body
+                if isinstance(node, (ast.Assign, ast.AnnAssign))
+                and any(isinstance(t, ast.Name) and t.id == "REMEDIATION_ACTION_TYPES"
+                        for t in (node.targets if isinstance(node, ast.Assign)
+                                  else [node.target]))]
+    assert len(bindings) == 1, (
+        f"expected exactly one module-level `REMEDIATION_ACTION_TYPES = ...` "
+        f"in the remediation module, found {len(bindings)}; the #429 pin "
+        f"cannot read the ANONYMIZE evidence set")
+    value = bindings[0].value
+    readable = (isinstance(bindings[0], ast.Assign)
+                and isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name) and value.func.id == "frozenset"
+                and not value.keywords and len(value.args) == 1
+                and isinstance(value.args[0], ast.Set)
+                and all(_string(e) is not None for e in value.args[0].elts))
+    assert readable, (
+        f"REMEDIATION_ACTION_TYPES is bound as {ast.unparse(bindings[0])!r}; "
+        f"the #429 pin reads only `REMEDIATION_ACTION_TYPES = "
+        f"frozenset({{\"WORD\", ...}})` with string-constant members. Teach "
+        f"_remediation_evidence_set the new shape; do not skip it")
+    return {_string(e) for e in value.args[0].elts}
+
+
+def test_the_anonymize_evidence_set_is_exactly_what_remediation_writes():
+    """The report's ANONYMIZE evidence set equals remediation's audit words (#429).
+
+    `REMEDIATION_ACTION_TYPES` is what `generate_report` checks a session
+    that anonymized against (#254): at least one of its words must be in
+    the audit summary, or the run grades REVIEW_REQUIRED. It was a
+    hand-kept copy of the words remediation writes, and nothing compared
+    the two. Measured at 0e3e38c across the 135 tests that could notice
+    (the remediation `TARGETS` row, this file, and the report's own
+    tests), every drift was green: dropping any one word from the set,
+    adding `EXPORT` to it, and the honest case -- a new emitter word
+    added to the emitter, to `FROZEN_AUDIT_ACTION_TYPES` and to the
+    stability page as the red tests there demand, with the frozenset
+    forgotten.
+
+    Equality, in both directions: a word written and missing from the set
+    grades a clean run REVIEW_REQUIRED; a word in the set that remediation
+    never writes is evidence nothing can produce.
+
+    `REMEDIATION_DECLINED` is subtracted **by the module constant's
+    value**, read from the same tree, because it is written by remediation
+    and deliberately is not evidence: a run in which every remediation
+    declined must not satisfy the check (#301,
+    `tests/test_declined_remediation_is_recorded.py`). The words come from
+    `_audit_words_in`, Pin A's own per-module reader, so the two pins read
+    the same sites. No probe operator mutates a set literal's members, so
+    this adds no kill signal to any `TARGETS` row; it is a guard against
+    the drift above, not a probe witness.
+    """
+    tree = ast.parse(_REMEDIATION.read_text(encoding="utf-8"))
+    written, _sites = _audit_words_in(tree, _REMEDIATION.relative_to(REPO))
+    declined = _module_string_constants(tree).get("REMEDIATION_DECLINED")
+    assert declined is not None, (
+        "the remediation module no longer binds `REMEDIATION_DECLINED = "
+        "\"...\"` at module level; the #429 pin cannot tell a decline from "
+        "evidence")
+    evidence = _remediation_evidence_set(tree)
+
+    assert declined not in evidence, (
+        f"{declined} is in REMEDIATION_ACTION_TYPES; a decline is not "
+        f"evidence that anything was anonymized (#301)")
+    missing = sorted(written - {declined} - evidence)
+    extra = sorted(evidence - written)
+    assert not missing and not extra, (
+        f"REMEDIATION_ACTION_TYPES disagrees with what remediation writes "
+        f"to the audit table: written but not evidence {missing} (a clean "
+        f"run whose rows carry only these grades REVIEW_REQUIRED -- add "
+        f"them to the frozenset); evidence never written {extra} (remove "
+        f"them). {declined} is written and excluded on purpose (#429)")
+
+
+@pytest.mark.parametrize("binding", [
+    'frozenset(["A"])',
+    'frozenset({"A", NAME})',
+    '{"A"}',
+    None,
+], ids=["list-argument", "non-constant-member", "bare-set", "absent"])
+def test_the_evidence_set_reader_refuses_a_shape_it_cannot_read(binding):
+    """`_remediation_evidence_set` raises, naming the shape, on anything else.
+
+    Synthetic, like `_synthetic` above: no production line has these
+    shapes, so there is nothing to mutate. The control is the shape the
+    module uses today, which reads back as its members.
+    """
+    src = (f"REMEDIATION_ACTION_TYPES = {binding}\n" if binding is not None
+           else 'OTHER = frozenset({"A"})\n')
+    with pytest.raises(AssertionError, match="REMEDIATION_ACTION_TYPES"):
+        _remediation_evidence_set(ast.parse(src))
+
+    control = ast.parse('REMEDIATION_ACTION_TYPES = frozenset({"A"})\n')
+    assert _remediation_evidence_set(control) == {"A"}
 
 
 _ALLOWED_BUFFER_USES = '''

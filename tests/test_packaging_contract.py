@@ -1473,8 +1473,8 @@ def test_the_hang_probe_never_runs_on_the_gate():
     arithmetic check below is on the raw `${{ }}` bodies.
 
     Only *inside* the expressions: the loop script legitimately does
-    shell arithmetic (`deadline=$(( ${{ inputs.per_iteration_minutes }}
-    * 60 ))`), where the `*` is bash's and the expression is only the
+    shell arithmetic (`ceiling=$(( ${{ inputs.per_iteration_minutes }}
+    * unit ))`), where the `*` is bash's and the expression is only the
     substitution. Widening this to whole lines would go red on that.
     """
     import yaml
@@ -1497,10 +1497,15 @@ def test_the_hang_probe_never_runs_on_the_gate():
             "it invites the trigger back, and as an alias it is one")
 
     inputs = triggers["workflow_dispatch"]["inputs"]
+    # A subset, not equality, so adding an input is free and removing or
+    # renaming one is red: `gh workflow run -f <unknown>=...` is an HTTP
+    # 422, and the release runbook dispatches with
+    # `-f per_iteration_minutes=25`. A deleted input the loop still
+    # substitutes becomes an empty string inside `$(( ))` (#427).
     assert {"iterations", "start_method", "selection",
-            "per_iteration_minutes"} <= set(inputs), (
+            "per_iteration_minutes", "stall_minutes"} <= set(inputs), (
         f"the probe's dispatch inputs are {sorted(inputs)}; the loop "
-        "script and the decision table in CHANGELOG assume all four")
+        "script and the decision table in CHANGELOG assume all five")
 
     job = workflow["jobs"]["probe"]
     steps = job["steps"]
@@ -1558,6 +1563,122 @@ def test_the_hang_probe_never_runs_on_the_gate():
     assert job_cap <= 360, (
         f"jobs.probe.timeout-minutes ({job_cap}) exceeds GitHub's "
         "360-minute maximum for a job on a hosted runner")
+
+
+def _probe_inputs():
+    import yaml
+
+    workflow = yaml.safe_load(PROBE_WORKFLOW.read_text(encoding="utf-8"))
+    return workflow[True]["workflow_dispatch"]["inputs"], workflow
+
+
+def _module_float(path, name):
+    """A module-level `NAME = <number>` read by AST, never by import."""
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if (isinstance(node, (ast.Assign, ast.AnnAssign))
+                and any(isinstance(t, ast.Name) and t.id == name
+                        for t in (node.targets if isinstance(node, ast.Assign)
+                                  else [node.target]))):
+            return float(ast.literal_eval(node.value))
+    raise AssertionError(f"{path.relative_to(REPO)} no longer binds {name}")
+
+
+def test_the_hang_probe_stall_deadline_outlasts_every_internal_timeout():
+    """The probe calls `HANG` only after every in-process diagnostic has fired (#427).
+
+    `stall_minutes` is how long the log may go without a new test starting
+    before the iteration is killed as a hang. Every dump the suite makes
+    of itself has to land before that kill, or the kill takes the stack
+    this workflow exists to capture. Those dumps are pytest's
+    `faulthandler_timeout` (300 s in `pytest.ini`), the conftest stall
+    watchdog (`_STALL_S` plus one `_TICK_S`), and the pool workers' 240 s
+    `dump_traceback_later`. The first two are read here from their
+    sources. A default of 4 minutes (240 s < 300 s) would kill a stuck
+    test before faulthandler reports it.
+
+    **And the ceiling must exceed the stall deadline.**
+    `per_iteration_minutes` is the wall clock for a run that is still
+    progressing. If it were at or below `stall_minutes`, every stall would
+    reach the ceiling first and be called `SLOW`, which is no verdict, so
+    a real hang would never block a release.
+    """
+    import configparser
+
+    inputs, _ = _probe_inputs()
+    stall_s = inputs["stall_minutes"]["default"] * 60
+    ceiling_s = inputs["per_iteration_minutes"]["default"] * 60
+
+    ini = configparser.ConfigParser()
+    ini.read(REPO / "pytest.ini", encoding="utf-8")
+    faulthandler_s = float(ini["pytest"]["faulthandler_timeout"])
+    conftest = REPO / "tests" / "conftest.py"
+    watchdog_s = _module_float(conftest, "_STALL_S") + _module_float(conftest, "_TICK_S")
+
+    assert stall_s > faulthandler_s, (
+        f"stall_minutes defaults to {stall_s / 60:g} minutes, not above "
+        f"faulthandler_timeout ({faulthandler_s:g}s): the probe would kill a "
+        "stuck test before pytest dumps its stack (#427)")
+    assert stall_s > watchdog_s, (
+        f"stall_minutes ({stall_s:g}s) does not exceed the conftest stall "
+        f"watchdog's first report ({watchdog_s:g}s) (#427)")
+    assert ceiling_s > stall_s, (
+        f"per_iteration_minutes ({ceiling_s / 60:g}) does not exceed "
+        f"stall_minutes ({stall_s / 60:g}): every stall reaches the ceiling "
+        "first and reads as SLOW, which blocks nothing (#427)")
+
+
+#: The loop script's test-only knobs and their production defaults. Each
+#: is unset in CI; `tests/test_hang_probe_loop.py` sets them to run the
+#: script in seconds.
+_PROBE_KNOBS = {"PROBE_UNIT_S": "60", "PROBE_POLL_S": "5",
+                "PROBE_GRACE_S": "45", "PROBE_MARGIN_S": "10"}
+
+
+def test_the_hang_probe_script_budget_sits_inside_its_step_cap():
+    """The script ends every iteration itself, and before its step cap (#427).
+
+    The loop step's `timeout-minutes` is a literal, because GitHub
+    Actions expressions have no arithmetic, so it cannot shrink to fit
+    the inputs. If iterations times the ceiling outgrew it, the cap fired
+    mid-iteration, and the run ended "cancelled" with no row and no
+    failing step: #243's shape. The input description's "hard ceiling 22"
+    was arithmetic nothing enforced, and at `per_iteration_minutes=25` it
+    was already false. The script now carries its own budget, a literal
+    number of minutes, and stops with a `BUDGET` row before an iteration
+    that cannot fit. This pins that budget below the cap.
+
+    It also pins the knobs the budget is read through, because they are
+    what `test_hang_probe_loop.py` turns. Each has a default, and nothing
+    in the workflow may set one: a `PROBE_UNIT_S: "1"` in an `env:` block
+    would make every production deadline sixty times shorter.
+    """
+    _, workflow = _probe_inputs()
+    loop = next(s for s in workflow["jobs"]["probe"]["steps"]
+                if s.get("id") == "loop")
+    run = loop["run"]
+
+    budget = re.search(
+        r"^\s*budget=\$\{PROBE_BUDGET_S:-\$\(\( (\d+) \* 60 \)\)\}", run, re.M)
+    assert budget, (
+        "the loop script no longer reads `budget=${PROBE_BUDGET_S:-$(( <minutes> "
+        "* 60 ))}`; this test cannot find the budget it pins (#427)")
+    assert int(budget.group(1)) < loop["timeout-minutes"], (
+        f"the loop's own budget ({budget.group(1)} minutes) is not inside the "
+        f"loop step's cap ({loop['timeout-minutes']}); the cap fires "
+        "mid-iteration again, with no row and no failing step (#243, #427)")
+
+    for knob, default in _PROBE_KNOBS.items():
+        assert re.search(
+            rf"^\s*\w+=\$\{{{knob}:-{default}\}}", run, re.M), (
+            f"the loop script does not read `{knob}` with the production "
+            f"default {default} (#427)")
+    envs = [workflow.get("env") or {}, workflow["jobs"]["probe"].get("env") or {}]
+    envs += [step.get("env") or {} for step in workflow["jobs"]["probe"]["steps"]]
+    set_here = sorted(k for env in envs for k in env
+                      if k.startswith("PROBE_") and k != "PROBE_SELECTION")
+    assert not set_here, (
+        f"hang-probe.yml sets {set_here}; those are test-only knobs, and in CI "
+        "they must fall through to their production defaults (#427)")
 
 
 # ---------------------------------------------------------------------------

@@ -269,22 +269,6 @@ def frame_count_mismatch_words(counted: FrameCount) -> str:
     return f"{table_name} names {table_frames} frames; {declared_words}"
 
 
-def needs_to_convert_to_RGB(ds):
-    """
-    Determines if the dataset needs RGB conversion.
-    Currently returns False as we preserve original photometric interpretation where possible.
-    """
-    return False
-
-
-def should_change_PhotometricInterpretation_to_RGB(ds):
-    """
-    Checks if Photometric Interpretation should be changed to RGB.
-    Currently returns False.
-    """
-    return False
-
-
 #: The declared colour spaces whose decoded samples this handler converts
 #: itself, per syntax, and the label the result is in (#448, #464). A
 #: JPEG-LS stream carries no colour transform, so `jpegls_decode` returns

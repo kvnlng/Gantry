@@ -210,8 +210,11 @@ def test_run_disables_bytecode_writing_without_clearing_the_environment(monkeypa
         return types.SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(mutation_probe.subprocess, "run", fake_run)
-    assert mutation_probe.run(["tests/never_actually_runs.py"]) is True
+    assert mutation_probe.run(["tests/never_actually_runs.py"], 7) is True
     assert seen["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
+    # The limit is the caller's, not a constant inside `run()` (#442): a
+    # hardcoded 900 here is the flat timeout coming back.
+    assert seen["timeout"] == 7
     assert seen["env"]["PATH"] == os.environ["PATH"]
 
 
@@ -318,7 +321,7 @@ def test_main_guards_the_bytes_of_every_run_including_the_control(tmp_path, monk
     monkeypatch.setattr(mutation_probe, "assert_fresh",
                         lambda p, c: calls.append(("guard", p.read_text(), c)))
     monkeypatch.setattr(mutation_probe, "run",
-                        lambda t: calls.append(("run", (tmp_path / "victim.py").read_text(), None)) or True)
+                        lambda t, timeout: calls.append(("run", (tmp_path / "victim.py").read_text(), None)) or True)
     monkeypatch.setattr(sys, "argv", ["mutation_probe"])
 
     mutation_probe.main()
