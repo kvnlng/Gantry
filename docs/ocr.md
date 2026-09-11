@@ -33,13 +33,18 @@ and the Tesseract binary, which pip cannot install:
 
 Without either, `scan_pixel_content()` and `discover_redaction_zones()` raise
 `OcrUnavailableError`, a `RuntimeError`, naming what is missing, before they scan
-anything. The check is made in the calling process, before the scan starts. After
-it passes, `scan_pixel_content()` lists each instance whose pixels could not be
-loaded, or whose OCR failed on any frame, in `report.failures` and warns with the
-count -- a worker process that cannot find a binary the caller could is one way
-to get there. `discover_redaction_zones()` warns the same way and counts only the
-instances it read in `n_sources`. If either could read none of the instances it
-tried, it raises `PixelScanError`, also a `RuntimeError`, after the pass (#423).
+anything. The check is made in the calling process, before the scan starts. A
+worker process runs the binary that check found: if you point
+`pytesseract.pytesseract.tesseract_cmd` at a tesseract that is not on `PATH`, the
+workers use it too (#458). After the check passes, `scan_pixel_content()` lists
+each instance whose pixels could not be loaded, or whose OCR failed on any frame,
+in `report.failures` and warns with the count. `discover_redaction_zones()` warns
+the same way and counts only the instances it read in `n_sources`. Both write one
+`WARNING` audit row per instance they could not read, naming it and the reason, so
+the compliance report grades the run `REVIEW_REQUIRED` and lists each one under
+"Exceptions & Errors" (#479). If either could read none of the instances it
+tried, it raises `PixelScanError`, also a `RuntimeError`, after the pass and the
+audit rows (#423).
 `pixel_analysis.HAS_OCR` says only whether `pytesseract` imported; it does not
 check the binary.
 
