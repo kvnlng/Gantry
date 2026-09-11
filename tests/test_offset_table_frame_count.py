@@ -28,8 +28,10 @@ then names no frames and the fragments do not say where frames begin.
 `test_an_empty_offset_table_is_the_documented_limit_and_decodes_as_before`
 pins that limit rather than pretending it is closed.
 """
+import copy
 import os
 import sqlite3
+import zlib
 
 import numpy as np
 import pydicom
@@ -38,13 +40,15 @@ from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
 from pydicom.encaps import (encapsulate, encapsulate_extended,
                             parse_basic_offsets)
 from pydicom.pixels import get_decoder
+from pydicom.sequence import Sequence
 from pydicom.uid import (ExplicitVRLittleEndian, JPEG2000Lossless,
                          generate_uid)
 
 import imagecodecs
 from isocenter import imagecodecs_handler
 from isocenter.entities import Instance
-from isocenter.io_handlers import (LOSS_SCOPE_SIGNAL, _decode_pixels)
+from isocenter.io_handlers import (LOSS_SCOPE_SIGNAL, LOSS_SCOPE_STANDARD,
+                                   _decode_pixels)
 from isocenter.session import DicomSession
 
 #: Two distinguishable 4x4 8-bit frames. Frame 1 is not frame 0 shifted
@@ -527,12 +531,14 @@ def test_a_consistent_multi_frame_ingest_writes_no_row(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_the_default_decode_is_still_every_frame_pydicom_returns():
-    """B6: only the top-level ingest, and only on an excess, truncates.
+    """B6: only a caller that asks, and only on an excess, truncates.
 
     On an excess fixture `as_array` with its defaults returns *every*
     frame the table names. `_decode_pixels(ds)` with no keyword must
-    return the same, so nested icons (`_decode_nested_pixels`) and every
-    other caller keep today's decode. Also pins that the keyword is not
+    return the same: truncation is the decision of a caller that has
+    counted the table and will write the row -- `ingest_worker` for the
+    top level (#418), `_decode_nested_pixels` for an icon (#433) -- and
+    no caller gets it by default. Also pins that the keyword is not
     forwarded as `None`: measured on pydicom 3.0.2, passing
     `allow_excess_frames=None` truncates exactly as `False` does.
     """
@@ -547,3 +553,195 @@ def test_the_default_decode_is_still_every_frame_pydicom_returns():
     truncated, _pi = _decode_pixels(ds, allow_excess_frames=False)
     assert truncated.shape == (4, 4)
     assert np.array_equal(truncated, FRAMES[0])
+
+
+# ---------------------------------------------------------------------------
+# B7 -- a nested pixel item (an icon) whose offset table disagrees (#433)
+# ---------------------------------------------------------------------------
+#
+# #418 fixed the top level and deliberately left nested items alone, so an
+# Icon Image Sequence item whose Basic Offset Table named two frames under a
+# one-frame header was carried whole -- 8 bytes under a 2x2 8-bit header --
+# with no row, and export then dropped the icon blaming an Integrity Error.
+# Scoped STANDARD, not SIGNAL as at the top level: an icon is a derived
+# thumbnail, every other icon loss is STANDARD, and truncating an icon's
+# frames must not grade worse than losing the icon outright.
+
+#: Two distinguishable 2x2 icon frames.
+ICON_FRAMES = [np.array([[10, 11], [12, 13]], dtype=np.uint8),
+               np.array([[50, 51], [52, 53]], dtype=np.uint8)]
+ICON_PATH_WORDS = "0088,0200[0]"
+
+
+def _icon(n_frames, number_of_frames):
+    """An encapsulated J2K icon item whose BOT names `n_frames` frames."""
+    item = Dataset()
+    item.Rows = item.Columns = 2
+    item.BitsAllocated = item.BitsStored = 8
+    item.HighBit = 7
+    item.SamplesPerPixel = 1
+    item.PhotometricInterpretation = "MONOCHROME2"
+    item.PixelRepresentation = 0
+    if number_of_frames is not None:
+        item.NumberOfFrames = number_of_frames
+    item.PixelData = encapsulate(
+        [_codestream(f) for f in ICON_FRAMES[:n_frames]], has_bot=True)
+    item["PixelData"].is_undefined_length = True
+    return item
+
+
+def _with_icon(icon):
+    """A consistent one-frame top level carrying `icon` at depth 1."""
+    ds = _dataset(1, 1)
+    ds.IconImageSequence = Sequence([icon])
+    return ds
+
+
+def _carried_icon_bytes(inst):
+    """The raw bytes the store holds for the icon, or None when not carried."""
+    refs = [ref for (path, tag), ref in inst._nested_pixel_refs.items()
+            if tag == "7fe0,0010" and path == (("0088,0200", 0),)]
+    if not refs:
+        return None
+    (ref,) = refs
+    with open(ref.sidecar_path, "rb") as fh:
+        fh.seek(ref.offset)
+        blob = fh.read(ref.length)
+    return zlib.decompress(blob) if ref.alg == "zlib" else blob
+
+
+def test_the_icon_fixtures_carry_the_offset_tables_they_are_named_for():
+    """B7-0: an icon whose BOT were silently empty would enter no check."""
+    assert len(parse_basic_offsets(_icon(2, 1).PixelData)) == 2
+    assert len(parse_basic_offsets(_icon(1, 2).PixelData)) == 1
+    top = _with_icon(_icon(2, None))
+    assert len(parse_basic_offsets(top.PixelData)) == 1
+    assert "NumberOfFrames" not in top.IconImageSequence[0]
+
+
+@pytest.mark.parametrize("number_of_frames,declared_words", [
+    (None, "NumberOfFrames is absent (read as 1)"),
+    (1, "NumberOfFrames declares 1"),
+], ids=["absent", "one"])
+def test_an_icon_keeps_its_declared_frame_and_reports_the_excess(
+        tmp_path, number_of_frames, declared_words):
+    """N1, the issue's case: 8 bytes under a 2x2 8-bit header, and no row."""
+    session, summary, db = _ingest(
+        tmp_path, _with_icon(_icon(2, number_of_frames)))
+    try:
+        assert summary.ingested == 1
+        assert _carried_icon_bytes(_only_instance(session)) == \
+            ICON_FRAMES[0].tobytes()
+
+        rows = _audit_rows(db, "DATA_LOSS")
+        assert len(rows) == 1, rows
+        _uid, details, scope = rows[0]
+        assert scope == LOSS_SCOPE_STANDARD
+        assert ICON_PATH_WORDS in details, details
+        assert "Basic Offset Table names 2 frames" in details, details
+        assert declared_words in details, details
+        assert "Kept the first 1 and discarded 1" in details, details
+
+        out = tmp_path / "out"
+        session.export(str(out), use_compression=False)
+        session.store_backend.flush_audit_queue()
+        files = [os.path.join(d, f) for d, _, fs in os.walk(out)
+                 for f in fs if f.endswith(".dcm")]
+        assert len(files) == 1
+        written = pydicom.dcmread(files[0])
+        assert written.IconImageSequence[0].PixelData == \
+            ICON_FRAMES[0].tobytes()
+        assert not any("could not be restored" in d
+                       for _u, d, _s in _audit_rows(db, "DATA_LOSS"))
+    finally:
+        session.close()
+
+
+def test_a_consistent_multi_frame_icon_is_carried_whole_with_no_row(tmp_path):
+    """N2: no false positive -- a 2/2 icon is 8 bytes, as it always was."""
+    session, summary, db = _ingest(tmp_path, _with_icon(_icon(2, 2)))
+    try:
+        assert summary.ingested == 1
+        assert _carried_icon_bytes(_only_instance(session)) == (
+            ICON_FRAMES[0].tobytes() + ICON_FRAMES[1].tobytes())
+        assert _audit_rows(db, "DATA_LOSS") == []
+    finally:
+        session.close()
+
+
+def test_an_icon_naming_fewer_frames_is_not_carried_and_says_why(tmp_path):
+    """N3: one row naming the item and both counts, not the generic one.
+
+    The generic row said "unrouted pixel elements are not held in the
+    object graph", which is #194's wrong-reason shape: the element was
+    routed, and its offset table is why it was not carried.
+    """
+    session, summary, db = _ingest(tmp_path, _with_icon(_icon(1, 2)))
+    try:
+        assert summary.ingested == 1
+        assert _carried_icon_bytes(_only_instance(session)) is None
+
+        rows = _audit_rows(db, "DATA_LOSS")
+        assert len(rows) == 1, rows
+        _uid, details, scope = rows[0]
+        assert scope == LOSS_SCOPE_STANDARD
+        assert "7fe0,0010" in details, details
+        assert ICON_PATH_WORDS in details, details
+        assert "Basic Offset Table names 1 frames" in details, details
+        assert "NumberOfFrames declares 2" in details, details
+        assert "unrouted" not in details, details
+    finally:
+        session.close()
+
+
+#: Two distinguishable 2x2 RGB 16-bit icon frames: a cell Pillow, the only
+#: JPEG 2000 plugin pydicom has here, will not decode.
+RGB16_ICON_FRAMES = [
+    (np.arange(12, dtype=np.int64) * 3000).astype(np.uint16).reshape(2, 2, 3),
+    (np.arange(12, dtype=np.int64) * 3000 + 5).astype(np.uint16)
+    .reshape(2, 2, 3)]
+
+
+def test_a_16_bit_colour_icon_is_truncated_through_the_fallback(tmp_path):
+    """N4: the nested caller's excess reaches `imagecodecs` too (#416, #433).
+
+    pydicom cannot decode this icon at all, so the decode goes through
+    `_decode_pixels`' fallback, which refuses an excess unless its caller
+    asked for it to be dropped. The nested caller asks; without that the
+    icon would not be carried.
+    """
+    icon = Dataset()
+    icon.Rows = icon.Columns = 2
+    icon.BitsAllocated = icon.BitsStored = 16
+    icon.HighBit = 15
+    icon.SamplesPerPixel = 3
+    icon.PlanarConfiguration = 0
+    icon.PhotometricInterpretation = "RGB"
+    icon.PixelRepresentation = 0
+    icon.NumberOfFrames = 1
+    icon.PixelData = encapsulate(
+        [_codestream(f) for f in RGB16_ICON_FRAMES], has_bot=True)
+    icon["PixelData"].is_undefined_length = True
+    assert len(parse_basic_offsets(icon.PixelData)) == 2
+
+    # The precondition: pydicom cannot decode it, so this is the fallback.
+    probe = copy.deepcopy(icon)
+    probe.file_meta = FileMetaDataset()
+    probe.file_meta.TransferSyntaxUID = JPEG2000Lossless
+    with pytest.raises(RuntimeError):
+        get_decoder(JPEG2000Lossless).as_array(probe,
+                                               allow_excess_frames=False)
+
+    session, summary, db = _ingest(tmp_path, _with_icon(icon))
+    try:
+        assert summary.ingested == 1
+        assert _carried_icon_bytes(_only_instance(session)) == \
+            RGB16_ICON_FRAMES[0].tobytes()
+        rows = _audit_rows(db, "DATA_LOSS")
+        assert len(rows) == 1, rows
+        _uid, details, scope = rows[0]
+        assert scope == LOSS_SCOPE_STANDARD
+        assert ICON_PATH_WORDS in details, details
+        assert "Basic Offset Table names 2 frames" in details, details
+    finally:
+        session.close()

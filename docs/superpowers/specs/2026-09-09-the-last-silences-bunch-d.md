@@ -8,6 +8,14 @@ codestream)
 **Base:** `main` at `124e9e5` (bunch C: #396, #397, #401, #394, #383)
 **Status:** design brief for a TDD developer. Three architect decisions are
 recorded in §2, §3 and §4; four owner questions are in §9.
+**Superseded in part:** #416 (v0.9.6). §3's ruling that
+`_J2K_ENCODABLE_FRAMES`' `(2, True)` refusal does not move, and §8's
+CHANGELOG sentence saying so. Both were true of this spec's change: #407
+gave `Instance.get_pixel_data()` a working imagecodecs decode and gave
+ingest none. §3 filed the fallback that would move the cell as a
+capability decision (§9 Q2); the owner ruled it in for v0.9.6, and #416
+added it to `_decode_pixels` and `(2, True)` to the frozenset in the same
+change. Both clauses are struck in place below.
 
 Both issues are about a **snapshot that stopped describing the thing it was
 taken of**, and in both the snapshot is between the caller's pixels and the
@@ -144,11 +152,14 @@ not touched here.
 
 ## 3. Architect decision 2: the #407 / #404 interaction
 
-**Ruling: `_J2K_ENCODABLE_FRAMES`'s `(2, True)` refusal does NOT move, and
+~~**Ruling: `_J2K_ENCODABLE_FRAMES`'s `(2, True)` refusal does NOT move, and
 this PR must not move it. #407's claim that the refusal is "contingent on this
 bug" is measured false for the door the refusal is about. The docstring gains
 one paragraph so that a future reader does not undo it on the strength of the
-fallback.**
+fallback.**~~ **Superseded by #416 (v0.9.6):** true of #407's change, which
+did not move the cell; #416 gave `_decode_pixels` the imagecodecs fallback
+this section files below, and moved `(2, True)` with it. Left struck rather
+than rewritten -- see the front matter.
 
 #407's last section says:
 
@@ -949,11 +960,12 @@ raises, and the convention is to name the exact exception:
 > which "take the last fragment" would not. This makes
 > `Instance.get_pixel_data()`'s imagecodecs fallback work for the population
 > it exists for -- 16-bit multi-sample JPEG 2000, which Pillow cannot decode.
-> It does **not** move `_J2K_ENCODABLE_FRAMES`' `(2, True)` refusal:
+> ~~It does **not** move `_J2K_ENCODABLE_FRAMES`' `(2, True)` refusal:
 > `ingest_worker` reads through pydicom's own decoder backend, which has no
 > imagecodecs plugin, so `session.ingest()` on such a file still returns
 > `ingested=0` with a `Decompression Failed` row -- measured, and now said in
-> the frozenset's own comment.
+> the frozenset's own comment.~~ **Superseded by #416 (v0.9.6)**, which
+> gave ingest that fallback and moved the cell; see the front matter.
 
 ---
 

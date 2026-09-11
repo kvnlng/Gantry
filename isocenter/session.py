@@ -1528,6 +1528,18 @@ class DicomSession:
         export write gets (#181, #211). Check the return value: a run
         that rejected files completes normally.
 
+        A file whose SOP Instance UID an instance in this session already
+        holds -- ingested earlier in this call, by an earlier call, or
+        loaded from the store -- is **declined** (#431): the first
+        instance is kept, the file is not read into the store, it is
+        counted in `IngestSummary.declined`, and a `WARNING` audit row
+        names the UID, the file, and the file the instance was ingested
+        from. The store is keyed on that UID, so admitting the second
+        used to let the next save overwrite the first. Which one is
+        "first" is the first linked, not necessarily the first on disk
+        (#450). A declined file is not recorded as imported, so
+        ingesting the same folder again declines it again.
+
         Args:
             directory (str): The path to the directory containing DICOM files.
 
@@ -1595,6 +1607,10 @@ class DicomSession:
                   f"{summary.ingested + summary.failed} new files; see the "
                   f"returned IngestSummary.failures and the ERROR audit "
                   f"rows for the paths and reasons.")
+        if summary.declined:
+            print(f"  - {summary.declined} file(s) DECLINED -- see the "
+                  f"returned IngestSummary.declined and the WARNING audit "
+                  f"rows.")
 
         return summary
 

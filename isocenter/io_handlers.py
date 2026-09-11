@@ -185,7 +185,8 @@ from .pixel_geometry import (
     resolve_pixel_geometry,
 )
 from .blob_kind import serialize_blob_kind
-from .imagecodecs_handler import (frame_count_mismatch_words,
+from .imagecodecs_handler import (decode_declared_frames,
+                                  frame_count_mismatch_words,
                                   offset_table_frame_count)
 from .parallel import run_parallel
 from .validation import IODValidator
@@ -327,6 +328,54 @@ _CARRIABLE_TRANSFER_SYNTAXES = frozenset({
     "1.2.840.10008.1.2.4.201",  # HTJ2K Lossless
     "1.2.840.10008.1.2.4.202",  # HTJ2K Lossless RPCL
 })
+
+#: The transfer syntaxes `_decode_pixels` decodes through `imagecodecs`
+#: when pydicom cannot (#416), so that `ingest()` accepts what
+#: `Instance.get_pixel_data()` reads. **This is the one place to narrow
+#: that**, and it is wider than the 16-bit colour JPEG 2000 cell #416 was
+#: filed for. Measured with pydicom 3.0.2, Pillow 12.3.0 and imagecodecs
+#: 2026.8.16 (`get_decoder(ts).available_plugins`):
+#:
+#: | Transfer syntax | pydicom plugins here | in this set |
+#: | --- | --- | --- |
+#: | .5 RLE Lossless | `pydicom` | no |
+#: | .50 / .51 JPEG Baseline / Extended | `pillow` | no |
+#: | .57 / .70 JPEG Lossless | none | yes |
+#: | .80 / .81 JPEG-LS | none | yes |
+#: | .90 / .91 JPEG 2000 | `pillow`, 16-bit multi-sample refused | yes |
+#:
+#: So every JPEG Lossless and JPEG-LS file was refused at ingest with
+#: "all plugins are missing dependencies", and now ingests when its
+#: decode matches its header. RLE is out because pydicom's own RLE
+#: decoder needs no dependency, and the handler's RLE arm has never
+#: decoded anything (#447). JPEG Baseline and Extended are out because
+#: Pillow decodes them here, the handler's colour handling through this
+#: door is unmeasured, and baseline JPEG is almost always YBR, which
+#: `_FALLBACK_PHOTOMETRICS` refuses anyway. UID strings, for the reason
+#: `_CARRIABLE_TRANSFER_SYNTAXES` gives.
+_IMAGECODECS_FALLBACK_SYNTAXES = frozenset({
+    "1.2.840.10008.1.2.4.57",   # JPEG Lossless, Non-Hierarchical
+    "1.2.840.10008.1.2.4.70",   # JPEG Lossless, First-Order Prediction
+    "1.2.840.10008.1.2.4.80",   # JPEG-LS Lossless
+    "1.2.840.10008.1.2.4.81",   # JPEG-LS Near-Lossless
+    "1.2.840.10008.1.2.4.90",   # JPEG 2000 (Lossless Only)
+    "1.2.840.10008.1.2.4.91",   # JPEG 2000
+})
+
+#: The declared colour spaces the fallback will label its output with.
+#: pydicom's decoder *states* what colour space it returned (#372);
+#: `imagecodecs` does not, so the fallback can only repeat the declared
+#: label, and that is honest only where the decoder cannot have
+#: converted anything. Monochrome and palette indices come back as
+#: stored (measured: a PALETTE COLOR JPEG Lossless frame decodes to its
+#: index array, and pydicom's `as_array` applies no palette either), and
+#: RGB is RGB. The YBR family is out: openjpeg undoes a codestream's
+#: colour transform and returns RGB under a `YBR_RCT`/`YBR_ICT` label,
+#: which is #372's defect through a new door. What those should become
+#: is #448. This library's own exports are RGB, so the round trip #416
+#: is about does not need them.
+_FALLBACK_PHOTOMETRICS = frozenset({
+    "MONOCHROME1", "MONOCHROME2", "RGB", "PALETTE COLOR"})
 
 
 #: The descriptors a nested payload is reshaped from, in a fixed order, with
@@ -1318,24 +1367,136 @@ def _decode_pixels(ds, *, allow_excess_frames=None) -> Tuple[np.ndarray, str]:
     helper that decoded frame 0 would carry a multi-frame source as one
     frame. That includes frames an encapsulated offset table names beyond
     NumberOfFrames, which is pydicom's default. `allow_excess_frames=False`
-    keeps only the declared frames, and only `ingest_worker`'s top-level
-    decode passes it, only when `offset_table_frame_count` has reported an
-    excess -- the caller whose `meta` carries the DATA_LOSS row (#418).
+    keeps only the declared frames. Two callers pass it, each only when
+    `offset_table_frame_count` has reported an excess, and each hands the
+    excess back to `import_files` for its DATA_LOSS row: `ingest_worker`
+    for the top level (#418) and `_decode_nested_pixels` for a nested
+    item such as an icon (#433).
 
     The keyword is forwarded only when it was given. Measured on pydicom
     3.0.2: `as_array(ds, allow_excess_frames=None)` truncates exactly as
     `False` does, so passing the default through would silently truncate
     every decode, nested icons included.
+
+    **When pydicom cannot decode, `imagecodecs` may (#416).** pydicom is
+    asked first, always, so a file that decoded before decodes to the same
+    bytes and the same colour-space label; `imagecodecs` first would
+    change both for files already accepted. Only a `RuntimeError` falls
+    through -- pydicom's "all plugins are missing dependencies" and "raised
+    by all available plugins" -- and only for
+    `_IMAGECODECS_FALLBACK_SYNTAXES`. Its validation failures are
+    `AttributeError` and `ValueError` (pydicom 3.0.2 `_validate_options`),
+    and they stay refusals in its words: imagecodecs ignores
+    PlanarConfiguration, so catching those would ingest a file missing a
+    Type 1 element. See `_decode_with_imagecodecs` for what it then
+    refuses. Both depths get it, because both call this: one rule for
+    both depths.
+
+    `ts` is read *outside* the `try`, so the #281 `AttributeError` above
+    can never reach the fallback.
     """
     ts = ds.file_meta.TransferSyntaxUID
     kwargs = {}
     if allow_excess_frames is not None:
         kwargs["allow_excess_frames"] = allow_excess_frames
-    arr, meta = get_decoder(ts).as_array(ds, **kwargs)
+    try:
+        arr, meta = get_decoder(ts).as_array(ds, **kwargs)
+    except RuntimeError as exc:
+        if str(ts) not in _IMAGECODECS_FALLBACK_SYNTAXES:
+            raise
+        return _decode_with_imagecodecs(ds, allow_excess_frames, exc)
     return np.ascontiguousarray(arr), meta["photometric_interpretation"]
 
 
-def _decode_nested_pixels(ds, candidates, dropped, instance) -> list:
+def _decode_with_imagecodecs(ds, allow_excess_frames,
+                             pydicom_error) -> Tuple[np.ndarray, str]:
+    """`_decode_pixels`' fallback: decode, then refuse what does not fit.
+
+    A generic fallback would store wrong values, measured: a signed 12-bit
+    JPEG Lossless frame comes back from `imagecodecs` as unsigned samples
+    with no sign extension, -800 read as 3296 (`Instance.get_pixel_data()`
+    returns the same wrong values; that is #446). So the decode is
+    accepted only when it is what the header says it is, and refused --
+    keeping pydicom's reason first, so the ingest row still reads
+    `Decompression Failed: <pydicom's words>` -- when:
+
+    - **the colour space is not one it can label.** `imagecodecs` does not
+      say what colour space it returned, so the declared label is all
+      there is; see `_FALLBACK_PHOTOMETRICS`.
+    - **the offset table disagrees in a way the caller has not handled.**
+      Fewer frames than declared is always refused. An excess is decoded
+      to the declared frames only when the caller passed
+      `allow_excess_frames=False` -- the two callers that do write the
+      row (#418, #433). Otherwise it is refused: pydicom's default is to
+      return every frame, and an array holding more frames than its
+      header declares is one nothing can read back.
+    - **the output does not match the header**: its itemsize against
+      BitsAllocated, its signedness against PixelRepresentation, or its
+      size against Rows x Columns x SamplesPerPixel x frames.
+
+    Returns:
+        ``(array, photometric)`` in the shape `pixel_array` returns --
+        ``(rows, cols[, samples])`` for one frame, ``(frames, ...)`` for
+        more -- and the declared Photometric Interpretation.
+    """
+    def refused(why):
+        return RuntimeError(
+            f"{pydicom_error}; imagecodecs could not decode it either: {why}")
+
+    photometric = str(getattr(ds, "PhotometricInterpretation", "") or "")
+    if photometric not in _FALLBACK_PHOTOMETRICS:
+        raise refused(
+            f"its declared colour space {photometric!r} is not one this "
+            f"fallback can label: imagecodecs does not say what colour "
+            f"space it decoded to, and for the YBR family it is not the "
+            f"declared one") from pydicom_error
+
+    counted = offset_table_frame_count(ds)
+    if counted is not None and counted[0] != counted[1]:
+        if counted[0] < counted[1]:
+            raise refused(frame_count_mismatch_words(counted)) \
+                from pydicom_error
+        if allow_excess_frames is not False:
+            raise refused(
+                f"{frame_count_mismatch_words(counted)}, and this decode "
+                f"was not asked to drop the excess") from pydicom_error
+    frames = (counted[1] if counted is not None
+              else max(1, int(getattr(ds, "NumberOfFrames", 1) or 1)))
+
+    try:
+        arr = decode_declared_frames(ds, frames)
+    except Exception as exc:  # pylint: disable=broad-except
+        raise refused(f"{type(exc).__name__}: {exc}") from exc
+
+    bits = int(ds.BitsAllocated)
+    representation = int(ds.PixelRepresentation)
+    kind = "i" if representation == 1 else "u"
+    if arr.dtype.itemsize * 8 != bits or arr.dtype.kind != kind:
+        raise refused(
+            f"it decoded to {arr.dtype}, where BitsAllocated {bits} and "
+            f"PixelRepresentation {representation} declare "
+            f"{np.dtype(f'{kind}{max(1, bits // 8)}')}") from pydicom_error
+
+    rows, cols = int(ds.Rows), int(ds.Columns)
+    samples = int(ds.SamplesPerPixel)
+    shape = (rows, cols) + ((samples,) if samples > 1 else ())
+    if frames > 1:
+        shape = (frames,) + shape
+    if arr.size != int(np.prod(shape)):
+        raise refused(
+            f"it decoded {arr.size} samples, where {frames} frame(s) of "
+            f"{rows}x{cols}x{samples} need {int(np.prod(shape))}") \
+            from pydicom_error
+    return np.ascontiguousarray(arr.reshape(shape)), photometric
+
+
+def _item_path_words(path) -> str:
+    """A nested item's path as a row reads it: `0008,1140[3] > 0088,0200[0]`."""
+    return " > ".join(f"{tag}[{index}]" for tag, index in path)
+
+
+def _decode_nested_pixels(ds, candidates, dropped, instance, *,
+                          offset_tables) -> list:
     """Decode every nested (7fe0,0010) `populate_attrs` collected (#183).
 
     Runs in `ingest_worker`, immediately after the walk that produced
@@ -1372,6 +1533,13 @@ def _decode_nested_pixels(ds, candidates, dropped, instance) -> list:
             parent files the `DATA_LOSS` row it always filed.
         instance (Instance): The graph this walk just built, so a carried
             icon's PlanarConfiguration can be corrected on its own item.
+        offset_tables (list): Appended to with `(path, tag, vr, counted,
+            kind)` for every candidate whose offset table disagrees with
+            its NumberOfFrames (#433), `kind` being "excess" (carried,
+            truncated to the declared frames) or "fewer" (not carried).
+            `import_files` writes the row for each; a "fewer" candidate is
+            deliberately *not* also appended to `dropped`, whose row would
+            give the wrong reason for the same loss.
 
     Returns:
         list: `(path, terminal_tag, vr, raw_bytes, sha256)` per carried
@@ -1401,7 +1569,27 @@ def _decode_nested_pixels(ds, candidates, dropped, instance) -> list:
             # `file_meta` is not an approximation; it is the right answer.
             # Measured to decode correctly through RLE encapsulation too.
             item_ds.file_meta = ds.file_meta
-            arr, decoded_pi = _decode_pixels(item_ds)
+            # The top level's #418 check, at this depth (#433). After the
+            # borrow, because it reads the transfer syntax off
+            # `file_meta`. An excess is truncated to the declared frames,
+            # as at the top level; without it pydicom returned every frame
+            # the table names, and the icon was carried whole under a
+            # header declaring fewer -- no row at ingest, and an export
+            # that then dropped it blaming an Integrity Error. Fewer than
+            # declared is not carried: there is no frame for the ones the
+            # table does not name. Neither refuses the file -- an icon is
+            # not a reason to lose the instance.
+            counted = offset_table_frame_count(item_ds)
+            decode_kwargs = {}
+            if counted is not None and counted[0] != counted[1]:
+                if counted[0] < counted[1]:
+                    offset_tables.append((path, tag_str, vr, counted,
+                                          "fewer"))
+                    continue
+                decode_kwargs["allow_excess_frames"] = False
+            arr, decoded_pi = _decode_pixels(item_ds, **decode_kwargs)
+            if decode_kwargs:
+                offset_tables.append((path, tag_str, vr, counted, "excess"))
         except Exception:  # pylint: disable=broad-except
             # Every reason a decode can fail takes the same route, and it is
             # the route this element already took: a loss row. Not the
@@ -1509,8 +1697,10 @@ def ingest_worker(fp: str) -> Tuple:
         # candidates that failed to decode land in `dropped` before it is
         # handed over. `_decode_nested_pixels` appends them itself: it is
         # the code that knows (#183, #194).
-        meta['nested_pixels'] = _decode_nested_pixels(ds, nested, dropped,
-                                                      inst)
+        nested_offset_tables = []
+        meta['nested_pixels'] = _decode_nested_pixels(
+            ds, nested, dropped, inst, offset_tables=nested_offset_tables)
+        meta['nested_offset_table'] = nested_offset_tables
         meta['dropped_private_binary'] = dropped
         # Rides `meta` for the same reason as `dropped_private_binary`
         # above: this worker may be in a subprocess with no store
@@ -1744,10 +1934,13 @@ class IngestSummary:
     A file takes exactly one of four routes, and they are four fields
     because they answer different questions: `ingested` reached the
     graph; `failures` were rejected with a reason (and each has an
-    `ERROR` audit row); `declined` were refused as the un-redacted
-    originals of instances the session already holds (#238, audited as
-    `WARNING`); `skipped` were already in the store and were not read
-    again.
+    `ERROR` audit row); `declined` were refused because the session
+    already holds their SOP Instance UID -- as the redacted copy's
+    pre-redaction identity (#238), or as the UID of another instance
+    (#431) -- each audited as `WARNING` and never read into the store;
+    `skipped` were already in the store and were not read again. A
+    declined file is not recorded as imported, so offering it again
+    declines it again.
     """
     ingested: int = 0
     #: `(path, reason)` per rejected file -- the same pair the `ERROR`
@@ -1822,12 +2015,21 @@ class DicomImporter:
         study_map = {}  # Key: study_uid -> Study
         series_map = {}  # Key: series_uid -> Series
 
+        # Every SOP Instance UID the session already holds, and the
+        # instance holding it (#431). Seeded from the graph, which equals
+        # the store at open (`Session.__init__` loads it all), so a file
+        # duplicating a *stored* instance is caught exactly like one
+        # duplicating an instance ingested a moment ago in this loop.
+        held = {}
+
         # Populate deep maps
         for p in store.patients:
             for st in p.studies:
                 study_map[st.study_instance_uid] = st
                 for se in st.series:
                     series_map[se.series_instance_uid] = se
+                    for held_inst in se.instances:
+                        held.setdefault(held_inst.sop_instance_uid, held_inst)
 
         # 2. Parallel Execution
         # OPTIMIZATION: Use return_generator=True to stream results.
@@ -1860,7 +2062,10 @@ class DicomImporter:
         gate = (store_backend._hold_sidecar_gate
                 if hasattr(store_backend, "_hold_sidecar_gate")
                 else contextlib.nullcontext)
-        declined = 0
+        # Two refusals, counted apart so the closing log line can say
+        # which one happened; `IngestSummary.declined` is their sum.
+        declined_superseded = 0
+        declined_duplicate = 0
         count = 0
         failures: List[Tuple[str, str]] = []
 
@@ -1916,7 +2121,7 @@ class DicomImporter:
                             f"pre-redaction identity of {supersedes}, which "
                             f"this session already holds. The file still "
                             f"carries the un-redacted original.")
-                        declined += 1
+                        declined_superseded += 1
                         # First five individually, as
                         # `scan_burned_in_annotations` does: a re-run over
                         # a large redacted cohort would otherwise print a
@@ -1924,9 +2129,9 @@ class DicomImporter:
                         # regardless -- it is the compliance trail, and
                         # DATA_LOSS rows are per instance for the same
                         # reason.
-                        if declined <= 5:
+                        if declined_superseded <= 5:
                             logger.warning(detail)
-                        elif declined == 6:
+                        elif declined_superseded == 6:
                             logger.warning(
                                 "... (suppressing further per-file messages "
                                 "for superseded sources) ...")
@@ -1934,6 +2139,52 @@ class DicomImporter:
                         # so this is not the worker-audit hazard of #126.
                         # Guarded because two test callers pass a bare
                         # `DicomStore` and no backend at all.
+                        if store_backend is not None:
+                            store_backend.log_audit(
+                                action_type="WARNING",
+                                entity_uid=inst.sop_instance_uid,
+                                details=detail)
+                        continue
+
+                    # A second instance with an SOP Instance UID the
+                    # session already holds (#431). The store is keyed on
+                    # that UID and its upsert is `ON CONFLICT DO UPDATE`,
+                    # so linking this one let the next `save()` overwrite
+                    # the holder's row -- series, pixels and all -- with
+                    # whichever was linked last, and a reload held one
+                    # instance where `ingested` had counted two. Keep the
+                    # first, decline the rest, and say so.
+                    #
+                    # Above the sidecar write, for #238's reason: nothing
+                    # de-duplicates a frame, so writing and then declining
+                    # would strand it. And a `WARNING`, not `DATA_LOSS`:
+                    # this file never entered the store, so no element of
+                    # data that was ingested is smaller than it claims
+                    # (#211's scoping). `WARNING` rows are exceptions in
+                    # the report and bar PASS.
+                    #
+                    # "First" is the first *linked*, which is not always
+                    # the first on disk: `run_parallel` streams results
+                    # as workers finish them (#450).
+                    holder = held.get(inst.sop_instance_uid)
+                    if holder is not None:
+                        holder_path = (holder.source_path or holder.file_path
+                                       or "an instance with no source file")
+                        detail = " ".join((
+                            f"Not importing {inst.file_path}: SOP Instance "
+                            f"UID {inst.sop_instance_uid} is already held by "
+                            f"the instance ingested from {holder_path}. A "
+                            f"session holds one instance per SOP Instance "
+                            f"UID; the first was kept and this file was not "
+                            f"read into the store.").split()
+                        ).replace("|", "\\|")
+                        declined_duplicate += 1
+                        if declined_duplicate <= 5:
+                            logger.warning(detail)
+                        elif declined_duplicate == 6:
+                            logger.warning(
+                                "... (suppressing further per-file messages "
+                                "for duplicate SOP Instance UIDs) ...")
                         if store_backend is not None:
                             store_backend.log_audit(
                                 action_type="WARNING",
@@ -2088,6 +2339,10 @@ class DicomImporter:
                     # touches neither -- so `save_all` re-emits the *row*
                     # (which is what makes the reference follow a
                     # `regenerate_uid()`) and never re-appends the frame.
+                    nested_tables = {
+                        (t_path, t_tag): (t_vr, t_counted, t_kind)
+                        for t_path, t_tag, t_vr, t_counted, t_kind
+                        in meta.get('nested_offset_table', ())}
                     for n_path, n_tag, n_vr, n_raw, n_hash in meta.get(
                             'nested_pixels', ()):
                         if not sidecar_manager:
@@ -2102,6 +2357,31 @@ class DicomImporter:
                                 'dropped_private_binary', []).append(
                                     (n_tag, n_vr))
                             continue
+                        # The frames `_decode_nested_pixels` dropped because
+                        # the item's offset table named more than it
+                        # declares (#433). Here, below the no-sidecar
+                        # branch, so only an icon that is actually carried
+                        # claims "kept the first N". STANDARD, not the
+                        # top level's SIGNAL: an icon is a derived
+                        # thumbnail, every other icon loss is STANDARD, and
+                        # truncating one must not grade worse than losing
+                        # it whole.
+                        n_table = nested_tables.get((n_path, n_tag))
+                        if n_table is not None:
+                            _t_vr, t_counted, _t_kind = n_table
+                            detail = (
+                                f"Standard tag {n_tag} at "
+                                f"{_item_path_words(n_path)}: "
+                                f"{frame_count_mismatch_words(t_counted)}. "
+                                f"Kept the first {t_counted[1]} and "
+                                f"discarded {t_counted[0] - t_counted[1]}.")
+                            logger.warning(f"{inst.sop_instance_uid}: {detail}")
+                            if store_backend is not None:
+                                store_backend.log_audit(
+                                    action_type="DATA_LOSS",
+                                    entity_uid=inst.sop_instance_uid,
+                                    details=detail,
+                                    loss_scope=LOSS_SCOPE_STANDARD)
                         kind = serialize_blob_kind('pixels', n_path, n_tag)
                         # Site 2 of six (#368): append and row commit under
                         # one hold, per icon, for the reason at site 1.
@@ -2137,6 +2417,30 @@ class DicomImporter:
                     # tag. Saying "Private tag 6000,3000" on a row the
                     # report scopes STANDARD invites the reader to
                     # distrust whichever half they check second.
+                    # A nested item whose offset table names fewer frames
+                    # than it declares (#433): not carried, and not in
+                    # `dropped_private_binary` either, so it gets this
+                    # row and only this one -- the generic one below
+                    # would call it "unrouted", which is not why.
+                    for t_path, t_tag, t_vr, t_counted, t_kind in meta.get(
+                            'nested_offset_table', ()):
+                        if t_kind != "fewer":
+                            continue
+                        detail = (
+                            f"Standard tag {t_tag} ({t_vr}) at "
+                            f"{_item_path_words(t_path)} was not ingested: "
+                            f"{frame_count_mismatch_words(t_counted)}, so "
+                            f"there is no frame to keep for the ones the "
+                            f"table does not name, and it is not in the "
+                            f"exported file.")
+                        logger.warning(f"{inst.sop_instance_uid}: {detail}")
+                        if store_backend is not None:
+                            store_backend.log_audit(
+                                action_type="DATA_LOSS",
+                                entity_uid=inst.sop_instance_uid,
+                                details=detail,
+                                loss_scope=LOSS_SCOPE_STANDARD)
+
                     for tag, vr in meta.get('dropped_private_binary', ()):
                         scope = loss_scope_for_tag(tag)
                         # Two reason clauses, because two rules drop
@@ -2284,6 +2588,10 @@ class DicomImporter:
 
                     # Instance
                     series.instances.append(inst)
+                    # Only once linked: a result whose linkage raised
+                    # above is a failure, and must not hold the UID
+                    # against a later file that could have been kept.
+                    held[inst.sop_instance_uid] = inst
                     count += 1
                 except Exception as e:
                     # A parent-side failure is the same failure to the
@@ -2297,14 +2605,21 @@ class DicomImporter:
             logger.warning(
                 f"Rejected {len(failures)} file(s) at ingest; each has an "
                 "ERROR audit row naming the file and the reason.")
-        if declined:
+        if declined_superseded:
             logger.warning(
-                f"Declined {declined} file(s) whose SOP Instance UID is the "
-                "pre-redaction identity of an instance already in this "
-                "session; see the compliance report.")
+                f"Declined {declined_superseded} file(s) whose SOP Instance "
+                "UID is the pre-redaction identity of an instance already in "
+                "this session; see the compliance report.")
+        if declined_duplicate:
+            logger.warning(
+                f"Declined {declined_duplicate} file(s) whose SOP Instance "
+                "UID an instance in this session already holds; each has a "
+                "WARNING audit row naming both files.")
 
-        return IngestSummary(ingested=count, failures=failures,
-                             declined=declined, skipped=skipped_count)
+        return IngestSummary(
+            ingested=count, failures=failures,
+            declined=declined_superseded + declined_duplicate,
+            skipped=skipped_count)
 
 
 @dataclass
@@ -3473,47 +3788,44 @@ class _J2kFrameRefusal(RuntimeError):
 
 #: The frames this project can compress **and read back**, keyed on
 #: `(itemsize, multi-sample)`. Measured end to end -- ingest, export,
-#: `dcmread`, compare against the literal -- on both imagecodecs 2024.6.1
-#: (the floor) and 2026.8.16:
+#: read back, compare against the literal:
 #:
 #: | itemsize | samples 1 | samples 3 |
 #: | --- | --- | --- |
 #: | 1 (`uint8`, `int8`) | exact | exact |
-#: | 2 (`uint16`, `int16`) | exact | encodes, **unreadable here** |
-#: | 4, 8 | see below | see below |
+#: | 2 (`uint16`, `int16`) | exact | exact, read back through `imagecodecs` |
+#: | 4, 8 | refused, see below | refused, see below |
 #:
 #: A **positive** rule, because neither the codec's refusals nor the
-#: encoder's exactness marks the boundary of what is safe to write. Two
-#: separate cells prove it: 32-bit encodes silently to 25 bits, and
-#: 16-bit multi-sample encodes *exactly* and still produces a file **this
-#: project cannot read** -- Pillow is the only JPEG 2000 decoding plugin
-#: it installs, and it reports `Pillow cannot decode 16-bit multi-sample
-#: data correctly`, so `session.ingest()` on our own export returns
-#: `ingested=0` with a `Decompression Failed` row. Other decoders manage
-#: it (`imagecodecs.jpeg2k_decode` returns those frames bit-exactly, and
-#: so does pylibjpeg-openjpeg); the standard applied here is what this
-#: library can read back, which is the same standard the 32-bit cell is
-#: judged by. A deny-list would have had to anticipate both cells, and
-#: would have anticipated neither.
+#: encoder's exactness marks the boundary of what is safe to write:
+#: 32-bit encodes *silently* to 25 bits, so a deny-list would have had
+#: to anticipate it and would not have. The standard is what this
+#: library can read back, which `_refuse_unencodable_j2k_frame` states.
 #:
-#: **#407 does not move the `(2, True)` cell, and the reason is worth
-#: reading before deleting it.** #407 fixed `imagecodecs_handler`'s
-#: single-frame decode (it had been joining the Basic Offset Table into
-#: the codestream), so `Instance.get_pixel_data()`'s imagecodecs fallback
-#: **does** now read a 16-bit multi-sample J2K frame back bit-exactly.
-#: That is one door, and it is not the one this rule is about.
-#: `ingest_worker` reads pixels through `_decode_pixels`, which is
-#: `get_decoder(ts).as_array(ds)` -- pydicom's own backend, whose only
-#: JPEG 2000 plugin here is Pillow, and which has no imagecodecs
-#: fallback. Measured at #407: `session.ingest()` on such a file still
-#: returns `ingested=0` with a `Decompression Failed` row. The round trip
-#: this rule is about is export -> ingest, and it is still broken.
-#: Widening the cell means giving `_decode_pixels` a fallback, which is
-#: #416 -- a capability decision, not a change to this frozenset.
+#: **The `(2, True)` cell is where that standard moved (#416).**
+#: `imagecodecs` always encoded 16-bit multi-sample frames exactly, but
+#: Pillow -- the only JPEG 2000 plugin pydicom has here -- reports
+#: `Pillow cannot decode 16-bit multi-sample data correctly`, so
+#: `session.ingest()` on this library's own export returned `ingested=0`
+#: and the cell was refused, on the same standard as 32-bit. Ingest now
+#: falls back to `imagecodecs` when pydicom cannot decode
+#: (`_decode_pixels`), which reads those frames bit-exactly, so the cell
+#: meets the standard. Measured on imagecodecs 2026.8.16, on 3.12 and
+#: 3.14t, for `uint16` and `int16`, one and two frames, and pinned by
+#: `test_our_own_compressed_16_bit_colour_export_re_ingests`. **Before
+#: narrowing `_IMAGECODECS_FALLBACK_SYNTAXES` to exclude JPEG 2000,
+#: remove this cell**, or the export writes a file ingest refuses again.
+#:
+#: What the cell costs: a third-party reader with pydicom and only
+#: Pillow still cannot decode such a file's `pixel_array`. A caller
+#: exporting for one passes `use_compression=False`, as before.
+#: `verify_readback=True` compares descriptors, not pixels, so it does
+#: not decide this either way (#449).
 _J2K_ENCODABLE_FRAMES = frozenset({
     (1, False),
     (1, True),
     (2, False),
+    (2, True),
 })
 
 
@@ -3527,24 +3839,12 @@ def _refuse_unencodable_j2k_frame(arr, ds, samples):
     if (arr.dtype.itemsize, samples > 1) in _J2K_ENCODABLE_FRAMES:
         return
 
-    if arr.dtype.itemsize in (1, 2):
-        # The encode is exact here; the decode is what this project
-        # cannot do. Said in those words, because "cannot carry" would be
-        # false and a user who read it would go looking for the wrong
-        # thing -- and "no decoder reads it" would be false too:
-        # `imagecodecs.jpeg2k_decode` and pylibjpeg-openjpeg both read
-        # these frames. What is true is the sentence below, and it is the
-        # one that tells a user what to do about it.
-        why = (f"the codestream would be exact, but Pillow is the only "
-               f"JPEG 2000 decoding plugin this library installs and it "
-               f"cannot decode {arr.dtype.itemsize * 8}-bit multi-sample "
-               f"data, so the file would be written and then unreadable "
-               f"by this library itself")
-    else:
-        why = (f"the encoder (imagecodecs {imagecodecs.__version__}) is "
-               f"exact only to 25 bits, so a 32-bit frame would be written "
-               f"wrong and read back wrong, and a 64-bit frame is refused "
-               f"by the codec outright")
+    # Every 8- and 16-bit cell is encodable since #416, so what reaches
+    # here is 32- or 64-bit, and this is the one reason that applies.
+    why = (f"the encoder (imagecodecs {imagecodecs.__version__}) is "
+           f"exact only to 25 bits, so a 32-bit frame would be written "
+           f"wrong and read back wrong, and a 64-bit frame is refused "
+           f"by the codec outright")
 
     raise _J2kFrameRefusal(
         f"Compression failed: JPEG 2000 lossless cannot carry "
@@ -3569,24 +3869,21 @@ def _compress_j2k(ds, pixel_array=None):
     wrote a JP2 *box* (`0000000c6a502020`) under that same syntax; lenient
     decoders read it, which is why it went unnoticed for every release.
 
-    **Accepted, and measured bit-exact end to end: 8-bit at any number of
-    samples per pixel, 16-bit at one, and `bool` (encoded as `uint8`).**
+    **Accepted, and measured bit-exact end to end: 8-bit and 16-bit at
+    any number of samples per pixel, and `bool` (encoded as `uint8`).**
     Pillow accepted exactly `uint8` and `uint16` greyscale, so
     `session.export(folder)` -- which compresses by default -- wrote
     *nothing at all* for CT and MR, failing with `broken data stream when
-    writing image file` (#404).
+    writing image file` (#404). 16-bit multi-sample was refused until
+    #416: it encoded exactly, but this library could not ingest the file
+    it wrote until ingest gained an `imagecodecs` fallback. See
+    `_J2K_ENCODABLE_FRAMES`.
 
-    Everything else is refused by name before any encode, and that refusal
-    is the safety of this function rather than a rough edge. Two cells
-    would otherwise be written and then be unreadable *by this project*:
-    `imagecodecs` does not reject 32-bit, it encodes exactly to 25 bits
-    and wrong above that; and it encodes 16-bit *multi-sample* frames
-    exactly, which Pillow -- the only JPEG 2000 decoding plugin this
-    library installs -- cannot decode, so `session.ingest()` on such an
-    export returns `ingested=0`. Other decoders read that second cell
-    fine; the standard applied is what this library can read back. Both
-    would replace a loud failure with `wrote 1 of 1` beside a file this
-    project cannot open.
+    32- and 64-bit are refused by name before any encode, and that refusal
+    is the safety of this function rather than a rough edge: `imagecodecs`
+    does not reject 32-bit, it encodes exactly to 25 bits and wrong above
+    that, which would replace a loud failure with `wrote 1 of 1` beside a
+    file written wrong.
 
     Updates `TransferSyntaxUID` and `PixelData`, and mutates nothing when
     it refuses.
@@ -3709,15 +4006,13 @@ def _compress_j2k(ds, pixel_array=None):
         # rather than raising. Worse than unreadable, not milder. A
         # silence created by the fix for a silence (#404).
         #
-        # 16-bit **multi-sample** is the same silence from the other
-        # direction, and it is this encoder's alone: `imagecodecs` encodes
-        # a `uint16` RGB frame bit-exactly where Pillow refused it at
-        # `Image.fromarray`, so the swap turned a loud failure into a
-        # written file that `ds.pixel_array` cannot open (`Pillow cannot
-        # decode 16-bit multi-sample data correctly` -- the only J2K
-        # decoding plugin this project installs). Measured, not reasoned:
-        # `int8` RGB, which Pillow also refused, *is* exact and is now
-        # supported.
+        # 16-bit **multi-sample** was refused here too until #416, for
+        # the other half of the same standard: `imagecodecs` encodes it
+        # bit-exactly, but pydicom's only J2K plugin here (Pillow) cannot
+        # decode it, so this library could not ingest its own export. It
+        # is written now because ingest falls back to `imagecodecs`; see
+        # `_J2K_ENCODABLE_FRAMES`. `int8` RGB, which Pillow also refused,
+        # *is* exact and was never refused by this guard.
         _refuse_unencodable_j2k_frame(arr, ds, samples)
 
         def encode_frame(frame_arr):
