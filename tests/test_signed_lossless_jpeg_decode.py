@@ -219,24 +219,131 @@ def test_a_signed_lossless_jpeg_frame_reads_its_values_at_both_doors(
                   want)
 
 
+#: `SIGNED[12]`'s 12-bit pattern read as a 16-bit signed sample: what a
+#: precision-16 JPEG-LS stream holding that pattern contains (S1b). The
+#: pattern of -800 is 3296, and no bit above bit 11 is set, so nothing is
+#: negative. Written out, not derived, so a wrong rule cannot also move
+#: the expected value.
+PATTERN_12_IN_16 = np.tile(np.array(
+    [2048, 3296, 4095, 0, 2047, 5, 4091, 100], dtype=np.int16), (16, 2))
+
+#: `SIGNED[8]`'s 8-bit pattern read as a 16-bit signed sample, for a
+#: precision-16 stream under BitsStored 8 (S1c).
+PATTERN_8_IN_16 = np.tile(np.array(
+    [128, 128, 255, 0, 127, 5, 251, 100], dtype=np.int16), (16, 2))
+
+
+def _multiframe(ds, codestreams):
+    """`ds` with its pixel data replaced by one frame per codestream."""
+    ds.NumberOfFrames = len(codestreams)
+    ds.PixelData = encapsulate(codestreams, has_bot=True)
+    ds["PixelData"].is_undefined_length = True
+    return ds
+
+
 @pytest.mark.parametrize("ts", [JPEGLS, JPEGLS_NEAR])
-def test_a_precision_16_jpeg_ls_stream_under_bits_stored_12_reads_by_bits_stored(
+def test_a_precision_16_jpeg_ls_stream_under_bits_stored_12_reads_by_its_precision(
         doors, ts):
-    """S1b: where the stream's precision and BitsStored disagree, BitsStored.
+    """S1b: where the stream's precision and BitsStored disagree, the stream (#478).
 
     `imagecodecs.jpegls_encode` always writes precision 16 for `uint16`,
     so a 12-bit pattern under a BitsStored 12 header is a precision-16
-    stream holding 12-bit samples. pydicom with pyjpegls sign-extends
-    from the *stream's* precision and returns 3296 for -800; this reads
-    it by BitsStored, the header's statement of what a sample is, and
-    returns -800. That is owner question Q4, answered with the
-    recommendation pending confirmation. Where pyjpegls is installed,
-    pydicom decodes first, so its answer is the one returned there.
+    stream holding 12-bit samples. The owner's ruling (#478, reversing
+    the BitsStored reading #463 shipped): read it by the stream's
+    precision, as pydicom with pyjpegls does, so -800's pattern reads
+    3296. The stream is what the decoder was told a sample is; a JPEG-LS
+    stream has no other place to say it, and pydicom is the reference
+    every other door here is measured against.
     """
-    want = SIGNED[12]
-    codestream = _jpegls(_pattern(want, 12), 12)
+    codestream = _jpegls(_pattern(SIGNED[12], 12), 12)
     assert codestream[codestream.index(b"\xff\xf7") + 4] == 16
-    _assert_reads(doors(_dataset(ts, codestream, want.shape, 12)), want)
+    _assert_reads(doors(_dataset(ts, codestream, (16, 16), 12)),
+                  PATTERN_12_IN_16)
+
+
+def test_a_precision_12_jpeg_ls_stream_under_bits_stored_16_reads_by_its_precision(
+        doors):
+    """S1c: the other direction -- a stream narrower than BitsStored (#478).
+
+    CharLS's precision-12 stream under a BitsStored 16 header. Read by
+    BitsStored, the 12-bit pattern is a pure view and -800 came back as
+    3296; read by the stream's precision it is -800, which is pydicom
+    with pyjpegls's answer (measured, 3.12.14, pydicom 3.0.2, pyjpegls
+    1.5.1). "Whenever that differs" is the ruling's wording, and it
+    covers this row as well as S1b's.
+    """
+    _assert_reads(doors(_dataset(JPEGLS, P12_JPEGLS, (16, 16), 16)),
+                  SIGNED[12])
+
+
+def test_a_precision_16_jpeg_ls_stream_under_bits_stored_8_reads_by_its_precision(
+        doors):
+    """S1d: an 8-bit pattern in a precision-16 stream, BitsAllocated 16 (#478).
+
+    The stream says each sample is 16 bits, so -128's 8-bit pattern is
+    128 -- pydicom with pyjpegls's answer (measured). By BitsStored it
+    read -128.
+    """
+    codestream = _jpegls(_pattern(SIGNED[8], 8).astype(np.uint16), 8)
+    assert codestream[codestream.index(b"\xff\xf7") + 4] == 16
+    _assert_reads(doors(_dataset(JPEGLS, codestream, (16, 16), 8,
+                                 bits_allocated=16)),
+                  PATTERN_8_IN_16)
+
+
+def test_each_jpeg_ls_frame_is_read_by_its_own_precision(doors):
+    """S1e: a precision-12 frame then a precision-16 frame, BitsStored 12.
+
+    Precision is a property of a codestream, and each frame is its own
+    codestream, so frame 0 reads -800 and frame 1 reads 3296. That is
+    pydicom's answer frame by frame (`pixel_array(path, index=i)`,
+    measured). pydicom's whole-array read applies the *last* frame's
+    precision to every frame -- [P12, P16] reads 3296 in both, [P16, P12]
+    reads -800 in both -- which is one frame's header answering for
+    another's samples; this does not follow it there.
+    """
+    ds = _multiframe(_dataset(JPEGLS, P12_JPEGLS, (16, 16), 12),
+                     [P12_JPEGLS, _jpegls(_pattern(SIGNED[12], 12), 12)])
+    _assert_reads(doors(ds), np.stack([SIGNED[12], PATTERN_12_IN_16]))
+
+
+#: `P12_JPEGLS` with a comment segment ahead of its frame header whose
+#: payload holds the two bytes of a SOF55 marker and a precision of 16.
+#: A COM (or APPn) payload is opaque bytes, so `FF F7` can legally occur
+#: in one; CharLS skips it and decodes the stream exactly (measured at
+#: imagecodecs 2024.6.1 and 2026.8.16).
+_DECOY = b"\xff\xf7\x00\x0b\x10\x00\x10\x00\x10\x01\x01\x11\x00"
+P12_BEHIND_A_DECOY = (P12_JPEGLS[:2] + b"\xff\xfe"
+                      + (len(_DECOY) + 2).to_bytes(2, "big") + _DECOY
+                      + P12_JPEGLS[2:])
+
+
+def test_the_precision_is_read_from_the_frame_header_not_the_first_ff_f7(
+        doors):
+    """S1f: the precision comes from walking the segments to SOF55.
+
+    A search for the first `FF F7` finds the comment's payload and reads
+    precision 16, so -800 would come back 3296. The frame header says 12.
+    """
+    assert P12_BEHIND_A_DECOY[P12_BEHIND_A_DECOY.index(b"\xff\xf7") + 4] \
+        == 16
+    _assert_reads(doors(_dataset(JPEGLS, P12_BEHIND_A_DECOY, (16, 16), 12)),
+                  SIGNED[12])
+
+
+@pytest.mark.parametrize("ts", [LJPEG, LJPEG_SV1])
+def test_a_lossless_jpeg_stream_wider_than_bits_stored_still_reads_by_bits_stored(
+        doors, ts):
+    """S1g: the ruling is JPEG-LS's; JPEG Lossless keeps BitsStored.
+
+    A precision-16 SOF3 stream holding a 12-bit pattern under BitsStored
+    12. pydicom reads JPEG Lossless by BitsStored (`_correct_unused_bits`,
+    not the JPEG-LS precision branch of `_apply_sign_correction`) and
+    returns -800 (measured with pylibjpeg-libjpeg), so this does too.
+    """
+    codestream = imagecodecs.ljpeg_encode(_pattern(SIGNED[12], 12),
+                                          bitspersample=16)
+    _assert_reads(doors(_dataset(ts, codestream, (16, 16), 12)), SIGNED[12])
 
 
 # ---------------------------------------------------------------------------

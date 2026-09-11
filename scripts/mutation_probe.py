@@ -645,7 +645,8 @@ TARGETS = {
                                "tests/test_wfdb_start_date_honesty.py",
                                "tests/test_wfdb_writer.py",
                                "tests/test_worker_loss_is_reported.py",
-                               "tests/test_worker_start_is_serialised.py"],
+                               "tests/test_worker_start_is_serialised.py",
+                               "tests/test_ybr_jpegls_read_doors.py"],
                               30),
     # 61 sites; budget 60 is stride 1 with headroom, exhaustive because it
     # is cheap, like parallel.py's 80.
@@ -677,7 +678,8 @@ TARGETS = {
                                           "tests/test_ingest_imagecodecs_fallback.py",
                                           "tests/test_offset_table_frame_count.py",
                                           "tests/test_signed_lossless_jpeg_decode.py",
-                                          "tests/test_single_frame_encapsulated_decode.py"],
+                                          "tests/test_single_frame_encapsulated_decode.py",
+                                          "tests/test_ybr_jpegls_read_doors.py"],
                                          60),
 }
 
