@@ -14,6 +14,13 @@ ingest's fallback, which decodes exactly the frames its caller asks for
 because that caller has already counted the table and decided (#418's
 truncation, which a refusal here would turn into a rejected file).
 
+**Signed samples (#446).** `ljpeg_decode` and `jpegls_decode` return the
+masked unsigned pattern of every sample; `_decode_frame` sign-extends it
+from BitsStored for JPEG Lossless and JPEG-LS when PixelRepresentation is
+1, so both decoders return the signed values the file stores. JPEG 2000
+is not corrected: `jpeg2k_decode` already returns signed samples. See
+`_sign_extend_from_bits_stored`.
+
 **Its limit, stated.** An *empty* Basic Offset Table with no Extended
 Offset Table is legal (PS3.5 A.4) and names no frames, and the fragments
 alone do not say where one frame ends and the next begins -- one frame
@@ -54,6 +61,25 @@ def is_available():
     return True
 
 
+def _unavailable() -> RuntimeError:
+    """The one refusal both decoders raise when imagecodecs did not import.
+
+    It carries the import failure's own words (#444). They used to reach
+    only the stderr print in `is_available()`, which a worker, a notebook
+    or a log-only deployment may never show, while the raise said a bare
+    "imagecodecs is not available" -- and "libjpeg.so.8: cannot open
+    shared object file" is the whole clue to the fix. Read at call time,
+    not bound at import, so the module global is what it describes.
+    Callers raise it `from IMPORT_ERROR`, so the cause is chained as well
+    as quoted.
+    """
+    if IMPORT_ERROR is None:
+        return RuntimeError("imagecodecs is not available")
+    return RuntimeError(
+        f"imagecodecs is not available: "
+        f"{type(IMPORT_ERROR).__name__}: {IMPORT_ERROR}")
+
+
 # UID Constants
 JPEGLossless = UID("1.2.840.10008.1.2.4.57")
 JPEGLosslessSV1 = UID("1.2.840.10008.1.2.4.70")
@@ -63,7 +89,6 @@ JPEGBaseline = UID("1.2.840.10008.1.2.4.50")
 JPEGExtended = UID("1.2.840.10008.1.2.4.51")
 JPEGLSLossless = UID("1.2.840.10008.1.2.4.80")
 JPEGLSLossy = UID("1.2.840.10008.1.2.4.81")
-RLELossless = UID("1.2.840.10008.1.2.5")
 
 HANDLER_NAME = "isocenter_imagecodecs_handler"
 
@@ -71,6 +96,15 @@ DEPENDENCIES = {
     "imagecodecs": ("http://www.lfd.uci.edu/~gohlke/pythonlibs/#imagecodecs", "imagecodecs"),
 }
 
+#: No RLE Lossless, deliberately (#447). This list named it, and the arm
+#: that decoded it called `imagecodecs.rle_decode`, which no imagecodecs
+#: this package supports has ever had -- so `supports_transfer_syntax`
+#: said yes and every RLE decode here raised `AttributeError`. pydicom's
+#: own RLE decoder needs no dependency and is what always read RLE, so
+#: `Instance.get_pixel_data()` never needs this handler for it. Do not
+#: re-add it on the strength of `imagecodecs.dicomrle_decode`: that
+#: returns planar big-endian bytes, and a second RLE decoder behind one
+#: that cannot fail for want of a plugin would have no caller.
 SUPPORTED_TRANSFER_SYNTAXES = [
     JPEGLossless,
     JPEGLosslessSV1,
@@ -80,7 +114,6 @@ SUPPORTED_TRANSFER_SYNTAXES = [
     JPEGExtended,
     JPEGLSLossless,
     JPEGLSLossy,
-    RLELossless
 ]
 
 
@@ -245,18 +278,98 @@ def should_change_PhotometricInterpretation_to_RGB(ds):
     return False
 
 
+def _sign_extend_from_bits_stored(arr, ds):
+    """A lossless-JPEG or JPEG-LS decode, as the signed values it holds (#446).
+
+    `ljpeg_decode`, `jpegsof3_decode` and `jpegls_decode` return every
+    sample as its masked unsigned bit pattern and never sign-extend, at
+    every BitsStored: a signed 12-bit -800 comes back as `uint16` 3296.
+    `Instance.get_pixel_data()` returned exactly that, with no error, and
+    `ingest()` refused the same file (#416). This is the rule pydicom
+    applies with its own plugins -- keep the low BitsStored bits and
+    extend bit BitsStored - 1 -- measured bit-exact against pydicom with
+    pylibjpeg-libjpeg and pyjpegls at 8, 12 and 16 bits. At BitsStored
+    equal to the output's width it is a pure reinterpretation.
+
+    Called for .57/.70/.80/.81 only, never JPEG 2000: `jpeg2k_decode`
+    already returns signed, sign-extended samples, so this would either
+    raise on them or, on an unsigned codestream under PixelRepresentation
+    1, admit it with wrong values that the fallback's dtype guard now
+    refuses. That is pydicom's split too.
+
+    With PixelRepresentation other than 1 it returns the codec's array
+    object itself, not a view: an unsigned decode is untouched. Read with
+    `getattr`, never `ds.get`: on a `MagicMock(spec=Dataset)` `ds.get`
+    hands back a mock, where `getattr(..., 0)` hands back the default.
+    """
+    if int(getattr(ds, "PixelRepresentation", 0) or 0) != 1:
+        return arr
+    bits = arr.dtype.itemsize * 8
+    # BitsStored from the header, not the stream's own precision: the
+    # header is the authority on what a sample means. The two agree for
+    # every conformant encoder. They disagree for `imagecodecs.jpegls_encode`
+    # output, which is always precision 16 for `uint16`: pydicom with
+    # pyjpegls reads such a stream by its precision (3296 for -800) and
+    # this reads it by BitsStored (-800). Owner question Q4, answered with
+    # the recommendation pending confirmation; S1b pins it.
+    bits_stored = int(getattr(ds, "BitsStored", bits) or bits)
+    # Owner question Q1, answered with the recommendation pending
+    # confirmation: refuse. A JPEG decoder returns right-aligned
+    # BitsStored-bit samples, so HighBit other than BitsStored - 1
+    # describes a layout no decode produces, and each other reading
+    # (ignore it as pydicom does, or shift from HighBit) can return a
+    # wrong value. Inside the signed branch only: an unsigned frame is
+    # returned untouched, as pydicom returns it. Skipped when HighBit is
+    # absent. This block is the whole of Q1; delete it to reverse it.
+    high_bit = getattr(ds, "HighBit", None)
+    if high_bit is not None and int(high_bit) != bits_stored - 1:
+        raise RuntimeError(
+            f"HighBit {int(high_bit)} with BitsStored {bits_stored}: a JPEG "
+            f"decode returns right-aligned {bits_stored}-bit samples, so a "
+            f"signed sample is sign-extended from BitsStored only when "
+            f"HighBit is BitsStored - 1")
+    if arr.dtype.kind != "u" or not 1 <= bits_stored <= bits:
+        raise RuntimeError(
+            f"cannot sign-extend a {arr.dtype} decode from BitsStored "
+            f"{bits_stored}: the codec returns unsigned samples at most "
+            f"{bits} bits wide")
+    shift = bits - bits_stored
+    # Shift left while unsigned, reinterpret, then shift right while
+    # signed: numpy's `>>` is arithmetic on a signed dtype and logical on
+    # an unsigned one, so the order is the whole of the sign extension.
+    return (arr << shift).view(np.dtype(f"i{arr.dtype.itemsize}")) >> shift
+
+
 def _decode_frame(transfer_syntax, bitstream, ds):
     """One frame's codestream to an array, by the codec its syntax names."""
     if transfer_syntax in [JPEGLossless, JPEGLosslessSV1]:
-        return imagecodecs.ljpeg_decode(bitstream)
+        # lj92 reads one byte past the end of its input. On an odd-length
+        # codestream with nothing after it -- `ljpeg_encode` output handed
+        # straight in -- it raises `LJ92_ERROR_CORRUPT` (measured on
+        # imagecodecs 2024.6.1 and 2026.8.16: 11 of 1260 random and flat
+        # streams, and every flat 8-bit frame at 4x4 and 8x8). A
+        # conformant file pads every item to even length (PS3.5 7.5), and
+        # that pad is the byte lj92 reads: through `generate_frames`, 0 of
+        # the same 1260 fail. But pydicom writes and reads an odd item
+        # length without complaint and `generate_frames` hands it over as
+        # stored, so a nonconformant file reached here unpadded at every
+        # door and was refused (#446). So the pad is added here, the one
+        # call every door reaches. Appended, after the EOI marker, where
+        # conformant framing would have written it; never prepended, which
+        # breaks the SOI. `jpegsof3_decode` needs no pad and is exact on
+        # all of the above; it is the codec to switch to if this is ever
+        # not enough.
+        if len(bitstream) % 2:
+            bitstream = bytes(bitstream) + b"\x00"
+        return _sign_extend_from_bits_stored(
+            imagecodecs.ljpeg_decode(bitstream), ds)
     if transfer_syntax in [JPEGBaseline, JPEGExtended]:
         return imagecodecs.jpeg_decode(bitstream)
     if transfer_syntax in [JPEG2000Lossless, JPEG2000]:
         return imagecodecs.jpeg2k_decode(bitstream)
     if transfer_syntax in [JPEGLSLossless, JPEGLSLossy]:
-        return imagecodecs.jpegls_decode(bitstream)
-    if transfer_syntax == RLELossless:
-        return imagecodecs.rle_decode(bitstream, shape=(ds.Rows, ds.Columns))
+        return _sign_extend_from_bits_stored(
+            imagecodecs.jpegls_decode(bitstream), ds)
     raise RuntimeError(f"Unsupported syntax: {transfer_syntax}")
 
 
@@ -280,7 +393,7 @@ def decode_declared_frames(ds, number_of_frames):
         caller checks dtype and size against the header.
     """
     if not is_available():
-        raise RuntimeError("imagecodecs is not available")
+        raise _unavailable() from IMPORT_ERROR
     transfer_syntax = ds.file_meta.TransferSyntaxUID
     frames = [_decode_frame(transfer_syntax, bitstream, ds)
               for bitstream in islice(
@@ -294,23 +407,28 @@ def get_pixel_data(ds):
     """
     Decodes pixel data from an encapsulated dataset using `imagecodecs`.
 
-    Handles multiple transfer syntaxes (JPEG, JPEG2000, JPEG-LS, RLE) and
+    Handles the transfer syntaxes in `SUPPORTED_TRANSFER_SYNTAXES` --
+    JPEG, JPEG Lossless, JPEG 2000 and JPEG-LS, not RLE (#447) -- and
     encapsulated bitstreams (fragments).
 
     Args:
         ds (pydicom.Dataset): The dataset containing PixelData.
 
     Returns:
-        np.ndarray: The decoded pixel array.
+        np.ndarray: The decoded pixel array. A signed (PixelRepresentation
+        1) JPEG Lossless or JPEG-LS frame comes back signed, sign-extended
+        from BitsStored (#446), where it used to come back as its unsigned
+        bit pattern.
 
     Raises:
-        RuntimeError: If imagecodecs is missing or decoding fails, or if
+        RuntimeError: If imagecodecs is missing (naming the import
+            failure, #444) or decoding fails, or if
             the offset table names a different number of frames from
             NumberOfFrames (#418) -- "<table> names N frames;
             NumberOfFrames declares M".
     """
     if not is_available():
-        raise RuntimeError("imagecodecs is not available")
+        raise _unavailable() from IMPORT_ERROR
 
     transfer_syntax = ds.file_meta.TransferSyntaxUID
     pixel_bytes = ds.PixelData

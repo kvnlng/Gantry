@@ -40,7 +40,6 @@ def test_unsupported_transfer_syntax(mock_dataset):
 # trailing null (items must be even, PS3.5 7.5), and a padded payload would
 # make the "handed exactly this" assertions below read `b"chunk\x00"`.
 CHUNK = b"ljpeg_chunk!"
-RLE_CHUNK = b"rle_chunk!"
 
 
 def test_decode_error_handling(mock_dataset):
@@ -64,20 +63,39 @@ def test_decode_error_handling(mock_dataset):
         # joined in front of it, this would be four zero bytes longer.
         assert mock_ic.ljpeg_decode.call_args[0][0] == CHUNK
 
-def test_rle_lossless_handling(mock_dataset):
-    """Test RLE Lossless specific path."""
-    mock_dataset.file_meta.TransferSyntaxUID = RLELossless
-    mock_dataset.PixelData = encapsulate([RLE_CHUNK])
-    expected_output = np.zeros((10, 10), dtype=np.uint8)
+def test_the_handler_does_not_claim_rle():
+    """R2: RLE Lossless is pydicom's to decode, and the handler says so (#447).
 
-    with patch('isocenter.imagecodecs_handler.imagecodecs') as mock_ic:
-        mock_ic.rle_decode.return_value = expected_output
-        result = imagecodecs_handler.get_pixel_data(mock_dataset)
-        mock_ic.rle_decode.assert_called_once()
-        # #407: the codec is handed the fragment, not the Basic Offset
-        # Table and the fragment joined together.
-        assert mock_ic.rle_decode.call_args[0][0] == RLE_CHUNK
-        assert result is expected_output
+    Replaces `test_rle_lossless_handling`, which mocked
+    `imagecodecs.rle_decode` and asserted it was called -- a function no
+    imagecodecs this package supports has ever had. So the handler listed
+    RLE, `Instance.get_pixel_data()` handed RLE files to it, and every one
+    raised `module 'imagecodecs' has no attribute 'rle_decode'`, while the
+    mock kept this test green. pydicom's own RLE decoder needs no
+    dependency and is what always read RLE here.
+
+    A real RLE dataset, not a mock: with the arm kept, the message is the
+    `AttributeError`'s, not the refusal below.
+    """
+    ds = Dataset()
+    ds.file_meta = FileMetaDataset()
+    ds.file_meta.TransferSyntaxUID = UID("1.2.840.10008.1.2.1")
+    ds.Rows, ds.Columns = 2, 3
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    ds.BitsAllocated = ds.BitsStored = 8
+    ds.HighBit = 7
+    ds.PixelRepresentation = 0
+    ds.PixelData = bytes(range(6))
+    ds.compress(RLELossless, encoding_plugin="pydicom")
+    assert ds.file_meta.TransferSyntaxUID == RLELossless
+
+    assert imagecodecs_handler.supports_transfer_syntax(RLELossless) is False
+    with pytest.raises(RuntimeError) as exc:
+        imagecodecs_handler.get_pixel_data(ds)
+    assert f"Unsupported syntax: {RLELossless}" in str(exc.value), \
+        str(exc.value)
+
 
 def test_multi_frame_handling(mock_dataset):
     """Test multi-frame image decoding logic."""
@@ -114,9 +132,10 @@ def test_is_available_success():
 
 
 # Every supported syntax, and the one codec it must reach. Before #414 the
-# suite pinned only the ljpeg and rle arms, so returning None from the
-# JPEG Baseline/Extended arm or the JPEG-LS arm -- or routing one syntax
-# family to another's codec -- left it green.
+# suite pinned only the ljpeg arm and an rle arm that never decoded
+# (#447), so returning None from the JPEG Baseline/Extended arm or the
+# JPEG-LS arm -- or routing one syntax family to another's codec -- left
+# it green.
 _CODEC_FOR = {
     "1.2.840.10008.1.2.4.57": "ljpeg_decode",   # JPEG Lossless
     "1.2.840.10008.1.2.4.70": "ljpeg_decode",   # JPEG Lossless SV1
@@ -126,7 +145,6 @@ _CODEC_FOR = {
     "1.2.840.10008.1.2.4.91": "jpeg2k_decode",  # JPEG 2000
     "1.2.840.10008.1.2.4.80": "jpegls_decode",  # JPEG-LS Lossless
     "1.2.840.10008.1.2.4.81": "jpegls_decode",  # JPEG-LS Near-Lossless
-    "1.2.840.10008.1.2.5": "rle_decode",        # RLE Lossless
 }
 _CODECS = sorted(set(_CODEC_FOR.values()))
 DISPATCH_CHUNK = b"codestream!!"  # even length: no pad byte from encapsulate
@@ -165,8 +183,42 @@ def test_each_syntax_reaches_its_own_codec_and_returns_its_result(syntax):
                 getattr(mock_ic, name).assert_not_called()
 
 
-def test_supports_exactly_the_nine_syntaxes():
+def test_supports_exactly_the_eight_syntaxes():
+    """Eight since #447: RLE Lossless is not the handler's to claim."""
+    assert sorted(imagecodecs_handler.SUPPORTED_TRANSFER_SYNTAXES) == \
+        sorted(_CODEC_FOR)
     for syntax in _CODEC_FOR:
         assert imagecodecs_handler.supports_transfer_syntax(UID(syntax)) is True
+    assert imagecodecs_handler.supports_transfer_syntax(RLELossless) is False
     assert imagecodecs_handler.supports_transfer_syntax(
         UID("1.2.840.10008.1.2.1")) is False  # Explicit VR Little Endian
+
+
+# ---------------------------------------------------------------------------
+# #444 -- an unavailable imagecodecs says why
+# ---------------------------------------------------------------------------
+
+#: The shape a broken wheel produces: the module is installed and a shared
+#: library it links is not. Its words are the only clue to the fix.
+_BROKEN_IMPORT = ImportError(
+    "libjpeg.so.8: cannot open shared object file: No such file or directory")
+
+
+@pytest.mark.parametrize("door", ["get_pixel_data", "decode_declared_frames"])
+def test_unavailable_imagecodecs_names_why(monkeypatch, mock_dataset, door):
+    """I1: both raise sites carry the import failure, and chain it (#444).
+
+    Each raised a bare "imagecodecs is not available", and the cause
+    reached only a stderr print in `is_available()`, which a worker, a
+    notebook or a log-only deployment may never show.
+    """
+    monkeypatch.setattr(imagecodecs_handler, "imagecodecs", None)
+    monkeypatch.setattr(imagecodecs_handler, "IMPORT_ERROR", _BROKEN_IMPORT)
+    args = (mock_dataset,) if door == "get_pixel_data" else (mock_dataset, 1)
+    with pytest.raises(RuntimeError) as exc:
+        getattr(imagecodecs_handler, door)(*args)
+    msg = str(exc.value)
+    assert "imagecodecs is not available" in msg, msg
+    assert "ImportError" in msg, msg
+    assert "libjpeg.so.8" in msg, msg
+    assert exc.value.__cause__ is _BROKEN_IMPORT

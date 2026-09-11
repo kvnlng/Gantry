@@ -215,6 +215,7 @@ TARGETS = {
                                   "tests/test_services.py",
                                   "tests/test_session.py",
                                   "tests/test_shared_executor_lifecycle.py",
+                                  "tests/test_signed_lossless_jpeg_decode.py",
                                   "tests/test_signed_pixels_survive_a_compressed_export.py",
                                   "tests/test_single_frame_encapsulated_decode.py",
                                   "tests/test_sidecar_gate_crosses_processes.py",
@@ -443,6 +444,7 @@ TARGETS = {
                               "tests/test_shipped_resource_is_required.py",
                               "tests/test_sidecar.py",
                               "tests/test_sidecar_gate_order.py",
+                              "tests/test_signed_lossless_jpeg_decode.py",
                               "tests/test_signed_pixels_survive_a_compressed_export.py",
                               "tests/test_study_date_roundtrip.py",
                               "tests/test_suggested_config.py",
@@ -551,6 +553,7 @@ TARGETS = {
                                "tests/test_float_pixel_data_export.py",
                                "tests/test_flush_orphan_recovery.py",
                                "tests/test_frozen_surface.py",
+                               "tests/test_ingest_imagecodecs_fallback.py",
                                "tests/test_io.py",
                                "tests/test_io_no_pixels.py",
                                "tests/test_legacy_waveform_hydration.py",
@@ -617,6 +620,7 @@ TARGETS = {
                                "tests/test_sidecar.py",
                                "tests/test_sidecar_gate_crosses_processes.py",
                                "tests/test_sidecar_gate_order.py",
+                               "tests/test_signed_lossless_jpeg_decode.py",
                                "tests/test_single_frame_encapsulated_decode.py",
                                "tests/test_sr_anonymization.py",
                                "tests/test_structured_export.py",
@@ -635,34 +639,36 @@ TARGETS = {
                                "tests/test_worker_loss_is_reported.py",
                                "tests/test_worker_start_is_serialised.py"],
                               30),
-    # 49 sites; budget 60 is stride 1 with headroom, exhaustive because it
-    # is cheap (one full pass is ~5s), like parallel.py's 80.
+    # 61 sites; budget 60 is stride 1 with headroom, exhaustive because it
+    # is cheap, like parallel.py's 80.
     #
-    # Four files, and it takes the widened `_importers` (#419) to see
-    # them: three reach this module as `from isocenter import
-    # imagecodecs_handler`, which the old stem-only scan could not read,
-    # so it demanded one of the four. Without
-    # test_offset_table_frame_count.py, nine of the #418 frame-count
-    # helpers' mutants survive.
+    # Six files, and it takes the widened `_importers` (#419) to see
+    # them: several reach this module as `from isocenter import
+    # imagecodecs_handler`, which the old stem-only scan could not read.
+    # Without test_offset_table_frame_count.py, nine of the #418
+    # frame-count helpers' mutants survive; without
+    # test_signed_lossless_jpeg_decode.py, the #446 sign rule and the
+    # lj92 pad have no witness at all.
     #
-    # Measured at stride 1: 43 of 49 killed. The six survivors are all
-    # known, and they are not all equivalent:
+    # Measured at stride 1 on the #446/#447 branch (3.12.14): 54 of 61
+    # killed, and a seventh (line 312, the sign rule's `or` -> `and`) was
+    # then pinned by that file's S6 and killed by a real edit. The six
+    # survivors are all known, and all equivalent or dead:
     #   - the decode-error print in `get_pixel_data` is equivalent: the
     #     exception it describes is re-raised carrying the same text;
-    #   - the print in `is_available()` is NOT. `get_pixel_data` then
-    #     raises a bare "imagecodecs is not available", so that print of
-    #     IMPORT_ERROR is the only place the import failure's cause
-    #     reaches anyone. It survives because nothing asserts it, and the
-    #     fix belongs in the raise rather than in a test of stderr (#444);
+    #   - the print in `is_available()` is equivalent now. It was the only
+    #     place the import failure's cause reached anyone until #444 put
+    #     the cause in the raise itself;
     #   - two mutants each in `needs_to_convert_to_RGB` and
     #     `should_change_PhotometricInterpretation_to_RGB`, which return
     #     False and have no caller: dead code, and deleting it is #440.
-    # The JPEG and JPEG-LS dispatch arms were survivors too, and are now
-    # pinned by test_imagecodecs_edge_cases.py.
+    # The RLE arm, which no mutant could reach through a real decode, is
+    # gone (#447).
     "isocenter/imagecodecs_handler.py": (["tests/test_codecs_strict.py",
                                           "tests/test_imagecodecs_edge_cases.py",
                                           "tests/test_ingest_imagecodecs_fallback.py",
                                           "tests/test_offset_table_frame_count.py",
+                                          "tests/test_signed_lossless_jpeg_decode.py",
                                           "tests/test_single_frame_encapsulated_decode.py"],
                                          60),
 }

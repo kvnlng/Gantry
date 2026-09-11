@@ -16,9 +16,12 @@ pydicom is always tried first, and only its plugin failures
 (`RuntimeError`) fall through, so a file that ingested before decodes to
 the same bytes and label, and a header pydicom rejects stays refused in
 its words (F7). The fallback's output is checked against the header,
-because one case was measured wrong: a signed 12-bit JPEG Lossless frame
-decodes unsigned, -800 read as 3296 (F4; the read path's copy of that
-defect is #446).
+because a decode can disagree with it: F11 and F12 are the size and
+shape halves, and a signedness mismatch is the dtype half. A signed JPEG
+Lossless or JPEG-LS frame decoded unsigned, -800 read as 3296, and this
+file refused it (F4) until #446 taught the handler to sign-extend from
+BitsStored; those files are now pinned as read, at both doors, in
+`tests/test_signed_lossless_jpeg_decode.py`.
 
 **Every fixture first asserts that `pydicom.dcmread(p).pixel_array`
 raises.** Without that, a test passes through pydicom's door and says
@@ -39,6 +42,7 @@ import pydicom
 import pytest
 from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
 from pydicom.encaps import encapsulate
+from pydicom.pixels import convert_color_space
 from pydicom.sequence import Sequence
 from pydicom.uid import generate_uid
 
@@ -68,10 +72,6 @@ RGB16_FRAME1 = (np.arange(48, dtype=np.int64) * 1000 + 7).astype(
     np.uint16).reshape(4, 4, 3)
 #: 4x4 unsigned 16-bit monochrome, values above 255.
 MONO16 = (np.arange(16, dtype=np.int64) * 4000).astype(np.uint16).reshape(4, 4)
-#: Signed 12-bit samples, and the two's-complement 12-bit pattern a JPEG
-#: Lossless stream of them carries (-800 & 0xFFF == 3296).
-SIGNED12 = np.array([[-800, -700, -600, -500]] * 4, dtype=np.int16)
-SIGNED12_PATTERN = (SIGNED12.astype(np.int32) & 0xFFF).astype(np.uint16)
 #: Palette indices.
 PALETTE8 = np.arange(16, dtype=np.uint8).reshape(4, 4)
 
@@ -245,30 +245,6 @@ def test_a_two_frame_16_bit_rgb_file_ingests_both_frames(ingest):
 
 
 # ---------------------------------------------------------------------------
-# F4 -- output that does not match the header is refused, not stored
-# ---------------------------------------------------------------------------
-
-def test_a_signed_12_bit_jpeg_lossless_frame_is_refused_not_misread(ingest):
-    """F4: imagecodecs hands back 3296 for -800; nothing sign-extends it.
-
-    `Instance.get_pixel_data()` returns those same wrong values today
-    (#446). Ingest refuses instead, naming what it got and what the
-    header declared.
-    """
-    _session, summary, _db = ingest(_dataset(
-        LJPEG_SV1, [SIGNED12], photometric="MONOCHROME2",
-        pixel_representation=1, bits_stored=12,
-        encode_as=[SIGNED12_PATTERN]))
-    assert summary.ingested == 0
-    assert len(summary.failures) == 1
-    reason = summary.failures[0][1]
-    assert reason.startswith("Decompression Failed:"), reason
-    assert "all plugins are missing dependencies" in reason, reason
-    assert "decoded to uint16" in reason, reason
-    assert "PixelRepresentation 1" in reason, reason
-
-
-# ---------------------------------------------------------------------------
 # F5 -- the widening, stated: every syntax in the constant now ingests
 # ---------------------------------------------------------------------------
 
@@ -291,29 +267,48 @@ def test_every_fallback_syntax_ingests():
     Narrowing it is the owner's one-line lever; this is the test that
     names what that line currently opens. RLE (.5) and JPEG Baseline /
     Extended (.50, .51) are out: pydicom decodes RLE with no dependency
-    and baseline JPEG through Pillow, and the handler's RLE arm has never
-    decoded anything (#447).
+    and baseline JPEG through Pillow, and the handler has no RLE arm
+    (#447).
     """
     assert _IMAGECODECS_FALLBACK_SYNTAXES == frozenset(
         {LJPEG, LJPEG_SV1, JPEGLS, JPEGLS_NEAR, J2K_LOSSLESS, J2K})
 
 
 # ---------------------------------------------------------------------------
-# F6, F7 -- what the fallback does not decode
+# Y1 (was F6) -- YBR under JPEG 2000 is stored as the RGB it decodes to;
+# F7 -- what the fallback does not decode
 # ---------------------------------------------------------------------------
 
-def test_a_ybr_declared_16_bit_j2k_is_refused_naming_the_colour_space(ingest):
-    """F6: openjpeg emits RGB under a YBR_RCT label, which is #372 again.
+@pytest.mark.parametrize("ts,photometric,mct", [
+    (J2K_LOSSLESS, "YBR_RCT", True),
+    (J2K_LOSSLESS, "YBR_RCT", False),
+    (J2K, "YBR_ICT", True),
+], ids=["rct-mct1", "rct-mct0", "ict-mct1"])
+def test_a_16_bit_ybr_j2k_ingests_as_the_rgb_it_decodes_to(ingest, ts,
+                                                         photometric, mct):
+    """Y1: openjpeg undoes the transform, so the stored label is RGB (#448).
 
-    Our own exports are RGB, so the round trip does not need this door;
-    what YBR through the fallback should become is #448.
+    This was F6, which refused the file naming `'YBR_RCT'`: the fallback
+    could only repeat the declared label, and repeating `YBR_RCT` over the
+    RGB samples `jpeg2k_decode` returns would be #372's defect through a
+    new door. The decode is RGB whatever the codestream's
+    multiple-component-transform flag says (both states here) and whatever
+    the label says, which is also what pydicom's own plugins return and
+    label. So the label is rewritten, as the top level does for pydicom's
+    door. `.91` permits a reversible codestream, and the decode does not
+    read the label, so its case is exact too.
     """
-    _session, summary, _db = ingest(_dataset(
-        J2K_LOSSLESS, [RGB16["uint16"]], photometric="YBR_RCT"))
-    assert summary.ingested == 0
-    reason = summary.failures[0][1]
-    assert reason.startswith("Decompression Failed:"), reason
-    assert "'YBR_RCT'" in reason, reason
+    want = RGB16["uint16"]
+    ds = _dataset(ts, [want], photometric=photometric)
+    ds.PixelData = encapsulate([imagecodecs.jpeg2k_encode(
+        want, level=0, codecformat="J2K", mct=mct)], has_bot=True)
+    ds["PixelData"].is_undefined_length = True
+    session, summary, _db = ingest(ds)
+    assert (summary.ingested, summary.failures) == (1, [])
+    inst, got = _stored(session)
+    assert got.dtype == np.dtype("uint16")
+    assert got.tolist() == want.tolist()
+    assert inst.attributes["0028,0004"] == "RGB"
 
 
 def test_a_header_pydicom_rejects_is_not_decoded_by_the_fallback(ingest):
@@ -526,7 +521,7 @@ def test_three_samples_under_a_one_sample_header_are_refused(ingest):
 
 
 # ---------------------------------------------------------------------------
-# F13 -- which colour spaces are labelled is decided per syntax
+# Y4, Y5, F13 -- which colour spaces are labelled is decided per syntax
 # ---------------------------------------------------------------------------
 
 #: A 4x12 greyscale frame: 48 samples, the count a 4x4 RGB header needs.
@@ -546,41 +541,131 @@ def _fallback_reason(summary):
 
 
 def test_the_colour_spaces_the_fallback_labels_are_chosen_per_syntax():
-    """The table is the one place to widen, and every syntax has a row.
+    """Y4: declared label -> stored label, per syntax; the one place to widen.
 
-    RGB is labelled where a colour decode has been measured exact:
-    JPEG 2000 (F1, F3, N4) and JPEG-LS (below). JPEG Lossless is
-    greyscale and palette only (F13); widening it belongs to #387.
+    Every syntax has a row. A label maps to itself where the decode is
+    measured to leave it true: greyscale and palette everywhere, RGB under
+    all three families (JPEG Lossless since #387, Y5). It maps to another
+    where the stored samples are not in the declared space: JPEG 2000's
+    `YBR_RCT` and `YBR_ICT` come back RGB from the decoder (Y1, #448), and
+    8-bit `YBR_FULL` JPEG-LS is converted to RGB by the fallback (Y2).
     """
+    grey = {label: label for label in _GREY}
     assert set(_FALLBACK_PHOTOMETRICS) == _IMAGECODECS_FALLBACK_SYNTAXES
-    assert {ts: set(labels) for ts, labels in
+    j2k = {**grey, "RGB": "RGB", "YBR_RCT": "RGB", "YBR_ICT": "RGB"}
+    jpegls = {**grey, "RGB": "RGB", "YBR_FULL": "RGB"}
+    ljpeg = {**grey, "RGB": "RGB"}
+    assert {ts: dict(labels) for ts, labels in
             _FALLBACK_PHOTOMETRICS.items()} == {
-        LJPEG: _GREY, LJPEG_SV1: _GREY,
-        JPEGLS: _GREY | {"RGB"}, JPEGLS_NEAR: _GREY | {"RGB"},
-        J2K_LOSSLESS: _GREY | {"RGB"}, J2K: _GREY | {"RGB"}}
+        LJPEG: ljpeg, LJPEG_SV1: ljpeg,
+        JPEGLS: jpegls, JPEGLS_NEAR: jpegls,
+        J2K_LOSSLESS: j2k, J2K: j2k}
+
+
+def _colour_ljpeg(ts, want, photometric="RGB"):
+    """A 3-component JPEG Lossless stream, written by libjpeg-turbo.
+
+    `imagecodecs.ljpeg_encode` refuses three components, which is why
+    #416 concluded no colour JPEG Lossless stream could be built here.
+    `jpeg8_encode(lossless=True)` writes one. Predictor 1 under .70,
+    which allows only that one; 5 under .57, any other.
+    """
+    ds = _dataset(ts, [WIDE_MONO16], photometric=photometric)
+    ds.SamplesPerPixel, ds.Columns = 3, want.shape[1]
+    ds.Rows = want.shape[0]
+    ds.PlanarConfiguration = 0
+    ds.BitsAllocated = ds.BitsStored = want.dtype.itemsize * 8
+    ds.HighBit = ds.BitsStored - 1
+    ds.PixelData = encapsulate([imagecodecs.jpeg8_encode(
+        want, lossless=True, predictor=1 if ts == LJPEG_SV1 else 5,
+        bitspersample=ds.BitsStored)], has_bot=True)
+    ds["PixelData"].is_undefined_length = True
+    return ds
 
 
 @pytest.mark.parametrize("ts", [LJPEG, LJPEG_SV1])
-def test_a_colour_jpeg_lossless_file_is_refused_naming_space_and_syntax(
-        ingest, ts):
-    """F13: RGB is not labelled under JPEG Lossless.
+@pytest.mark.parametrize("want", [RGB8, RGB16["uint16"]],
+                         ids=["uint8", "uint16"])
+def test_a_colour_jpeg_lossless_file_ingests_exactly(ingest, ts, want):
+    """Y5 (was F13's refusal): RGB under JPEG Lossless, measured (#387).
 
-    There is no colour JPEG Lossless stream here to measure a decode
-    against: `imagecodecs.ljpeg_encode` refuses three components. And
-    imagecodecs ignores PlanarConfiguration, so a planar/interleaved
-    swap would pass both the size and the shape checks. So the colour
-    space is refused before any decode. This fixture's stream is
-    greyscale with the right sample count; the shape check would refuse
-    it too, in other words, which is why the assertion is on the reason.
+    F13 refused it, on the premise that no colour JPEG Lossless stream
+    could be built here to measure a decode against. That premise was
+    false: this stream is one. It decodes exactly at 8 and 16 bits, at
+    imagecodecs 2024.6.1 and 2026.8.16, on 3.12 and 3.14t. Every sample
+    in `RGB8` and `RGB16` differs from its neighbours in the pixel, so a
+    plane swap or a planar/interleaved mix-up after the decode would not
+    compare equal.
     """
-    ds = _dataset(ts, [WIDE_MONO16], photometric="RGB")
-    ds.SamplesPerPixel, ds.Columns = 3, 4
-    ds.PlanarConfiguration = 0
-    _session, summary, _db = ingest(ds)
+    session, summary, _db = ingest(_colour_ljpeg(ts, want))
+    assert (summary.ingested, summary.failures) == (1, [])
+    inst, got = _stored(session)
+    assert got.dtype == want.dtype
+    assert got.shape == want.shape
+    assert got.tolist() == want.tolist()
+    assert inst.attributes["0028,0004"] == "RGB"
+
+
+@pytest.mark.parametrize("ts", [LJPEG, LJPEG_SV1])
+def test_a_ybr_jpeg_lossless_file_is_refused_naming_space_and_syntax(
+        ingest, ts):
+    """F13, what stays: YBR under JPEG Lossless is still refused.
+
+    No YBR JPEG Lossless stream was measured. JPEG Lossless has no colour
+    transform of its own, so a decoder would hand back the stored YBR
+    samples, and whether this fallback should convert them is a decision
+    nobody has measured for this syntax. Refused before the decode,
+    naming the declared space and the syntax.
+    """
+    _session, summary, _db = ingest(_colour_ljpeg(ts, RGB8,
+                                                  photometric="YBR_FULL"))
     assert summary.ingested == 0
     why = _fallback_reason(summary)
-    assert "'RGB'" in why, why
+    assert "'YBR_FULL'" in why, why
     assert ts in why, why
+
+
+#: 8-bit YBR_FULL samples of `RGB8`, and what pydicom's own conversion
+#: makes of them: the bytes pydicom's door stores for this file with
+#: pyjpegls installed (measured), and the reference Y2 compares with.
+YBR8 = convert_color_space(RGB8, "RGB", "YBR_FULL")
+YBR8_AS_RGB = convert_color_space(YBR8, "YBR_FULL", "RGB")
+
+
+@pytest.mark.parametrize("ts", [JPEGLS, JPEGLS_NEAR])
+def test_an_8_bit_ybr_full_jpeg_ls_frame_is_stored_as_rgb(ingest, ts):
+    """Y2: converted and relabelled, as pydicom's door does (#448, Q2).
+
+    A JPEG-LS stream carries no colour transform, and `jpegls_decode`
+    returns the YBR samples as stored. pydicom with pyjpegls converts them
+    with `convert_color_space` and labels the result RGB, and so does the
+    native door since #372; this stores the same bytes under the same
+    label. Owner question Q2, answered with the recommendation pending
+    confirmation. Near-lossless is encoded at NEAR 0, so exact.
+    """
+    ds = _dataset(ts, [YBR8], photometric="YBR_FULL")
+    session, summary, _db = ingest(ds)
+    assert (summary.ingested, summary.failures) == (1, [])
+    inst, got = _stored(session)
+    assert got.dtype == np.dtype("uint8")
+    assert got.tolist() == YBR8_AS_RGB.tolist()
+    assert int(np.abs(got.astype(int) - RGB8.astype(int)).max()) <= 2
+    assert inst.attributes["0028,0004"] == "RGB"
+
+
+def test_a_16_bit_ybr_full_jpeg_ls_frame_is_refused_naming_its_depth(ingest):
+    """Y3: pydicom cannot convert 16-bit YBR either, and neither does this.
+
+    `convert_color_space` refuses `uint16` ("Invalid ndarray.dtype 'uint16'
+    for color space conversion"), at pydicom's door as here. Refused before
+    the decode, in this library's words, naming the space and the depth.
+    """
+    _session, summary, _db = ingest(_dataset(JPEGLS, [RGB16["uint16"]],
+                                             photometric="YBR_FULL"))
+    assert summary.ingested == 0
+    why = _fallback_reason(summary)
+    assert "'YBR_FULL'" in why, why
+    assert "16-bit" in why, why
 
 
 @pytest.mark.parametrize("ts", [JPEGLS, JPEGLS_NEAR])
@@ -601,31 +686,85 @@ def test_a_colour_jpeg_ls_file_ingests_bit_exactly(ingest, ts, want):
 
 
 # ---------------------------------------------------------------------------
-# Signed JPEG Lossless and JPEG-LS stay refused at every depth (#446)
+# #444 -- an unavailable imagecodecs says why, at both doors
 # ---------------------------------------------------------------------------
 
-#: Signed 16-bit samples, CT's common case.
-SIGNED16 = np.array([[-1000, -500, 0, 1500]] * 4, dtype=np.int16)
-SIGNED8 = np.array([[-100, -50, 0, 100]] * 4, dtype=np.int8)
+#: A broken wheel's shape: installed, with a shared library missing.
+_BROKEN_IMPORT = ImportError(
+    "libjpeg.so.8: cannot open shared object file: No such file or directory")
 
 
-@pytest.mark.parametrize("ts,signed", [
-    (LJPEG_SV1, SIGNED16), (JPEGLS, SIGNED16), (JPEGLS, SIGNED8),
-], ids=["ljpeg-16", "jpegls-16", "jpegls-8"])
-def test_a_signed_lossless_jpeg_file_stays_refused_at_every_depth(
-        ingest, ts, signed):
-    """Not only sub-16-bit (F4): 8 and 16 bits are refused too.
+def _without_imagecodecs(monkeypatch):
+    from isocenter import imagecodecs_handler
+    monkeypatch.setattr(imagecodecs_handler, "imagecodecs", None)
+    monkeypatch.setattr(imagecodecs_handler, "IMPORT_ERROR", _BROKEN_IMPORT)
 
-    Both codecs return unsigned samples at every depth, which the dtype
-    check refuses. At 16 bits the bit pattern is right and only the
-    signedness is wrong, but admitting it is #446's work, which covers
-    16-bit as well. (8-bit JPEG Lossless does not decode at all.)
+
+def test_ingest_names_why_imagecodecs_is_unavailable(tmp_path, monkeypatch):
+    """I2: the ingest row carries the import failure's own words.
+
+    In-process through `ingest_worker`, the function that writes the
+    row: a Session hands ingest to its own process pool, which a
+    monkeypatch does not reach.
     """
-    unsigned = signed.view(np.dtype(f"u{signed.itemsize}"))
-    _session, summary, _db = ingest(_dataset(
-        ts, [signed], photometric="MONOCHROME2", pixel_representation=1,
-        encode_as=[unsigned]))
-    assert summary.ingested == 0
-    why = _fallback_reason(summary)
-    assert f"decoded to uint{signed.itemsize * 8}" in why, why
-    assert "PixelRepresentation 1" in why, why
+    from isocenter.io_handlers import ingest_worker
+    path = _write(str(tmp_path), _dataset(LJPEG_SV1, [MONO16],
+                                          photometric="MONOCHROME2"))
+    _assert_pydicom_cannot(path)
+    _without_imagecodecs(monkeypatch)
+    reason = ingest_worker(path)[-1]
+    assert reason.startswith("Decompression Failed:"), reason
+    assert "imagecodecs is not available: ImportError" in reason, reason
+    assert "libjpeg.so.8" in reason, reason
+
+
+def test_the_lazy_load_error_carries_the_fallback_words_too(tmp_path):
+    """I4: the read door's second raise says what the fallback said (#444).
+
+    `Instance.get_pixel_data()` has two final raises, and I3 reaches only
+    the "Failed to decompress" one. This file reaches the other: pydicom
+    refuses it on validation (PlanarConfiguration absent, an
+    `AttributeError`, so not the "decompress" branch), the handler is
+    asked and refuses the offset table (it names one frame; NumberOfFrames
+    declares two), and the error is `Lazy load failed`. Without the
+    fallback line, the handler's reason -- the only true one -- is lost.
+    Found in review of #463.
+    """
+    from isocenter.entities import Instance
+    ds = _dataset(J2K_LOSSLESS, [RGB16["uint16"]], planar=None,
+                  number_of_frames=2)
+    path = _write(str(tmp_path), ds)
+    _assert_pydicom_cannot(path, expect=AttributeError)
+    inst = Instance(generate_uid(), "1.2.840.10008.5.1.4.1.1.7", 1,
+                    file_path=path)
+    with pytest.raises(RuntimeError) as exc:
+        inst.get_pixel_data()
+    msg = str(exc.value)
+    assert msg.startswith("Lazy load failed"), msg
+    assert ("imagecodecs fallback: Basic Offset Table names 1 frames; "
+            "NumberOfFrames declares 2") in msg, msg
+
+
+def test_the_read_door_names_why_imagecodecs_is_unavailable(tmp_path,
+                                                            monkeypatch):
+    """I3: `Instance.get_pixel_data()` says why, and keeps its advice.
+
+    Its fallback tested `is_available()` first, so a missing imagecodecs
+    was never asked and the caller got pydicom's error alone; and when
+    the handler was asked and refused, the refusal was dropped for
+    pydicom's. The advice line is pinned elsewhere
+    (`tests/test_compression_deps.py`) and must survive the addition.
+    """
+    from isocenter.entities import Instance
+    path = _write(str(tmp_path), _dataset(LJPEG_SV1, [MONO16],
+                                          photometric="MONOCHROME2"))
+    _assert_pydicom_cannot(path)
+    _without_imagecodecs(monkeypatch)
+    inst = Instance(generate_uid(), "1.2.840.10008.5.1.4.1.1.7", 1,
+                    file_path=path)
+    with pytest.raises(RuntimeError) as exc:
+        inst.get_pixel_data()
+    msg = str(exc.value)
+    assert "imagecodecs fallback: imagecodecs is not available" in msg, msg
+    assert "libjpeg.so.8" in msg, msg
+    assert "Missing image codecs" in msg, msg
