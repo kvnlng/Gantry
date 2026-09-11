@@ -387,3 +387,33 @@ def test_the_tier_two_functions_still_return_a_list(ocr_present, caplog):
                for r in caplog.records), [r.getMessage() for r in caplog.records]
 
     assert RedactionVerifier([]).verify_instance(victim) == []
+
+
+def test_an_unexpected_worker_error_is_a_failure_not_a_lost_pass(ocr_present, monkeypatch):
+    """E12: an exception `_ocr_instance` does not catch costs one instance, not the pass.
+
+    `run_parallel` re-raises a worker's exception by default (that is how
+    `audit()` fails, E8), so without the boundary catch in `_verify_worker`
+    one instance failing outside `_ocr_instance`'s own catches would take
+    every other instance's findings down with it. Here the helper itself
+    raises for one instance: that instance is a failure naming the error,
+    and the other three still report.
+    """
+    _one_word_per_frame(ocr_present)
+    real = pixel_analysis._ocr_instance  # pylint: disable=protected-access
+    victim_uid = "1.2.826.0.1.423.11.0"
+
+    def ocr_instance(instance):
+        if instance.sop_instance_uid == victim_uid:
+            raise MemoryError("could not allocate the decoded frame")
+        return real(instance)
+    monkeypatch.setattr(pixel_analysis, "_ocr_instance", ocr_instance)
+    others = [_instance(f"1.2.826.0.1.423.11.{n}", _frame(1)) for n in (1, 2, 3)]
+
+    report = _scan([_instance(victim_uid, _frame(1))] + others)
+
+    assert len(report.failures) == 1, report.failures
+    uid, reason = report.failures[0]
+    assert uid == victim_uid
+    assert "MemoryError" in reason and "could not allocate" in reason, reason
+    assert {f.entity_uid for f in report} == {i.sop_instance_uid for i in others}

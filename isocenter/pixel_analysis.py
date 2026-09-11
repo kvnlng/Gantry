@@ -247,7 +247,8 @@ def _detect_text_regions_or_raise(pixel_data: np.ndarray,
     config = r'--oem 3 --psm 11'
 
     # Output is a dict with lists
-    data = pytesseract.image_to_data(img, config=config, output_type=pytesseract.Output.DICT)
+    data = pytesseract.image_to_data(
+        img, config=config, output_type=pytesseract.Output.DICT)
 
     regions = []
     n_boxes = len(data['text'])
