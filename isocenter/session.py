@@ -23,7 +23,7 @@ from .services import (RedactionService, RedactionOutcome, RedactionError,
 from .config_manager import ConfigLoader, require_package_resource
 from .privacy import PhiInspector, PhiFinding, PhiReport
 from .logger import configure_logger, describe_exception, get_logger
-from .reporting import (ComplianceReport, get_renderer, GAP_REMOVED,
+from .reporting import (ComplianceReport, PixelScanSummary, get_renderer, GAP_REMOVED,
                         GAP_RETAINED, GAP_UNRESOLVED)
 from .manifest import Manifest, ManifestItem, generate_manifest_file
 from .blob_kind import serialize_blob_kind
@@ -890,6 +890,14 @@ class DicomSession:
         # its audit rows, so a call that performed no work demands no
         # evidence; see the two recording sites.
         self._actions_performed: Set[str] = set()
+
+        # Each `scan_pixel_content()` call this session made, for the
+        # report's section 5 (#481), which used to say "pixel data was
+        # scanned" for every session. Transient for `_actions_performed`'s
+        # reason above, which is also why section 5 says "in this
+        # session": a scan an earlier session ran over this store is not
+        # known here, and the report says so rather than guessing.
+        self._pixel_scans: List[PixelScanSummary] = []
 
         if os.path.exists("isocenter.key"):
             self.enable_reversible_anonymization("isocenter.key")
@@ -2241,6 +2249,12 @@ class DicomSession:
             if skipped_count > 0:
                 msg += f" (Skipped {skipped_count} unconfigured instances)"
             print(msg)
+            # Recorded: a call that found nothing configured to read still
+            # ran, and "no scan ran" would be the wrong thing for section 5
+            # to say about it (#481).
+            self._pixel_scans.append(PixelScanSummary(
+                serial_number=serial_number, attempted=0, read=0, unread=0,
+                findings=0, skipped=skipped_count))
             return PhiReport([])
 
         outcomes = run_parallel(_verify_worker, worker_items, desc="OCR Verification")
@@ -2254,6 +2268,15 @@ class DicomSession:
                 failures.append((outcome.entity_uid, outcome.failure))
             if outcome.read:
                 read += 1
+
+        # Here, before anything below can raise: a pass that read nothing
+        # ends in `PixelScanError`, and recorded after that raise it would
+        # read in section 5 as "no scan ran" beside section 4's rows for
+        # the very instances it could not read (#481, #479).
+        self._pixel_scans.append(PixelScanSummary(
+            serial_number=serial_number, attempted=len(worker_items),
+            read=read, unread=len(failures), findings=len(all_findings),
+            skipped=skipped_count))
 
         # Unconditionally, in both strategies: the worker strips the
         # entity, and this is the one path that puts it back, so
@@ -2558,6 +2581,47 @@ class DicomSession:
             resolved.append((timestamp, uid, details, disposition))
         return resolved
 
+    @staticmethod
+    def _review_reasons(*, audit_summary, exceptions, graded_losses,
+                        open_gaps, declined_remediations,
+                        unattested) -> List[str]:
+        """Why a run is not PASS, one entry per term of the grade (#481).
+
+        The grade IS this list: `generate_report` grades PASS exactly when
+        it is empty. It used to be a boolean, with section 5 rendering a
+        count nothing set, so every report said "Identified Issues: 0" --
+        beside a REVIEW_REQUIRED whose section 4 listed the issue. One list
+        means a new grade term cannot move the grade without also appearing
+        in section 5, because there is no second expression for it to live
+        in. Every term is here, including the two with no row anywhere else
+        in the report: an empty audit trail and an unattested verb.
+        """
+        review_reasons = []
+        if not audit_summary:
+            review_reasons.append(
+                "the audit trail holds no rows, so nothing this run did is "
+                "attested (section 2)")
+        if exceptions:
+            review_reasons.append(
+                f"{len(exceptions)} row(s) in section 4 (Exceptions & Errors)")
+        if graded_losses:
+            review_reasons.append(
+                f"{len(graded_losses)} graded data loss(es) in section 3.1 "
+                f"(scope {' or '.join(sorted(GRADED_LOSS_SCOPES))})")
+        if open_gaps:
+            review_reasons.append(
+                f"{len(open_gaps)} unscanned element(s) in section 3.2 not "
+                "removed before export")
+        if declined_remediations:
+            review_reasons.append(
+                f"{len(declined_remediations)} declined remediation(s) in "
+                "section 3.3")
+        for verb in unattested:
+            review_reasons.append(
+                f"{verb} ran in this session and the audit trail holds none "
+                "of the rows it writes")
+        return review_reasons
+
     def generate_report(self, output_path: str, format: str = "markdown") -> None:
         """
         Generates a formal Compliance Report for the current session.
@@ -2747,6 +2811,17 @@ class DicomSession:
         unattested = [verb for verb in sorted(self._actions_performed)
                       if not expected_evidence[verb] & audit_summary.keys()]
 
+        # The grade IS this list: PASS exactly when it is empty (#481). See
+        # `_review_reasons` for why it is a list and not a boolean.
+        # Keyword-only: six lists in a row is an easy pair to transpose,
+        # and a transposed pair would still grade -- it would name the
+        # wrong section.
+        review_reasons = self._review_reasons(
+            audit_summary=audit_summary, exceptions=exceptions,
+            graded_losses=graded_losses, open_gaps=open_gaps,
+            declined_remediations=declined_remediations,
+            unattested=unattested)
+
         # 5. Build Report DTO
         report = ComplianceReport(
             isocenter_version=ver,
@@ -2765,12 +2840,12 @@ class DicomSession:
             scan_gaps=scan_gaps,
             declined_remediations=declined_remediations,
             export_recorded=export_recorded,
-            validation_status=("PASS"
-                               if audit_summary and not exceptions
-                               and not graded_losses and not open_gaps
-                               and not declined_remediations
-                               and not unattested
-                               else "REVIEW_REQUIRED")
+            validation_status="REVIEW_REQUIRED" if review_reasons else "PASS",
+            review_reasons=review_reasons,
+            metadata_remediations=sum(
+                audit_summary.get(action, 0)
+                for action in REMEDIATION_ACTION_TYPES),
+            pixel_scans=list(self._pixel_scans),
         )
 
         renderer = get_renderer(format)
