@@ -8,7 +8,7 @@ This file allows you to define a reproducible privacy policy that can be shared 
 
 | Section | Description |
 | :--- | :--- |
-| **[privacy_profile](#privacy-profile)** | Base set of rules (e.g., "basic", "comprehensive"). |
+| **[privacy_profile](#privacy-profile)** | Base set of rules: "basic", "none", or a path to a YAML profile. |
 | **[date_jitter](#date-jitter)** | Randomly shifts dates to preserve intervals while hiding exact dates. |
 | **[remove_private_tags](#private-tags)** | Removes vendor-specific private tags (odd groups). |
 | **[phi_tags](#phi-tags)** | Overrides or adds specific tag rules (e.g., `PatientName`). |
@@ -22,7 +22,7 @@ Save this as `isocenter_config.yaml`:
 
 ```yaml
 # 1. Privacy Profile (Base Rules)
-# Options: "basic", "comprehensive", or path to external YAML
+# Options: "basic", "none", or path to external YAML
 privacy_profile: "basic"
 
 # 2. Date Jitter
@@ -66,15 +66,19 @@ machines:
 
 ### Privacy Profile
 
-Sets the baseline behavior for thousands of DICOM tags.
+Sets the baseline rules that `phi_tags` then extends or overrides.
 
 ```yaml
-privacy_profile: "comprehensive"
+privacy_profile: "basic"
 ```
 
-* **`basic`**: Implements the *DICOM PS3.15 Annex E Basic Profile*. Retains some descriptors but removes direct identifiers.
-* **`comprehensive`**: Aggressive de-identification. Removes almost all non-structural text fields.
+* **`basic`**: A reduced *DICOM PS3.15 Annex E Basic Profile* (`BASIC_PROFILE` in `isocenter/profiles.py`, 35 tags). Retains some descriptors but removes direct identifiers.
+* **`none`**: No base. The file's `phi_tags` are the whole policy.
 * **External File**: You can provide a path to another YAML file (e.g., `./profiles/my_hospital_standard.yaml`) to inherit its rules.
+
+Any other value is refused: `load_config()` raises `ValueError` naming it. (These docs once offered a `comprehensive` profile, which never existed; loading it warned and applied no base.)
+
+A session that has loaded no configuration applies the **floor policy**, `FLOOR_POLICY` in `isocenter/profiles.py`: the basic profile plus the three research defaults `create_config()` writes (Study Date jittered, Patient's Sex and Age kept), 36 rules.
 
 ### Date Jitter
 

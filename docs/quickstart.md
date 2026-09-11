@@ -28,7 +28,7 @@ session.examine()
 
 ## 3. Configure & Audit
 
-Before changing anything, define your privacy rules. Use `create_config` to generate a scaffolding based on your inventory, then `audit` to scan that inventory against your rules. This "Measure Twice, Cut Once" approach lets you identify all PHI risks before applying any irreversible changes.
+Before changing anything, define your privacy rules. Use `create_config` to generate a scaffolding based on your inventory, then `audit` to scan that inventory against your rules. This "Measure Twice, Cut Once" approach lets you identify all PHI risks before applying any irreversible changes. A session that has loaded no configuration still applies a floor policy (the PS3.15 basic profile plus Study Date jittered, Sex and Age kept); the config file is where you record the policy you actually want.
 
 ```python
 # Create a default configuration file (v2.0 YAML)
@@ -64,7 +64,7 @@ Remediation is a multi-stage process performed in-memory:
 
 1. **Anonymize**: Strips or replaces metadata tags (PatientID, Names, Dates) based on your config.
 2. **Redact**: Loads pixel data and scrubs burned-in PHI from defined regions.
-3. **Export**: The final "Gatekeeper". Writes clean files to a new directory. Setting `check_burned_in=True` ensures the export halts if any verification checks fail (e.g., corrupt images or missing codecs).
+3. **Export**: The final "Gatekeeper". Writes clean files to a new directory. With `check_burned_in=True` the export runs `audit()` first and skips every instance that still carries an identifier, on itself or a parent, under the policy in force -- so on a session that has not run `anonymize()`, that is every instance carrying a value any rule of the policy would act on.
 
 ```python
 # Apply metadata remediation (anonymization) using the findings

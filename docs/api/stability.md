@@ -168,7 +168,11 @@ three fields. The rest of the fluent chain is tier 2.
 **`IsocenterConfiguration`** as `session.configuration`: `save()`,
 `add_rule()`, `update_rule()`, `delete_rule()`, `set_phi_tag()`,
 `get_rule()`, and the fields `rules`, `phi_tags`, `date_jitter`,
-`remove_private_tags`, `privacy_profile`.
+`remove_private_tags`, `privacy_profile`. On a session that has loaded
+no configuration, `phi_tags` is a copy of the floor policy,
+`profiles.FLOOR_POLICY`, and `audit()`/`anonymize()` apply it; a config
+with `privacy_profile: none` opts out of it (#495). `set_phi_tag()`
+stores lowercase keys, as every other key in the policy is.
 
 **Exceptions.** `RedactionError(failures, attempted)`, a `RuntimeError`,
 with `.failures` (a list of `(entity_uid, details)`) and `.attempted`,
