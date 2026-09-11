@@ -244,7 +244,11 @@ def test_a_signed_8_bit_ybr_full_jpeg_ls_file_is_refused_at_every_door(doors):
     ingested, failures, _stored, _label = got["ingest"]
     assert ingested == 0
     words = "its declared colour space 'YBR_FULL' is signed 8-bit"
-    assert words in failures[0][1], failures
+    # Ingest's framing is the one the CHANGELOG quotes: the handler's
+    # refusal reaches the row as the reason imagecodecs could not decode
+    # it either, not as a bare error escaping `_decode_with_imagecodecs`.
+    assert f"imagecodecs could not decode it either: {words}" \
+        in failures[0][1], failures
     arr, ds_label = got["handler"]
     assert isinstance(arr, RuntimeError), arr
     # Its own words, not "imagecodecs failed to decode ...": the refusal
@@ -255,6 +259,35 @@ def test_a_signed_8_bit_ybr_full_jpeg_ls_file_is_refused_at_every_door(doors):
         exc, inst_label, moved = got[door]
         assert isinstance(exc, RuntimeError), f"{door}: {exc!r}"
         assert f"imagecodecs fallback: {words}" in str(exc), str(exc)
+        assert (inst_label, moved) == (label, 0)
+
+
+# ---------------------------------------------------------------------------
+# R7 -- a decode that fails leaves every label where it was
+# ---------------------------------------------------------------------------
+
+def test_a_truncated_8_bit_ybr_full_jpeg_ls_file_changes_no_label(doors):
+    """R7: the relabel follows a conversion that happened, never precedes it.
+
+    #372's defect was a label without its conversion. Here the stream is
+    cut two bytes short, so CharLS reads the header and then fails the
+    decode. A handler that relabelled `ds` before decoding would leave
+    `RGB` on a dataset whose samples were never converted. The dataset's
+    label, the labelled instance's label and its revision all stay put.
+    """
+    ds = _dataset(JPEGLS, [YBR8])
+    whole = imagecodecs.jpegls_encode(YBR8)
+    ds.PixelData = encapsulate([whole[:-2]], has_bot=True)
+    ds["PixelData"].is_undefined_length = True
+    got = doors(ds)
+    assert got["ingest"][0] == 0, got["ingest"]
+    arr, ds_label = got["handler"]
+    assert isinstance(arr, RuntimeError), arr
+    assert "imagecodecs failed to decode" in str(arr), str(arr)
+    assert ds_label == "YBR_FULL"
+    for door, label in (("bare", None), ("labelled", "YBR_FULL")):
+        exc, inst_label, moved = got[door]
+        assert isinstance(exc, RuntimeError), f"{door}: {exc!r}"
         assert (inst_label, moved) == (label, 0)
 
 

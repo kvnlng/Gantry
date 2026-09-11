@@ -331,6 +331,28 @@ def test_the_precision_is_read_from_the_frame_header_not_the_first_ff_f7(
                   SIGNED[12])
 
 
+#: `P12_JPEGLS` with two fill bytes ahead of its frame header. ITU-T T.81
+#: B.1.1.2 lets any marker be preceded by `FF` fill, and CharLS skips it
+#: and decodes the stream exactly (measured, imagecodecs 2026.8.16).
+P12_BEHIND_FILL_BYTES = P12_JPEGLS[:2] + b"\xff\xff" + P12_JPEGLS[2:]
+
+
+def test_fill_bytes_ahead_of_the_frame_header_do_not_hide_its_precision(
+        doors):
+    """S1h: the walk steps over `FF` fill to reach SOF55.
+
+    A walk that took the fill byte for a marker would read `FF F7` as a
+    segment length, run off the end, fall back to BitsStored 16, and
+    return the raw 12-bit patterns: -2048 would come back 2048. That is
+    what pydicom's own header parser does with this stream (a divergence
+    the CHANGELOG states): the frame header says precision 12, and CharLS,
+    which decoded the samples, read it.
+    """
+    assert P12_BEHIND_FILL_BYTES[2:6] == b"\xff\xff\xff\xf7"
+    _assert_reads(doors(_dataset(JPEGLS, P12_BEHIND_FILL_BYTES, (16, 16), 16)),
+                  SIGNED[12])
+
+
 @pytest.mark.parametrize("ts", [LJPEG, LJPEG_SV1])
 def test_a_lossless_jpeg_stream_wider_than_bits_stored_still_reads_by_bits_stored(
         doors, ts):
