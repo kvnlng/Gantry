@@ -67,3 +67,45 @@ def get_logger():
         logging.Logger: The isocenter logger.
     """
     return logging.getLogger("isocenter")
+
+
+def describe_exception(exc: BaseException) -> str:
+    """How an exception is spelled wherever it becomes a recorded reason.
+
+    `Type: message`, or `Type` alone when the message is empty, and the
+    direct cause (`raise ... from`) in the same spelling:
+    `RuntimeError: Pixel Loader failed ... (caused by OSError: EIO)`.
+
+    **Why the type leads.** `str()` is `''` for `KeyError()`,
+    `StopIteration()`, `OSError()`, `AssertionError()` and most bare
+    raises, so a reason built as `f"...: {e}"` ended in a colon and said
+    a step failed without saying how, and one built as `str(e)` was
+    empty -- which ingest tested with `if err:` and dropped, so the file
+    was counted nowhere (#435). A message alone also cannot tell
+    `KeyError('x')` from the string `'x'`.
+
+    **Why the cause, and only the direct one.** `get_pixel_data()` wraps
+    a loader's error in `RuntimeError("Pixel Loader failed ...") from e`,
+    so without the cause a sidecar `OSError` reaches `PhiReport.failures`
+    named only as a `RuntimeError` (#423). `__context__` -- an exception
+    raised while handling another, without `from` -- is not followed: the
+    raiser did not say the two were one failure.
+
+    **One spelling.** Bunch E (#423) wrote this as
+    `pixel_analysis._describe_failure`, with a trailing `: ` for an empty
+    message; this replaced it, and every site that turns an exception
+    into audit text, a summary reason or a report failure calls this.
+    Here because `logger` is a leaf every one of those modules already
+    imports, so no caller imports another caller for it.
+    """
+    text = _type_and_message(exc)
+    cause = exc.__cause__
+    if cause is not None:
+        text += f" (caused by {_type_and_message(cause)})"
+    return text
+
+
+def _type_and_message(exc: BaseException) -> str:
+    message = str(exc)
+    name = type(exc).__name__
+    return f"{name}: {message}" if message else name

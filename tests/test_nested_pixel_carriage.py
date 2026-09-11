@@ -47,6 +47,7 @@ from pydicom.sequence import Sequence
 from pydicom.uid import (ExplicitVRLittleEndian, JPEGBaseline8Bit,
                          JPEGExtended12Bit, RLELossless, generate_uid)
 
+from isocenter import io_handlers
 from isocenter.io_handlers import (DicomExporter, LOSS_SCOPE_STANDARD,
                                    _CARRIABLE_TRANSFER_SYNTAXES)
 from isocenter.blob_kind import serialize_blob_kind
@@ -1007,3 +1008,27 @@ def test_write_tree_honours_the_redaction_attestation(tmp_path):
         session.close()
 
     assert "IconImageSequence" not in _exported(out)
+
+
+def test_a_nested_restore_failure_with_no_message_names_its_type(
+        tmp_path, monkeypatch):
+    """F10 (#435): the nested-restore `DATA_LOSS` text, `... sidecar ()`.
+
+    The restore's `try` covers the loader metadata as well as the read,
+    so a message-less raise there reaches the same arm. Export runs
+    in-process so the patch reaches the worker.
+    """
+    db, _src = _ingest(tmp_path, "nestedfail", icons=[_icon_item()])
+    monkeypatch.setattr(io_handlers, "run_parallel",
+                        lambda fn, items, *args, **kwargs: [fn(x) for x in items])
+
+    def refuse(*_args, **_kwargs):
+        raise KeyError()
+
+    monkeypatch.setattr(io_handlers, "_nested_loader_metadata", refuse)
+    _export(db, tmp_path / "out")
+
+    details = [d for d, _scope in _data_loss_rows(db)
+               if "could not be restored from the sidecar" in d]
+    assert len(details) == 1, _data_loss_rows(db)
+    assert "restored from the sidecar (KeyError);" in details[0], details

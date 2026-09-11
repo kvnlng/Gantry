@@ -6,7 +6,7 @@ import pydicom
 from pydicom.dataset import Dataset
 from pydicom.pixels import apply_voi_lut
 from isocenter.entities import Instance
-from isocenter.logger import get_logger
+from isocenter.logger import describe_exception, get_logger
 from isocenter.pixel_geometry import resolve_pixel_geometry
 
 logger = logging.getLogger(__name__)
@@ -87,20 +87,6 @@ class PixelScanError(RuntimeError):
             f"OCR read none of the {attempted} instance(s) it tried; "
             f"{len(self.failures)} could not be read. First: {first[0]}: "
             f"{first[1]}. Every failure is in .failures.")
-
-
-def _describe_failure(exc: BaseException) -> str:
-    """`Type: message`, with the direct cause when there is one.
-
-    `get_pixel_data()` wraps a loader's error in `RuntimeError("Pixel
-    Loader failed ...")`, so without the cause a sidecar `OSError` would
-    reach `PhiReport.failures` named only as a `RuntimeError`.
-    """
-    text = f"{type(exc).__name__}: {exc}"
-    cause = exc.__cause__
-    if cause is not None:
-        text += f" (caused by {type(cause).__name__}: {cause})"
-    return text
 
 
 def _ocr_unavailable_reason() -> Optional[str]:
@@ -404,7 +390,7 @@ def _load_and_ocr(instance: Instance) -> _InstanceOcr:
         pixel_array = instance.get_pixel_data()
     except Exception as e:  # pylint: disable=broad-exception-caught
         return _InstanceOcr(
-            [], False, f"pixels could not be read: {_describe_failure(e)}")
+            [], False, f"pixels could not be read: {describe_exception(e)}")
     # An ingested SR carries its source file and no pixel element, and
     # `get_pixel_data()` answers `None` for it: neither read nor failed.
     if pixel_array is None:
@@ -433,7 +419,7 @@ def _load_and_ocr(instance: Instance) -> _InstanceOcr:
     except Exception as e:  # pylint: disable=broad-exception-caught
         return _InstanceOcr(
             [], False,
-            f"pixels could not be prepared for OCR: {_describe_failure(e)}")
+            f"pixels could not be prepared for OCR: {describe_exception(e)}")
 
     regions: List[TextRegion] = []
     read = False
@@ -445,7 +431,7 @@ def _load_and_ocr(instance: Instance) -> _InstanceOcr:
             regions.extend(_detect_text_regions_or_raise(frame, frame_idx=i))
             read = True
         except Exception as e:  # pylint: disable=broad-exception-caught
-            frame_failures.append(f"OCR failed on frame {i}: {_describe_failure(e)}")
+            frame_failures.append(f"OCR failed on frame {i}: {describe_exception(e)}")
     return _InstanceOcr(regions, read, "; ".join(frame_failures) or None)
 
 

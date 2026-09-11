@@ -212,3 +212,11 @@ def test_a_lost_export_worker_is_accounted_by_export_batch(
         "instance with; the row still has to exist")
     assert "Export worker failed" in detail, detail
     assert "export worker exploded" in detail, detail
+
+
+def test_a_lost_redaction_worker_with_no_message_names_its_type():
+    """F8 (#435): `Redaction worker failed:` said a worker died and not how."""
+    applied, failures = DicomSession._apply_redaction_outcomes([KeyError()], {})
+
+    assert applied == 0
+    assert failures == [("UNKNOWN", "Redaction worker failed: KeyError")]

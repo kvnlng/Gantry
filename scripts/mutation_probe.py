@@ -719,8 +719,10 @@ NOT_PROBED = {
         "deferred: 16 sites, 0 importers -- 12 test files reach DicomStore "
         "by class name, which the import scan cannot see (#441)",
     "isocenter/logger.py":
-        "deferred: 10 sites, 0 importers -- reached only through "
-        "get_logger()",
+        "deferred: 13 sites, 1 importer -- reached through get_logger() "
+        "and describe_exception(), whose spelling "
+        "tests/test_ingest_failure_audit.py pins directly (#435); a row "
+        "would still need its list written by hand",
     "isocenter/exporters/dicom.py":
         "deferred: 2 sites, 0 importers -- reached through "
         "export(format=\"dicom\"), which the import scan cannot see (#441)",

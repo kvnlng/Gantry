@@ -775,3 +775,22 @@ def test_a_tampered_frame_is_refused_right_after_ingest(pair):
     _swap_in(a._pixel_loader, b._pixel_loader)
     with pytest.raises(RuntimeError, match="hash mismatch"):
         a.get_pixel_data()
+
+
+# ---------------------------------------------------------------------------
+# F9 -- the loader names a message-less read failure (#435)
+# ---------------------------------------------------------------------------
+
+def test_a_read_failure_with_no_message_names_its_type(ingested, monkeypatch):
+    """`Failed to read/decompress frame for <uid>: ` said nothing about why."""
+    _session, inst, _db = ingested
+
+    def refuse(*_args, **_kwargs):
+        raise OSError()
+
+    monkeypatch.setattr(SidecarManager, "read_frame", refuse)
+    with pytest.raises(RuntimeError) as raised:
+        inst.get_pixel_data()
+    assert str(raised.value).endswith(
+        f"Failed to read/decompress frame for {inst.sop_instance_uid}: OSError"), (
+        str(raised.value))

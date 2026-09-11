@@ -18,7 +18,7 @@ import numpy as np
 from .entities import Instance, DicomItem, DicomSequence
 from .pixel_geometry import PixelGeometry, resolve_pixel_geometry
 from .store import DicomStore
-from .logger import get_logger
+from .logger import describe_exception, get_logger
 
 
 # Define standard codes for the Sequence
@@ -548,7 +548,7 @@ class RedactionService:
             # worker may have moved `inst.sop_instance_uid` by now (#257).
             self.logger.error(f"  Failed {original_uid}: {e}")
             return RedactionOutcome(ok=False, sop_instance_uid=original_uid,
-                                    error=f"{type(e).__name__}: {e}")
+                                    error=describe_exception(e))
         finally:
             # Memory cleanup only. No persist lives here any more: the
             # one in the `try` body is the only append this path makes
@@ -804,7 +804,7 @@ class RedactionService:
                 failures.append(
                     (original_uid,
                      f"Redaction failed for {original_uid}: "
-                     f"{type(e).__name__}: {e}"))
+                     f"{describe_exception(e)}"))
                 self.logger.error(f"  Failed {inst.sop_instance_uid}: {e}")
             finally:
                 # OPTIMIZATION: Release memory immediately after processing

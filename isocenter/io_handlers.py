@@ -174,7 +174,7 @@ from pydicom.filewriter import write_sequence
 
 from .entities import (Patient, Study, Series, Instance, Equipment, DicomItem,
                        resolve_item_path)
-from .logger import get_logger
+from .logger import describe_exception, get_logger
 from .pixel_geometry import (
     FLOAT_DTYPE_BY_ELEMENT,
     SIDECAR_DTYPE_NAMES,
@@ -1580,7 +1580,7 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
     try:
         arr = decode_declared_frames(ds, frames)
     except Exception as exc:  # pylint: disable=broad-except
-        raise refused(f"{type(exc).__name__}: {exc}") from exc
+        raise refused(describe_exception(exc)) from exc
 
     representation = int(ds.PixelRepresentation)
     kind = "i" if representation == 1 else "u"
@@ -1905,7 +1905,7 @@ def ingest_worker(fp: str) -> Tuple:
                 # The path rides the meta slot, as in the blanket except
                 # below, so the parent's ERROR row can name the file (#211).
                 return ({'path': fp}, None, None, None, None, None, None,
-                        f"Decompression Failed: {e}")
+                        f"Decompression Failed: {describe_exception(e)}")
 
         elif any(kw in ds for kw in ("FloatPixelData", "DoubleFloatPixelData")):
             # The float pair rides the sidecar too, and until #183 it did
@@ -2045,7 +2045,8 @@ def ingest_worker(fp: str) -> Tuple:
         # prose. The reason travels as the error string it always was;
         # the arity -- unpacked at every call site -- does not change
         # (#211).
-        return ({'path': fp}, None, None, None, None, None, None, str(e))
+        return ({'path': fp}, None, None, None, None, None, None,
+                describe_exception(e))
 
 
 @dataclass
@@ -2284,7 +2285,17 @@ class DicomImporter:
         for meta, inst, p_bytes, p_hash, p_alg, w_bytes, w_hash, err in results:
             # Clear result components from scope as soon as possible after use to help GC
             # But the loop variable holds them. Next iteration clears them.
-            if err:
+            # `is not None`, not truthiness. An empty reason is still a
+            # failure: `str(KeyError())` is `''`, so a worker whose
+            # reason was built from a message-less exception returned
+            # `''` here, this test was falsy, `inst` was None too, and
+            # the file was counted nowhere -- no failure, no audit row,
+            # not declined, not skipped (#435). Every failing return in
+            # `ingest_worker` carries a non-None reason and the success
+            # return carries None; `describe_exception` makes today's
+            # reasons non-empty, and this makes an empty one impossible
+            # to lose.
+            if err is not None:
                 _record_failure((meta or {}).get('path', '<unknown>'), err)
                 continue
             if inst:
@@ -2802,7 +2813,7 @@ class DicomImporter:
                     # caller as a worker-side one: the file is not in the
                     # store. It takes the same route (#211).
                     _record_failure(inst.file_path or '<unknown>',
-                                    f"Linkage Failed: {e}")
+                                    f"Linkage Failed: {describe_exception(e)}")
 
         logger.info(f"Successfully ingested {count} instances.")
         if failures:
@@ -3461,7 +3472,8 @@ def _write_back_nested_pixels(ds, inst, ctx, losses) -> None:
             removals.append((parent, seq_tag, item))
             losses.append((LOSS_SCOPE_STANDARD, (
                 f"Standard tag {terminal_tag} inside {seq_tag} could not be "
-                f"restored from the sidecar ({exc}); its sequence item was "
+                f"restored from the sidecar ({describe_exception(exc)}); "
+                f"its sequence item was "
                 f"dropped rather than exported with descriptors and no "
                 f"pixel data.")))
             continue
@@ -4541,7 +4553,8 @@ class SidecarPixelLoader:
             raw = mgr.read_frame(self.offset, self.length, self.alg)
         except Exception as e:
             raise RuntimeError(
-                f"Integrity Error: Failed to read/decompress frame for {self.sop_instance_uid}: {e}")
+                f"Integrity Error: Failed to read/decompress frame for "
+                f"{self.sop_instance_uid}: {describe_exception(e)}")
 
         # Integrity Check
         if self.pixel_hash:
@@ -5103,14 +5116,22 @@ class DicomExporter:
                 if r.ok:
                     continue
                 uid = r.sop_instance_uid or r.output_path
-                reason = r.error if r.error is not None else "unknown error"
+                # `error` is the exception the worker caught, not prose,
+                # so it is described here; `str()` of a message-less one
+                # was `''` and the row ended `Export failed for <path>:`
+                # (#435).
+                if isinstance(r.error, BaseException):
+                    reason = describe_exception(r.error)
+                else:
+                    reason = r.error if r.error is not None else "unknown error"
                 detail = f"Export failed for {r.output_path}: {reason}"
             else:
                 # `run_parallel` returns its own exception when a worker
                 # dies before it can answer. There is no outcome to name
                 # the instance with, and the row still has to exist.
                 uid = "UNKNOWN"
-                detail = f"Export worker failed: {r}"
+                died = describe_exception(r) if isinstance(r, BaseException) else r
+                detail = f"Export worker failed: {died}"
 
             detail = " ".join(str(detail).split()).replace("|", "\\|")
             logger.error("%s: %s", uid, detail)
@@ -5518,7 +5539,8 @@ class DicomExporter:
                 # -- as the #126 tests show -- no logger the caller can
                 # see either. The parent logs it and writes the audit
                 # entry (#126).
-                loss = f"Tag {t} not exported (data loss): {exc}"
+                loss = (f"Tag {t} not exported (data loss): "
+                        f"{describe_exception(exc)}")
                 if losses is None:
                     get_logger().warning(loss)
                     continue

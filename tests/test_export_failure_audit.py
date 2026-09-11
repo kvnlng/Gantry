@@ -240,3 +240,53 @@ def test_the_summary_counts_both_sides_of_what_the_batch_did():
 
     assert summary.written == 1
     assert summary.failed == 2
+
+
+# ---------------------------------------------------------------------------
+# #435 -- a reason built from an exception with no message
+# ---------------------------------------------------------------------------
+
+def test_a_failed_outcome_names_its_exception_type():
+    """F6: `ExportOutcome.error` is the exception object, not prose.
+
+    Measured on c9e9938: `error=KeyError()` recorded `Export failed for
+    /o/x.dcm:` and nothing after the colon. The type leads now whether
+    or not there is a message.
+    """
+    store = _RecordingStore()
+    results = [
+        ExportOutcome(ok=False, output_path="/o/x.dcm", sop_instance_uid="1.2",
+                      error=KeyError()),
+        ExportOutcome(ok=False, output_path="/o/y.dcm", sop_instance_uid="1.3",
+                      error=KeyError("x")),
+    ]
+
+    failures = DicomExporter._report_export_failures(results, store)
+
+    assert failures == [("1.2", "Export failed for /o/x.dcm: KeyError"),
+                        ("1.3", "Export failed for /o/y.dcm: KeyError: 'x'")]
+    assert [r[2] for r in store.rows] == [d for _u, d in failures]
+
+
+def test_a_worker_that_died_with_no_message_names_its_type():
+    """F7: `Export worker failed:` said a worker died and not how."""
+    store = _RecordingStore()
+
+    failures = DicomExporter._report_export_failures([KeyError()], store)
+
+    assert failures == [("UNKNOWN", "Export worker failed: KeyError")]
+
+
+def test_a_tag_lost_to_a_message_less_exception_names_its_type():
+    """F11: the tag-loss `DATA_LOSS` text, `Tag t not exported (data loss): `."""
+    from pydicom.dataset import Dataset
+
+    class _Refusing(Dataset):
+        def add_new(self, *_args, **_kwargs):
+            raise KeyError()
+
+    losses = []
+    DicomExporter._merge(_Refusing(), {"0010,0010": "DOE^JANE"}, losses)
+
+    assert [detail for _scope, detail in losses] == [
+        "Tag 0010,0010 not exported (data loss): KeyError"]

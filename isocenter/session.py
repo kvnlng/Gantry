@@ -22,7 +22,7 @@ from .services import (RedactionService, RedactionOutcome, RedactionError,
                        _report_redaction_failures)
 from .config_manager import ConfigLoader, require_package_resource
 from .privacy import PhiInspector, PhiFinding, PhiReport
-from .logger import configure_logger, get_logger
+from .logger import configure_logger, describe_exception, get_logger
 from .reporting import (ComplianceReport, get_renderer, GAP_REMOVED,
                         GAP_RETAINED, GAP_UNRESOLVED)
 from .manifest import Manifest, ManifestItem, generate_manifest_file
@@ -133,7 +133,7 @@ def _verify_worker(args):
     except Exception as e:  # pylint: disable=broad-exception-caught
         return _ScanOutcome(
             uid, [], False,
-            pixel_analysis._describe_failure(e))  # pylint: disable=protected-access
+            describe_exception(e))
 
     # Strip the instance before the findings cross back, as `scan_worker`
     # does; `scan_pixel_content` puts the live one back (#412). The strip
@@ -174,7 +174,7 @@ def _discover_worker(instance):
         return uid, pixel_analysis._ocr_instance(instance)  # pylint: disable=protected-access
     except Exception as e:  # pylint: disable=broad-exception-caught
         return uid, pixel_analysis._InstanceOcr(  # pylint: disable=protected-access
-            [], False, pixel_analysis._describe_failure(e))  # pylint: disable=protected-access
+            [], False, describe_exception(e))
 
 
 def _warn_unread_instances(operation, failures, attempted, where):
@@ -3438,7 +3438,8 @@ class DicomSession:
                 # to name the instance with, and the row still has to
                 # exist.
                 failures.append(
-                    ("UNKNOWN", f"Redaction worker failed: {outcome}"))
+                    ("UNKNOWN",
+                     f"Redaction worker failed: {describe_exception(outcome)}"))
                 continue
             else:
                 failures.append(
