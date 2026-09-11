@@ -804,6 +804,16 @@ def test_the_stability_page_names_every_tier_one_session_method():
     # cannot drift apart (#423 added `failures` to both).
     assert "`PhiReport(findings, failures)`" in flat, (
         "stability.md does not list PhiReport's fields as (findings, failures)")
+    # The unload/discard rule as frozen, including what a discard undoes
+    # (#434): the descriptors `set_pixel_data()` wrote go with the pixels.
+    # The behaviour is pinned by the R tests in
+    # `tests/test_descriptor_edit_with_pixels_unloaded.py`; this pins that
+    # the page a 1.0 user reads says so, rather than leaving both
+    # readings of "throws it away" open.
+    assert ("`discard` throws it away, with the descriptors "
+            "`set_pixel_data()` wrote for it") in flat, (
+        "stability.md's unload/discard rule no longer says discard puts "
+        "back the descriptors set_pixel_data() wrote (#434)")
 
     # The *union* is what is frozen, so the union is what this checks:
     # each word appears **exactly once**, backticked, inside the Output

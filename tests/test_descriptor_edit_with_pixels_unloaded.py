@@ -36,6 +36,7 @@ import copy
 import glob
 import hashlib
 import os
+import pickle
 import sqlite3
 
 import numpy as np
@@ -45,6 +46,7 @@ from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
 from isocenter.io_handlers import ExportError, SidecarPixelLoader
+from isocenter.services import RedactionOutcome
 from isocenter.session import DicomSession
 from isocenter.sidecar import SidecarManager
 
@@ -424,25 +426,30 @@ def test_the_descriptors_are_read_from_one_snapshot(ingested):
 
 
 # ---------------------------------------------------------------------------
-# A10 -- set_pixel_data -> discard: one answer, whatever the save state
+# A10 -- a descriptor edit after a discard: one answer, whatever the save state
 # ---------------------------------------------------------------------------
 
-def test_a_discarded_replacement_reads_the_same_before_and_after_a_save(
-        ingested):
+def test_a_descriptor_edit_after_a_discard_is_read_ungated(ingested):
     """A10: no gate on `_pixel_array_unwritten`.
 
-    `set_pixel_data(view)` writes PixelRepresentation 1; `discard` drops
-    the array but not the descriptor. The stored bytes under the
-    instance's descriptors are the int16 reading -- which is also what a
-    save and a reopen give. A check gated on "not unwritten" leaves the
-    first read uint16 and flips it on the second, with no save between:
-    two answers to one question.
+    Since #434 `discard_pixel_data()` puts back the descriptors
+    `set_pixel_data()` wrote, so a set -> discard no longer changes how
+    the stored bytes are read (see the R tests below). What still needs
+    no gate is a descriptor edit made *after* the discard, while the flag
+    is still set: PixelRepresentation 0 -> 1 there must read as `int16`
+    live, after an unload, after a save and reopened. A check filtered on
+    "not unwritten" would read the first two as `uint16` and flip to
+    `int16` after the save -- two answers to one question.
     """
     session, inst, db = ingested
-    signed = inst.get_pixel_data().view(np.int16)
-    inst.set_pixel_data(signed)
+    inst.set_pixel_data(inst.get_pixel_data().view(np.int16))
     assert inst.discard_pixel_data() is True
     assert inst.pixel_array is None
+    # The fixture guard: the flag a gate would consult is still set, and
+    # the discard put PixelRepresentation back to 0.
+    assert inst._pixel_array_unwritten
+    assert inst.attributes[PR] == 0
+    inst.set_attr(PR, 1)
 
     reads = [inst.get_pixel_data()]
     _not_resident(inst)
@@ -457,6 +464,219 @@ def test_a_discarded_replacement_reads_the_same_before_and_after_a_save(
         assert got.dtype == np.int16, i
         assert got.min() < 0, i
         assert np.array_equal(got, ORIGINAL.view(np.int16)), i
+
+
+# ---------------------------------------------------------------------------
+# R -- discard undoes the whole set_pixel_data(): pixels and descriptors (#434)
+# ---------------------------------------------------------------------------
+#
+# Every tag `set_pixel_data()` can write. Spelled out here rather than
+# imported from `entities`, so a tag dropped from the package's list is a
+# difference these tests see rather than one they share.
+SET_TAGS = ("0028,0010", "0028,0011", "0028,0002", "0028,0008", "0028,0004",
+            "0028,0006", "0028,0100", "0028,0103", "_ISOCENTER_PIXEL_DTYPE")
+
+
+def _descriptors(inst):
+    """The set's tags as they stand, absence included (absent = not a key)."""
+    return {t: inst.attributes[t] for t in SET_TAGS if t in inst.attributes}
+
+
+REPLACEMENTS = {
+    # PixelRepresentation 0 -> 1 over the same bytes: no error, and the
+    # stored uint16 frame read as int16 [-25536, ...] (measured).
+    "signed view": lambda inst: inst.get_pixel_data().view(np.int16),
+    # Rows, Columns and BitsAllocated: the read raised an Integrity Error.
+    "8x8 uint8": lambda inst: np.full((8, 8), 7, np.uint8),
+    # NumberOfFrames, absent before: must be deleted, not zeroed.
+    "three frames": lambda inst: np.zeros((3, 4, 4), np.uint16),
+    # BitsAllocated 32 and the float carrier, absent before.
+    "float32": lambda inst: np.full((4, 4), 1.5, np.float32),
+    # SamplesPerPixel, PhotometricInterpretation, PlanarConfiguration.
+    "rgb": lambda inst: np.zeros((4, 4, 3), np.uint8),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(REPLACEMENTS))
+def test_discard_restores_every_descriptor_the_set_wrote(ingested, kind):
+    """R1: the descriptors from before the set, exactly -- and they stay so.
+
+    Measured on c9e9938, a save after the discard wrote the set's
+    descriptors over the stored frame, so a reopened session raised too:
+    the damage was durable, not cosmetic.
+    """
+    session, inst, db = ingested
+    before = _descriptors(inst)
+    inst.set_pixel_data(REPLACEMENTS[kind](inst))
+    # The fixture guard: this set did change what the tests compare.
+    assert _descriptors(inst) != before
+
+    assert inst.discard_pixel_data() is True
+    assert inst.pixel_array is None
+    assert _descriptors(inst) == before
+    got = inst.get_pixel_data()
+    assert got.dtype == np.uint16 and np.array_equal(got, ORIGINAL)
+    # A set and a discard are still a change: no un-dirtying.
+    assert inst.has_unsaved_changes
+
+    session.save(sync=True)
+    reopened, reopened_inst = _reopened_read(db)
+    assert reopened.dtype == np.uint16 and np.array_equal(reopened, ORIGINAL)
+    assert _descriptors(reopened_inst) == before
+
+
+def test_discard_puts_back_a_float_carrier_the_set_removed(ingested):
+    """R2: the carrier is uppercase, and `set_attr` lowercases.
+
+    A restore through `set_attr` would write `_isocenter_pixel_dtype`, a
+    ghost nothing reads, and leave the float frame decoding as integers.
+    """
+    session, inst, _db = ingested
+    floats = np.full((4, 4), 1.5, np.float32)
+    inst.set_pixel_data(floats)
+    session.save(sync=True)
+    before = _descriptors(inst)
+    assert before["_ISOCENTER_PIXEL_DTYPE"] == "float32"
+
+    inst.set_pixel_data(np.full((4, 4), 2, np.uint16))
+    assert "_ISOCENTER_PIXEL_DTYPE" not in inst.attributes
+    assert inst.discard_pixel_data() is True
+    assert _descriptors(inst) == before
+    assert "_isocenter_pixel_dtype" not in inst.attributes
+    got = inst.get_pixel_data()
+    assert got.dtype == np.float32 and np.array_equal(got, floats)
+
+
+def test_a_second_set_keeps_the_first_record(ingested):
+    """R3: two sets, one discard, back to before the first.
+
+    The second set's prior values are the first set's writes, which
+    describe pixels that were never stored.
+    """
+    _session, inst, _db = ingested
+    before = _descriptors(inst)
+    inst.set_pixel_data(inst.get_pixel_data().view(np.int16))
+    inst.set_pixel_data(np.full((8, 8), 7, np.uint8))
+    assert inst.discard_pixel_data() is True
+    assert _descriptors(inst) == before
+    got = inst.get_pixel_data()
+    assert got.dtype == np.uint16 and np.array_equal(got, ORIGINAL)
+
+
+@pytest.mark.parametrize("kind", ["new bytes", "same bytes, new dtype"])
+def test_once_saved_there_is_nothing_to_discard(ingested, kind):
+    """R4: a written replacement is the stored frame; discard keeps it.
+
+    Two cases because `_persist_pixels` has two publishing arms: new
+    bytes append a frame, and the same bytes under a new dtype take the
+    dedup arm, which rebuilds the loader at the old offset. Each clears
+    the record separately.
+    """
+    session, inst, _db = ingested
+    offset = inst._pixel_loader.offset
+    new = (np.full((8, 8), 7, np.uint8) if kind == "new bytes"
+           else inst.get_pixel_data().view(np.int16))
+    inst.set_pixel_data(new)
+    after_set = _descriptors(inst)
+    session.save(sync=True)
+    # Which arm ran: only the dedup keeps the offset. Without this guard
+    # both cases could pass through one arm and pin only that one.
+    assert (inst._pixel_loader.offset == offset) == (kind != "new bytes")
+
+    assert inst.discard_pixel_data() is True
+    assert _descriptors(inst) == after_set
+    got = inst.get_pixel_data()
+    assert got.dtype == new.dtype and np.array_equal(got, new)
+
+
+def test_a_pixel_swap_leaves_nothing_to_discard(ingested):
+    """R5: `persist_pixel_data` (the redaction swap) publishes too."""
+    session, inst, _db = ingested
+    new = np.full((8, 8), 7, np.uint8)
+    inst.set_pixel_data(new)
+    after_set = _descriptors(inst)
+    session.store_backend.persist_pixel_data(inst)
+
+    assert inst.discard_pixel_data() is True
+    assert _descriptors(inst) == after_set
+    got = inst.get_pixel_data()
+    assert got.dtype == np.uint8 and np.array_equal(got, new)
+
+
+def test_a_redaction_rebind_leaves_nothing_to_discard(ingested):
+    """R6: the processes-path rebind binds the redacted frame.
+
+    After `_apply_redaction_outcomes` the loader reads the worker's frame
+    and the *current* descriptors describe it, so a record left from the
+    user's earlier set would restore descriptors over the wrong frame.
+    Also #437: the rebind no longer hangs the parent's instance off the
+    loader.
+    """
+    session, inst, _db = ingested
+    inst.set_pixel_data(np.full((8, 8), 7, np.uint8))
+    worker = pickle.loads(pickle.dumps(inst))
+    redacted = np.full((8, 8), 5, np.uint8)
+    worker.set_pixel_data(redacted)
+    session.store_backend.persist_pixel_data(worker)
+    uid = inst.sop_instance_uid
+
+    _applied, failures = DicomSession._apply_redaction_outcomes(
+        [RedactionOutcome(ok=True, sop_instance_uid=uid, mutation={
+            "original_sop_uid": uid, "pixel_loader": worker._pixel_loader,
+            "pixel_hash": worker._pixel_hash})],
+        {uid: inst}, store_backend=session.store_backend)
+    assert failures == []
+    assert inst.pixel_array is None
+    assert not hasattr(inst._pixel_loader, "instance")   # #437
+
+    after = _descriptors(inst)
+    assert np.array_equal(inst.get_pixel_data(), redacted)
+    assert inst.discard_pixel_data() is True
+    assert _descriptors(inst) == after
+    assert np.array_equal(inst.get_pixel_data(), redacted)
+
+
+@pytest.mark.parametrize("kind", ["8x8 uint8", "same geometry, new bytes"])
+def test_a_discard_inside_a_save_leaves_the_instance_dirty(ingested, kind):
+    """R8: a discard that lands while a save is writing the replacement.
+
+    `_persist_pixels` read the array before the discard and publishes
+    after it; its #274 revision guard is what stops it, and only if the
+    discard moved the revision. The same-geometry case changes no
+    descriptor, so a bump taken only when the restore changed something
+    leaves the guard passing: the discarded replacement is published and
+    the instance marked persisted.
+    """
+    session, inst, db = ingested
+    before = _descriptors(inst)
+    new = (np.full((8, 8), 7, np.uint8) if kind == "8x8 uint8"
+           else (ORIGINAL + 1).astype(np.uint16))
+    inst.set_pixel_data(new)
+    sidecar = session.store_backend.sidecar
+    real = sidecar.write_frame
+    entered = []
+
+    def discard_first(*args, **kwargs):
+        sidecar.write_frame = real
+        entered.append(1)
+        assert inst.discard_pixel_data() is True
+        return real(*args, **kwargs)
+
+    sidecar.write_frame = discard_first
+    session.save(sync=True)
+    # Exactly one interception, and it was this instance's frame: the
+    # fixture has one instance and no waveform or nested frame.
+    assert entered == [1]
+    assert inst.has_unsaved_changes
+    assert _descriptors(inst) == before
+    got = inst.get_pixel_data()
+    assert got.dtype == np.uint16 and np.array_equal(got, ORIGINAL)
+
+    session.save(sync=True)
+    assert not inst.has_unsaved_changes
+    reopened, reopened_inst = _reopened_read(db)
+    assert np.array_equal(reopened, ORIGINAL)
+    assert _descriptors(reopened_inst) == before
 
 
 # ---------------------------------------------------------------------------

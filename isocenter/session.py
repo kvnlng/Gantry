@@ -3483,11 +3483,17 @@ class DicomSession:
                         else contextlib.nullcontext())
                 with lock:
                     if loader:
-                        # The loader is our handle on the sidecar copy,
-                        # but it points at the worker's instance.
-                        # Re-point it at this process's.
-                        loader.instance = instance
                         instance._pixel_loader = loader
+                        # The loader reads the worker's frame now, and the
+                        # descriptors in `attributes` describe it: a record
+                        # from a `set_pixel_data()` made before the pass
+                        # describes the frame this rebind replaced, and a
+                        # discard restoring it would put those over the
+                        # redacted frame (#434). Inside `if loader:`, never
+                        # one indent out, for the reason the null below
+                        # gives: a mutation carrying only a hash leaves the
+                        # loader on the frame the record describes.
+                        instance._pixel_descriptors_replaced = None
                         # And drop whatever this process is still holding
                         # (#322). Under processes the worker redacted a
                         # *copy*: its `discard_pixel_data()` freed the

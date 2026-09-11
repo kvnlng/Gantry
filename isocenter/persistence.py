@@ -2847,6 +2847,11 @@ class SqliteStore:
             # The loader now points at the bytes that are resident, so
             # the array is recoverable and freeable again (#293).
             instance._pixel_array_unwritten = False
+            # And they are the stored frame now, which the current
+            # descriptors describe: nothing is left for a discard to undo
+            # (#434). Beside the flag, inside this lock, for the same
+            # reason the flag is.
+            instance._pixel_descriptors_replaced = None
 
         # 3. Optional: Persist the linkage to DB immediately?
         # It's safer if we do, so if we crash, we know where the pixels are.
@@ -3488,7 +3493,9 @@ class SqliteStore:
                 # equal to what the loader points at, or a caller
                 # deliberately discarded one -- the redaction `finally`
                 # blocks, where reverting to the loader's frame IS the
-                # intended outcome -- or
+                # intended outcome, and since #434 the discard has also
+                # put back the descriptors that frame was stored with, so
+                # the row this arm records describes it -- or
                 # `Session._apply_redaction_outcomes` nulled it in the
                 # same breath as rebinding the loader to the frame the
                 # worker just redacted (#322), which is the same intended
@@ -3564,6 +3571,11 @@ class SqliteStore:
                 # loader already points at them, so the resident array
                 # is recoverable and freeable again (#293).
                 inst._pixel_array_unwritten = False
+                # The loader just rebuilt describes them under the
+                # current descriptors, so a discard has nothing to put
+                # back (#434) -- a same-bytes, new-dtype replacement is
+                # saved here, not appended below.
+                inst._pixel_descriptors_replaced = None
                 return _StoredFrame(loader.offset, loader.length,
                                     loader.alg, digest)
 
@@ -3599,6 +3611,11 @@ class SqliteStore:
             # instance becomes permanently unfreeable, silently, because
             # the sweep only logs counts (#293).
             inst._pixel_array_unwritten = False
+            # Written, so it is the stored frame and a discard has
+            # nothing to undo (#434). After the revision guard above,
+            # never before it: a skipped publish leaves the replacement
+            # unwritten, and its record must survive for a discard.
+            inst._pixel_descriptors_replaced = None
             return _StoredFrame(offset, length, _PIXEL_COMPRESSION, digest)
 
     def _log_save_summary(self, tally) -> None:

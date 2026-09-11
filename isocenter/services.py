@@ -563,7 +563,9 @@ class RedactionService:
             # depending on the interpreter. Without a persist, the
             # unconditional `discard_pixel_data()` below drops the
             # mutated array and the next `get_pixel_data()` reloads the
-            # original through the loader.
+            # original through the loader, under the descriptors it was
+            # stored with: the discard also puts back whatever the
+            # copying arm's `set_pixel_data()` wrote (#434).
             #
             # The one instance this cannot reach is one with neither a
             # loader nor a `file_path` -- a graph built in memory and never
