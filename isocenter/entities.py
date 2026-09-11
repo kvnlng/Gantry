@@ -1009,9 +1009,10 @@ class Instance(DicomItem):
                 # error and advice to install the codec that was installed
                 # and broken. The handler raises its own refusal when it
                 # is unavailable; let it.
-                fallback_error = None
+                fallback_words = ""
                 try:
-                    if ds is not None and h.supports_transfer_syntax(ds.file_meta.TransferSyntaxUID):
+                    if ds is not None and h.supports_transfer_syntax(
+                            ds.file_meta.TransferSyntaxUID):
                         arr = h.get_pixel_data(ds)
                         # Same reasoning as the two branches above: a read
                         # must not write (#186).
@@ -1046,14 +1047,11 @@ class Instance(DicomItem):
                     # frame-count, sign or colour refusal, or an import
                     # failure -- for pydicom's words alone, so a refusal
                     # made in the handler never reached this method's
-                    # caller. Bound to a second name because Python unbinds
-                    # an `except ... as` name when the block ends.
-                    fallback_error = exc
-                # Appended only when the handler was actually asked: a
-                # syntax it does not list must leave the message exactly
-                # as it was.
-                fallback_words = ("" if fallback_error is None else
-                                  f"\nimagecodecs fallback: {fallback_error}")
+                    # caller. Formatted here because Python unbinds an
+                    # `except ... as` name when the block ends. Only when
+                    # the handler was actually asked: a syntax it does not
+                    # list leaves the message exactly as it was.
+                    fallback_words = f"\nimagecodecs fallback: {exc}"
 
                 # Try to get Transfer Syntax UID for better debugging
                 ts_uid = "Unknown"
