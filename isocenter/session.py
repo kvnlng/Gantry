@@ -2851,12 +2851,48 @@ class DicomSession:
         renderer = get_renderer(format)
         renderer.render(report, output_path)
 
+    @staticmethod
+    def _manifest_anonymized(patient, study, instance) -> bool:
+        """The manifest's `anonymized` for one instance (#486).
+
+        True when the patient, the study and the instance each carry
+        REMEDIATED or CLEARED at their current revision: the last
+        tag-policy scan left nothing unremediated on any of the three, and
+        nothing has edited them since. `phi_status` reads UNSCANNED for an
+        entity edited after its scan, so the revision check is structural
+        rather than repeated here.
+
+        **The series is deliberately not consulted.** The inspector never
+        scans one (`_record_scan_results` leaves it alone), so it is
+        UNSCANNED in every session and would make every item False.
+
+        **REMEDIATED is not required anywhere.** A re-audit of an
+        anonymized graph records CLEARED over it, and a rule that required
+        it would call a re-checked graph un-anonymized. The consequence is
+        that an input the scan found clean reads True after `audit()`
+        alone -- stated where the key is documented, not hidden.
+
+        **The study matters.** A declined study-date remediation leaves the
+        study IDENTIFIED while its instances read CLEARED; consulting the
+        instance alone would say True over a date that reaches the export
+        unshifted.
+        """
+        return all(entity.phi_status in (PhiStatus.REMEDIATED, PhiStatus.CLEARED)
+                   for entity in (patient, study, instance))
+
     def generate_manifest(self, output_path: str, format: str = "html") -> None:
         """
         Generates a visual (HTML) or machine-readable (JSON) manifest of all instances.
 
         This manifest lists every SOP Instance currently tracked in the session,
         along with its file path and key metadata (Modality, Manufacturer, etc.).
+
+        Each JSON item's `anonymized` is True when the last tag-policy PHI
+        scan left no identifier unremediated on that instance's patient,
+        study or instance, and none of the three has been edited since.
+        It is not "`anonymize()` ran" -- a clean input reads True after
+        `audit()` alone -- and it says nothing about burned-in pixel text
+        (#486). See `docs/api/stability.md`.
 
         Args:
             output_path (str): The file path where the manifest should be saved.
@@ -2883,7 +2919,8 @@ class DicomSession:
                             file_path=str(fpath),
                             modality=modality,
                             manufacturer=manufacturer,
-                            model_name=model
+                            model_name=model,
+                            anonymized=self._manifest_anonymized(p, st, inst),
                         )
                         items.append(item)
 

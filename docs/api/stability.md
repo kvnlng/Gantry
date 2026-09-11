@@ -314,6 +314,16 @@ in a 1.x release with a CHANGELOG entry naming both spellings:
 - **`Builder`'s fluent chain beyond `start_patient()`.**
 - **`ComplianceReport`'s fields** and the report's section layout and
   wording; log messages and `print` lines; the manifest's HTML.
+- **The JSON manifest's item keys** (`generate_manifest(format="json")`).
+  Each item's `anonymized` is `true` when the last tag-policy PHI scan
+  left no identifier unremediated on that instance's patient, study or
+  instance, and none of the three has been edited since: each carries
+  `REMEDIATED` or `CLEARED` at its current revision (#486). Two things it
+  is not. It is not "`anonymize()` ran": an input the scan found clean
+  reads `true` after `audit()` alone. And it says nothing about burned-in
+  pixel text, which the tag scan does not read. `false` means nothing
+  established it -- a session that never scanned, or an entity edited
+  since its scan.
 - **The `.pass.lock` / `.lock` file names**, the sidecar's `_pixels.bin`
   suffix, the audit table's columns, the schema's table names.
 

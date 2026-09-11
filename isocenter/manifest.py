@@ -18,7 +18,14 @@ class ManifestItem:
         modality (str): Modality code (e.g. CT, MR).
         manufacturer (str): Manufacturer name.
         model_name (str): Model name.
-        anonymized (bool): Status flag indicating if anonymization was applied.
+        anonymized (bool): True when the last tag-policy PHI scan left no
+            identifier unremediated on this instance's patient, study or
+            instance, and none of the three has been edited since -- each
+            carries `PhiStatus.REMEDIATED` or `PhiStatus.CLEARED` at its
+            current revision. Not "`anonymize()` ran": an input the scan
+            found clean reads True after `audit()` alone. Not a statement
+            about burned-in pixel text, which the tag scan does not read.
+            False when nothing established it (#486).
     """
     patient_id: str
     study_instance_uid: str
@@ -35,7 +42,13 @@ class ManifestItem:
     model_name: str = ""
 
     # Processing details
-    anonymized: bool = True
+    #
+    # False by default: an item nobody described has not been shown to be
+    # anonymized. This defaulted to True and `generate_manifest` never
+    # passed it, so every manifest said `"anonymized": true` for every
+    # instance -- beside the untouched PatientID of a session that never
+    # called `anonymize()` (#486).
+    anonymized: bool = False
 
 
 @dataclass
