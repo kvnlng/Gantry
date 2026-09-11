@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import numpy as np
 import pydicom
+from pydicom.pixels import as_pixel_options, get_decoder
 from pydicom.uid import generate_uid
 import isocenter.imagecodecs_handler as h
 from .logger import get_logger
@@ -576,6 +577,42 @@ def _defer(notes, level, message, *args):
     notes.append((level, message, args))
 
 
+def _decode_with_pydicom(ds):
+    """`ds.pixel_array`, and the colour space pydicom says it is in (#482).
+
+    `Dataset.pixel_array` is the `as_array` call on `get_decoder(ts)`,
+    made with `as_pixel_options(ds)`, and it keeps `[0]` of the pair
+    (pydicom 3.0.2 `pixels/utils.py:1430`). That throws away the one
+    statement pydicom makes about colour: the meta's
+    `photometric_interpretation`. With the default
+    `as_rgb=True` every 8-bit YBR family comes back RGB -- native
+    YBR_FULL, JPEG Baseline YBR_FULL_422, J2K YBR_RCT/ICT through Pillow
+    -- while the dataset keeps its YBR label (measured). So the call is
+    made here in full, and the meta kept. Ingest reads the same meta
+    (`io_handlers._decode_pixels`, #372).
+
+    **Where pydicom would refuse before decoding -- no Transfer Syntax
+    UID (#281's header-less population), or one no decoder implements --
+    this asks `ds.pixel_array` instead**, which refuses in pydicom's own
+    words. Those words reach the caller through `get_pixel_data()`'s
+    `Lazy load failed for <path>: ...`, and they are not to be reworded
+    by accident here.
+
+    Returns:
+        ``(array, photometric)``; `photometric` is None when pydicom was
+        not asked for one.
+    """
+    tsyntax = (getattr(ds, "file_meta", None) or {}).get("TransferSyntaxUID")
+    try:
+        decoder = get_decoder(tsyntax) if tsyntax else None
+    except NotImplementedError:
+        decoder = None
+    if decoder is None:
+        return ds.pixel_array, None
+    arr, meta = decoder.as_array(ds, **as_pixel_options(ds))
+    return arr, meta.get("photometric_interpretation")
+
+
 def _log_memory_only_refusal(uid):
     # Refusing is the guard working: pixel data held only in memory
     # (edited but not yet saved) cannot be re-loaded, so clearing it would
@@ -986,11 +1023,15 @@ class Instance(DicomItem):
             when the instance genuinely carries no pixel element. "Could
             not decode" is *not* None -- it raises (#226).
 
+        A read whose decoder returns RGB from a YBR-labelled file says so.
         An 8-bit `YBR_FULL` JPEG-LS file read through the imagecodecs
-        fallback comes back converted to RGB, as `ingest()` stores it. An
-        instance that carries a PhotometricInterpretation is relabelled
-        `RGB` to match, which advances its revision (#464). This is the
-        one write a read makes, and it is made only for that conversion.
+        fallback comes back converted to RGB, as `ingest()` stores it
+        (#464). So does a JPEG 2000 `YBR_RCT`/`YBR_ICT` file, whose codec
+        undoes the colour transform, and any 8-bit YBR source pydicom
+        decodes, which it returns as RGB by default (#482). An instance
+        that carries a PhotometricInterpretation is relabelled `RGB` to
+        match, which advances its revision. This is the one write a read
+        makes, and it is made only when the decode converted.
 
         Raises:
             RuntimeError: If loading fails due to transfer syntax issues,
@@ -1132,12 +1173,24 @@ class Instance(DicomItem):
                     if mismatch is not None:
                         raise RuntimeError(mismatch)
 
+                    # pydicom returns an 8-bit YBR source as RGB and says
+                    # so only in its decoder's meta, leaving `ds` labelled
+                    # YBR. Follow the meta, as the imagecodecs arm below
+                    # follows the handler's relabel (#482, #464's rule).
+                    # Compared with the file's label, not the instance's:
+                    # only a conversion is a statement this read makes
+                    # about colour.
+                    declared = str(getattr(
+                        ds, "PhotometricInterpretation", "") or "")
+                    arr, decoded = _decode_with_pydicom(ds)
+                    if decoded is not None and str(decoded) != declared:
+                        self._relabel_to_decoded_colour(str(decoded))
                     # Cache it in memory. Assigned, not set through
                     # set_pixel_data: pydicom shaped this array from the
                     # file's own descriptors, which are the descriptors
                     # `attributes` holds, so a re-derivation could only
                     # disagree with them (#186).
-                    self.pixel_array = ds.pixel_array
+                    self.pixel_array = arr
                     # A fresh read from the store or the file: the resident
                     # array now IS what is stored, so it is freeable again (#293).
                     self._pixel_array_unwritten = False
@@ -1384,14 +1437,17 @@ class Instance(DicomItem):
         return True
 
     def _relabel_to_decoded_colour(self, label: str) -> None:
-        """`get_pixel_data()`'s imagecodecs arm converted: say so (#464).
+        """`get_pixel_data()`'s decode converted: say so (#464, #482).
 
-        The handler converted the frame this read is about to publish
-        (8-bit YBR_FULL JPEG-LS to RGB) and relabelled its dataset. The
-        instance's PhotometricInterpretation follows, as ingest's does.
-        Otherwise the door returns RGB bytes under a YBR label, which is
-        #372's defect at a new door. It bumps the revision, because a new
-        label is a change the store should hold.
+        The decoder converted the frame this read is about to publish and
+        said so: the handler by relabelling its dataset (8-bit YBR_FULL
+        JPEG-LS, J2K YBR_RCT/ICT), pydicom in its decoder's meta (8-bit
+        YBR sources). The instance's PhotometricInterpretation follows, as
+        ingest's does. Otherwise the door returns RGB bytes under a YBR
+        label, which is #372's defect, and export writes the two together.
+        It bumps the revision, because a new label is a change the store
+        should hold. **Both arms relabel through here and nowhere else**,
+        so both get the lock discipline below.
 
         **Only when the instance already carries a label.** A bare
         `Instance(file_path=...)` holds no descriptors, so nothing on it

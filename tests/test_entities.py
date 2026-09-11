@@ -119,10 +119,17 @@ def test_lazy_loading(tmp_path):
     dummy_file.touch()  # <--- THIS WAS MISSING (Creates empty file)
     inst.file_path = str(dummy_file)
 
-    # Mock pydicom.dcmread so we don't need a real file
-    with patch("pydicom.dcmread") as mock_read:
+    # Mock pydicom.dcmread so we don't need a real file. The door decodes
+    # through `get_decoder(ts).as_array` -- what `Dataset.pixel_array`
+    # calls -- to keep the decoder's colour-space answer (#482), so the
+    # decode is mocked there.
+    with patch("pydicom.dcmread") as mock_read, \
+            patch("isocenter.entities.get_decoder") as mock_decoder, \
+            patch("isocenter.entities.as_pixel_options", return_value={}):
         mock_ds = mock_read.return_value
-        mock_ds.pixel_array = np.zeros((50, 50))
+        mock_ds.PhotometricInterpretation = "MONOCHROME2"
+        mock_decoder.return_value.as_array.return_value = (
+            np.zeros((50, 50)), {"photometric_interpretation": "MONOCHROME2"})
 
         # Act
         data = inst.get_pixel_data()

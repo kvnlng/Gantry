@@ -21,11 +21,13 @@ the stream's own precision for JPEG-LS (#478) -- so both decoders return
 the signed values the file stores. JPEG 2000 is not corrected:
 `jpeg2k_decode` already returns signed samples. See `_sign_extend`.
 
-**Colour (#464).** `CONVERTS_TO` is the one table of conversions this
-handler makes (8-bit YBR_FULL JPEG-LS to RGB). `get_pixel_data` applies
-it and relabels its dataset, and ingest applies it through
+**Colour (#464, #482).** `CONVERTS_TO` is the one table of conversions
+this handler makes (8-bit YBR_FULL JPEG-LS to RGB). `get_pixel_data`
+applies it and relabels its dataset, and ingest applies it through
 `colour_conversion` and `convert_colour`, so the read doors and ingest
-return the same bytes under the same label.
+return the same bytes under the same label. `DECODER_RELABELS` is the
+other half: the conversions the codec has already made (JPEG 2000
+YBR_RCT/ICT to RGB), which `get_pixel_data` relabels without converting.
 
 **Its limit, stated.** An *empty* Basic Offset Table with no Extended
 Offset Table is legal (PS3.5 A.4) and names no frames, and the fragments
@@ -292,6 +294,25 @@ CONVERTS_TO = {
     str(JPEGLSLossy): {"YBR_FULL": "RGB"},
 }
 
+#: The declared colour spaces whose decode *the codec* has already
+#: converted, per syntax, and the label its output is in (#482). A
+#: relabel with no conversion, which is why these rows are not in
+#: `CONVERTS_TO`: `convert_colour` would hand `YBR_RCT` to
+#: `convert_color_space`, which has no such conversion, and ingest reads
+#: `CONVERTS_TO` too. `jpeg2k_decode` undoes the codestream's colour
+#: transform and returns RGB, at 8 and 16 bits (#448's measurement,
+#: `io_handlers._FALLBACK_DECODER_CONVERTS`). Until #482 this handler
+#: returned that RGB with `ds` still saying `YBR_RCT`, so a hand-built
+#: instance read through it kept `YBR_RCT` over RGB bytes and exported
+#: them so. No depth gate, unlike `colour_conversion`: the codec converts
+#: at every depth it decodes.
+#: `test_the_handler_relabels_exactly_the_rows_ingest_relabels_without_converting`
+#: holds this table to `io_handlers._FALLBACK_PHOTOMETRICS`.
+DECODER_RELABELS = {
+    str(JPEG2000Lossless): {"YBR_RCT": "RGB", "YBR_ICT": "RGB"},
+    str(JPEG2000): {"YBR_RCT": "RGB", "YBR_ICT": "RGB"},
+}
+
 
 def colour_conversion(ds) -> Optional[Tuple[str, str]]:
     """`(declared, converted)` when this handler converts `ds`'s decode.
@@ -549,7 +570,9 @@ def get_pixel_data(ds):
         own precision (#478). An 8-bit YBR_FULL JPEG-LS frame comes back
         converted to RGB, **and `ds.PhotometricInterpretation` is set to
         `RGB`** (#464): this mutates the dataset it is given, so the label
-        stays true of the bytes.
+        stays true of the bytes. A JPEG 2000 `YBR_RCT` or `YBR_ICT` frame,
+        which the codec returns as RGB, is relabelled `RGB` the same way
+        (#482), at any depth.
 
     Raises:
         RuntimeError: If imagecodecs is missing (naming the import
@@ -578,6 +601,10 @@ def get_pixel_data(ds):
     # Also before the decode and outside the `try`, for the same reason:
     # a signed 8-bit YBR_FULL frame is refused in its own words (#464).
     conversion = colour_conversion(ds)
+    # The label the codec's own output is in, where it undid a colour
+    # transform (#482). Looked up here, applied only after the decode.
+    decoded_label = DECODER_RELABELS.get(str(transfer_syntax), {}).get(
+        str(getattr(ds, "PhotometricInterpretation", "") or ""))
 
     # Handle encapsulated data (fragments)
 
@@ -669,4 +696,11 @@ def get_pixel_data(ds):
         # instance. Do not drop it as a side effect nobody asked for: it
         # is the only way the door says the bytes changed colour space.
         ds.PhotometricInterpretation = conversion[1]
+    elif decoded_label is not None:
+        # The codec converted rather than this handler, and the label
+        # follows it just the same (#482). After the `try`, for the reason
+        # above: a JPEG 2000 decode that fails leaves `ds` saying what it
+        # said. Relabel before the decode and a failed read leaves RGB on
+        # a dataset nothing was decoded from.
+        ds.PhotometricInterpretation = decoded_label
     return arr

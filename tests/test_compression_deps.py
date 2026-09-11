@@ -1,6 +1,6 @@
 
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 from isocenter.entities import Instance
 
 def test_missing_compression_deps_error(tmp_path):
@@ -13,19 +13,17 @@ def test_missing_compression_deps_error(tmp_path):
 
     inst = Instance("1.2.3", "1.2.3.4", 1, file_path=str(dcm_path))
 
-    # Mock pydicom.dcmread to return a dataset that fails on .pixel_array access
-    with patch("isocenter.entities.pydicom.dcmread") as mock_read:
+    # Mock pydicom.dcmread to return a dataset whose decode fails. The
+    # Instance door decodes through `get_decoder(ts).as_array`, which is
+    # what `Dataset.pixel_array` calls, so that it can keep the decoder's
+    # colour-space answer (#482); the decoder is where the failure goes.
+    with patch("isocenter.entities.pydicom.dcmread") as mock_read, \
+            patch("isocenter.entities.get_decoder") as mock_decoder:
         mock_ds = MagicMock()
-        # Define a property that raises the specific RuntimeError
-        type(mock_ds).pixel_array = PropertyMock(side_effect=RuntimeError(
-            "Unable to decompress 'JPEG Baseline' pixel data because all plugins are missing dependencies"
-        ))
         mock_read.return_value = mock_ds
-
-        p = PropertyMock(side_effect=RuntimeError(
+        mock_decoder.return_value.as_array.side_effect = RuntimeError(
             "Unable to decompress 'JPEG Baseline' pixel data because all plugins are missing dependencies"
-        ))
-        type(mock_ds).pixel_array = p
+        )
 
         with pytest.raises(RuntimeError) as excinfo:
             inst.get_pixel_data()
