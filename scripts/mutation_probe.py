@@ -904,14 +904,16 @@ TARGETS = {
     #   - the print in `is_available()` is equivalent now. It was the only
     #     place the import failure's cause reached anyone until #444 put
     #     the cause in the raise itself.
-    # #482 then added 2 sites, taking the module to 81: `DECODER_RELABELS`
-    # and the lookup that reads it. They are NOT in the 77/79 above, which
-    # was measured before them, and this row's figures are deliberately
-    # left at that measurement rather than restated over a count nothing
-    # re-ran. Both new sites were killed by real edits on this branch and
-    # not by the probe: the relabel emptied to `pass` (M2), and the
-    # `YBR_ICT` row dropped from the .91 table (M3), each red in
-    # tests/test_ybr_read_door_labels.py on 3.12.14 and 3.14.7t.
+    # #482 then added 2 sites, taking the module to 81. Every other site
+    # is the one #489 measured: the operator kinds are unchanged and only
+    # line numbers moved, so the 77 above carries. The two new ones are
+    # NOT the table -- `DECODER_RELABELS` is a dict literal, which no
+    # operator in this probe can see. They are the `or ""` in the lookup
+    # that reads it (`Or -> And`) and the `is not None` guard on the
+    # relabel (`IsNot -> Is`). Both measured here at stride 1 on this
+    # branch (3.12.14, 27.6s control against #489's 28.6s), both KILLED,
+    # by tests/test_ybr_read_door_labels.py. That is 79 of 81, with the
+    # same two known-equivalent survivors named above and no new one.
     # The RLE arm, which no mutant could reach through a real decode, is
     # gone (#447).
     "isocenter/imagecodecs_handler.py": (["tests/test_codecs_strict.py",
