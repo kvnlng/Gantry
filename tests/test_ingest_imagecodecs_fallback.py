@@ -718,6 +718,33 @@ def test_ingest_names_why_imagecodecs_is_unavailable(tmp_path, monkeypatch):
     assert "libjpeg.so.8" in reason, reason
 
 
+def test_the_lazy_load_error_carries_the_fallback_words_too(tmp_path):
+    """I4: the read door's second raise says what the fallback said (#444).
+
+    `Instance.get_pixel_data()` has two final raises, and I3 reaches only
+    the "Failed to decompress" one. This file reaches the other: pydicom
+    refuses it on validation (PlanarConfiguration absent, an
+    `AttributeError`, so not the "decompress" branch), the handler is
+    asked and refuses the offset table (it names one frame; NumberOfFrames
+    declares two), and the error is `Lazy load failed`. Without the
+    fallback line, the handler's reason -- the only true one -- is lost.
+    Found in review of #463.
+    """
+    from isocenter.entities import Instance
+    ds = _dataset(J2K_LOSSLESS, [RGB16["uint16"]], planar=None,
+                  number_of_frames=2)
+    path = _write(str(tmp_path), ds)
+    _assert_pydicom_cannot(path, expect=AttributeError)
+    inst = Instance(generate_uid(), "1.2.840.10008.5.1.4.1.1.7", 1,
+                    file_path=path)
+    with pytest.raises(RuntimeError) as exc:
+        inst.get_pixel_data()
+    msg = str(exc.value)
+    assert msg.startswith("Lazy load failed"), msg
+    assert ("imagecodecs fallback: Basic Offset Table names 1 frames; "
+            "NumberOfFrames declares 2") in msg, msg
+
+
 def test_the_read_door_names_why_imagecodecs_is_unavailable(tmp_path,
                                                             monkeypatch):
     """I3: `Instance.get_pixel_data()` says why, and keeps its advice.

@@ -289,8 +289,9 @@ def test_a_signed_decode_narrower_than_bits_stored_is_refused_at_both_doors(
 # S5 -- a signed header whose HighBit is not BitsStored - 1 is refused
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize("high_bit", [15, 10], ids=["above", "below"])
 def test_a_signed_frame_whose_high_bit_is_not_bits_stored_minus_one_is_refused_at_both_doors(  # noqa: E501  pylint: disable=line-too-long
-        doors):
+        doors, high_bit):
     """S5: no JPEG decode produces the layout that header describes.
 
     A JPEG decoder returns right-aligned BitsStored-bit samples, so
@@ -302,17 +303,22 @@ def test_a_signed_frame_whose_high_bit_is_not_bits_stored_minus_one_is_refused_a
     return a wrong value (owner question Q1, answered with the
     recommendation pending confirmation). Refused at ingest, and at the
     read door in the handler's words (#444's `imagecodecs fallback:` line).
+
+    Both sides of BitsStored - 1, so the check is pinned as an inequality:
+    with HighBit 15 alone, `!=` weakened to `>` stayed green (found in
+    review of #463).
     """
     want = SIGNED[12]
     codestream = _ljpeg(_pattern(want, 12), 12)
-    got = doors(_dataset(LJPEG_SV1, codestream, want.shape, 12, high_bit=15))
+    got = doors(_dataset(LJPEG_SV1, codestream, want.shape, 12,
+                         high_bit=high_bit))
     ingested, failures, _stored = got["ingest"]
     assert ingested == 0
     reason = failures[0][1]
     for door, words in (("ingest", reason),
                         ("instance", str(got["instance"])),
                         ("handler", str(got["handler"]))):
-        assert "HighBit 15" in words, f"{door}: {words}"
+        assert f"HighBit {high_bit}" in words, f"{door}: {words}"
         assert "BitsStored 12" in words, f"{door}: {words}"
 
 
