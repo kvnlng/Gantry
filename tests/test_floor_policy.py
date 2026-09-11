@@ -455,6 +455,76 @@ def test_the_loader_lowercases_user_keys_before_the_merge(tmp_path):
     assert len(tags) == len(BASIC_PROFILE)
 
 
+# ---------------------------------------------------------------------------
+# A config with no privacy_profile line (an absent line means the floor
+# beneath the file's tags; `none` opts out)
+# ---------------------------------------------------------------------------
+
+def test_a_config_without_a_profile_line_extends_the_floor(tmp_path, caplog):
+    """`phi_tags: {'0018,1030': REMOVE}` with no `privacy_profile` line
+    loads the floor plus that one tag, names no profile, and logs that
+    the floor was applied. Kills an absent line meaning an empty base
+    (1 tag, and Study ID and Institution Name back in the export -- the
+    brief's `MODE=onetag` measurement), and the floor applied without a
+    word."""
+    from isocenter.config_manager import ConfigLoader
+    from isocenter.profiles import FLOOR_POLICY
+
+    config = tmp_path / "onetag.yaml"
+    config.write_text("phi_tags:\n  '0018,1030': {action: REMOVE, name: Protocol}\n",
+                      encoding="utf-8")
+
+    with caplog.at_level(logging.INFO, logger="isocenter"):
+        tags, _, _, _, profile = ConfigLoader.load_unified_config(str(config))
+
+    assert tags == {**FLOOR_POLICY,
+                    "0018,1030": {"action": "REMOVE", "name": "Protocol"}}
+    assert tags["0020,0010"]["action"] == "REMOVE"      # Study ID
+    assert profile is None
+    assert "floor policy" in caplog.text
+
+
+def test_keep_opts_a_tag_out_of_the_floor(tmp_path):
+    """`action: KEEP` in a file with no profile line opts one tag out of
+    the floor, and the key may be spelled uppercase. Loaded: 36 entries,
+    one `0008,103e` carrying KEEP (not 37 with the KEEP winning only by
+    dict order); the audit raises nothing for it; and a KEEP on
+    Institution Name survives to the exported CT_small. Kills the
+    override order reversed (floor over user) and the loader not
+    lowercasing."""
+    from isocenter.profiles import FLOOR_POLICY
+
+    config = tmp_path / "keep.yaml"
+    config.write_text(
+        "phi_tags:\n"
+        "  '0008,103E': {action: KEEP, name: Series Description}\n"
+        "  '0008,0080': {action: KEEP, name: Institution Name}\n",
+        encoding="utf-8")
+
+    patient, instance = _bare_ct_instance()
+    instance.attributes["0008,103e"] = "Rhythm strip Jane Doe"
+    with Session(str(tmp_path / "a.db")) as session:
+        session.load_config(str(config))
+        tags = session.configuration.phi_tags
+        assert len(tags) == len(FLOOR_POLICY)
+        assert "0008,103E" not in tags
+        assert tags["0008,103e"]["action"] == "KEEP"
+        session.store.patients.append(patient)
+        report = session.audit()
+    assert not any(f.tag in ("0008,103e", "0008,0080") for f in report)
+
+    original = _ct_small_into(str(tmp_path / "in"))
+    with Session(str(tmp_path / "b.db")) as session:
+        session.ingest(str(tmp_path / "in"))
+        session.load_config(str(config))
+        session.anonymize(session.audit())
+        summary = session.export(str(tmp_path / "out"), use_compression=False)
+    assert summary.written == 1, summary.failures
+    ds = pydicom.dcmread(_exported_dicoms(str(tmp_path / "out"))[0])
+    assert str(ds.InstitutionName) == str(original.InstitutionName)
+    assert "StudyID" not in ds, "the floor beneath the KEEPs did not apply"
+
+
 def test_the_default_phi_policy_is_the_floor():
     """`ConfigLoader.load_phi_config()` with no path, which `PhiInspector()`
     with no policy calls, returns a fresh copy of the floor now that

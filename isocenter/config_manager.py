@@ -216,6 +216,23 @@ def load_unified_config(path: str) -> Dict[str, Any]:
         config.pop("privacy_profile")
         return config
 
+    # No `privacy_profile` line: the floor policy beneath the file's tags
+    # (#495). A loaded config extends or overrides
+    # what a bare session applies rather than replacing it with its own
+    # few tags -- otherwise a one-tag file switches the floor off by
+    # accident, which the #495 measurement shows (`MODE=onetag`: Study ID
+    # and Institution Name back in the export). `action: KEEP` opts one
+    # tag out; `privacy_profile: none` opts out of the floor entirely.
+    if "privacy_profile" not in config:
+        floor = copy.deepcopy(FLOOR_POLICY)
+        get_logger().info(
+            "%s names no privacy_profile: applying the floor policy (%d rules) "
+            "beneath its %d phi_tags. Write 'privacy_profile: none' to load "
+            "only the file's own tags.", path, len(floor), len(config["phi_tags"]))
+        floor.update(config["phi_tags"])
+        config["phi_tags"] = floor
+        return config
+
     # Merge Privacy Profile
     if "privacy_profile" in config:
         profile_name = config["privacy_profile"]

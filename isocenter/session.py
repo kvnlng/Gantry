@@ -302,7 +302,8 @@ _CONFIG_HEADER = """# Isocenter Privacy Configuration (v2.0)
 #
 # privacy_profile: "basic"
 #   - Standard profile handling common PHI (Name, ID, etc).
-#   - Set to "none" for manual control.
+#   - Omit the line to apply the floor policy beneath your phi_tags.
+#   - Set to "none" for manual control: phi_tags is the whole policy.
 #
 # phi_tags:
 #   - Define custom overrides here.

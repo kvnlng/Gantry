@@ -97,8 +97,11 @@ There are three configurations a reader of this guide can be in:
   `privacy_profile: basic` -- the entries of the floor whose action
   differs from the profile's -- so the loaded policy is the same 36
   rules a bare session applies.
-- **Your own `phi_tags` configuration**, loaded standalone or layered
-  on top of a profile -- your explicit tags win over the profile's.
+- **Your own `phi_tags` configuration.** With no `privacy_profile`
+  line it is layered on the floor policy; with `privacy_profile: basic`
+  on the basic profile; with `privacy_profile: none` it is the whole
+  policy. Your explicit tags win over the base either way, and
+  `action: KEEP` opts a tag out.
 
 Series Description `(0008,103E)` -- and the Study Description it sits
 alongside -- are both correctly emptied on the documented path. (A

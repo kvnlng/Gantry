@@ -80,6 +80,8 @@ Any other value is refused: `load_config()` raises `ValueError` naming it. (Thes
 
 A session that has loaded no configuration applies the **floor policy**, `FLOOR_POLICY` in `isocenter/profiles.py`: the basic profile plus the three research defaults `create_config()` writes (Study Date jittered, Patient's Sex and Age kept), 36 rules.
 
+**Omitting `privacy_profile` means the floor beneath your `phi_tags`.** A file with a few tags and no profile line extends the floor rather than replacing it, so a one-tag config cannot switch the floor off by accident. To opt a single tag out, give it `action: "KEEP"`; to opt out of the floor entirely, write `privacy_profile: "none"`.
+
 ### Date Jitter
 
 Shifts all date attributes (`DA`, `DT`) by a random number of days.

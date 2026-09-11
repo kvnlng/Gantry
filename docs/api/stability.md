@@ -171,7 +171,8 @@ three fields. The rest of the fluent chain is tier 2.
 `remove_private_tags`, `privacy_profile`. On a session that has loaded
 no configuration, `phi_tags` is a copy of the floor policy,
 `profiles.FLOOR_POLICY`, and `audit()`/`anonymize()` apply it; a config
-with `privacy_profile: none` opts out of it (#495). `set_phi_tag()`
+with no `privacy_profile` line extends it, and one with
+`privacy_profile: none` opts out of it (#495). `set_phi_tag()`
 stores lowercase keys, as every other key in the policy is.
 
 **Exceptions.** `RedactionError(failures, attempted)`, a `RuntimeError`,
