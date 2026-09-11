@@ -364,16 +364,6 @@ def _ocr_instance(instance: Instance) -> _InstanceOcr:
     `detect_text_regions`, which logged and returned `[]`, so an instance
     nobody had read reported exactly like a clean one.
     """
-    if not HAS_OCR:
-        # A failure, not `[]`. The Session methods check availability in
-        # the parent before dispatching (#422), so reaching this is a
-        # spawned worker that cannot import pytesseract when the caller
-        # could -- #423's shape exactly. A module flag rather than
-        # `_ocr_unavailable_reason()`, which would spawn a tesseract
-        # subprocess per instance.
-        return _InstanceOcr(
-            [], False, f"pytesseract could not be imported ({_OCR_IMPORT_ERROR})")
-
     # No pixel element to read is neither read nor failed. Checked from
     # the instance's state, not from `get_pixel_data()`'s messages, which
     # would drift under any rewording there. A hand-built instance with
@@ -417,6 +407,24 @@ def _load_and_ocr(instance: Instance) -> _InstanceOcr:
     # `get_pixel_data()` answers `None` for it: neither read nor failed.
     if pixel_array is None:
         return _InstanceOcr([], False, None)
+
+    # After both pixel-less checks, never before them. An instance with
+    # nothing to read had nothing OCR could miss, and only the load can
+    # tell an ingested SR from an image. With this check first, as it
+    # was, a spawned worker that could not import pytesseract reported
+    # every pixel-less instance as a failure too: the review of #462
+    # measured 5 of 5, the pixel-less one among them. The cost of the
+    # order is one load on a route that is failing anyway, and
+    # `_ocr_instance`'s `finally` frees it.
+    if not HAS_OCR:
+        # A failure, not `[]`. The Session methods check availability in
+        # the parent before dispatching (#422), so reaching this is a
+        # spawned worker that cannot import pytesseract when the caller
+        # could -- #423's shape exactly. A module flag rather than
+        # `_ocr_unavailable_reason()`, which would spawn a tesseract
+        # subprocess per instance.
+        return _InstanceOcr(
+            [], False, f"pytesseract could not be imported ({_OCR_IMPORT_ERROR})")
 
     try:
         frames = _frames_for_ocr(instance, pixel_array)

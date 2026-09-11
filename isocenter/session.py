@@ -138,7 +138,7 @@ def _verify_worker(args):
     # Strip the instance before the findings cross back, as `scan_worker`
     # does; `scan_pixel_content` puts the live one back (#412). The strip
     # is not tidiness. OCR decodes the frame first, `get_pixel_data()`
-    # caches it on the instance, and `verify_instance` attaches that
+    # caches it on the instance, and `_findings_for` attaches that
     # instance to every finding -- so the result carried the decoded
     # frame back to the parent, once per scanned instance with a finding
     # (pickle memoises the shared instance, so a second finding on the

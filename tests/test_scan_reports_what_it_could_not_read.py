@@ -27,8 +27,9 @@ that did would pass for different reasons in the two places.
 `ocr_present` (in `conftest.py`) stands in for pytesseract in this
 process, and its `image_to_data` is overridden where a test needs text or
 a failure. Which frame fails is decided by the frame's *contents*, never
-by a call counter, which races across the pool's threads. E6 is the one
-test in processes, and it patches inside the child (see its wrapper).
+by a call counter, which races across the pool's threads. E6, E13, E14
+and E15 run in processes, and each patches inside the child (see
+`_worker_that_cannot_run_tesseract_for_one_instance`).
 
 **Why this file imports what it does.** It reaches `PhiReport` through
 `session_module.PhiReport`, never by the dotted name of the module that
@@ -40,6 +41,7 @@ sits in both of those `TARGETS` rows in `scripts/mutation_probe.py`.
 """
 import logging
 import os
+import time
 from datetime import date
 from unittest.mock import patch
 
@@ -325,6 +327,171 @@ def test_a_worker_process_that_cannot_read_reports_it_back(monkeypatch, ocr_pres
     child_pid = int(reason.split("pid=")[1].split(")")[0])
     assert child_pid != os.getpid(), "the processes case ran in this process"
     assert {f.entity_uid for f in report} == {i.sop_instance_uid for i in others}
+
+
+def _processes(monkeypatch, workers="2"):
+    monkeypatch.setenv("ISOCENTER_MAX_WORKERS", workers)
+    monkeypatch.setenv("ISOCENTER_FORCE_PROCESSES", "1")
+    monkeypatch.delenv("ISOCENTER_FORCE_THREADS", raising=False)
+
+
+def _worker_without_pytesseract(args):
+    """The real worker, in a child that cannot import pytesseract.
+
+    Forced rather than left to the environment: neither local gate
+    interpreter's children have pytesseract and CI's do, so a test that
+    relied on the difference would pin this in one of the two places.
+    """
+    with patch.object(pixel_analysis, "HAS_OCR", False):
+        return _REAL_VERIFY_WORKER(args)
+
+
+def test_a_pixelless_instance_is_not_a_failure_in_a_worker_without_ocr(
+        monkeypatch, ocr_present):
+    """E13: no pixel element is neither read nor failed on the worker route too.
+
+    #423's route: the parent passes `_require_ocr` and a spawned child
+    cannot import pytesseract. The instance with pixels is a failure
+    naming that; the one with no pixel element had nothing to read, and
+    reporting it as a failure is the false positive E4 pins in threads.
+    Red while `_ocr_instance` checked `HAS_OCR` before the pixel-less
+    check: the reviewer measured 5 of 5 failed, the pixel-less one among
+    them. Also kills the mutant that makes a worker without pytesseract
+    report neither (the instance with pixels would then not be a failure,
+    and nothing would raise).
+    """
+    _processes(monkeypatch)
+    monkeypatch.setattr(session_module, "_verify_worker", _worker_without_pytesseract)
+    pixelless_uid, readable_uid = "1.2.826.0.1.423.14.0", "1.2.826.0.1.423.14.1"
+
+    with pytest.raises(pixel_analysis.PixelScanError) as raised:
+        _scan([_instance(pixelless_uid), _instance(readable_uid, _frame(1))])
+
+    exc = raised.value
+    assert [uid for uid, _ in exc.failures] == [readable_uid], exc.failures
+    assert "pytesseract could not be imported" in exc.failures[0][1], exc.failures
+    assert exc.attempted == 2
+
+
+def test_an_ingested_sr_is_not_a_failure_in_a_worker_without_ocr(
+        monkeypatch, ocr_present, tmp_path):
+    """E13, the ingested-SR arm: only the load says an SR has no pixel element.
+
+    It carries its source file, so the pre-check cannot tell it from an
+    image, and the `HAS_OCR` check must come after the load that answers
+    `None` -- moving it below the pre-check alone left this arm reporting
+    a failure, and, alone in its scan, raising.
+    """
+    _processes(monkeypatch)
+    monkeypatch.setattr(session_module, "_verify_worker", _worker_without_pytesseract)
+    source = tmp_path / "src"
+    source.mkdir()
+    _write_sr(str(source))
+
+    with DicomSession(str(tmp_path / "sr.db")) as session:
+        assert session.ingest(str(source)).ingested == 1
+        session.configuration.rules = [
+            {"serial_number": SERIAL, "redaction_zones": [ZONE]}]
+        report = session.scan_pixel_content()
+
+    assert len(report) == 0
+    assert report.failures == []
+
+
+def _worker_whose_ocr_fails_on_every_frame(args):
+    """The real worker, in a child whose tesseract raises for every frame.
+
+    The load and the preparation succeed, so this is the per-frame catch
+    alone: every instance reaches the loop and no frame is read.
+    """
+    def detect(_frame_data, frame_idx=0):
+        raise RuntimeError(f"Tesseract process timeout (pid={os.getpid()})")
+
+    with patch.object(pixel_analysis, "HAS_OCR", True), \
+            patch.object(pixel_analysis, "pytesseract", object()), \
+            patch.object(pixel_analysis, "_detect_text_regions_or_raise", detect):
+        return _REAL_VERIFY_WORKER(args)
+
+
+def test_a_scan_whose_ocr_failed_on_every_frame_raises(monkeypatch, ocr_present):
+    """E14: an instance is read only when a frame went through OCR.
+
+    E3 raises on instances whose *load* failed. Here every load succeeds
+    and every frame's OCR raises, so nothing was read either; an instance
+    counted as read because it had frames to try would return an empty
+    report for a scan that saw no text at all.
+    """
+    _processes(monkeypatch)
+    monkeypatch.setattr(session_module, "_verify_worker",
+                        _worker_whose_ocr_fails_on_every_frame)
+    uids = [f"1.2.826.0.1.423.15.{n}" for n in range(3)]
+
+    with pytest.raises(pixel_analysis.PixelScanError) as raised:
+        _scan([_instance(uid, _frame(1)) for uid in uids])
+
+    exc = raised.value
+    assert sorted(uid for uid, _ in exc.failures) == uids, exc.failures
+    assert all("OCR failed on frame 0" in why and "pid=" in why
+               for _, why in exc.failures), exc.failures
+    assert exc.attempted == 3
+
+
+#: Dispatched first and slow: readable, and still reading when the fast
+#: failures dispatched behind them come back.
+SLOW_READABLE = ("1.2.826.0.1.423.16.0", "1.2.826.0.1.423.16.1")
+FAST_FAILING = ("1.2.826.0.1.423.16.2", "1.2.826.0.1.423.16.3")
+FAST_READABLE = ("1.2.826.0.1.423.16.4", "1.2.826.0.1.423.16.5")
+
+
+def _worker_whose_outcomes_come_back_out_of_order(args):
+    """The real worker, slow for the first instances and failing fast for two.
+
+    The failure names the instance the child actually read, so a
+    failure filed under another instance's UID is visible in its own
+    entry, not only in the set.
+    """
+    uid = args[0].sop_instance_uid
+
+    def detect(_frame_data, frame_idx=0):
+        if uid in SLOW_READABLE:
+            time.sleep(2.0)
+        if uid in FAST_FAILING:
+            raise RuntimeError(f"Tesseract process timeout reading {uid}")
+        return [TextRegion("LEAKTEXT", (200, 200, 50, 50), 90.0, frame_idx)]
+
+    with patch.object(pixel_analysis, "HAS_OCR", True), \
+            patch.object(pixel_analysis, "pytesseract", object()), \
+            patch.object(pixel_analysis, "_detect_text_regions_or_raise", detect):
+        return _REAL_VERIFY_WORKER(args)
+
+
+def test_each_outcome_is_filed_under_its_own_instance_on_the_recycling_pool(
+        monkeypatch, ocr_present):
+    """E15: outcomes are keyed by the UID they carry, never by position.
+
+    `ISOCENTER_MAX_TASKS_PER_CHILD` routes the pass through
+    `multiprocessing.Pool.imap_unordered`, which yields results as
+    workers finish. The two slow readable instances are dispatched
+    first, so the fast failures behind them come back ahead of them: a
+    loop that zipped the outcomes onto the dispatch order would file the
+    first failure under the first slow instance. The 2 s sleep is the
+    margin over the gap between the pool's workers starting, which are
+    spawned together.
+    """
+    _processes(monkeypatch, workers="3")
+    monkeypatch.setenv("ISOCENTER_MAX_TASKS_PER_CHILD", "1")
+    monkeypatch.setattr(session_module, "_verify_worker",
+                        _worker_whose_outcomes_come_back_out_of_order)
+    order = SLOW_READABLE + FAST_FAILING + FAST_READABLE
+
+    report = _scan([_instance(uid, _frame(1)) for uid in order])
+
+    assert sorted(uid for uid, _ in report.failures) == list(FAST_FAILING), report.failures
+    for uid, why in report.failures:
+        assert why.endswith(f"reading {uid}"), (uid, why)
+    assert sorted(f.entity_uid for f in report) == sorted(SLOW_READABLE + FAST_READABLE)
+    assert all(f.entity is not None and f.entity.sop_instance_uid == f.entity_uid
+               for f in report)
 
 
 def test_the_count_is_warned(ocr_present, caplog):
