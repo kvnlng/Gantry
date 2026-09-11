@@ -121,6 +121,7 @@ are what an operator watching a terminal sees -- but a test that pinned
 their wording would pin a rendering, not a fact.
 """
 
+import concurrent.futures
 import contextlib
 import os
 import sys
@@ -188,7 +189,7 @@ from .blob_kind import serialize_blob_kind
 from .imagecodecs_handler import (decode_declared_frames,
                                   frame_count_mismatch_words,
                                   offset_table_frame_count)
-from .parallel import run_parallel
+from .parallel import run_parallel, _resolve_strategy
 from .validation import IODValidator
 from .sidecar import SidecarManager
 from .waveform import filter_dangling_annotation_refs
@@ -2101,6 +2102,15 @@ class DicomImporter:
                         if filename.startswith('.'):
                             continue
                         all_files.append(os.path.join(root, filename))
+        # `os.walk` order is the filesystem's -- measured: APFS lists
+        # neither sorted nor in creation order, HFS+ lists sorted -- and
+        # #431 keeps the first file linked for a duplicated SOP Instance
+        # UID, so without this the same folder kept a different file on a
+        # different volume (#450). The key is the path string as built
+        # above, the one the declined row prints: not `abspath` or
+        # `realpath`, which would reorder a symlinked tree, and not
+        # locale-aware, which would differ by machine.
+        all_files.sort()
 
         known_paths = store.get_ingested_paths()
         new_files = [fp for fp in all_files
@@ -2142,13 +2152,63 @@ class DicomImporter:
         # This prevents accumulating result tuples (with huge p_bytes) in a list (O(N) memory).
         # We process each result immediately and discard it (O(1) memory).
         # OPTIMIZATION: chunksize=1 to prevent buffering multiple large files in IPC queue
+        #
+        # The strategy is resolved here, once, and handed to
+        # `run_parallel` as `strategy=`, which then ignores its own
+        # resolution keywords -- so `chunksize`, `desc` and the progress
+        # bar live in this call and nowhere else. Resolved here because
+        # this is the one frame that can say what the strategy is worth
+        # to ingest: see the warning below (#393).
+        strategy = _resolve_strategy(None, 1, None, False, False, True,
+                                     "Ingesting", None)
+        # `ingest()` hands in the session's `ProcessPoolExecutor`, which
+        # `_run_on_shared_executor` uses as given, so a threads lever the
+        # strategy granted reaches nothing (#390). Say so, once per call
+        # that dispatches, where the operator who set the variable will
+        # look for its effect (#393, in #400's shape: it names only the
+        # knob that was set, says the result is correct, and bounds
+        # itself). The conditions are each load-bearing:
+        #   - `threads_requested_by`, not `use_threads`: a free-threaded
+        #     build resolves to threads with nothing set, and warning
+        #     there would be a line on every 3.14t ingest about a
+        #     variable nobody touched;
+        #   - `use_threads` as well: when recycling beat the request,
+        #     #185's warning -- emitted inside `run_parallel`, and
+        #     already naming `ingest()` -- is the one line;
+        #   - an executor that is not a thread pool: with none,
+        #     `run_parallel` builds its own pool and honours the lever,
+        #     and a `ThreadPoolExecutor` is already threads.
+        # Here and not in `run_parallel`, because "ingest() has no threads
+        # mode" is ingest's knowledge; a future caller that hands in a
+        # process pool on purpose has promised nothing about the lever.
+        # After the `not new_files` return, so an ingest with nothing to
+        # read is silent, and before the dispatch, so a dispatch that
+        # raises cannot swallow it.
+        if (strategy.threads_requested_by is not None
+                and strategy.use_threads
+                and executor is not None
+                and not isinstance(executor,
+                                   concurrent.futures.ThreadPoolExecutor)):
+            logger.warning(
+                "%s had no effect on this ingest(). ingest() runs on the "
+                "session's own process pool, so it ran in processes and "
+                "its result is unaffected. The variable still applies to "
+                "audit(), scan_pixel_content() and redact() in this "
+                "process; ingest() has no threads mode.",
+                strategy.threads_requested_by)
+        #
+        # `ordered=True` keeps the results in the sorted order above on
+        # the one path that would otherwise yield by arrival: the
+        # recycling pool, which a direct `import_files(executor=None)`
+        # reaches under `ISOCENTER_MAX_TASKS_PER_CHILD`. The session's
+        # shared executor is ordered already (#450).
         results = run_parallel(
             ingest_worker,
             new_files,
-            desc="Ingesting",
-            chunksize=1,
             executor=executor,
-            return_generator=True)
+            return_generator=True,
+            ordered=True,
+            strategy=strategy)
 
         # 3. Aggregation (Streaming)
         #
@@ -2269,9 +2329,11 @@ class DicomImporter:
                     # (#211's scoping). `WARNING` rows are exceptions in
                     # the report and bar PASS.
                     #
-                    # "First" is the first *linked*, which is not always
-                    # the first on disk: `run_parallel` streams results
-                    # as workers finish them (#450).
+                    # "First" is first in path order among the files new
+                    # to this call -- `all_files` is sorted and results
+                    # are consumed in submission order -- and an instance
+                    # the session already held beats every new file,
+                    # because `held` is seeded from the graph (#450).
                     holder = held.get(inst.sop_instance_uid)
                     if holder is not None:
                         holder_path = holder.source_path or holder.file_path

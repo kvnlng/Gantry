@@ -12,10 +12,15 @@ The ruling: keep the first, decline the rest, each with a `WARNING` row
 naming the UID and both paths. The same holds across calls and across
 sessions, because both reduce to "the graph already holds this UID".
 
-**No test here asserts which file is kept.** Workers finish in any order
-(`imap_unordered`), so "first" is first *linked* (#450). What is pinned
-instead is that the instance kept holds the pixels of the file the row
-names as the holder -- a property of the fix, not of scheduling.
+Which file is kept is pinned: the one whose path sorts first among the
+files new to the call (#450), and an instance the session already holds
+always wins. Before #450 it was the first in the filesystem's listing
+order, which APFS does not sort; the tests that pin it control
+`os.walk` rather than trusting the volume, because a filesystem that
+happens to list sorted would let an unsorted ingest pass. The other
+tests still read the holder from the row rather than assuming it, and
+check that the instance kept holds the pixels of the file the row names
+-- a property of the #431 fix, whichever file is first.
 
 Each file's pixels are a constant array of a distinct value, so the
 kept instance's pixels say which file it came from, and so every file
@@ -27,6 +32,7 @@ import os
 import sqlite3
 
 import numpy as np
+import pytest
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
@@ -440,3 +446,111 @@ def test_the_printout_counts_declined_files_among_the_new_files(tmp_path,
         assert "ingested 1 of 3 new files" in out, out
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# #450 -- which file is kept does not depend on the volume
+# ---------------------------------------------------------------------------
+
+_REAL_WALK = os.walk
+
+
+def _reverse_sorted_walk(top, *args, **kwargs):
+    """`os.walk`, listing directories and files in reverse name order.
+
+    The listing order is the thing under test, so the test sets it rather
+    than trusting the filesystem: APFS measured neither sorted nor
+    creation order, HFS+ sorted, and ext4 hashes -- any of which could
+    list these fixtures sorted and let an unsorted ingest pass. `dirs` is
+    reversed *in place*, which is what top-down `os.walk` reads when it
+    descends, so the recursion order follows too.
+    """
+    for root, dirs, files in _REAL_WALK(top, *args, **kwargs):
+        dirs.sort(reverse=True)
+        yield root, dirs, sorted(files, reverse=True)
+
+
+def _same_directory(root):
+    """Two files, one UID, side by side: `src/a.dcm` (7s), `src/b.dcm` (9s)."""
+    uid, study, series = generate_uid(), generate_uid(), generate_uid()
+    first = _write(os.path.join(root, "a.dcm"), uid, study, series, X_VALUE)
+    second = _write(os.path.join(root, "b.dcm"), uid, study, series, Y_VALUE)
+    return uid, first, second, {first: X_VALUE, second: Y_VALUE}
+
+
+def _across_directories(root):
+    """`src/one/x.dcm` (7s) and `src/two/y.dcm` (9s), from `_pair`."""
+    uid, values = _pair(root)
+    first, second = sorted(values)
+    return uid, first, second, values
+
+
+@pytest.mark.parametrize("layout", [_same_directory, _across_directories],
+                         ids=["same-directory", "across-directories"])
+def test_the_file_kept_is_the_one_whose_path_sorts_first_whatever_the_listing_order(
+        tmp_path, monkeypatch, layout):
+    """The same folder keeps the same file on every volume (#450).
+
+    Before #450 `import_files` dispatched in `os.walk` order, and the
+    shared executor yields in submission order, so the file kept was the
+    first the *filesystem* listed: `f001.dcm` over `f000.dcm` on APFS,
+    `f000.dcm` on HFS+, measured on one folder. The listing is now sorted
+    before dispatch, so the path that sorts first is linked first and
+    kept. Killing mutation: the sort deleted -- the reversed listing then
+    keeps the second file.
+    """
+    uid, first, second, values = layout(str(tmp_path / "src"))
+    assert sorted((first, second)) == [first, second]
+    monkeypatch.setattr(os, "walk", _reverse_sorted_walk)
+
+    session = DicomSession(persistence_file=str(tmp_path / "s.db"))
+    try:
+        summary = session.ingest(str(tmp_path / "src"))
+        assert (summary.ingested, summary.declined) == (1, 1), summary
+
+        rows = _warning_rows(session)
+        assert len(rows) == 1, rows
+        declined, holder = _declined_and_holder(rows[0][1], list(values))
+        assert (holder, declined) == (first, second), (
+            f"kept {holder}, declined {declined}: the path that sorts first "
+            f"must be the one kept")
+        _assert_the_holder_is_what_is_held(session, uid, first, values)
+    finally:
+        session.close()
+
+
+def test_import_files_hands_run_parallel_sorted_files_and_asks_for_order(
+        tmp_path, monkeypatch):
+    """The dispatch itself: sorted items, `ordered=True`, one strategy (#450, #393).
+
+    `ordered=True` matters only on the recycling pool, which a direct
+    `import_files(executor=None)` reaches under
+    `ISOCENTER_MAX_TASKS_PER_CHILD`; the session's shared executor is
+    ordered already. The strategy is resolved in `import_files` and handed
+    in, because that is where #393's warning reads it. Killing mutations:
+    the sort deleted or moved after the dispatch; `ordered=True` dropped.
+    """
+    from isocenter.parallel import _Strategy
+
+    for name in ("c.dcm", "a.dcm", "b.dcm"):
+        (tmp_path / "src").mkdir(exist_ok=True)
+        (tmp_path / "src" / name).write_bytes(b"never read")
+    monkeypatch.setattr(os, "walk", _reverse_sorted_walk)
+
+    recorded = {}
+
+    def spy(func, items, **kwargs):
+        recorded.update(kwargs)
+        recorded["items"] = list(items)
+        return []
+
+    monkeypatch.setattr("isocenter.io_handlers.run_parallel", spy)
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        session.ingest(str(tmp_path / "src"))
+
+    items = recorded["items"]
+    assert len(items) == 3, items
+    assert items == sorted(items), items
+    assert recorded.get("ordered") is True, recorded
+    assert isinstance(recorded.get("strategy"), _Strategy), recorded
