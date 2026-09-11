@@ -1451,10 +1451,10 @@ class Instance(DicomItem):
 
         **Only when the instance already carries a label.** A bare
         `Instance(file_path=...)` holds no descriptors, so nothing on it
-        is false. The pydicom arm of the same door never adds one, and a
-        lone PhotometricInterpretation beside no Rows would be a write no
-        read has made before. After `ingest()` the label is RGB already,
-        so on that path this writes nothing. It is for hand-built graphs.
+        is false. Neither arm adds one: a lone PhotometricInterpretation
+        beside no Rows would be a write no read has made before. After
+        `ingest()` the label is RGB already, so on that path this writes
+        nothing. It is for hand-built graphs.
 
         **Under `PIXEL_STATE_LOCK`, and only while `pixel_array` is
         still None.** The read arms publish their frame without the lock,
