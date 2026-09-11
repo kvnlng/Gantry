@@ -5,6 +5,21 @@ from .entities import Patient, Study, Instance, iter_item_tree
 from .logger import get_logger
 
 
+# The replacements `scan_patient` proposes, spelled once for the two
+# places that ask "is this already the Patient's replacement?":
+# `scan_patient`, which raises nothing for a patient holding one, and
+# `_scan_instance`, which raises nothing for an instance's top-level copy
+# of it (#496). Two spellings of one test would drift, and a drift here
+# either re-flags every anonymized instance on a re-audit or stops
+# flagging a real identifier that happens to start with the prefix.
+def _is_replacement_name(value) -> bool:
+    return value == "ANONYMIZED"
+
+
+def _is_replacement_id(value) -> bool:
+    return str(value).startswith("ANON_")
+
+
 @dataclass(slots=True)
 class PhiRemediation:
     """
@@ -266,7 +281,8 @@ class PhiInspector:
         findings = []
 
         # 1. Direct Attributes
-        if patient.patient_name and patient.patient_name != "Unknown" and patient.patient_name != "ANONYMIZED":
+        if (patient.patient_name and patient.patient_name != "Unknown"
+                and not _is_replacement_name(patient.patient_name)):
             proposal = PhiRemediation(
                 action_type="REPLACE_TAG",
                 target_attr="patient_name",
@@ -285,8 +301,8 @@ class PhiInspector:
                 remediation_proposal=proposal
             ))
 
-        if patient.patient_id and patient.patient_id != "UNKNOWN" and not patient.patient_id.startswith(
-                "ANON_"):
+        if (patient.patient_id and patient.patient_id != "UNKNOWN"
+                and not _is_replacement_id(patient.patient_id)):
             # Simple deterministic anonymization proposal for now (can be refined in Service)
             # The Service will handle the hash calculation if 'new_value' is a
             # placeholder or if logic dictates
@@ -315,18 +331,24 @@ class PhiInspector:
 
             for series in study.series:
                 for instance in series.instances:
-                    findings.extend(self._scan_instance(instance, patient.patient_id, study=study))
+                    findings.extend(self._scan_instance(instance, patient.patient_id,
+                                                        study=study, patient=patient))
 
         return findings
 
     def _scan_instance(self, instance: Instance, patient_id: str,
-                       study: Study = None) -> List[PhiFinding]:
+                       study: Study = None, patient: Patient = None) -> List[PhiFinding]:
         """
         Scans a single instance for PHI based on configured tags and private tag rules.
 
         Walks the instance structurally to reach every text node,
         including nested sequence items. See the comment below before
         reintroducing an index.
+
+        `patient` and `study` are the instance's owners. With them, a
+        top-level copy of a tag they own that already holds their
+        replacement is not a finding (#496); without them nothing is
+        skipped, and the policy judges every copy.
         """
         findings = []
 
@@ -478,6 +500,21 @@ class PhiInspector:
             if val is None:
                 continue
 
+            # The owner's replacement is not PHI (#496). Since #492 an
+            # owner's remediation writes its value onto every instance's
+            # top-level copy, and without this a re-audit raised the
+            # instance's own rule against it: the instance went
+            # IDENTIFIED, the manifest read false, and a second
+            # `anonymize()` wrote a second value over the owner's.
+            # Top-level only, because that is as far as the owner's write
+            # and the exporter's stamp reach. Not for REMOVE, which the
+            # remediation side exempts from the fold for the same reason:
+            # removing a copy writes no second value, and it is the
+            # policy's explicit request.
+            if (action_code != "REMOVE" and not path
+                    and self._holds_owners_replacement(tag, val, patient, study)):
+                continue
+
             # Determine if remediation is needed
             needs_remediation = False
             remediation_action = "REPLACE_TAG"
@@ -536,6 +573,39 @@ class PhiInspector:
                     remediation_proposal=proposal
                 ))
         return findings + seq_removals
+
+    @staticmethod
+    def _holds_owners_replacement(tag: str, value: Any, patient: Patient,
+                                  study: Study) -> bool:
+        """Whether `value`, an instance's top-level copy of `tag`, is the
+        replacement its owner already holds (#496).
+
+        Agreement alone is not enough: before anything is anonymized every
+        copy equals its owner's *original*, and that is PHI. The owner's
+        value has to be a replacement by the scan's own test --
+        `_is_replacement_name` / `_is_replacement_id`, the ones
+        `scan_patient` stops raising on -- or, for the date, the shifted
+        date of a study `SHIFT_DATE` has marked `date_shifted`. No owner,
+        no skip.
+        """
+        if tag == "0008,0020":
+            if study is None:
+                return False
+            # Lazy: io_handlers is the heavy module, and this is the one
+            # spelling of "a Study's date as a DA string" (#189) -- the
+            # spelling the owner's write put on the copy.
+            from .io_handlers import format_study_date
+            return (bool(getattr(study, "date_shifted", False))
+                    and value == format_study_date(study.study_date))
+        if patient is None:
+            return False
+        if tag == "0010,0010":
+            return (value == patient.patient_name
+                    and _is_replacement_name(value))
+        if tag == "0010,0020":
+            return (value == patient.patient_id
+                    and _is_replacement_id(value))
+        return False
 
     def _scan_study(self, study: Study, patient_id: str = None) -> List[PhiFinding]:
         """
