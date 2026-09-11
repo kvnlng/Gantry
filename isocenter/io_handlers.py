@@ -347,8 +347,8 @@ _CARRIABLE_TRANSFER_SYNTAXES = frozenset({
 #: So every JPEG Lossless and JPEG-LS file was refused at ingest, and now
 #: ingests when its decode matches its header under a colour space
 #: `_FALLBACK_PHOTOMETRICS` labels for it. RLE is out because pydicom's RLE
-#: decoder needs no dependency, and the handler's RLE arm has never
-#: decoded anything (#447). JPEG Baseline and Extended are out because
+#: decoder needs no dependency, and the handler has no RLE arm (#447):
+#: pydicom's is the one that decodes. JPEG Baseline and Extended are out because
 #: Pillow decodes them here, the handler's colour handling through this
 #: door is unmeasured, and baseline JPEG is almost always YBR, which
 #: `_FALLBACK_PHOTOMETRICS` refuses anyway. UID strings, for the reason

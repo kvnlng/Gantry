@@ -82,7 +82,6 @@ JPEGBaseline = UID("1.2.840.10008.1.2.4.50")
 JPEGExtended = UID("1.2.840.10008.1.2.4.51")
 JPEGLSLossless = UID("1.2.840.10008.1.2.4.80")
 JPEGLSLossy = UID("1.2.840.10008.1.2.4.81")
-RLELossless = UID("1.2.840.10008.1.2.5")
 
 HANDLER_NAME = "isocenter_imagecodecs_handler"
 
@@ -90,6 +89,15 @@ DEPENDENCIES = {
     "imagecodecs": ("http://www.lfd.uci.edu/~gohlke/pythonlibs/#imagecodecs", "imagecodecs"),
 }
 
+#: No RLE Lossless, deliberately (#447). This list named it, and the arm
+#: that decoded it called `imagecodecs.rle_decode`, which no imagecodecs
+#: this package supports has ever had -- so `supports_transfer_syntax`
+#: said yes and every RLE decode here raised `AttributeError`. pydicom's
+#: own RLE decoder needs no dependency and is what always read RLE, so
+#: `Instance.get_pixel_data()` never needs this handler for it. Do not
+#: re-add it on the strength of `imagecodecs.dicomrle_decode`: that
+#: returns planar big-endian bytes, and a second RLE decoder behind one
+#: that cannot fail for want of a plugin would have no caller.
 SUPPORTED_TRANSFER_SYNTAXES = [
     JPEGLossless,
     JPEGLosslessSV1,
@@ -99,7 +107,6 @@ SUPPORTED_TRANSFER_SYNTAXES = [
     JPEGExtended,
     JPEGLSLossless,
     JPEGLSLossy,
-    RLELossless
 ]
 
 
@@ -274,8 +281,6 @@ def _decode_frame(transfer_syntax, bitstream, ds):
         return imagecodecs.jpeg2k_decode(bitstream)
     if transfer_syntax in [JPEGLSLossless, JPEGLSLossy]:
         return imagecodecs.jpegls_decode(bitstream)
-    if transfer_syntax == RLELossless:
-        return imagecodecs.rle_decode(bitstream, shape=(ds.Rows, ds.Columns))
     raise RuntimeError(f"Unsupported syntax: {transfer_syntax}")
 
 
@@ -313,7 +318,8 @@ def get_pixel_data(ds):
     """
     Decodes pixel data from an encapsulated dataset using `imagecodecs`.
 
-    Handles multiple transfer syntaxes (JPEG, JPEG2000, JPEG-LS, RLE) and
+    Handles the transfer syntaxes in `SUPPORTED_TRANSFER_SYNTAXES` --
+    JPEG, JPEG Lossless, JPEG 2000 and JPEG-LS, not RLE (#447) -- and
     encapsulated bitstreams (fragments).
 
     Args:

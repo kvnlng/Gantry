@@ -291,8 +291,8 @@ def test_every_fallback_syntax_ingests():
     Narrowing it is the owner's one-line lever; this is the test that
     names what that line currently opens. RLE (.5) and JPEG Baseline /
     Extended (.50, .51) are out: pydicom decodes RLE with no dependency
-    and baseline JPEG through Pillow, and the handler's RLE arm has never
-    decoded anything (#447).
+    and baseline JPEG through Pillow, and the handler has no RLE arm
+    (#447).
     """
     assert _IMAGECODECS_FALLBACK_SYNTAXES == frozenset(
         {LJPEG, LJPEG_SV1, JPEGLS, JPEGLS_NEAR, J2K_LOSSLESS, J2K})
