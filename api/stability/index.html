@@ -1695,8 +1695,8 @@ in a 1.x release with a CHANGELOG entry naming both spellings:</p>
   Each item's <code>anonymized</code> is <code>true</code> when the last tag-policy PHI scan
   left no identifier unremediated on that instance's patient, study or
   instance, and none of the three has been edited since: each carries
-  <code>REMEDIATED</code> or <code>CLEARED</code> at its current revision (#486). Two things it
-  is not. It is not "<code>anonymize()</code> ran": an input the scan found clean
+  <code>REMEDIATED</code> or <code>CLEARED</code> at its current revision (#486). Three things
+  it is not. It is not "<code>anonymize()</code> ran": an input the scan found clean
   reads <code>true</code> after <code>audit()</code> alone. And it says nothing about burned-in
   pixel text, which the tag scan does not read. And it does not see
   inside sequences: <code>anonymize()</code> stamps the nested item it changed,
