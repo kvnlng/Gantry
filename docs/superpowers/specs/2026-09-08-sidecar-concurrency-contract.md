@@ -7,6 +7,7 @@ Isolation)...` unconditionally — was already stale when this spec was
 written: `f0d3bab` (0.9.4, #381) had removed the parenthetical. #384 is
 the issue that retired it, and the line now names the strategy the pool
 was built from. The clause is marked in place.
+**Superseded in part:** #475 (2026-09-11). The Run Tests step cap at the top of the timeout family -- `1200` s in §2's inequality and in §13's table -- is 1800 s since #475 raised `tests.yml`'s step to 30 minutes (the suite's measured peak had reached 993 s). The four bounds under it are unchanged, and the inequality still holds. Both figures are marked in place.
 **Status:** Determinations MADE, with evidence. The design in §8 is the
 recommendation; §0.2 lists the calls that are the owner's, each as
 options with the recommendation first. No production code was changed;
@@ -305,7 +306,7 @@ contended acquisition against a 26 ms hold at 200 MB.
 The inequality, with what each bound protects:
 
 ```
-_SQLITE_BUSY_TIMEOUT_S = 120  <  _SIDECAR_GATE_TIMEOUT_S = 180  <  _WORKER_FAULTHANDLER_TIMEOUT_S = 240  <  faulthandler_timeout = 300  <  Run Tests 1200
+_SQLITE_BUSY_TIMEOUT_S = 120  <  _SIDECAR_GATE_TIMEOUT_S = 180  <  _WORKER_FAULTHANDLER_TIMEOUT_S = 240  <  faulthandler_timeout = 300  <  Run Tests ~~1200~~ 1800 (#475)
 ```
 
 - **> 120 + a frame write.** A waiter behind a holder legitimately
@@ -1123,7 +1124,7 @@ them.
 | #373 table | §7.1 | `probe_373.py` |
 | Suite under the #373 bound | 1603 passed, 407.17 s | `suite_373_mutation.log` |
 | `:memory:` + processes `redact()` | `RedactionError` / `no such table: instance_blobs`; sidecar survives `close()` | `probe_memory_child.py` |
-| Timeout family | 120 / 30 / 240 / 300 / 1200 s | `persistence.py:175`, `persistence_manager.py:29`, `parallel.py:34`, `pytest.ini`, `tests.yml` |
+| Timeout family | 120 / 30 / 240 / 300 / ~~1200~~ 1800 (#475) s | `persistence.py:175`, `persistence_manager.py:29`, `parallel.py:34`, `pytest.ini`, `tests.yml` |
 
 ## 14. Clean-tree and suite record
 

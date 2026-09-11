@@ -2,7 +2,7 @@ import json
 from typing import Dict, Any, Optional
 from .entities import Instance
 from .crypto import CryptoEngine, KeyManager
-from .logger import get_logger
+from .logger import get_logger, describe_exception
 
 
 class ReversibilityService:
@@ -100,7 +100,11 @@ class ReversibilityService:
             # self.logger.debug(f"Embedded token into {instance.sop_instance_uid}.")
 
         except Exception as e:
-            self.logger.error(f"Failed to embed token: {e}")
+            # `describe_exception`, not `{e}`: a bare raise has an
+            # empty `str()`, and this line then said a step failed
+            # without saying how (#487, #435's class).
+            self.logger.error(
+                f"Failed to embed token: {describe_exception(e)}")
             raise
 
     def embed_original_data(self, instance: Instance, original_attributes: Dict[str, Any]):
@@ -125,7 +129,8 @@ class ReversibilityService:
                     instance.sop_instance_uid}.")
 
         except Exception as e:
-            self.logger.error(f"Failed to embed original data: {e}")
+            self.logger.error(
+                f"Failed to embed original data: {describe_exception(e)}")
             raise
 
     def recover_original_data(self, instance: Instance) -> Optional[Dict[str, Any]]:
@@ -176,5 +181,13 @@ class ReversibilityService:
             return json.loads(json_str)
 
         except Exception as e:
-            self.logger.error(f"Failed to recover data from {instance.sop_instance_uid}: {e}")
+            # `describe_exception`, not `{e}`. The one failure that
+            # means "a token is here and this key cannot open it" is
+            # Fernet's `InvalidToken`, whose `str()` is empty, so this
+            # line read `Failed to recover data from <uid>: ` and a
+            # wrong key could not be told from any other failure
+            # (#487). Now `...: InvalidToken`.
+            self.logger.error(
+                f"Failed to recover data from {instance.sop_instance_uid}: "
+                f"{describe_exception(e)}")
             return None

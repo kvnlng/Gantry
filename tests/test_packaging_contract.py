@@ -1281,6 +1281,43 @@ def test_a_hang_dumps_tracebacks_before_any_timeout_kills_it():
         "process; the dump has to land while the run is still alive")
 
 
+#: The least the Run Tests step may be allowed, in minutes. Set from
+#: the measured step durations of the 2026-09-11 gate runs (#475):
+#: 748-993 s on 3.12 and 574-899 s on 3.14t over eight runs each, so
+#: the previous cap of 20 minutes (1200 s) was 83% used at the peak,
+#: with the milestone still adding tests. 30 minutes puts that peak at
+#: 55%. A cap the suite grows into dies as `Terminate orphan process:
+#: pytest` with no failing test in the log -- #243's shape -- which is
+#: why this is pinned rather than left to be noticed at the next kill.
+#: A floor, not an exact value: raising the cap is a decision that
+#: needs no red test, dropping it below what the suite needs is the
+#: defect. The job cap above it must still exceed the sum of the steps
+#: (`test_the_job_cap_cannot_fire_before_a_steps_own_timeout`), and the
+#: faulthandler threshold must still sit inside half of it
+#: (`test_a_hang_dumps_tracebacks_before_any_timeout_kills_it`), so a
+#: raise here is a raise of the whole family.
+_RUN_TESTS_STEP_MINUTES_FLOOR = 30
+
+
+def test_the_run_tests_step_keeps_the_headroom_the_suite_needs():
+    """The Run Tests step cap cannot quietly drop below what was measured (#475).
+
+    `_RUN_TESTS_STEP_MINUTES_FLOOR` carries the figures. The step is
+    found by its `id`, as the faulthandler test finds it, so a renamed
+    step is a failed lookup rather than a silent pass over the wrong
+    step. publish.yml's `test-floor` and `test-supported` call this
+    workflow, and a `uses:` job carries no `timeout-minutes` of its
+    own, so the release path inherits exactly this cap.
+    """
+    _threshold, step_seconds, run_tests = (
+        _faulthandler_threshold_and_step_seconds())
+    assert run_tests["timeout-minutes"] >= _RUN_TESTS_STEP_MINUTES_FLOOR, (
+        f"the Run Tests step allows {run_tests['timeout-minutes']} minutes "
+        f"({step_seconds}s); the suite's measured peak of 993s needs at "
+        f"least {_RUN_TESTS_STEP_MINUTES_FLOOR} (#475), or a healthy but "
+        "slow run is killed with no failing test in the log (#243)")
+
+
 def _faulthandler_threshold_and_step_seconds():
     """The two outer bounds of the timeout-inequality family.
 

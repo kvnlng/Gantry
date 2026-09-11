@@ -53,6 +53,27 @@ def test_embed_token_exception(rev_service, mock_instance):
     with pytest.raises(Exception, match="Embed fail"):
         rev_service.embed_identity_token(mock_instance, token)
 
+
+def test_a_failed_embed_names_a_message_less_exception(rev_service,
+                                                       mock_instance, caplog):
+    """The ERROR before the re-raise names the exception's type (#487).
+
+    A bare `Exception()` has an empty `str()`, so `f"...: {e}"` logged
+    `Failed to embed token: ` -- a line saying a step failed without
+    saying how (#435's class). The re-raise carries the exception
+    onward, which is why the mutation probe classed deleting this line
+    as equivalent; the line is still what a reader of the log gets, and
+    it now reads `Failed to embed token: Exception`.
+    """
+    mock_instance.add_sequence.side_effect = Exception()
+
+    with caplog.at_level(logging.ERROR, logger="isocenter"):
+        with pytest.raises(Exception):
+            rev_service.embed_identity_token(mock_instance, b"valid_token")
+    errors = [r.getMessage() for r in caplog.records
+              if r.name == "isocenter" and r.levelno == logging.ERROR]
+    assert errors == ["Failed to embed token: Exception"], caplog.text
+
 def test_embed_original_data_empty(rev_service, mock_instance):
     rev_service.embed_original_data(mock_instance, None)
     rev_service.embed_original_data(mock_instance, {})
@@ -121,9 +142,11 @@ def test_a_recovery_that_cannot_decrypt_names_the_instance(caplog):
     test above mocks `decrypt` and asserts only the None.
 
     A real token and a real wrong key, no mock: Fernet's `InvalidToken`
-    has an empty message, so the record's tail after the UID is blank
-    today, and the assertion matches the UID by substring rather than
-    pinning that tail.
+    has an empty message, so until #487 the record's tail after the UID
+    was blank -- `Failed to recover data from SOP_WRONG_KEY_439: ` --
+    and a reader could not tell a wrong key from any other failure. The
+    reason is spelled by `logger.describe_exception` now (#435's
+    pattern), so the tail names the type, and this pins it.
     """
     def service():
         km = MagicMock()
@@ -141,4 +164,6 @@ def test_a_recovery_that_cannot_decrypt_names_the_instance(caplog):
     errors = [r for r in caplog.records
               if r.name == "isocenter" and r.levelno == logging.ERROR]
     assert len(errors) == 1, caplog.text
-    assert "SOP_WRONG_KEY_439" in errors[0].getMessage()
+    message = errors[0].getMessage()
+    assert "SOP_WRONG_KEY_439" in message
+    assert message.endswith("SOP_WRONG_KEY_439: InvalidToken"), message

@@ -1703,9 +1703,12 @@ class DicomSession:
         the `WARNING` row prints. A declined file is not recorded as
         imported, so ingesting the same folder again declines it again.
 
-        `ISOCENTER_FORCE_THREADS` has no effect here: `ingest()` runs on
-        the session's own process pool. Each call that has files to read
-        logs one `WARNING` saying so when the variable is set (#393).
+        Neither `ISOCENTER_FORCE_THREADS` nor
+        `ISOCENTER_MAX_TASKS_PER_CHILD` has any effect here: `ingest()`
+        runs on the session's own process pool, which has no threads
+        mode and never recycles a worker. Each call that has files to
+        read logs one `WARNING` naming whichever is set (#393, #471);
+        with both set, #185's line is that one.
 
         Args:
             directory (str): The path to the directory containing DICOM files.
