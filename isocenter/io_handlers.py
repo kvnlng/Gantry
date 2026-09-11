@@ -3235,14 +3235,16 @@ def _verify_readback(path: str, ds, written_pixels=None,
 
     Each reason names the exception's type as well as its text: a
     message-less exception (`StopIteration()`) would otherwise leave a
-    row reading "could not be decoded ()" (#435's class).
+    row reading "could not be decoded ()" (#435's class). Spelled by
+    `logger.describe_exception`, the one spelling every recorded reason
+    uses (#435).
     """
     try:
         readback = pydicom.dcmread(path)
     except Exception as exc:
         raise RuntimeError(
             f"Readback verification failed: the written file could not be "
-            f"read back ({type(exc).__name__}: {exc})") from exc
+            f"read back ({describe_exception(exc)})") from exc
 
     mismatches = [
         f"{kw} reads back as {getattr(readback, kw, None)!r} where "
@@ -3259,7 +3261,7 @@ def _verify_readback(path: str, ds, written_pixels=None,
         except Exception as exc:
             raise RuntimeError(
                 f"Readback verification failed: the written pixel data "
-                f"could not be decoded ({type(exc).__name__}: {exc})"
+                f"could not be decoded ({describe_exception(exc)})"
             ) from exc
         reason = _readback_pixel_mismatch(
             decoded, written_pixels,
