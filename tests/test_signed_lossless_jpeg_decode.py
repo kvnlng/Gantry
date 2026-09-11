@@ -240,6 +240,32 @@ def test_a_precision_12_jpeg_ls_stream_from_another_encoder_reads_exactly(
 
 
 # ---------------------------------------------------------------------------
+# S6 -- a decode narrower than BitsStored is refused, never shifted
+# ---------------------------------------------------------------------------
+
+def test_a_signed_decode_narrower_than_bits_stored_is_refused_at_both_doors(
+        doors):
+    """S6: an 8-bit JPEG-LS stream under a signed BitsStored 12 header.
+
+    The codec returns `uint8`, and 12 bits cannot be sign-extended inside
+    8: the shift the rule computes would be -4. The handler refuses, in
+    its words, at the read door, and ingest refuses. Found by the probe
+    (#446 review): with `and` in place of `or` in the guard, a `uint8`
+    decode passed it and came back as whatever a negative shift made of
+    it, with no error at the read door.
+    """
+    source = np.arange(16 * 16, dtype=np.uint8).reshape(16, 16)
+    got = doors(_dataset(JPEGLS, imagecodecs.jpegls_encode(source),
+                         source.shape, 12, bits_allocated=16))
+    assert got["ingest"][0] == 0
+    for door in ("instance", "handler"):
+        words = str(got[door])
+        assert isinstance(got[door], Exception), f"{door}: {got[door]!r}"
+        assert "cannot sign-extend a uint8 decode from BitsStored 12" in \
+            words, f"{door}: {words}"
+
+
+# ---------------------------------------------------------------------------
 # S3 -- a JPEG Lossless fragment of odd length decodes
 # ---------------------------------------------------------------------------
 
