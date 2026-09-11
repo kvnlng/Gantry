@@ -137,7 +137,7 @@ def _validated_phi_tags(tags: Any, source: str) -> Dict[str, Any]:
     REPLACE) or a rule mapping whose `action`, if present, is one the
     inspector implements. Each of the other shapes loaded silently before
     #456 and failed, or misbehaved, later: a list-shaped `phi_tags` broke
-    the scan's `.items()`, an int rule was read as a name, and an unknown
+    the scan when it iterated the mapping, an int rule was read as a name, and an unknown
     action was scanned as REPLACE. `None` (a bare `phi_tags:` line) is the
     empty mapping it plainly means.
     """

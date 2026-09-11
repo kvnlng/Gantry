@@ -28,6 +28,16 @@ at the new revision. Not stamped REMEDIATED: `anonymize(findings=[...])`
 with only the patient's findings would then vouch for an instance whose
 own IDENTIFIED findings were never applied.
 
+**The policy these tests run under is the empty one.** They were
+measured on 168fdd6, where a session with no config scanned against `{}`,
+and they pin #492's write mechanism: the entity's value landing on the
+instance copies. Since #495 a bare session applies the floor policy,
+whose own instance rules remove `0010,0010`/`0010,0020` and jitter the
+instance's `0008,0020` -- acting on the same copies and hiding the
+mechanism under test. So both helpers set `phi_tags = {}` (by assignment:
+`set_phi_tag` would call `save()`), and `tests/test_floor_policy.py` pins
+the floor path, including the re-lock refusal there.
+
 **Why this file imports what it does.** It reaches `RemediationService`
 through `isocenter.remediation`, so it charges that module's probe row;
 see `test_mutation_probe_targets.py`.
@@ -68,6 +78,7 @@ def _ingested(tmp_path):
     src.mkdir()
     shutil.copy(get_testdata_file("CT_small.dcm"), src / "ct.dcm")
     session = DicomSession(str(tmp_path / "m.db"))
+    session.configuration.phi_tags = {}   # the empty policy; see the module docstring
     session.ingest(str(src))
     return session
 
@@ -85,6 +96,7 @@ def _built(tmp_path, *, study_date="20240101", instance_dates=("20240101",),
     study with one instance carrying that date.
     """
     session = DicomSession(str(tmp_path / "b.db"))
+    session.configuration.phi_tags = {}   # the empty policy; see the module docstring
     patient = Patient(BUILT_ID, BUILT_NAME)
     study = Study("1.2.826.0.1.492", study_date)
     series = Series("1.2.826.0.1.492.1", "OT", 1)

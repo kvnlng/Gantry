@@ -3053,7 +3053,20 @@ class DicomSession:
         # `"ANONYMIZED"` / `startswith("ANON_")` tests it skips by).
         # A re-lock of still-original values is unchanged and is what
         # recovery answers with (#399).
-        for tag, val in original_attrs.items():
+        #
+        # The patient entity is checked first (#495). Under the floor
+        # policy `anonymize()` removes the instance's own 0010,0010 and
+        # 0010,0020, so the copies read above can hold nothing to refuse
+        # on while the patient already reads ANONYMIZED / ANON_<hash>.
+        # Measured on CT_small, bare session: lock -> anonymize -> lock
+        # again raised nothing and wrote a token holding only
+        # {'0010,0040': 'O'} over the good one, so recovery lost the name
+        # and ID -- #492's defect by another route. The entity is also
+        # the object `scan_patient` applies this predicate to. The stash
+        # itself is still read from the instance copies, as before.
+        entity_values = (("0010,0010", patient.patient_name),
+                         ("0010,0020", patient.patient_id))
+        for tag, val in (*entity_values, *original_attrs.items()):
             if val == "ANONYMIZED" or str(val).startswith("ANON_"):
                 raise RuntimeError(
                     f"lock_identities: patient {patient_id!r} already "

@@ -23,6 +23,7 @@ import shutil
 
 import pydicom
 import pydicom.data
+import pytest
 import yaml
 from pydicom.dataset import Dataset
 
@@ -299,6 +300,46 @@ def test_a_bare_session_status_and_manifest_after_anonymize(tmp_path):
         with open(tmp_path / "m2.json", encoding="utf-8") as f:
             items = json.load(f)["items"]
         assert [item["anonymized"] for item in items] == [False]
+
+
+def test_a_lock_after_anonymize_is_refused_on_the_floor_path(tmp_path):
+    """#492's refusal holds on the bare path. The floor removes the
+    instance's own 0010,0010/0010,0020, so a refusal that read only those
+    copies saw nothing: measured, lock -> anonymize -> lock again raised
+    nothing and wrote a token holding only `{'0010,0040': 'O'}` over the
+    good one, and recovery lost the name and ID. Kills the patient-entity
+    check in `_lock_patient_identity` deleted (both orders stop raising,
+    and the token and recovery change)."""
+    _ct_small_into(str(tmp_path / "in"))
+    with Session(str(tmp_path / "s.db")) as session:
+        session.enable_reversible_anonymization(str(tmp_path / "k.key"))
+        session.ingest(str(tmp_path / "in"))
+        inst = session.store.patients[0].studies[0].series[0].instances[0]
+        session.lock_identities("1CT1")
+        first = session.reversibility_service.recover_original_data(inst)
+        assert first["0010,0010"] == "CompressedSamples^CT1"
+        assert first["0010,0020"] == "1CT1"
+
+        session.anonymize(session.audit())
+        assert "0010,0010" not in inst.attributes, "the floor did not remove the copy"
+        patient = session.store.patients[0]
+        token = inst.sequences["0400,0500"].items[0].attributes["0400,0510"]
+        with pytest.raises(RuntimeError, match=r"0010,0010 \('ANONYMIZED'\)"):
+            session.lock_identities(patient.patient_id)
+        assert inst.sequences["0400,0500"].items[0].attributes["0400,0510"] == token
+        assert session.reversibility_service.recover_original_data(inst) == first
+
+    # The reverse of the documented order, as one call: nothing to stash.
+    _ct_small_into(str(tmp_path / "in2"))
+    with Session(str(tmp_path / "s2.db")) as session:
+        session.enable_reversible_anonymization(str(tmp_path / "k2.key"))
+        session.ingest(str(tmp_path / "in2"))
+        session.anonymize(session.audit())
+        patient = session.store.patients[0]
+        inst = patient.studies[0].series[0].instances[0]
+        with pytest.raises(RuntimeError, match=patient.patient_id):
+            session.lock_identities(patient.patient_id)
+        assert "0400,0500" not in inst.sequences
 
 
 # ---------------------------------------------------------------------------
