@@ -12,6 +12,12 @@ and closing reviews of 2026-09-09, recorded in **§11 Amendments**, which also
 adds work to §1.4, §1.5 and §3.6 and adds **§11.13 (#404)**, a defect found by
 §11.6's own step P1. Read §11 before implementing; where it disagrees with the
 text above, §11 wins.
+**Superseded in part (later):** #449 (v0.9.6) — the clause in §11.13.1 that
+`export(verify_readback=True)` "would not have caught it either, and cannot be
+made to … `_verify_readback` never decodes pixels", and review item 19 in
+§11.13 ("`_verify_readback` cannot catch this family … it never decodes
+pixels"). Since #449 the readback decodes every written file and compares it
+bit for bit with the samples written. Both clauses are struck in place.
 
 **Superseded in part, by implementation:** §11.12's "no 3.14.7t run is
 required" (struck in place — #404 added an unguarded module-scope C-extension
@@ -1382,11 +1388,13 @@ The refusal is also mute: the `ERROR` row carries Pillow's sentence and names
 neither the dtype, nor `BitsAllocated`, nor `PixelRepresentation`, nor the
 encoder, nor a remedy. A reader is told a data stream broke.
 
-`export(verify_readback=True)` would not have caught it either, and cannot be
+~~`export(verify_readback=True)` would not have caught it either, and cannot be
 made to: `_READBACK_DESCRIPTORS` is `("Rows", "Columns", "SamplesPerPixel",
 "NumberOfFrames", "BitsAllocated")`, it does not include
-`PixelRepresentation`, and `_verify_readback` never decodes pixels. Noted for
-§6, not proposed as a fix here.
+`PixelRepresentation`, and `_verify_readback` never decodes pixels.~~ Noted for
+§6, not proposed as a fix here. — superseded by #449 (v0.9.6): the readback
+now decodes every written file and compares it bit for bit with the samples
+written.
 
 #### §11.13.2 The approach, chosen by measurement
 
@@ -1803,11 +1811,12 @@ it, and do not rewrite §11.6.
 18. **The bool arm writes `uint8`.** Confirm the uncompressed path writes the
     same bytes for the same array, or the two export paths disagree for one
     dtype.
-19. **`_verify_readback` cannot catch this family.** `_READBACK_DESCRIPTORS`
+19. ~~**`_verify_readback` cannot catch this family.** `_READBACK_DESCRIPTORS`
     is `("Rows", "Columns", "SamplesPerPixel", "NumberOfFrames",
     "BitsAllocated")` — no `PixelRepresentation` — and it never decodes pixels,
-    so `verify_readback=True` passes on a file whose codestream is wrong.
-    Naming it here; widening it is not this bunch's work.
+    so `verify_readback=True` passes on a file whose codestream is wrong.~~
+    Naming it here; widening it is not this bunch's work. — superseded by
+    #449 (v0.9.6), which widened it: the readback decodes every written file.
 20. **The conftest flip is a test-quality change with a blast radius.** Every
     red it produces must be explained in the PR body, not absorbed.
 

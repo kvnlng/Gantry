@@ -153,25 +153,45 @@ class _Choice(NamedTuple):
     `"force_threads=True"` -- and is `None` otherwise. It carries what
     #185's warning needs so the warning can be emitted at *dispatch*
     rather than here; see `_resolve_execution_choice`.
+
+    `threads_requested_by` names the threads lever that asked **and
+    won** -- `"ISOCENTER_FORCE_THREADS"` or `"force_threads=True"`, the
+    variable taking the name when both are set, as it does above -- and
+    is `None` otherwise: when nobody asked, when recycling beat the
+    request (the field above covers that, and #185's warning is the one
+    line), and for the free-threaded default, which resolves to threads
+    without anyone asking. `DicomImporter.import_files` reads it to say
+    that `ISOCENTER_FORCE_THREADS` had no effect on an `ingest()`, which
+    runs on the session's process pool whatever the strategy says
+    (#393). It is last and defaulted so a positional three-field
+    construction still means what it meant.
     """
     use_threads: bool
     processes_requested_by: Optional[str]
     threads_request_overridden_by: Optional[str]
+    threads_requested_by: Optional[str] = None
 
 
 @dataclass(frozen=True)
-class _Strategy:
+class _Strategy:  # pylint: disable=too-many-instance-attributes
+    # Eight settings and three attribution fields, each read by name by a
+    # caller that reports on the decision (#384, #400, #393). Grouping
+    # them to satisfy the count would hide which fields exist -- the
+    # reason `_resolve_strategy` keeps one parameter per knob.
     """How one `run_parallel` call will actually be executed.
 
     Resolved once, before any work starts, so the three execution paths
     below read settings rather than each deriving their own.
 
-    The two attribution fields carry `_Choice`'s answer out to callers
-    that report on the decision. `redact()` is the one that does:
-    it resolves a strategy itself, prints the parenthetical on
-    `Executing using N workers (...)` from `use_threads`, and reads
-    `processes_requested_by` to decide whether an operator's lever was
-    ignored (#384, #400).
+    The three attribution fields carry `_Choice`'s answer out to callers
+    that report on the decision. Two do. `redact()` resolves a strategy
+    itself, prints the parenthetical on `Executing using N workers
+    (...)` from `use_threads`, and reads `processes_requested_by` to
+    decide whether an operator's lever was ignored (#384, #400).
+    `DicomImporter.import_files` resolves one for `ingest()` and reads
+    `threads_requested_by` to say that a threads lever had no effect on
+    the session's process pool (#393). `run_parallel` reads
+    `threads_request_overridden_by` for #185's warning.
     """
     max_workers: int
     chunksize: int
@@ -183,6 +203,7 @@ class _Strategy:
     total: Optional[int]
     processes_requested_by: Optional[str]
     threads_request_overridden_by: Optional[str]
+    threads_requested_by: Optional[str] = None
 
     @property
     def worker_initializer(self):
@@ -334,7 +355,8 @@ def _resolve_strategy(max_workers, chunksize, maxtasksperchild, disable_gc,
         desc=desc,
         total=total,
         processes_requested_by=choice.processes_requested_by,
-        threads_request_overridden_by=choice.threads_request_overridden_by)
+        threads_request_overridden_by=choice.threads_request_overridden_by,
+        threads_requested_by=choice.threads_requested_by)
 
 
 def _resolve_execution_choice(
@@ -397,7 +419,13 @@ def _resolve_execution_choice(
             overridden_by = "force_threads=True"
         return _Choice(False, processes_requested_by, overridden_by)
     if force_threads or forced_by_env:
-        return _Choice(True, processes_requested_by, None)
+        # The one return that grants a request for threads, so the one
+        # place that can name who asked (#393). Not derived from
+        # `use_threads` anywhere else: the free-threaded default below
+        # also ends in threads, and nobody asked for it.
+        return _Choice(True, processes_requested_by, None,
+                       "ISOCENTER_FORCE_THREADS" if forced_by_env
+                       else "force_threads=True")
     if processes_by_env:
         return _Choice(False, processes_requested_by, None)
     # On a free-threaded build there is no GIL to escape, so threads keep
@@ -480,7 +508,7 @@ def _run_on_shared_executor(executor, func, items, strategy):
     yield from _tracked(iterator, items, strategy)
 
 
-def _run_on_recycling_pool(func, items, strategy):
+def _run_on_recycling_pool(func, items, strategy, ordered=False):
     """Runs in a pool whose workers are replaced every N tasks.
 
     This exists for the imaging paths, where the C libraries behind
@@ -495,10 +523,16 @@ def _run_on_recycling_pool(func, items, strategy):
     with ctx.Pool(processes=strategy.max_workers,
                   maxtasksperchild=strategy.maxtasksperchild,
                   initializer=strategy.worker_initializer) as pool:
-        # Unordered: results are yielded as workers finish, so one slow
-        # item does not hold back everything queued behind it.
-        iterator = pool.imap_unordered(func, items,
-                                       chunksize=strategy.chunksize)
+        # Unordered unless asked: results are yielded as workers finish,
+        # so one slow item does not hold back everything queued behind
+        # it. `import_files` asks, because the order it links files in
+        # decides which of two files sharing an SOP Instance UID is kept
+        # (#431), and arrival order made that a matter of scheduling
+        # (#450). `export()` does not: its results are small and
+        # order-free, and holding them behind a slow instance buys
+        # nothing.
+        mapper = pool.imap if ordered else pool.imap_unordered
+        iterator = mapper(func, items, chunksize=strategy.chunksize)
         yield from _tracked(iterator, items, strategy)
 
 
@@ -545,7 +579,8 @@ def run_parallel(
     disable_gc: bool = False,  # Disable GC in worker processes
     return_generator: bool = False,  # Implement streaming
     yield_exceptions: bool = False,  # Exceptions come back as values
-    strategy: Optional[_Strategy] = None  # Already resolved by the caller
+    strategy: Optional[_Strategy] = None,  # Already resolved by the caller
+    ordered: bool = False  # Submission order on the recycling pool too
 ) -> Any:  # Union[List[R], Iterator[R]]
     """
     Executes `func(item)` in parallel using multiple processes or threads.
@@ -594,9 +629,18 @@ def run_parallel(
             already. `redact()` is the one caller that does, so that the
             strategy it *names* on the console and the pool it *gets*
             are two readings of one object rather than two resolutions
-            that can disagree (#384). `executor`, `return_generator` and
-            `yield_exceptions` are not resolution settings and still
-            apply.
+            that can disagree (#384). `import_files` does too, so that
+            #393's warning reads the strategy the dispatch uses.
+            `executor`, `return_generator`, `yield_exceptions` and
+            `ordered` are not resolution settings and still apply.
+        ordered (bool): If True, results come back in submission order
+            on the recycling pool (`maxtasksperchild`), which otherwise
+            yields them as workers finish. The shared-executor path
+            (`executor.map`, or a Pool's `imap`) and the per-call
+            executor path (`executor.map`) are ordered already, so it
+            changes nothing there. `import_files` passes it, because
+            the order it links files in decides which duplicate is kept
+            (#450); `export()` does not.
 
     Returns:
         Union[List[R], Iterator[R]]: The results of the parallel execution.
@@ -622,7 +666,7 @@ def run_parallel(
     if executor is not None:
         results = _run_on_shared_executor(executor, func, items, strategy)
     elif strategy.maxtasksperchild is not None:
-        results = _run_on_recycling_pool(func, items, strategy)
+        results = _run_on_recycling_pool(func, items, strategy, ordered)
     else:
         results = _run_on_new_executor(func, items, strategy)
 

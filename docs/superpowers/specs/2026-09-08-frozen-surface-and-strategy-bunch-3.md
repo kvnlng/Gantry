@@ -9,6 +9,14 @@ not keep" — no longer holds. The parenthetical returns, carrying the
 strategy `_resolve_strategy` actually resolved: `(threads)` or
 `(processes)`, read off the `_Strategy` the pool is built from. Both
 clauses are marked in place.
+**Superseded in part:** #393 (v0.9.6). "Nothing warns." in §2 (the
+`ingest()` lever row) and again in the #185 discussion no longer holds:
+`ingest()` now logs one `WARNING` per call that dispatches work when
+`ISOCENTER_FORCE_THREADS` is set. The characterization of
+`test_force_threads_does_not_reach_ingest` in §7.2 and in the PR-body
+quote under Step 1 also changed: the test now asserts that warning as
+well. The two sentences are struck in place, and both test passages
+carry a note.
 **Status:** Determinations MADE, with evidence. §1–§5 are the
 recommendations; §0.2 lists the calls that are the owner's, each as
 options with the recommendation first. No production code was changed
@@ -94,7 +102,9 @@ keys on.
    is different in kind: the variable is **read and then ignored** — the
    strategy resolves `use_threads=True` and `_run_on_shared_executor`
    uses the session's own `ProcessPoolExecutor` regardless, because a
-   caller-supplied `executor` beats every lever silently. Nothing warns.
+   caller-supplied `executor` beats every lever silently. ~~Nothing warns.~~
+   (Superseded by #393, v0.9.6: `ingest()` now logs one `WARNING` per
+   call that dispatches work when the variable is set.)
    `discover_redaction_zones()` is threads on every interpreter
    (`force_threads=True`, `session.py:1985`).
 3. **#363 — two defaults, two owners, and the row conflated them.**
@@ -428,7 +438,9 @@ two are different facts:
   (`parallel.py`, the `executor is not None` path) calls
   `executor.map(...)` on whatever it was handed and consults no lever;
   `_resolve_strategy` still runs and still resolves `use_threads=True`,
-  which nothing reads. Nothing warns. The #185 warning's text —
+  which nothing reads. ~~Nothing warns.~~ (Superseded by #393, v0.9.6:
+  `import_files` reads that strategy's `threads_requested_by` and warns.)
+  The #185 warning's text —
   "elsewhere, unset ISOCENTER_MAX_TASKS_PER_CHILD to get threads"
   (`parallel.py:322`) — is one word too broad: "elsewhere" includes
   `ingest()`, where unsetting anything gets no threads. Production
@@ -1170,7 +1182,9 @@ default decides the test before the fix is consulted.
   `isinstance(session._executor, concurrent.futures.ProcessPoolExecutor)`.
   Killing mutation: `executor=self._executor,` deleted at
   `session.py:1433` → red. Green on `05d69e8`, and that is the finding
-  (the #333 convention).
+  (the #333 convention). *Note (#393, v0.9.6): the test keeps its name
+  and now also asserts the one `WARNING` `ingest()` logs for the lever,
+  emitted before the dispatch; it is no longer a pure characterization.*
 
 ### 7.3 #363 — `tests/test_redaction_worker_count.py`
 
@@ -1488,6 +1502,9 @@ next because its new tests are re-run by the probe whose entry it adds;
    > is a characterization pin — green on the code it was written
    > against, and the row is written from it (the #333 convention).
    > Design record: spec §2.
+
+   *Note (#393, v0.9.6): that test now also asserts `ingest()`'s
+   `WARNING` for the lever; see the front-matter supersession.*
 
 ### Step 3 — #365
 

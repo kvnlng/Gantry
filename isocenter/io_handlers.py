@@ -121,6 +121,7 @@ are what an operator watching a terminal sees -- but a test that pinned
 their wording would pin a rendering, not a fact.
 """
 
+import concurrent.futures
 import contextlib
 import os
 import sys
@@ -188,7 +189,7 @@ from .blob_kind import serialize_blob_kind
 from .imagecodecs_handler import (decode_declared_frames,
                                   frame_count_mismatch_words,
                                   offset_table_frame_count)
-from .parallel import run_parallel
+from .parallel import run_parallel, _resolve_strategy
 from .validation import IODValidator
 from .sidecar import SidecarManager
 from .waveform import filter_dangling_annotation_refs
@@ -1404,7 +1405,8 @@ def process_sequence(tag, elem, parent_item, dropped: list = None,
         parent_item.add_sequence_item(tag, seq_item)
 
 
-def _decode_pixels(ds, *, allow_excess_frames=None) -> Tuple[np.ndarray, str]:
+def _decode_pixels(ds, *, allow_excess_frames=None,
+                   as_rgb=None) -> Tuple[np.ndarray, str]:
     """The array `Dataset.pixel_array` returns, and the colour space it is in.
 
     `pixel_array` calls exactly this -- `as_array` on `get_decoder(ts)`,
@@ -1456,6 +1458,23 @@ def _decode_pixels(ds, *, allow_excess_frames=None) -> Tuple[np.ndarray, str]:
     refuses. Both depths get it, because both call this: one rule for
     both depths.
 
+    **`as_rgb=False` asks for the stored samples, and only the export
+    readback passes it (#449).** Forwarded only when given, like
+    `allow_excess_frames`, so every ingest decode still gets pydicom's
+    default and #372's relabel still sees what it was measured against.
+    The readback compares the decode with the samples it wrote, and with
+    the default an 8-bit YBR file comes back RGB and fails although it
+    is correct (measured under both syntaxes the exporter writes). The
+    imagecodecs fallback does not take the keyword, and for the readback
+    it need not: the exporter writes only native syntaxes and JPEG 2000
+    (`_finalize_dataset`), native syntaxes never reach the fallback
+    (`_IMAGECODECS_FALLBACK_SYNTAXES`), and under JPEG 2000 the fallback
+    returns the samples the encoder was given. Its one conversion, 8-bit
+    `YBR_FULL` under JPEG-LS (`_FALLBACK_JPEGLS`), is not a file the
+    exporter can write. **A new export syntax that the fallback converts
+    would need the keyword threaded through**, or the readback would
+    fail its correct files.
+
     `ts` is read *outside* the `try`, so the #281 `AttributeError` above
     can never reach the fallback.
     """
@@ -1463,6 +1482,8 @@ def _decode_pixels(ds, *, allow_excess_frames=None) -> Tuple[np.ndarray, str]:
     kwargs = {}
     if allow_excess_frames is not None:
         kwargs["allow_excess_frames"] = allow_excess_frames
+    if as_rgb is not None:
+        kwargs["as_rgb"] = as_rgb
     try:
         arr, meta = get_decoder(ts).as_array(ds, **kwargs)
     except RuntimeError as exc:
@@ -2101,6 +2122,15 @@ class DicomImporter:
                         if filename.startswith('.'):
                             continue
                         all_files.append(os.path.join(root, filename))
+        # `os.walk` order is the filesystem's -- measured: APFS lists
+        # neither sorted nor in creation order, HFS+ lists sorted -- and
+        # #431 keeps the first file linked for a duplicated SOP Instance
+        # UID, so without this the same folder kept a different file on a
+        # different volume (#450). The key is the path string as built
+        # above, the one the declined row prints: not `abspath` or
+        # `realpath`, which would reorder a symlinked tree, and not
+        # locale-aware, which would differ by machine.
+        all_files.sort()
 
         known_paths = store.get_ingested_paths()
         new_files = [fp for fp in all_files
@@ -2142,13 +2172,63 @@ class DicomImporter:
         # This prevents accumulating result tuples (with huge p_bytes) in a list (O(N) memory).
         # We process each result immediately and discard it (O(1) memory).
         # OPTIMIZATION: chunksize=1 to prevent buffering multiple large files in IPC queue
+        #
+        # The strategy is resolved here, once, and handed to
+        # `run_parallel` as `strategy=`, which then ignores its own
+        # resolution keywords -- so `chunksize`, `desc` and the progress
+        # bar live in this call and nowhere else. Resolved here because
+        # this is the one frame that can say what the strategy is worth
+        # to ingest: see the warning below (#393).
+        strategy = _resolve_strategy(None, 1, None, False, False, True,
+                                     "Ingesting", None)
+        # `ingest()` hands in the session's `ProcessPoolExecutor`, which
+        # `_run_on_shared_executor` uses as given, so a threads lever the
+        # strategy granted reaches nothing (#390). Say so, once per call
+        # that dispatches, where the operator who set the variable will
+        # look for its effect (#393, in #400's shape: it names only the
+        # knob that was set, says the result is correct, and bounds
+        # itself). The conditions are each load-bearing:
+        #   - `threads_requested_by`, not `use_threads`: a free-threaded
+        #     build resolves to threads with nothing set, and warning
+        #     there would be a line on every 3.14t ingest about a
+        #     variable nobody touched;
+        #   - `use_threads` as well: when recycling beat the request,
+        #     #185's warning -- emitted inside `run_parallel`, and
+        #     already naming `ingest()` -- is the one line;
+        #   - an executor that is not a thread pool: with none,
+        #     `run_parallel` builds its own pool and honours the lever,
+        #     and a `ThreadPoolExecutor` is already threads.
+        # Here and not in `run_parallel`, because "ingest() has no threads
+        # mode" is ingest's knowledge; a future caller that hands in a
+        # process pool on purpose has promised nothing about the lever.
+        # After the `not new_files` return, so an ingest with nothing to
+        # read is silent, and before the dispatch, so a dispatch that
+        # raises cannot swallow it.
+        if (strategy.threads_requested_by is not None
+                and strategy.use_threads
+                and executor is not None
+                and not isinstance(executor,
+                                   concurrent.futures.ThreadPoolExecutor)):
+            logger.warning(
+                "%s had no effect on this ingest(). ingest() runs on the "
+                "session's own process pool, so it ran in processes and "
+                "its result is unaffected. The variable still applies to "
+                "audit(), scan_pixel_content() and redact() in this "
+                "process; ingest() has no threads mode.",
+                strategy.threads_requested_by)
+        #
+        # `ordered=True` keeps the results in the sorted order above on
+        # the one path that would otherwise yield by arrival: the
+        # recycling pool, which a direct `import_files(executor=None)`
+        # reaches under `ISOCENTER_MAX_TASKS_PER_CHILD`. The session's
+        # shared executor is ordered already (#450).
         results = run_parallel(
             ingest_worker,
             new_files,
-            desc="Ingesting",
-            chunksize=1,
             executor=executor,
-            return_generator=True)
+            return_generator=True,
+            ordered=True,
+            strategy=strategy)
 
         # 3. Aggregation (Streaming)
         #
@@ -2269,9 +2349,11 @@ class DicomImporter:
                     # (#211's scoping). `WARNING` rows are exceptions in
                     # the report and bar PASS.
                     #
-                    # "First" is the first *linked*, which is not always
-                    # the first on disk: `run_parallel` streams results
-                    # as workers finish them (#450).
+                    # "First" is first in path order among the files new
+                    # to this call -- `all_files` is sorted and results
+                    # are consumed in submission order -- and an instance
+                    # the session already held beats every new file,
+                    # because `held` is seeded from the graph (#450).
                     holder = held.get(inst.sop_instance_uid)
                     if holder is not None:
                         holder_path = holder.source_path or holder.file_path
@@ -2755,10 +2837,11 @@ class ExportContext:
     #: narrower gate fails open. Both context builders set it; a builder
     #: that forgets ships thumbnails of redacted frames.
     drop_nested_icons: bool = False
-    #: Re-read the written file and compare its descriptors before
-    #: delivering it (#209). Off by default: it costs a second parse
-    #: per instance. Carried here because the check runs in the worker
-    #: -- the file is local to it and the cost parallelizes.
+    #: Re-read the written file, compare its descriptors and decode and
+    #: compare every sample before delivering it (#209, #449). Off by
+    #: default: it costs a second parse and a full decode per instance
+    #: (#449). Carried here because the check runs in the worker -- the
+    #: file is local to it and the cost parallelizes.
     verify_readback: bool = False
 
 
@@ -2962,7 +3045,9 @@ def _write_pixel_geometry(ds, geom, attributes, *, float_element: bool) -> None:
     # leaving it there labelled interleaved bytes as planar. That is a
     # corrupt exported DICOM file with no error, no warning and no
     # DATA_LOSS row, and `_READBACK_DESCRIPTORS` does not include this
-    # element, so `verify_readback=True` does not see it either (#210).
+    # element, so before #449 `verify_readback=True` did not see it
+    # either (#210); the pixel decode now does (a PC 1 label over
+    # interleaved bytes decodes to different samples).
     #
     # The `samples < 3` half of `planar_configuration_default` is kept
     # deliberately, spelled out here: an unconditional write would add
@@ -2975,44 +3060,166 @@ def _write_pixel_geometry(ds, geom, attributes, *, float_element: bool) -> None:
         ds.PlanarConfiguration = 0
 
 
-#: The descriptors the readback compares, by pydicom keyword. The four
-#: geometry descriptors are the ones #186/#205 showed can describe a
-#: different image than the pixels beside them; BitsAllocated is the
+#: The descriptors the readback compares first, by pydicom keyword. The
+#: four geometry descriptors are the ones #186/#205 showed can describe
+#: a different image than the pixels beside them; BitsAllocated is the
 #: width #170/#216 showed being silently rewritten from the tag side.
+#: This is the descriptor half; the pixels are decoded and compared
+#: after it (#449), so a descriptor failure keeps its own message.
 _READBACK_DESCRIPTORS = ("Rows", "Columns", "SamplesPerPixel",
                          "NumberOfFrames", "BitsAllocated")
 
 
-def _verify_readback(path: str, ds) -> None:
+def _bit_patterns(arr: np.ndarray) -> np.ndarray:
+    """`arr` flattened and viewed as unsigned integers of its own width.
+
+    The readback compares these rather than values, for floats above all:
+    NaN is not equal to itself and -0.0 equals 0.0, so a value compare
+    fails a correct file holding a NaN and passes one whose sign bit was
+    lost (#449). `bool` is viewed as the `uint8` it is written as. No
+    copy is made unless `arr` is not contiguous -- a `tobytes()` on each
+    side would add two transient full copies of a large multi-frame.
+    """
+    flat = arr.reshape(-1)
+    if flat.dtype == np.bool_:
+        flat = flat.view(np.uint8)
+    return flat.view(np.dtype(f"u{flat.itemsize}"))
+
+
+def _readback_pixel_mismatch(decoded: np.ndarray, written: np.ndarray,
+                             pixel_representation=None) -> Optional[str]:
+    """Why `decoded` is not bit for bit `written`, or None if it is.
+
+    `pixel_representation` is the file's own PixelRepresentation, named
+    in the reason when the two disagree about signedness.
+    """
+    if written.dtype == np.bool_:
+        written = written.view(np.uint8)
+    # Size, not shape: the descriptors are already compared, and pydicom
+    # squeezes a single frame and a single sample out of the shape.
+    #
+    # **The dtype comparison is not redundant with the bitwise compare
+    # below.** int16 [-1, -2, -3] declared PixelRepresentation 0 reaches
+    # the file with every bit intact, so the bit patterns agree -- and a
+    # reader gets uint16 [65535, 65534, 65533]. Only the dtype says so.
+    if decoded.dtype != written.dtype or decoded.size != written.size:
+        reason = (f"the written pixel data decodes as {decoded.dtype} x "
+                  f"{decoded.size} where {written.dtype} x {written.size} "
+                  f"was written")
+        kinds = {decoded.dtype.kind, written.dtype.kind}
+        if kinds == {"i", "u"}:
+            # Signed against unsigned: the element that decides it is
+            # PixelRepresentation, so the reason points the reader there.
+            reason += (
+                f"; the file declares PixelRepresentation "
+                f"{pixel_representation} "
+                f"({'unsigned' if decoded.dtype.kind == 'u' else 'signed'}) "
+                f"where "
+                f"{'signed' if written.dtype.kind == 'i' else 'unsigned'} "
+                f"samples were written")
+        return reason
+    differ = _bit_patterns(decoded) != _bit_patterns(written)
+    count = int(np.count_nonzero(differ))
+    if count == 0:
+        return None
+    first = int(np.argmax(differ))
+    got = decoded.reshape(-1)[first].item()
+    want = written.reshape(-1)[first].item()
+    return (f"the written pixel data decodes to different samples: "
+            f"{count} of {written.size} differ, first at flat index "
+            f"{first} ({got!r} read back where {want!r} was written)")
+
+
+def _readback_waveform_mismatch(readback, written: bytes) -> Optional[str]:
+    """Why the file's `WaveformData` is not `written`, or None if it is.
+
+    **One trailing `\\x00` on an odd-length value is not a difference.**
+    `save_as` pads an odd-length OB/OW value to even length with one zero
+    byte (measured: 6401 bytes written, 6402 read back), so "just compare
+    the bytes" fails every correct odd-length waveform -- an 8-bit one,
+    say. Exactly that pad is allowed, and only on an odd-length value: an
+    even-length value is written as it is, so any tail there is a
+    difference.
+    """
+    try:
+        read = bytes(readback.WaveformSequence[0].WaveformData)
+    except (AttributeError, IndexError):
+        read = b""
+    if read == written or (len(written) % 2 == 1
+                           and read == written + b"\x00"):
+        return None
+    common = min(len(read), len(written))
+    count = int(np.count_nonzero(
+        np.frombuffer(read, np.uint8, common)
+        != np.frombuffer(written, np.uint8, common)))
+    count += abs(len(read) - len(written))
+    return (f"the written WaveformData reads back as different bytes "
+            f"({count} of {len(written)} differ)")
+
+
+def _verify_readback(path: str, ds, written_pixels=None,
+                     written_waveform=None) -> None:
     """Re-read a just-written file and hold it against what was meant.
 
     "The write did not raise" is a weaker claim than "a file exists
     that decodes to what we meant", and the compliance report presents
     the stronger one (#209). This is the opt-in check behind
-    `export(verify_readback=True)`.
+    `export(verify_readback=True)`, and since #449 it checks the stronger
+    claim itself. One `dcmread`, then three comparisons, in this order:
 
-    Compared against the dataset the worker serialized, deliberately
-    *not* against `inst.attributes`: the worker corrects stale declared
-    descriptors on the way out (`_write_pixel_geometry` writes the
-    resolved geometry, the integer branch derives `BitsAllocated` from
-    `itemsize` -- #186, #216), so the raw attributes are the one
-    baseline guaranteed to disagree with a correctly written file. The
-    claim being verified is "the file says what the export meant",
-    which is the claim `ok=True` makes to the report.
+    1. **Descriptors** (`_READBACK_DESCRIPTORS`), against the dataset the
+       worker serialized -- deliberately *not* against `inst.attributes`.
+       The worker corrects stale declared descriptors on the way out
+       (`_write_pixel_geometry` writes the resolved geometry, the integer
+       branch derives `BitsAllocated` from `itemsize` -- #186, #216), so
+       the raw attributes are the one baseline guaranteed to disagree
+       with a correctly written file. The claim being verified is "the
+       file says what the export meant", which is the claim `ok=True`
+       makes to the report.
+    2. **Pixels**, when `written_pixels` is given: the array the pixel
+       element was written from, after redaction and after geometry. The
+       file is decoded through `_decode_pixels`, the door `ingest()`
+       reads through -- pydicom, then the imagecodecs fallback -- so the
+       check reads what a re-ingest would read. `Dataset.pixel_array`
+       alone would fail every healthy 16-bit colour JPEG 2000 export,
+       which pydicom with only Pillow cannot decode (#416), and
+       `imagecodecs` alone would verify a reading nobody makes. It asks
+       for the stored samples (`as_rgb=False`), not a colour conversion,
+       because the samples are what was written. Every sample is then
+       compared bit for bit (`_bit_patterns`). A native sample outside
+       the declared BitsStored therefore fails: every conformant reader
+       masks it, so the file does not hold what was meant (-3024 at
+       BitsStored 12 reads back as 1072).
+    3. **Waveform bytes**, when `written_waveform` is given: the file's
+       `WaveformData` against the bytes written, allowing exactly the
+       one pad byte `save_as` adds to an odd-length value
+       (`_readback_waveform_mismatch`).
 
-    Raises on an unreadable file or any descriptor mismatch. The raise
-    is the whole mechanism: it becomes `ExportOutcome(ok=False)`, an
-    `ERROR` audit row and a `REVIEW_REQUIRED` grade through the same
+    `None` for either means "no such element was written" -- an SR, a
+    float16 array (whose arm writes none), an image with no waveform --
+    and the comparison is skipped, not attempted and caught: both
+    decoders raise `AttributeError` on a file with no pixel element, and
+    catching that would also pass a file whose pixel element vanished.
+    Not compared: nested pixel payloads such as icons (#183), whose
+    decoded arrays the worker does not hold.
+
+    Raises on an unreadable or undecodable file, or any mismatch. The
+    raise is the whole mechanism: it becomes `ExportOutcome(ok=False)`,
+    an `ERROR` audit row and a `REVIEW_REQUIRED` grade through the same
     channel a write that raised takes (#181) -- and because it fires
     against the temporary file, before the rename that publishes it
     (#199), a file that fails here is never delivered at all.
+
+    Each reason names the exception's type as well as its text: a
+    message-less exception (`StopIteration()`) would otherwise leave a
+    row reading "could not be decoded ()" (#435's class).
     """
     try:
         readback = pydicom.dcmread(path)
     except Exception as exc:
         raise RuntimeError(
             f"Readback verification failed: the written file could not be "
-            f"read back ({exc})") from exc
+            f"read back ({type(exc).__name__}: {exc})") from exc
 
     mismatches = [
         f"{kw} reads back as {getattr(readback, kw, None)!r} where "
@@ -3022,6 +3229,25 @@ def _verify_readback(path: str, ds) -> None:
     if mismatches:
         raise RuntimeError(
             "Readback verification failed: " + "; ".join(mismatches))
+
+    if written_pixels is not None:
+        try:
+            decoded, _ = _decode_pixels(readback, as_rgb=False)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Readback verification failed: the written pixel data "
+                f"could not be decoded ({type(exc).__name__}: {exc})"
+            ) from exc
+        reason = _readback_pixel_mismatch(
+            decoded, written_pixels,
+            getattr(readback, "PixelRepresentation", None))
+        if reason is not None:
+            raise RuntimeError(f"Readback verification failed: {reason}")
+
+    if written_waveform is not None:
+        reason = _readback_waveform_mismatch(readback, written_waveform)
+        if reason is not None:
+            raise RuntimeError(f"Readback verification failed: {reason}")
 
 
 #: The attestation `RedactionService` writes on every path that actually
@@ -3305,6 +3531,13 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
         inst = ctx.instance
         ds = DicomExporter._create_ds(inst)
 
+        # What `verify_readback` holds the written file against (#449):
+        # the array each pixel element is written from, and the waveform
+        # bytes. Each is set where its element is written, so an instance
+        # that writes none leaves it None and is not decoded.
+        written_pixels = None
+        written_waveform = None
+
         # 0. Base Attributes
         DicomExporter._merge(ds, inst.attributes, losses,
                              vrs=getattr(inst, 'attribute_vrs', None))
@@ -3508,12 +3741,19 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
                     f"declaration is wrong, or export each sample plane "
                     f"as its own single-sample instance.")
 
+            # `written_pixels` is taken in each arm that writes an
+            # element, and here rather than at the finalize below: this
+            # branch ends with `arr = None`, so a capture after it would
+            # leave every float export unchecked (#449). The float16 arm
+            # writes no element and takes none, so it is not decoded.
             if arr.itemsize == 4:
                 ds.FloatPixelData = arr.tobytes()
                 ds.BitsAllocated = 32
+                written_pixels = arr
             elif arr.itemsize == 8:
                 ds.DoubleFloatPixelData = arr.tobytes()
                 ds.BitsAllocated = 64
+                written_pixels = arr
             else:
                 # `ds`, not `inst.attributes` -- same reason as the
                 # missing-pixels check above (#184).
@@ -3799,6 +4039,7 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
                 # is what left the rest declaring a Type 1 element they
                 # did not carry.
                 ds.WaveformSequence[0].WaveformData = w_raw
+                written_waveform = w_raw
             else:
                 # Structurally plausible and empty is the failure mode this
                 # whole fix exists to end; if it is still reachable -- a
@@ -3833,6 +4074,15 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
         # `if key in ds: del` reintroduces that noise and guards nothing;
         # measured in `test_export_redaction_hash_warning.py` (#248).
 
+        # The integer branch's pixel element is written from `arr`, as
+        # bytes above or by the encoder inside `_finalize_dataset`, so
+        # this is the array the readback holds the file against (#449).
+        # After the redaction block and the geometry, and a reference,
+        # not a copy. `arr` is None here after the float branch, which
+        # took its own capture, and for an instance with no pixels.
+        if arr is not None:
+            written_pixels = arr
+
         # Validate & Save
         ds = DicomExporter._finalize_dataset(ds, ctx.compression, pixel_array=arr)
 
@@ -3865,7 +4115,8 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
             # never published under its real name -- see
             # `_verify_readback` (#209).
             if ctx.verify_readback:
-                _verify_readback(tmp_path, ds)
+                _verify_readback(tmp_path, ds, written_pixels,
+                                 written_waveform)
             os.replace(tmp_path, ctx.output_path)
         except Exception:
             try:
@@ -3932,8 +4183,9 @@ class _J2kFrameRefusal(RuntimeError):
 #: What the cell costs: a third-party reader with pydicom and only
 #: Pillow still cannot decode such a file's `pixel_array`. A caller
 #: exporting for one passes `use_compression=False`, as before.
-#: `verify_readback=True` compares descriptors, not pixels, so it does
-#: not decide this either way (#449).
+#: `verify_readback=True` decodes every written file through
+#: `_decode_pixels` since #449; `(2, True)` passes it through the
+#: imagecodecs fallback, where `pixel_array` with only Pillow raises.
 _J2K_ENCODABLE_FRAMES = frozenset({
     (1, False),
     (1, True),

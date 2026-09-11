@@ -1604,10 +1604,18 @@ class DicomSession:
         counted in `IngestSummary.declined`, and a `WARNING` audit row
         names the UID, the file, and the file the instance was ingested
         from. The store is keyed on that UID, so admitting the second
-        used to let the next save overwrite the first. Which one is
-        "first" is the first linked, not necessarily the first on disk
-        (#450). A declined file is not recorded as imported, so
-        ingesting the same folder again declines it again.
+        used to let the next save overwrite the first. **Which file is
+        kept is promised** (#450): an instance the session already holds
+        is always kept over a new file, and among the files new to this
+        call, the one whose path sorts first is kept -- whatever order
+        the filesystem lists them in. The sort is on the path string as
+        walked (`os.path.join` of the directory and the name), the one
+        the `WARNING` row prints. A declined file is not recorded as
+        imported, so ingesting the same folder again declines it again.
+
+        `ISOCENTER_FORCE_THREADS` has no effect here: `ingest()` runs on
+        the session's own process pool. Each call that has files to read
+        logs one `WARNING` saying so when the variable is set (#393).
 
         Args:
             directory (str): The path to the directory containing DICOM files.
@@ -3758,15 +3766,31 @@ class DicomSession:
             subset (Union[str, list, pd.DataFrame]): Filter the export
                 using a query string, a list of UIDs, or a DataFrame.
             verify_readback (bool): If True, each worker re-reads the file
-                it just wrote and compares Rows, Columns, SamplesPerPixel,
-                NumberOfFrames and BitsAllocated against the dataset it
-                serialized, before the file is published under its real
-                name. An unreadable file or a mismatch fails that
-                instance's export: it is counted out of "Instances
-                Written", files an `ERROR` audit row and takes the
-                compliance grade to `REVIEW_REQUIRED` (#209, following
-                #181). Off by default because it costs a second parse per
-                instance; the cost parallelizes across the export workers.
+                it just wrote before it is published under its real name,
+                and holds it against what it meant to write: Rows,
+                Columns, SamplesPerPixel, NumberOfFrames and
+                BitsAllocated against the dataset it serialized (#209);
+                then every pixel sample, decoded through the same door
+                `ingest()` reads through and compared bit for bit with
+                the samples written, after redaction (#449); and a DICOM
+                waveform's `WaveformData` bytes. The stored samples are
+                compared, not a colour conversion of them. A value
+                outside the declared BitsStored fails an uncompressed
+                file, because every conformant reader masks it (-3024
+                at BitsStored 12 reads as 1072). An unreadable or
+                undecodable file, or any mismatch, fails that instance's
+                export: it is counted out of "Instances Written", files
+                an `ERROR` audit row and takes the compliance grade to
+                `REVIEW_REQUIRED` (#181); when every instance fails the
+                call raises `ExportError`. Off by default because it
+                costs a second parse and a full decode per instance.
+                Measured on 200 CT-like 512x512 slices, 14 workers,
+                Python 3.12: the default JPEG 2000 export took 1.18 s
+                with it and 0.58 s without (x2.02; the descriptor-only
+                check before #449 cost x1.03), mostly pydicom's Pillow
+                decode; an uncompressed export 0.42 s against 0.40 s
+                (x1.06). Each worker holds one more decoded array while
+                it checks.
         """
         # Cleared before anything can return early or raise. These are
         # session-scoped, and assigning them only on success let an

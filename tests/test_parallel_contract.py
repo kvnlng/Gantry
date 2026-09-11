@@ -386,7 +386,8 @@ def test_a_raising_task_is_yielded_as_a_value_when_asked(monkeypatch, lever):
 def test_a_raising_task_is_yielded_as_a_value_on_the_recycling_pool():
     """`maxtasksperchild` selects `multiprocessing.Pool`, the third path.
 
-    `imap_unordered`, so the contract here is membership, not order.
+    `imap_unordered` by default, so the contract here is membership, not
+    order (`ordered=True` keeps submission order; #450).
     """
     results = parallel.run_parallel(
         double_or_raise, [1, -2, 3], show_progress=False, max_workers=2,
@@ -395,6 +396,64 @@ def test_a_raising_task_is_yielded_as_a_value_on_the_recycling_pool():
     exceptions = [r for r in results if isinstance(r, Exception)]
     assert sorted(r for r in results if not isinstance(r, Exception)) == [2, 6]
     assert len(exceptions) == 1 and isinstance(exceptions[0], ValueError)
+
+
+def _head_waits_for_the_rest(item):
+    """Module scope: it pickles into a recycling-pool worker.
+
+    Item 0 does not return until items 1..3 have each left a marker file,
+    so it *finishes* last whatever the scheduler does -- a sleep would
+    only make that likely, and a respawn under `maxtasksperchild=1` can
+    take longer than any sleep short enough to keep in the suite. The
+    60-second bound turns a broken barrier into a failure, not a hang.
+    """
+    import time  # pylint: disable=import-outside-toplevel
+    index, folder = item
+    if index == 0:
+        deadline = time.monotonic() + 60
+        while not all(os.path.exists(os.path.join(folder, str(k)))
+                      for k in (1, 2, 3)):
+            if time.monotonic() > deadline:
+                raise TimeoutError("items 1..3 never finished")
+            time.sleep(0.01)
+    else:
+        with open(os.path.join(folder, str(index)), "w",
+                  encoding="utf-8"):
+            pass
+    return index
+
+
+def test_an_ordered_recycling_run_yields_in_submission_order(tmp_path):
+    """`ordered=True` makes the recycling pool yield in submission order (#450).
+
+    The other two paths are ordered already (`executor.map`, or a
+    shared Pool's `imap`); the recycling pool streams by arrival unless
+    asked. `import_files` asks, so a direct call under
+    `ISOCENTER_MAX_TASKS_PER_CHILD` links its files in path order and
+    keeps the same duplicate every time.
+
+    The unordered run is here as the precondition: item 0 is made to
+    finish last, and if the default did *not* then yield it last the
+    fixture would not be able to tell `imap` from `imap_unordered`, and
+    the ordered assertion would pass for the wrong reason.
+    """
+    def items(tag):
+        folder = tmp_path / tag
+        folder.mkdir()
+        return [(k, str(folder)) for k in range(4)]
+
+    unordered = parallel.run_parallel(
+        _head_waits_for_the_rest, items("unordered"), show_progress=False,
+        max_workers=2, maxtasksperchild=1)
+    assert sorted(unordered) == [0, 1, 2, 3]
+    assert unordered[-1] == 0, (
+        f"precondition: item 0 must arrive last by default; got "
+        f"{unordered}")
+
+    ordered = parallel.run_parallel(
+        _head_waits_for_the_rest, items("ordered"), show_progress=False,
+        max_workers=2, maxtasksperchild=1, ordered=True)
+    assert ordered == [0, 1, 2, 3], ordered
 
 
 def test_a_raising_task_is_yielded_as_a_value_on_a_shared_executor():
@@ -1170,7 +1229,7 @@ def _pid_of_worker(_):
 
 
 def test_the_choice_records_which_lever_asked_for_processes(monkeypatch):
-    """The whole three-field `_Choice`, per row of the lever matrix (#400).
+    """The whole four-field `_Choice`, per row of the lever matrix (#400).
 
     The single mutation the refusal and the warning both rest on is an
     attribution computed *after* the `force_threads` short-circuit: the
@@ -1197,39 +1256,41 @@ def test_the_choice_records_which_lever_asked_for_processes(monkeypatch):
     max_tasks = "ISOCENTER_MAX_TASKS_PER_CHILD"
 
     # (env, force_threads, maxtasksperchild, recycling_lever) ->
-    # (use_threads, processes_requested_by, threads_request_overridden_by)
+    # (use_threads, processes_requested_by, threads_request_overridden_by,
+    #  threads_requested_by -- #393's field, which has its own table in
+    #  `test_threads_requested_by_names_only_a_lever_that_asked_and_won`)
     rows = [
         ({}, False, None, None,
-         (False, None, None),
+         (False, None, None, None),
          "nothing set: rank 4 is a default, and a default is not a request"),
         ({}, True, None, None,
-         (True, None, None),
+         (True, None, None, "force_threads=True"),
          "the force_threads argument alone denies nobody"),
         ({force_processes: "1"}, False, None, None,
-         (False, force_processes, None),
+         (False, force_processes, None, None),
          "the processes lever was set and got what it asked for"),
         ({force_processes: "1"}, True, None, None,
-         (True, force_processes, None),
+         (True, force_processes, None, "force_threads=True"),
          "the processes lever was set and the argument beat it -- the "
          "request must survive the short-circuit, or redact() on a "
          ":memory: store can never report it"),
         ({"ISOCENTER_FORCE_THREADS": "1", force_processes: "1"}, False, None,
          None,
-         (True, None, None),
+         (True, None, None, "ISOCENTER_FORCE_THREADS"),
          "the operator's own threads lever supersedes their processes "
          "lever by the documented order, so nothing was denied"),
         ({max_tasks: "2"}, False, 2, max_tasks,
-         (False, max_tasks, None),
+         (False, max_tasks, None, None),
          "recycling asked for processes and nobody asked for threads"),
         ({max_tasks: "2"}, True, 2, max_tasks,
-         (False, max_tasks, "force_threads=True"),
+         (False, max_tasks, "force_threads=True", None),
          "recycling beat the force_threads argument"),
         ({"ISOCENTER_FORCE_THREADS": "1", max_tasks: "2"}, False, 2, max_tasks,
-         (False, max_tasks, "ISOCENTER_FORCE_THREADS"),
+         (False, max_tasks, "ISOCENTER_FORCE_THREADS", None),
          "recycling beat the threads variable, which is the lever the "
          "#185 warning must name"),
         ({}, False, 25, "the maxtasksperchild argument",
-         (False, "the maxtasksperchild argument", None),
+         (False, "the maxtasksperchild argument", None, None),
          "session.export()'s own call: the argument asked, not a variable"),
     ]
 
@@ -1243,6 +1304,74 @@ def test_the_choice_records_which_lever_asked_for_processes(monkeypatch):
         assert tuple(choice) == expected, (
             f"{env}, force_threads={force_threads}, "
             f"maxtasksperchild={maxtasks}: {why}; got {tuple(choice)}")
+
+
+def test_threads_requested_by_names_only_a_lever_that_asked_and_won(
+        monkeypatch):
+    """Who asked for threads *and got them* (#393).
+
+    `ingest()` warns that `ISOCENTER_FORCE_THREADS` had no effect on it,
+    so it needs to know that the variable asked -- not merely that the
+    strategy resolved to threads. On a free-threaded build with nothing
+    set, `use_threads` is True and nobody asked: a field derived from
+    `use_threads` after the fact would make every free-threaded
+    `ingest()` warn about a lever the operator never touched, which is
+    the row that patches `_is_gil_enabled` to False below. And when
+    recycling beat the request, the request lost,
+    `threads_request_overridden_by` already says so, and #185's warning
+    is the one line; naming the lever here too would make `ingest()`
+    say it twice.
+    """
+    force_threads = "ISOCENTER_FORCE_THREADS"
+    force_processes = "ISOCENTER_FORCE_PROCESSES"
+    max_tasks = "ISOCENTER_MAX_TASKS_PER_CHILD"
+
+    # (env, force_threads, maxtasksperchild, lever, gil) ->
+    # (use_threads, threads_requested_by, threads_request_overridden_by)
+    rows = [
+        ({force_threads: "1"}, False, None, None, True,
+         (True, force_threads, None),
+         "the variable asked and threads won"),
+        ({}, True, None, None, True,
+         (True, "force_threads=True", None),
+         "the argument asked and threads won"),
+        ({force_threads: "1"}, True, None, None, True,
+         (True, force_threads, None),
+         "both asked: the variable wins the name, as it does for "
+         "threads_request_overridden_by"),
+        ({force_threads: "1", max_tasks: "2"}, False, 2, max_tasks, True,
+         (False, None, force_threads),
+         "recycling beat the request, so nothing was granted and #185 "
+         "is the one line"),
+        ({}, False, None, None, False,
+         (True, None, None),
+         "the free-threaded default is not a request"),
+        ({force_processes: "1"}, False, None, None, False,
+         (False, None, None),
+         "the processes lever asked for processes and got them"),
+    ]
+
+    for env, force, maxtasks, lever, gil, expected, why in rows:
+        for name in (force_threads, force_processes, max_tasks):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        monkeypatch.setattr(sys, "_is_gil_enabled", lambda gil=gil: gil,
+                            raising=False)
+        choice = parallel._resolve_execution_choice(force, maxtasks, lever)
+        got = (choice.use_threads, choice.threads_requested_by,
+               choice.threads_request_overridden_by)
+        assert got == expected, (
+            f"{env}, force_threads={force}, maxtasksperchild={maxtasks}, "
+            f"GIL={gil}: {why}; got {got}")
+
+    # And `_resolve_strategy` carries it to the callers that read it.
+    for name in (force_processes, max_tasks):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(force_threads, "1")
+    strategy = parallel._resolve_strategy(
+        None, 1, None, False, False, False, "x", None)
+    assert strategy.threads_requested_by == force_threads
 
 
 def test_resolving_a_strategy_emits_nothing(monkeypatch, caplog):
