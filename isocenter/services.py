@@ -172,8 +172,9 @@ def _report_redaction_failures(failures, store_backend=None):
 
 
 #: What pixel redaction writes to an instance itself, and so may change
-#: without invalidating the instance's tag-scan conclusion (#486; pending
-#: owner confirmation). `_apply_redaction_flags` writes ImageType,
+#: without invalidating the instance's tag-scan conclusion (#486;
+#: confirmed by the owner on 2026-09-11). `_apply_redaction_flags`
+#: writes ImageType,
 #: BurnedInAnnotation, DerivationDescription and the Derivation Code
 #: Sequence; `regenerate_uid()` writes the SOP Instance UID and records
 #: the one it replaced; the attestation hash; and `set_pixel_data()` the
@@ -233,7 +234,8 @@ def capture_phi_status_for_redaction(inst: Instance) -> Optional[tuple]:
     dispatch**: under threads the worker writes to the live instance, so a
     status read when the outcome lands is already UNSCANNED.
 
-    Pending owner confirmation: this is option 2 on #486. Without it,
+    This is option 2 on #486, confirmed by the owner on 2026-09-11.
+    Without it,
     `redact()`'s own writes move every redacted instance to UNSCANNED --
     measured, revision 12 to 19 -- and the documented anonymize -> redact
     -> export path produces a manifest saying `"anonymized": false` for
@@ -843,7 +845,7 @@ class RedactionService:
                 disable=not show_progress):
             original_uid = inst.sop_instance_uid  # Capture before mutation
             # Before the pass touches it, as `_apply_redaction_rules`
-            # does for the parallel path (#486; pending owner confirmation).
+            # does for the parallel path (#486; confirmed by the owner).
             captured = capture_phi_status_for_redaction(inst)
             failed = False
             # Bound before the `try`: every `continue` below and the

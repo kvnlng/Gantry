@@ -1,9 +1,9 @@
 """Redaction keeps an instance's tag-scan conclusion across its own writes (#486).
 
-**Pending owner confirmation.** This is option 2 of the two put to the owner
-on #486, landed in its own commit so it can be reverted whole. If option 1 is
-chosen instead, this file goes with it, and the docs gain "call `audit()`
-after `redact()` before `generate_manifest()`".
+**Confirmed by the owner on 2026-09-11.** This is option 2 of the two put to
+the owner on #486, landed in its own commit so it could be reverted whole.
+The owner picked it, so it stands; option 1 would have been the docs gaining
+"call `audit()` after `redact()` before `generate_manifest()`" instead.
 
 `PhiStatus` is valid only at the revision it was recorded at, and
 `redact()` writes to every instance it redacts: the pixels, `ImageType`,

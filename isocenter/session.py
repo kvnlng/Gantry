@@ -2113,7 +2113,7 @@ class DicomSession:
         `redact()` is the one edit that keeps an instance's status: an
         instance REMEDIATED or CLEARED before the pass reads the same
         after it, provided nothing but redaction's own writes changed
-        (#486; pending owner confirmation). See `PhiStatus`.
+        (#486; confirmed by the owner on 2026-09-11). See `PhiStatus`.
 
         Returns:
             Dict[str, Counter]: Keyed "patients", "studies", "instances";
@@ -3543,7 +3543,7 @@ class DicomSession:
         # worker writes to the live instance, so by the time the parent
         # sees an outcome the status it would read is already UNSCANNED.
         # See `capture_phi_status_for_redaction` for what is kept and why
-        # (#486; pending owner confirmation).
+        # (#486; confirmed by the owner on 2026-09-11).
         captured = {sop: capture_phi_status_for_redaction(inst)
                     for sop, inst in instances.items()}
 

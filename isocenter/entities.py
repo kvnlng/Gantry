@@ -104,7 +104,7 @@ class PhiStatus(Enum):
     before the pass; anything else changed, by anyone, and the status is
     left UNSCANNED as the rule above requires. Without it, the documented
     anonymize -> redact -> export path left every redacted instance
-    UNSCANNED (#486; pending owner confirmation). See
+    UNSCANNED (#486; confirmed by the owner on 2026-09-11). See
     `services.capture_phi_status_for_redaction`.
     """
 
