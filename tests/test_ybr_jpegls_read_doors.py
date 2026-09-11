@@ -346,21 +346,21 @@ def test_the_handler_converts_exactly_the_relabels_ingest_leaves_to_it():
 
 
 # ---------------------------------------------------------------------------
-# R6 -- the relabel does not widen #465
+# R6 -- a set landing during the fallback read keeps its pixels and label
 # ---------------------------------------------------------------------------
 
-def test_a_set_landing_during_the_fallback_read_keeps_its_own_label(
+def test_a_set_landing_during_the_fallback_read_keeps_its_pixels_and_label(
         tmp_path, monkeypatch):
-    """R6: the relabel is taken under the pixel-state lock, and only when
-    nothing replaced the array during the load.
+    """R6: the fallback arm publishes, and relabels, only into an empty slot.
 
-    `get_pixel_data()`'s read arms publish the loaded frame without the
-    lock, so a `set_pixel_data()` landing during the load loses its
-    pixels (#465, open, and not fixed here). The relabel must not add
-    the set's *descriptors* to that loss. Here the set is a grey frame,
-    so it corrects the label to MONOCHROME2 and SamplesPerPixel to 1. An
-    unguarded relabel would then write RGB beside a SamplesPerPixel of
-    1, a label no array can carry.
+    `get_pixel_data()` loads with no lock held and publishes under the
+    pixel-state lock, only while the array is still absent; otherwise it
+    returns what is resident (#465). The relabel is made in the same
+    hold, on the publishing branch only. Here the set is a grey frame, so
+    it corrects the label to MONOCHROME2 and SamplesPerPixel to 1: a
+    relabel made anyway would write RGB beside a SamplesPerPixel of 1, a
+    label no array can carry, and a publish made anyway would put the
+    stale RGB frame over the set's pixels and mark them written.
 
     The set is injected inside the handler call, which is the interleaving
     a second thread produces, made deterministic (#465's `SetDuringRead`
@@ -373,13 +373,21 @@ def test_a_set_landing_during_the_fallback_read_keeps_its_own_label(
     inst = _instance(path, "YBR_FULL")
     real = imagecodecs_handler.get_pixel_data
 
+    grey = np.zeros((4, 4), dtype=np.uint8)
+    fired = []
+
     def set_during_read(ds):
         arr = real(ds)
-        inst.set_pixel_data(np.zeros((4, 4), dtype=np.uint8))
+        fired.append(1)
+        inst.set_pixel_data(grey)
         return arr
 
     monkeypatch.setattr(imagecodecs_handler, "get_pixel_data",
                         set_during_read)
-    inst.get_pixel_data()
+    got = inst.get_pixel_data()
+    assert fired == [1], "the fallback arm was never reached"
     assert inst.attributes["0028,0004"] == "MONOCHROME2"
     assert int(inst.attributes["0028,0002"]) == 1
+    assert got is inst.pixel_array
+    assert got.shape == grey.shape and np.array_equal(got, grey)
+    assert inst._pixel_array_unwritten, "the set's pixels were marked written"

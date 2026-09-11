@@ -3767,10 +3767,13 @@ class DicomSession:
                         # the write repeats what is already there.
                         #
                         # Not `Instance._relabel_to_decoded_colour`, which
-                        # is a *read's* relabel: this copies a result
-                        # across, and that helper takes `PIXEL_STATE_LOCK`,
-                        # a plain `threading.Lock` this block already
-                        # holds, so calling it here would deadlock. A dict
+                        # is a *read's* relabel, called only by a read that
+                        # publishes into an empty slot (#465): this copies
+                        # a result across, beside the loader it describes,
+                        # whatever is resident. (That helper used to take
+                        # `PIXEL_STATE_LOCK` itself, which this block holds,
+                        # and calling it here would have deadlocked; since
+                        # #465 its caller holds the lock instead.) A dict
                         # write takes no lock and logs nothing, so the leaf
                         # stays a leaf. The `mark_modified()` after the
                         # lock moves the revision.

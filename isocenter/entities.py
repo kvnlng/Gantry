@@ -542,9 +542,10 @@ _ABSENT = object()
 # `Session._apply_redaction_outcomes` -- each of which checks what it read
 # still stands, rebinds the loader and clears the flag and the record.
 # `get_pixel_data()`'s three read arms (the loader, the file and the
-# imagecodecs fallback) also fill the array and clear the flag, and they
-# do it **without** this lock, so a set landing during a load is
-# overwritten and marked written (#465, open).
+# imagecodecs fallback) fill the array and clear the flag through
+# `Instance._publish_loaded_frame`, which takes it after the load,
+# holding nothing, and publishes only while the slot is still empty, so a
+# set landing during a load keeps its pixels (#465).
 #
 # Without it a publish could interleave with a mutator. A discard landing
 # after `_persist_pixels`' revision guard and before its clears restored
@@ -717,12 +718,12 @@ class Instance(DicomItem):
     # `Session._apply_redaction_outcomes` clears (its loader reads the
     # worker's frame, which the *current* descriptors describe); and the
     # three persistence sites that make the resident array the stored
-    # frame clear it beside the flag. **Except** `get_pixel_data()`'s
-    # three read arms, which do not hold the leaf: each checks that the
-    # array is absent, loads, then assigns the loaded frame and clears
-    # the flag, and a `set_pixel_data()` landing between the check and
-    # the assignment is overwritten -- leaving this record set beside a
-    # flag that says written (measured in the review of #466; #465, open).
+    # frame clear it beside the flag. `get_pixel_data()`'s three read
+    # arms publish only into an empty slot, under the leaf, so a set that
+    # landed during the load keeps its array, its flag and this record
+    # together (#465). Before that they published without it, and the
+    # stale frame went over the set with this record left beside a flag
+    # that said written (measured in the review of #466).
     #
     # On the instance, not the loader: after #417 the loader's capture is
     # not authoritative, and the loader is rebuilt per read, replaced by
@@ -1099,7 +1100,9 @@ class Instance(DicomItem):
                 # Ungated, every read agrees with the reopened store.
                 # (Before #434 the discard itself left `set_pixel_data`'s
                 # descriptors behind and was the example here; it now
-                # puts them back.)
+                # puts them back.) The publish below is not gated on the
+                # flag either, for the same reason: it asks whether the
+                # slot is still empty (`_publish_loaded_frame`, #465).
                 #
                 # Duck-typed: tests install a bare lambda as the loader,
                 # and a loader with no `describes` has no capture to go
@@ -1119,11 +1122,9 @@ class Instance(DicomItem):
                 # 1->4, PhotometricInterpretation MONOCHROME2->RGB and
                 # Rows 4->3 -- and since set_pixel_data ends in
                 # mark_modified(), the next save() wrote it to SQLite (#186).
-                self.pixel_array = arr
-                # A fresh read from the store or the file: the resident
-                # array now IS what is stored, so it is freeable again (#293).
-                self._pixel_array_unwritten = False
-                return self.pixel_array
+                # Published only into an empty slot: a set that landed
+                # during the load keeps its pixels (#465).
+                return self._publish_loaded_frame(arr)
             except Exception as e:
                 raise RuntimeError(f"Pixel Loader failed for {self.sop_instance_uid}: {e}") from e
 
@@ -1187,18 +1188,15 @@ class Instance(DicomItem):
                     declared = str(getattr(
                         ds, "PhotometricInterpretation", "") or "")
                     arr, decoded = _decode_with_pydicom(ds)
-                    if decoded is not None and str(decoded) != declared:
-                        self._relabel_to_decoded_colour(str(decoded))
+                    relabel = (str(decoded) if decoded is not None
+                               and str(decoded) != declared else None)
                     # Cache it in memory. Assigned, not set through
                     # set_pixel_data: pydicom shaped this array from the
                     # file's own descriptors, which are the descriptors
                     # `attributes` holds, so a re-derivation could only
-                    # disagree with them (#186).
-                    self.pixel_array = arr
-                    # A fresh read from the store or the file: the resident
-                    # array now IS what is stored, so it is freeable again (#293).
-                    self._pixel_array_unwritten = False
-                    return self.pixel_array
+                    # disagree with them (#186). Published, relabel and
+                    # all, only into an empty slot (#465).
+                    return self._publish_loaded_frame(arr, relabel)
                 except (AttributeError, TypeError):
                     # "No pixel data element" was the intent and is still
                     # right -- but `.pixel_array` raises AttributeError for
@@ -1279,36 +1277,13 @@ class Instance(DicomItem):
                         # to correct.
                         decoded = str(getattr(
                             ds, "PhotometricInterpretation", "") or "")
-                        if decoded != declared:
-                            self._relabel_to_decoded_colour(decoded)
                         # Same reasoning as the two branches above: a read
-                        # must not write (#186). The relabel just above is
-                        # the one exception, and it is a label, not a
-                        # geometry: it states a conversion this read made.
-                        self.pixel_array = arr
-                        # A fresh read from the store or the file: the resident
-                        # array now IS what is stored, so it is freeable again
-                        # (#293). This clear used to say it SURVIVED DELETION
-                        # UNTESTED, because reaching it needs a transfer syntax
-                        # pydicom cannot decode and imagecodecs can, on an
-                        # instance whose array has diverged -- and until #407
-                        # `imagecodecs_handler`'s single-frame arm could not
-                        # decode anything at all, so no such transfer syntax
-                        # existed and nothing in the suite could construct one.
-                        # #407 fixed that arm, and the sequence is now pinned by
-                        # tests/test_single_frame_encapsulated_decode.py::
-                        # test_the_imagecodecs_fallback_reads_a_frame_pydicom_cannot:
-                        # a 16-bit multi-sample JPEG 2000 file (Pillow refuses
-                        # it, imagecodecs reads it bit-exactly), then
-                        # `set_pixel_data` -> `discard_pixel_data` ->
-                        # `get_pixel_data`, and `unload_pixel_data()` must come
-                        # back True. Delete this line and that last assertion
-                        # goes red. It is here, as it always was, because the
-                        # two arms above are pinned and a read path that
-                        # disagreed with them about whether a read counts as a
-                        # write would be a second answer to one question.
-                        self._pixel_array_unwritten = False
-                        return self.pixel_array
+                        # must not write (#186). The relabel is the one
+                        # exception, and it is a label, not a geometry: it
+                        # states a conversion this read made, and it is
+                        # made only if this read publishes (#465).
+                        return self._publish_loaded_frame(
+                            arr, decoded if decoded != declared else None)
                 except (ImportError, AttributeError, RuntimeError) as exc:
                     # Fallback failed: raise the original error below, and
                     # say what the fallback said beside it (#444). This was
@@ -1450,13 +1425,13 @@ class Instance(DicomItem):
         ingest's does. Otherwise the door returns RGB bytes under a YBR
         label, which is #372's defect, and export writes the two together.
         It bumps the revision, because a new label is a change the store
-        should hold. **Both read arms relabel through here and nowhere
-        else**, so both get the lock discipline below. The one other write
-        of this label beside a new frame is not a read:
-        `Session._apply_redaction_outcomes` copies a process worker's
-        redaction result across, the worker's label with its loader, under
-        the same lock and without this helper, which would take that lock
-        a second time (#482).
+        should hold. **Every read arm relabels through here, and only
+        `_publish_loaded_frame` calls it**, so every relabel gets the
+        discipline below. The one other write of this label beside a new
+        frame is not a read: `Session._apply_redaction_outcomes` copies a
+        process worker's redaction result across, the worker's label with
+        its loader, under the same lock and without this helper, which
+        writes only on a read's publishing branch (#482).
 
         **Only when the instance already carries a label.** A bare
         `Instance(file_path=...)` holds no descriptors, so nothing on it
@@ -1465,24 +1440,68 @@ class Instance(DicomItem):
         `ingest()` the label is RGB already, so on that path this writes
         nothing. It is for hand-built graphs.
 
-        **Under `PIXEL_STATE_LOCK`, and only while `pixel_array` is
-        still None.** The read arms publish their frame without the lock,
-        so a `set_pixel_data()` landing during the load loses its pixels
-        (#465, open). This must not also take the set's descriptors. A set
-        that lands before this section has already made the array
-        resident, and the relabel is skipped. A set that lands after it
-        writes its own label over this one. Either way the set's label
-        stands.
-        The array publish and the flag clear stay where #465 has them, and
-        they are that issue's to fix: moving them in here would be a
-        one-arm half of its fix, and would change the shape the site
-        detector in `tests/test_sidecar_gate_order.py` pins. `set_attr`
-        takes no lock and logs nothing, and `set_pixel_data` already calls
-        it under this leaf, so this stays a leaf section.
+        **Called under `PIXEL_STATE_LOCK`, on the publishing branch
+        only.** `_publish_loaded_frame` holds the leaf, finds `pixel_array`
+        still None, and relabels and publishes the frame in that one hold
+        (#465). A `set_pixel_data()` that landed during the load has
+        filled the slot, so neither happens and the set keeps its label and
+        its pixels; a set that lands after the hold writes its own label
+        over this one. It takes no lock of its own: the caller holds a
+        plain `threading.Lock`, which a second acquire would deadlock.
+        `set_attr` takes no lock and logs nothing, and `set_pixel_data`
+        already calls it under this leaf, so the section stays a leaf.
+        """
+        if "0028,0004" in self.attributes:
+            self._write_str_if_changed("0028,0004", label)
+
+    def _publish_loaded_frame(self, arr: np.ndarray,
+                              relabel: Optional[str] = None) -> np.ndarray:
+        """Cache the frame a read arm loaded, unless a set got there first (#465).
+
+        The three read arms -- the sidecar loader, the file, the
+        imagecodecs fallback -- load with no lock held, since a decode
+        can take seconds and `PIXEL_STATE_LOCK` is a leaf held for
+        microseconds, and then publish here. They used to assign the
+        frame and clear the unwritten flag unconditionally: a
+        `set_pixel_data()` that landed during the load was overwritten by
+        the stale stored frame, the clear marked the lost pixels written,
+        `unload_pixel_data()` then dropped the only copy, and the next
+        save dedup'd against the stored frame. A set of another geometry
+        left the stored frame resident under the set's descriptors, with
+        the #434 record set beside a flag that said written.
+
+        So: under the leaf, publish only while the slot is still empty,
+        and otherwise return what is resident, the set's array. **The
+        predicate is the slot**, not the flag and not the revision. The
+        flag stays set after a `discard_pixel_data()`, and the read that
+        follows must publish (A10 and S6 in
+        `tests/test_descriptor_edit_with_pixels_unloaded.py`). The
+        revision moves on every `set_attr`, every PHI status and the
+        relabel below, none of which makes the loaded frame wrong, so a
+        revision guard would refuse to cache under an audit running on
+        another thread.
+
+        `relabel` is the colour space the decode converted to (#464,
+        #482), written only when this read publishes.
+
+        The imagecodecs arm is a read like the other two, and its clear
+        through here is pinned by
+        `tests/test_single_frame_encapsulated_decode.py`'s
+        `test_the_imagecodecs_fallback_reads_a_frame_pydicom_cannot`
+        (set, discard, read, and `unload_pixel_data()` must come back
+        True). Until #407 no transfer syntax reached that arm, and its
+        clear was the one line in this method no test could see.
         """
         with PIXEL_STATE_LOCK:
-            if self.pixel_array is None and "0028,0004" in self.attributes:
-                self._write_str_if_changed("0028,0004", label)
+            if self.pixel_array is None:
+                if relabel is not None:
+                    self._relabel_to_decoded_colour(relabel)
+                self.pixel_array = arr
+                # A fresh read from the store or the file: the resident
+                # array now IS what is stored, so it is freeable again (#293).
+                self._pixel_array_unwritten = False
+                return arr
+            return self.pixel_array
 
     @staticmethod
     def _accepted_pixel_array(array: np.ndarray) -> np.ndarray:

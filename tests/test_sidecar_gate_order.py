@@ -13,9 +13,10 @@ is pinned here by recording wrappers rather than frozen in the API:
     _pixel_swap_lock  ->  PIXEL_STATE_LOCK       (publish sections; a leaf)
 
 `entities.PIXEL_STATE_LOCK` (#434, Q6) is taken by `set_pixel_data`,
-`discard_pixel_data` and `unload_pixel_data` holding nothing, and by the
-four publish sections under `_pixel_swap_lock`; nothing is taken while it
-is held. It is recorded by the same proxy, swapped in on the module.
+`discard_pixel_data`, `unload_pixel_data` and the read publish
+`_publish_loaded_frame` (#465) holding nothing, and by the four publish
+sections under `_pixel_swap_lock`; nothing is taken while it is held. It
+is recorded by the same proxy, swapped in on the module.
 
 Reversing the second arm is the cycle the 2026-09-07 spec measured:
 `_persist_pixels` calls `write_frame` under `_pixel_swap_lock`, and
@@ -294,6 +295,10 @@ def recorded(tmp_path, monkeypatch):
         first.set_pixel_data(np.full((8, 8), 9, dtype=np.uint8))
         session.store_backend.persist_pixel_data(first)           # site 5
         first.discard_pixel_data()                                # leaf
+        # A load into the emptied slot: the read publish (#465, leaf).
+        # Nothing else here reads an unloaded instance, so without this
+        # line `_publish_loaded_frame` never takes the lock.
+        first.get_pixel_data()
         # The dedup arm: the same bytes under a new dtype (leaf).
         second.set_pixel_data(second.get_pixel_data().view(np.int8))
         session.save(sync=True)
@@ -482,6 +487,7 @@ def test_there_are_exactly_six_write_frame_sites_and_they_are_these():
 
 #: Everything that takes the pixel-state leaf, by function name (#434, Q6).
 _LEAF_TAKERS = {"set_pixel_data", "discard_pixel_data", "unload_pixel_data",
+                "_publish_loaded_frame",
                 "_swap_pixels_under_gate", "_persist_pixels",
                 "_apply_redaction_outcomes"}
 
@@ -537,10 +543,10 @@ _CALLER_HOLDS = {"_replace_pixel_array", "_drop_resident_array",
 _PIXEL_STATE_WRITES = {
     ("isocenter/entities.py", "_replace_pixel_array"): (2, "caller holds"),
     ("isocenter/entities.py", "_restore_replaced_descriptors"): (1, "caller holds"),
-    # The three read arms -- loader, file, imagecodecs fallback -- fill the
-    # array and clear the flag without the lock, so a set landing during a
-    # load is overwritten and marked written (#465, open).
-    ("isocenter/entities.py", "get_pixel_data"): (3, "unlocked: #465"),
+    # The three read arms -- loader, file, imagecodecs fallback -- publish
+    # through this one helper, under the leaf, only while the slot is
+    # still empty (#465).
+    ("isocenter/entities.py", "_publish_loaded_frame"): (1, "leaf"),
     ("isocenter/persistence.py", "_swap_pixels_under_gate"): (2, "leaf"),
     ("isocenter/persistence.py", "_persist_pixels"): (4, "leaf"),
     ("isocenter/session.py", "_apply_redaction_outcomes"): (1, "leaf"),
