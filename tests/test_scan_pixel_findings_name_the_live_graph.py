@@ -17,6 +17,10 @@ boundary, and neither local gate interpreter has `pytesseract`. This
 file gets past that by patching *inside* the worker instead of around
 it: `_verify_worker_with_one_leak` is a module-level function, so a
 spawned child imports this module by name and runs the patch itself.
+In the parent -- the threads arm -- the test installs the stand-in with
+`monkeypatch` and the worker patches nothing: its threads share the
+parent's module, and a patch made in each of them raced (review of #466;
+`test_two_workers_at_once_leave_the_parents_ocr_alone`).
 
 **Why each finding carries the worker's pid.** Without it, a strategy
 lever that was silently ignored would run the "processes" case in
@@ -28,13 +32,18 @@ This file names no mutation-probe target module, so it needs no
 `TARGETS` row (`tests/test_mutation_probe_targets._importers` matches
 the text of a dotted module name anywhere in a test file).
 """
+import multiprocessing
 import os
+import sys
+import threading
+import types
 from datetime import date
 from unittest.mock import patch
 
 import numpy as np
 import pytest
 
+from isocenter import pixel_analysis
 from isocenter import session as session_module
 from isocenter.entities import Equipment, Instance, Patient, Series, Study
 from isocenter.pixel_analysis import TextRegion, _InstanceOcr
@@ -54,18 +63,30 @@ TEXT_OUTSIDE_THE_ZONE = (200, 200, 50, 50)
 _REAL_VERIFY_WORKER = session_module._verify_worker  # pylint: disable=protected-access
 
 
+def _ocr_one_leak(_instance):
+    """OCR's stand-in: one word, outside the zone, for every instance."""
+    return _InstanceOcr(
+        [TextRegion("LEAKTEXT", TEXT_OUTSIDE_THE_ZONE, 90.0)], True, None)
+
+
 def _verify_worker_with_one_leak(args):
     """The real worker, with OCR answering one word, stamped with this pid.
 
-    The patch is made here, in whichever process runs the worker, so it
-    holds in a spawned child as well as in a thread. It patches
-    `pixel_analysis._ocr_instance`, which the worker reads through since
-    #423; a patch on `verification.analyze_pixels` would now be inert.
+    It replaces `pixel_analysis._ocr_instance`, which the worker reads
+    through since #423; a patch on `verification.analyze_pixels` would now
+    be inert. **Only in a spawned child**, where `unittest.mock.patch` in
+    the test cannot reach and a pool child runs one task at a time. In the
+    parent the test has already installed the stand-in with `monkeypatch`,
+    and a patch here would be made in each worker thread at once: the
+    threads share the parent's module, `mock.patch` is not thread-safe,
+    and two interleaved enters and exits left the stand-in installed for
+    every later test (review of #466).
     """
-    with patch("isocenter.pixel_analysis._ocr_instance",
-               return_value=_InstanceOcr(
-                   [TextRegion("LEAKTEXT", TEXT_OUTSIDE_THE_ZONE, 90.0)], True, None)):
+    if multiprocessing.parent_process() is None:
         outcome = _REAL_VERIFY_WORKER(args)
+    else:
+        with patch.object(pixel_analysis, "_ocr_instance", _ocr_one_leak):
+            outcome = _REAL_VERIFY_WORKER(args)
     for finding in outcome.findings:
         finding.metadata["worker_pid"] = os.getpid()
     return outcome
@@ -115,6 +136,9 @@ def test_each_finding_is_the_instance_in_the_session_store(
         monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
         monkeypatch.delenv("ISOCENTER_FORCE_PROCESSES", raising=False)
     monkeypatch.setattr(session_module, "_verify_worker", _verify_worker_with_one_leak)
+    # The threads arm's stand-in, on the parent's module and undone with
+    # the test. A child installs its own (see the wrapper).
+    monkeypatch.setattr(pixel_analysis, "_ocr_instance", _ocr_one_leak)
 
     session, instances = _session_with_three_instances()
     try:
@@ -138,3 +162,49 @@ def test_each_finding_is_the_instance_in_the_session_store(
             f"{strategy}: finding.entity for {finding.entity_uid} is a "
             f"{type(finding.entity).__name__} that is not the instance in "
             f"session.store")
+
+
+def test_two_workers_at_once_leave_the_parents_ocr_alone(monkeypatch):
+    """The wrapper must not touch the parent's `_ocr_instance` (review of #466).
+
+    It used to install its stand-in with `with patch(...)` in whichever
+    thread ran it, and `mock.patch` is not thread-safe: worker A enters
+    (saving the real function), B enters (saving A's stand-in as "the
+    original"), A exits, B exits -- and restores A's stand-in for the rest
+    of the session. Every later scan then read it: in CI run 34587592174
+    (3.14t) twelve tests in `test_scan_reports_what_it_could_not_read.py`
+    and `test_voi_lut_integration.py` went red, far from the cause. Rare,
+    not ordered: measured on 3.14t, this file left the stand-in behind in
+    2 of 20 runs on the #466 branch and 1 of 20 on 0e3e38c. This test
+    forces that interleave with events rather than waiting for it.
+    """
+    real = pixel_analysis._ocr_instance  # pylint: disable=protected-access
+    a_inside, b_inside, a_done = threading.Event(), threading.Event(), threading.Event()
+
+    def inner(who):
+        if who == "A":
+            a_inside.set()
+            b_inside.wait(5)
+        else:
+            b_inside.set()
+            a_done.wait(5)
+        return types.SimpleNamespace(findings=[])
+
+    monkeypatch.setattr(sys.modules[__name__], "_REAL_VERIFY_WORKER", inner)
+
+    def run_a():
+        _verify_worker_with_one_leak("A")
+        a_done.set()
+
+    first = threading.Thread(target=run_a)
+    second = threading.Thread(target=_verify_worker_with_one_leak, args=("B",))
+    first.start()
+    assert a_inside.wait(5)
+    second.start()
+    first.join(10)
+    second.join(10)
+    assert not first.is_alive() and not second.is_alive()
+    assert b_inside.is_set() and a_done.is_set(), "the interleave was not forced"
+
+    assert pixel_analysis._ocr_instance is real, (  # pylint: disable=protected-access
+        "a worker thread left its OCR stand-in on the parent's pixel_analysis")

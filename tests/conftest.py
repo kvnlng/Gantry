@@ -253,6 +253,30 @@ def redirect_logging(tmp_path):
         del os.environ["ISOCENTER_LOG_FILE"]
 
 
+@pytest.fixture(autouse=True)
+def _pixel_analysis_ocr_is_not_left_replaced():
+    """Fail the test that leaves `pixel_analysis._ocr_instance` replaced.
+
+    Not its victims. A stand-in left on the module answers every later
+    scan: when `test_scan_pixel_findings_name_the_live_graph.py`'s worker
+    raced two `mock.patch` calls in threads and left one installed, twelve
+    tests in `test_scan_reports_what_it_could_not_read.py` and
+    `test_voi_lut_integration.py` went red in CI, none of them the cause
+    (review of #466). Checked by code object rather than identity, so
+    `test_pydicom_deprecations.py`'s `importlib.reload(pixel_analysis)`,
+    which defines a new `_ocr_instance` in place, passes. Torn down after
+    `monkeypatch`, which undoes a test's own replacement first.
+    """
+    yield
+    from isocenter import pixel_analysis
+    ocr = pixel_analysis._ocr_instance  # pylint: disable=protected-access
+    code = getattr(ocr, "__code__", None)
+    assert (code is not None and code.co_name == "_ocr_instance"
+            and code.co_filename.endswith(
+                os.path.join("isocenter", "pixel_analysis.py"))), (
+        f"this test left pixel_analysis._ocr_instance replaced by {ocr!r}")
+
+
 @pytest.fixture
 def ocr_present(monkeypatch):
     """OCR that can run, whatever this interpreter has installed (#422).

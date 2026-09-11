@@ -18,7 +18,7 @@ import numpy as np
 from .entities import Instance, DicomItem, DicomSequence
 from .pixel_geometry import PixelGeometry, resolve_pixel_geometry
 from .store import DicomStore
-from .logger import get_logger
+from .logger import describe_exception, get_logger
 
 
 # Define standard codes for the Sequence
@@ -548,7 +548,7 @@ class RedactionService:
             # worker may have moved `inst.sop_instance_uid` by now (#257).
             self.logger.error(f"  Failed {original_uid}: {e}")
             return RedactionOutcome(ok=False, sop_instance_uid=original_uid,
-                                    error=f"{type(e).__name__}: {e}")
+                                    error=describe_exception(e))
         finally:
             # Memory cleanup only. No persist lives here any more: the
             # one in the `try` body is the only append this path makes
@@ -563,7 +563,9 @@ class RedactionService:
             # depending on the interpreter. Without a persist, the
             # unconditional `discard_pixel_data()` below drops the
             # mutated array and the next `get_pixel_data()` reloads the
-            # original through the loader.
+            # original through the loader, under the descriptors it was
+            # stored with: the discard also puts back whatever the
+            # copying arm's `set_pixel_data()` wrote (#434).
             #
             # The one instance this cannot reach is one with neither a
             # loader nor a `file_path` -- a graph built in memory and never
@@ -775,9 +777,17 @@ class RedactionService:
                                 inst.sop_instance_uid}: No pixel data found (or file missing).")
                     continue
 
-                # Safety: Invalidates current hash since we are about to modify.
-                # If persist/save fails later, we don't want to match the Old Hash.
-                inst._pixel_hash = None
+                # `_pixel_hash` is left alone. It names the frame the loader
+                # reads, and until the swap below has written a new frame
+                # that is still the original: the swap assigns the new hash
+                # with the new loader, after its write. This arm used to set
+                # it to None here, "so a failed save does not match the old
+                # hash" -- but the loader still reads the old frame after a
+                # failure, and the None reached the row: a failed persist
+                # (a full disk, an EIO) on an instance whose UID the pass
+                # had regenerated saved a new row with no hash, so a
+                # reopened session read that frame unchecked (#436, review
+                # of #466). The threads and processes arm never cleared it.
 
                 # One call, the whole zone list. See the note in
                 # `execute_redaction_task`: a per-zone loop here kept only
@@ -802,7 +812,7 @@ class RedactionService:
                 failures.append(
                     (original_uid,
                      f"Redaction failed for {original_uid}: "
-                     f"{type(e).__name__}: {e}"))
+                     f"{describe_exception(e)}"))
                 self.logger.error(f"  Failed {inst.sop_instance_uid}: {e}")
             finally:
                 # OPTIMIZATION: Release memory immediately after processing

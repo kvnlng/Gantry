@@ -1,4 +1,5 @@
 import os
+import threading
 from datetime import date, datetime
 from typing import List, Dict, Any, Optional, Callable
 from dataclasses import dataclass, field
@@ -514,6 +515,88 @@ def clone_sequences(item: 'DicomItem') -> dict:
     return clones
 
 
+_ABSENT = object()
+
+
+# The pixel-state leaf lock (#434, Q6). It makes one step of each of these
+# atomic against the others: `set_pixel_data()` (the record, the array,
+# the unwritten flag, the descriptors and the revision bump),
+# `discard_pixel_data()` and `unload_pixel_data()` (the check, the null,
+# the restore and the bump), and the four places that publish a resident
+# array as the stored frame -- `SqliteStore._swap_pixels_under_gate`,
+# both arms of `SqliteStore._persist_pixels`, and the redaction rebind in
+# `Session._apply_redaction_outcomes` -- each of which checks what it read
+# still stands, rebinds the loader and clears the flag and the record.
+# `get_pixel_data()`'s three read arms (the loader, the file and the
+# imagecodecs fallback) also fill the array and clear the flag, and they
+# do it **without** this lock, so a set landing during a load is
+# overwritten and marked written (#465, open).
+#
+# Without it a publish could interleave with a mutator. A discard landing
+# after `_persist_pixels`' revision guard and before its clears restored
+# the pre-set descriptors over the frame just published; a set landing
+# there had its unwritten flag cleared by a save that wrote the previous
+# array, so `unload_pixel_data()` would then drop the only copy (#293's
+# shape).
+#
+# **A leaf, innermost:** pass-lock -> `_sidecar_gate` -> `_pixel_swap_lock`
+# -> this. It is never held while taking any other lock -- no frame write,
+# no sqlite, and no logging either (a handler takes its own lock), which
+# is why `set_pixel_data` and the refusals log after releasing it.
+# `tests/test_sidecar_gate_order.py` records it with the other two, and
+# its site detector fails on any write of the flag or the record that is
+# neither under this lock nor listed with the issue that says why.
+#
+# **Module-level, not per instance.** `Instance` is a slots dataclass
+# whose generated `__getstate__` pickles every field to a worker; a
+# `threading.Lock` field would need a hand-written `__getstate__` on a
+# frozen-surface class. A module lock is created by each process's
+# import, so no pickle carries or inherits it. It is taken for
+# microseconds (no array copy happens under it), so serialising those
+# steps across instances costs nothing measurable; the redaction
+# benchmark in the #434 PR says how much.
+PIXEL_STATE_LOCK = threading.Lock()
+
+
+def _defer(notes, level, message, *args):
+    """Queue a log call until `PIXEL_STATE_LOCK` is released."""
+    notes.append((level, message, args))
+
+
+def _log_memory_only_refusal(uid):
+    # Refusing is the guard working: pixel data held only in memory
+    # (edited but not yet saved) cannot be re-loaded, so clearing it would
+    # be a silent discard rather than a free. This announced itself on
+    # stdout prefixed "DEBUG:", once per instance, so a correct refusal
+    # read as a fault and `release_memory()` over a store with unsaved
+    # edits printed a wall of them with no way to quiet it.
+    # `unload_waveform_data` declines silently; match it.
+    get_logger().debug(
+        "Not unloading pixels for %s: held in memory only, with no "
+        "file path or loader to restore them.", uid)
+
+
+# Every attribute `Instance.set_pixel_data()` can write, and so every one
+# `discard_pixel_data()` puts back (#434). **A new descriptor write in
+# `set_pixel_data` must join this tuple**, or a discard leaves that
+# descriptor describing pixels that no longer exist -- which is #434
+# exactly: BitsAllocated 8 over a stored 16-bit frame, and a read that
+# raises until a save makes it permanent. The carrier is uppercase and
+# `set_attr` lowercases, which is why the restore writes `attributes`
+# directly.
+_SET_PIXEL_DATA_TAGS = (
+    "0028,0010",        # Rows
+    "0028,0011",        # Columns
+    "0028,0002",        # SamplesPerPixel
+    "0028,0008",        # NumberOfFrames
+    "0028,0004",        # PhotometricInterpretation
+    "0028,0006",        # PlanarConfiguration
+    "0028,0100",        # BitsAllocated
+    "0028,0103",        # PixelRepresentation
+    PIXEL_DTYPE_ATTR,   # the float/bool dtype carrier
+)
+
+
 @dataclass(slots=True, eq=False)
 class Instance(DicomItem):
     """
@@ -564,6 +647,37 @@ class Instance(DicomItem):
     # either. This is narrower than any of them: it tracks one specific
     # divergence, not a general state of unsavedness.
     _pixel_array_unwritten: bool = field(default=False, repr=False)
+
+    # Transient: what `set_pixel_data()` found in each descriptor it can
+    # write (`_SET_PIXEL_DATA_TAGS`), from before the first unwritten
+    # replacement -- so `discard_pixel_data()` can undo the whole set, the
+    # descriptors as well as the pixels (#434). Without it a discard left
+    # the replacement's Rows, BitsAllocated or PixelRepresentation
+    # describing the stored frame it reloads, and the next save wrote
+    # them to the store.
+    #
+    # **Invariant: set => `pixel_array` resident and
+    # `_pixel_array_unwritten` True.** Every site that nulls the array or
+    # publishes it keeps that: discard restores and clears; unload
+    # refuses while unwritten; the redaction rebind in
+    # `Session._apply_redaction_outcomes` clears (its loader reads the
+    # worker's frame, which the *current* descriptors describe); and the
+    # three persistence sites that make the resident array the stored
+    # frame clear it beside the flag. **Except** `get_pixel_data()`'s
+    # three read arms, which do not hold the leaf: each checks that the
+    # array is absent, loads, then assigns the loaded frame and clears
+    # the flag, and a `set_pixel_data()` landing between the check and
+    # the assignment is overwritten -- leaving this record set beside a
+    # flag that says written (measured in the review of #466; #465, open).
+    #
+    # On the instance, not the loader: after #417 the loader's capture is
+    # not authoritative, and the loader is rebuilt per read, replaced by
+    # every save and shared with worker results. Present tags only -- an
+    # absent tag is simply not a key -- so no sentinel has to survive a
+    # pickle to a worker. `init=False`: it is state, not an argument, and
+    # an `init=True` field would add a positional.
+    _pixel_descriptors_replaced: Optional[Dict[str, Any]] = field(
+        default=None, init=False, repr=False)
 
     # Transient: Decoded waveform samples, shape (num_samples, num_channels)
     waveform_array: Optional[np.ndarray] = field(default=None, repr=False)
@@ -728,20 +842,27 @@ class Instance(DicomItem):
                 nothing could bring it back, or it has diverged from what
                 is stored.
         """
-        if self.pixel_array is None:
-            return True
+        # The check and the drop under one hold of `PIXEL_STATE_LOCK`:
+        # checked outside it, a `set_pixel_data()` landing between the
+        # check and the drop would be dropped, unwritten.
+        with PIXEL_STATE_LOCK:
+            if self.pixel_array is None:
+                return True
+            unwritten = self._pixel_array_unwritten
+            if not unwritten and self._drop_resident_array():
+                return True
 
-        if self._pixel_array_unwritten:
-            # Same refusal path as the no-loader case below, and silent
-            # for the same reason: this is the guard working. A loader
-            # may well be present -- it just points at the wrong frame.
+        if unwritten:
+            # Same refusal path as the no-loader case, and silent for the
+            # same reason: this is the guard working. A loader may well be
+            # present -- it just points at the wrong frame.
             get_logger().debug(
                 "Not unloading pixels for %s: the array was replaced and "
                 "has not been written, so clearing it would discard the "
                 "only copy.", self.sop_instance_uid)
-            return False
-
-        return self.discard_pixel_data()
+        else:
+            _log_memory_only_refusal(self.sop_instance_uid)
+        return False
 
     def discard_pixel_data(self) -> bool:
         """
@@ -752,9 +873,23 @@ class Instance(DicomItem):
         throw the resident array away -- the redaction `finally` blocks,
         where a partially-zeroed array must be dropped so the next
         `get_pixel_data()` reloads the stored bytes through the loader,
-        read under the instance's *current* descriptors (#417). Those are
-        the descriptors a `set_pixel_data()` wrote, if one ran: discard
-        drops the array, not the attributes it set.
+        read under the instance's current descriptors (#417).
+
+        **It undoes the whole `set_pixel_data()` it discards (#434)**: the
+        pixels, and every descriptor that call wrote -- Rows, Columns,
+        SamplesPerPixel, NumberOfFrames, PhotometricInterpretation,
+        PlanarConfiguration, BitsAllocated, PixelRepresentation and the
+        float/bool dtype carrier -- go back to what they were before the
+        first unwritten replacement, absent ones included. A pixel
+        descriptor edited between the set and the discard goes back with
+        them: while the replacement is resident, that edit describes the
+        replacement. So the next read is the stored frame as it was
+        stored. Once the replacement is written -- by a save or the
+        redaction swap -- it *is* the stored frame, and there is nothing
+        to undo: the array is dropped and the descriptors, which describe
+        it, stay. A refusal (below) keeps both the array and the
+        descriptors that describe it. Dropping an unwritten replacement
+        leaves the instance dirty, as the set did.
 
         Two behaviours, two names. This is not an alias for
         `unload_pixel_data()` and must not become one: "one spelling per
@@ -766,24 +901,62 @@ class Instance(DicomItem):
             bool: True if discarded (or already absent), False if there
                 is nowhere to reload from at all.
         """
-        if self.pixel_array is None:
-            return True
-
-        if self.file_path or self._pixel_loader:
-            self.pixel_array = None
-            return True
-
-        # Refusing here is the guard working: pixel data held only in
-        # memory (edited but not yet saved) cannot be re-loaded, so
-        # clearing it would be a silent discard rather than a free. This
-        # announced itself on stdout prefixed "DEBUG:", once per instance,
-        # so a correct refusal read as a fault and `release_memory()` over
-        # a store with unsaved edits printed a wall of them with no way to
-        # quiet it. `unload_waveform_data` declines silently; match it.
-        get_logger().debug(
-            "Not unloading pixels for %s: held in memory only, with no "
-            "file path or loader to restore them.", self.sop_instance_uid)
+        with PIXEL_STATE_LOCK:
+            if self.pixel_array is None:
+                return True
+            if self._drop_resident_array():
+                return True
+        _log_memory_only_refusal(self.sop_instance_uid)
         return False
+
+    def _drop_resident_array(self) -> bool:
+        """Discard's drop, for a caller holding `PIXEL_STATE_LOCK`.
+
+        False, touching nothing, when there is nowhere to reload from: a
+        refusal keeps the array and the descriptors that describe it.
+        """
+        if self.file_path or self._pixel_loader:
+            dropped_unwritten = self._pixel_array_unwritten
+            self.pixel_array = None
+            self._restore_replaced_descriptors()
+            if dropped_unwritten:
+                # A change, and one a save already under way must see.
+                # `_persist_pixels` reads the array, writes it, and then
+                # publishes only if the revision it captured still
+                # stands (#274); a discard landing in between is caught
+                # there by this bump and nothing else. Taken whenever an
+                # unwritten array is dropped, not only when the restore
+                # changed a descriptor: a replacement with the same
+                # geometry and dtype changes none, and without the bump
+                # the save published the discarded pixels and marked the
+                # instance persisted. Single-threaded it changes nothing
+                # visible -- the set already dirtied the instance.
+                self.mark_modified()
+            return True
+        return False
+
+    def _restore_replaced_descriptors(self) -> None:
+        """Put back what `set_pixel_data()` recorded, and forget the record.
+
+        Direct writes and deletes into `attributes`, not `set_attr`:
+        `set_attr` lowercases its key, and the dtype carrier is
+        `_ISOCENTER_PIXEL_DTYPE` -- a `set_attr` restore writes a
+        lowercase ghost nothing reads and leaves the float frame decoding
+        as integers. There is no remove-attribute method, hence the
+        `del`: a tag the set introduced (NumberOfFrames for a multi-frame
+        array, the carrier for a float one) was absent before, and absent
+        is what it goes back to. The caller moves the revision.
+        """
+        record = self._pixel_descriptors_replaced
+        if record is None:
+            return
+        self._pixel_descriptors_replaced = None
+        for tag in _SET_PIXEL_DATA_TAGS:
+            if tag in record:
+                if self.attributes.get(tag, _ABSENT) != record[tag]:
+                    self.attributes[tag] = record[tag]
+            elif tag in self.attributes:
+                del self.attributes[tag]
 
     def get_pixel_data(self) -> Optional[np.ndarray]:
         """
@@ -853,12 +1026,16 @@ class Instance(DicomItem):
                 # frame -- #274's shape, unredacted pixels under a full
                 # redaction attestation.
                 #
-                # **Not gated on `_pixel_array_unwritten`.** After
-                # `set_pixel_data(x)` -> `discard_pixel_data()` a gate would
-                # read the old way once, the new way on the next read with
-                # no save between, and the new way after a save and a
-                # reopen: two answers to one question. Ungated, every read
-                # agrees with the reopened store.
+                # **Not gated on `_pixel_array_unwritten`.** The flag
+                # stays set after a `discard_pixel_data()`, so a descriptor
+                # edited after the discard -- PixelRepresentation 0 -> 1,
+                # say -- is read under a set flag. A gate would read it
+                # the old way here and on the next read, and the new way
+                # after a save and a reopen: two answers to one question.
+                # Ungated, every read agrees with the reopened store.
+                # (Before #434 the discard itself left `set_pixel_data`'s
+                # descriptors behind and was the example here; it now
+                # puts them back.)
                 #
                 # Duck-typed: tests install a bare lambda as the loader,
                 # and a loader with no `describes` has no capture to go
@@ -1292,6 +1469,13 @@ class Instance(DicomItem):
                 `self.pixel_array` has been assigned** -- pre-existing,
                 and not what the dtype guard above is about.
 
+        It records the prior value, or absence, of each descriptor it can
+        write (`_SET_PIXEL_DATA_TAGS`), once, at the first replacement
+        since the array was last written; a later set keeps that first
+        record. It is kept until the array is written -- by a save or the
+        redaction swap -- or discarded, when `discard_pixel_data()` puts
+        it back (#434).
+
         Note that this does **not** clear `_pixel_loader`. #293 weighed
         clearing it as a cheaper fix and rejected it: the loader is what
         lets a partially-redacted array be dropped and the original
@@ -1316,6 +1500,36 @@ class Instance(DicomItem):
         # the whole frame -- normalising first would fully copy a large
         # `complex64` array immediately before rejecting it.
         array = self._accepted_pixel_array(array)
+
+        # From the record to the revision bump under `PIXEL_STATE_LOCK`,
+        # so a save publishing the previous array sees this set whole or
+        # not at all (#434, Q6). The dtype guard and its copy stay
+        # outside. Logged after release: the lock is a leaf, and a
+        # logging handler takes its own.
+        notes = []
+        try:
+            with PIXEL_STATE_LOCK:
+                self._replace_pixel_array(array, notes)
+        finally:
+            for level, message, args in notes:
+                getattr(get_logger(), level)(message, *args)
+
+    def _replace_pixel_array(self, array: np.ndarray, notes: list) -> None:
+        """`set_pixel_data()` from the record on; the caller holds the lock."""
+        # What the descriptors held before this replacement, for
+        # `discard_pixel_data()` to put back (#434). After the dtype
+        # guard, so a refused dtype records nothing and still leaves the
+        # instance exactly as it was; before the assignment and every
+        # descriptor write, so the SamplesPerPixel `ValueError` below --
+        # raised after the assignment -- finds the record already in
+        # place, and a write moved above it cannot slip in unrecorded.
+        # Only when there is none: a second set before the array is
+        # written keeps the first record, since the second set's "prior"
+        # values describe pixels that were never stored.
+        if self._pixel_descriptors_replaced is None:
+            self._pixel_descriptors_replaced = {
+                tag: self.attributes[tag] for tag in _SET_PIXEL_DATA_TAGS
+                if tag in self.attributes}
 
         self.pixel_array = array
         # The resident array no longer matches anything on disk or in the
@@ -1360,7 +1574,8 @@ class Instance(DicomItem):
             return
 
         if geom.evidence is GeometryEvidence.GUESSED:
-            get_logger().warning(
+            _defer(
+                notes, "warning",
                 "Pixel array shape %s for %s is ambiguous: it is equally a "
                 "%d-frame %dx%d image and a %dx%d image with %d samples per "
                 "pixel, and the instance declares neither SamplesPerPixel "
@@ -1439,7 +1654,8 @@ class Instance(DicomItem):
         bits = array.itemsize * 8
         previous = declared_int(self.attributes, "0028,0100")
         if self._write_int_if_changed("0028,0100", bits) and previous is not None:
-            get_logger().debug(
+            _defer(
+                notes, "debug",
                 "BitsAllocated for %s corrected from %s to %d by a %s pixel "
                 "array.", self.sop_instance_uid, previous, bits, array.dtype)
 
@@ -1469,7 +1685,8 @@ class Instance(DicomItem):
             previous = declared_int(self.attributes, "0028,0103")
             if (self._write_int_if_changed("0028,0103", representation)
                     and previous is not None):
-                get_logger().debug(
+                _defer(
+                    notes, "debug",
                     "PixelRepresentation for %s corrected from %s to %d by a "
                     "%s pixel array.", self.sop_instance_uid, previous,
                     representation, array.dtype)

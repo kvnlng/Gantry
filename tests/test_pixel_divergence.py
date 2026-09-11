@@ -214,6 +214,26 @@ def test_discard_pixel_data_still_refuses_an_instance_with_nowhere_to_reload(
     assert inst.pixel_array is not None
 
 
+def test_a_refused_discard_keeps_the_descriptors_of_the_array_it_keeps():
+    """R7 (#434): a refusal keeps the array, so it keeps what describes it.
+
+    `discard_pixel_data()` puts back the descriptors `set_pixel_data()`
+    wrote only when it actually drops the array. With nowhere to reload
+    from it refuses and keeps the array, and restoring anyway would leave
+    the kept 8x8 `uint8` array under 4x4 16-bit descriptors.
+    """
+    inst = Instance("mem.only", "1.2.840.10008.5.1.4.1.1.7", 1)
+    inst.set_pixel_data(np.zeros((4, 4), dtype=np.uint16))
+    inst.set_pixel_data(np.full((8, 8), 7, dtype=np.uint8))
+    tags = ("0028,0010", "0028,0011", "0028,0100")
+    after_set = {t: inst.attributes[t] for t in tags}
+    assert after_set == {"0028,0010": 8, "0028,0011": 8, "0028,0100": 8}
+
+    assert inst.discard_pixel_data() is False
+    assert inst.pixel_array is not None
+    assert {t: inst.attributes[t] for t in tags} == after_set
+
+
 def test_discard_pixel_data_drops_a_replaced_array_on_purpose(tmp_path):
     """The second spelling has to actually differ from the first.
 

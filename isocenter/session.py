@@ -22,7 +22,7 @@ from .services import (RedactionService, RedactionOutcome, RedactionError,
                        _report_redaction_failures)
 from .config_manager import ConfigLoader, require_package_resource
 from .privacy import PhiInspector, PhiFinding, PhiReport
-from .logger import configure_logger, get_logger
+from .logger import configure_logger, describe_exception, get_logger
 from .reporting import (ComplianceReport, get_renderer, GAP_REMOVED,
                         GAP_RETAINED, GAP_UNRESOLVED)
 from .manifest import Manifest, ManifestItem, generate_manifest_file
@@ -36,6 +36,7 @@ from .configuration import IsocenterConfiguration, FlowList
 from .entities import (PhiStatus, SOURCE_SOP_UID_ATTR, clone_sequences,
                        resolve_item_path, iter_item_tree)
 from .profiles import PRIVACY_PROFILES
+from . import entities
 from . import pixel_analysis
 from .automation import ConfigAutomator
 
@@ -133,7 +134,7 @@ def _verify_worker(args):
     except Exception as e:  # pylint: disable=broad-exception-caught
         return _ScanOutcome(
             uid, [], False,
-            pixel_analysis._describe_failure(e))  # pylint: disable=protected-access
+            describe_exception(e))
 
     # Strip the instance before the findings cross back, as `scan_worker`
     # does; `scan_pixel_content` puts the live one back (#412). The strip
@@ -174,7 +175,7 @@ def _discover_worker(instance):
         return uid, pixel_analysis._ocr_instance(instance)  # pylint: disable=protected-access
     except Exception as e:  # pylint: disable=broad-exception-caught
         return uid, pixel_analysis._InstanceOcr(  # pylint: disable=protected-access
-            [], False, pixel_analysis._describe_failure(e))  # pylint: disable=protected-access
+            [], False, describe_exception(e))
 
 
 def _warn_unread_instances(operation, failures, attempted, where):
@@ -3438,7 +3439,8 @@ class DicomSession:
                 # to name the instance with, and the row still has to
                 # exist.
                 failures.append(
-                    ("UNKNOWN", f"Redaction worker failed: {outcome}"))
+                    ("UNKNOWN",
+                     f"Redaction worker failed: {describe_exception(outcome)}"))
                 continue
             else:
                 failures.append(
@@ -3481,13 +3483,23 @@ class DicomSession:
                 lock = (store_backend._pixel_swap_lock
                         if store_backend is not None
                         else contextlib.nullcontext())
-                with lock:
+                # And the pixel-state leaf inside it (#434, Q6): the rebind,
+                # the record clear and the null below land wholly before or
+                # after a `set_pixel_data()` or `discard_pixel_data()` on
+                # another thread. Nothing under it logs or takes a lock.
+                with lock, entities.PIXEL_STATE_LOCK:
                     if loader:
-                        # The loader is our handle on the sidecar copy,
-                        # but it points at the worker's instance.
-                        # Re-point it at this process's.
-                        loader.instance = instance
                         instance._pixel_loader = loader
+                        # The loader reads the worker's frame now, and the
+                        # descriptors in `attributes` describe it: a record
+                        # from a `set_pixel_data()` made before the pass
+                        # describes the frame this rebind replaced, and a
+                        # discard restoring it would put those over the
+                        # redacted frame (#434). Inside `if loader:`, never
+                        # one indent out, for the reason the null below
+                        # gives: a mutation carrying only a hash leaves the
+                        # loader on the frame the record describes.
+                        instance._pixel_descriptors_replaced = None
                         # And drop whatever this process is still holding
                         # (#322). Under processes the worker redacted a
                         # *copy*: its `discard_pixel_data()` freed the

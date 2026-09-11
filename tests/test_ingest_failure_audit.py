@@ -42,6 +42,7 @@ import pytest
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
+from isocenter import io_handlers
 from isocenter.io_handlers import IngestSummary
 from isocenter.session import DicomSession
 
@@ -251,3 +252,195 @@ def test_a_clean_ingest_returns_a_clean_summary(tmp_path):
         "as neither ingested nor skipped")
 
     assert _error_rows(db_path) == []
+
+
+# ---------------------------------------------------------------------------
+# #435 -- a reason built from an exception with no message
+# ---------------------------------------------------------------------------
+#
+# `str(e)` is `''` for `KeyError()`, `StopIteration()`, `OSError()` and
+# most bare raises, so a reason spelled `f"...: {e}"` ended in a colon,
+# and one spelled `str(e)` was empty -- which `import_files` tested with
+# `if err:` and dropped: the file was counted nowhere. The ingest tests
+# below swap `io_handlers.run_parallel` for an in-process map, because a
+# monkeypatch does not reach the session's worker pool; everything after
+# the worker (`import_files`' result loop, `_record_failure`, the audit
+# row, the summary) is the real code.
+
+def _in_process(monkeypatch):
+    monkeypatch.setattr(io_handlers, "run_parallel",
+                        lambda fn, items, *args, **kwargs: [fn(x) for x in items])
+
+
+def _raising(exc_type):
+    def raise_it(*_args, **_kwargs):
+        raise exc_type()
+    return raise_it
+
+
+def _ingest_folder(tmp_path, names=("a.dcm", "b.dcm")):
+    src = tmp_path / "src"
+    src.mkdir()
+    paths = [_write_good(str(src), name) for name in names]
+    return src, paths
+
+
+def _ingest_and_read(tmp_path, src):
+    db = str(tmp_path / "ingest.db")
+    session = DicomSession(persistence_file=db)
+    try:
+        summary = session.ingest(str(src))
+    finally:
+        session.close()
+    return summary, _error_rows(db)
+
+
+def test_an_exception_is_described_by_its_type_and_its_message():
+    """F1: one spelling for every site, and never a trailing colon.
+
+    `Type: message`, or `Type` alone when the message is empty, and
+    ` (caused by ...)` in the same spelling for a direct cause -- the
+    spelling bunch E gave `PhiReport.failures` (#423), now in one place.
+    """
+    from isocenter.logger import describe_exception
+
+    assert describe_exception(KeyError()) == "KeyError"
+    assert describe_exception(KeyError("x")) == "KeyError: 'x'"
+    assert describe_exception(StopIteration()) == "StopIteration"
+    assert describe_exception(ValueError("")) == "ValueError"
+
+    def chained(outer, inner):
+        try:
+            try:
+                raise inner
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                raise outer from e
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            return e
+
+    assert describe_exception(chained(RuntimeError("read failed"), OSError("EIO"))) == (
+        "RuntimeError: read failed (caused by OSError: EIO)")
+    assert describe_exception(chained(RuntimeError(), OSError())) == (
+        "RuntimeError (caused by OSError)")
+
+    # The implicit context is not a cause: an exception raised while
+    # handling another, without `from`, names only itself.
+    try:
+        try:
+            raise OSError("first")
+        except OSError:
+            raise KeyError()  # pylint: disable=raise-missing-from
+    except KeyError as e:
+        assert describe_exception(e) == "KeyError"
+
+
+def test_an_unrenderable_or_blank_message_names_the_type():
+    """F1b: a `__str__` that raises, or a blank message, gives `Type`.
+
+    A reason is built while a failure is being recorded, and a
+    `describe_exception` that raised there would replace that failure
+    with its own. `'   '` is no more a reason than `''`, and `Type:   `
+    said nothing. Both hold for the cause too (review of #466).
+    """
+    from isocenter.logger import describe_exception
+
+    class Unrenderable(Exception):
+        def __str__(self):
+            raise ValueError("cannot render")
+
+    assert describe_exception(Unrenderable()) == "Unrenderable"
+    assert describe_exception(ValueError("   ")) == "ValueError"
+    assert describe_exception(OSError("\t\n")) == "OSError"
+    assert describe_exception(ValueError(" padded ")) == "ValueError:  padded "
+
+    def chained(outer, inner):
+        try:
+            try:
+                raise inner
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                raise outer from e
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            return e
+
+    assert describe_exception(chained(RuntimeError("read failed"), Unrenderable())) == (
+        "RuntimeError: read failed (caused by Unrenderable)")
+    assert describe_exception(chained(Unrenderable(), OSError("  "))) == (
+        "Unrenderable (caused by OSError)")
+
+
+def test_a_decode_failure_with_no_message_names_its_type(tmp_path, monkeypatch):
+    """F2: `Decompression Failed: ` said a decode failed and not how.
+
+    pydicom's `StopIteration` is the real case (#418's short offset
+    table raised one), and it carries no message.
+    """
+    src, paths = _ingest_folder(tmp_path, names=("a.dcm",))
+    _in_process(monkeypatch)
+    monkeypatch.setattr(io_handlers, "_decode_pixels", _raising(StopIteration))
+
+    summary, rows = _ingest_and_read(tmp_path, src)
+
+    assert summary.failures == [(paths[0], "Decompression Failed: StopIteration")]
+    assert len(rows) == 1, rows
+    assert rows[0][1].endswith("Decompression Failed: StopIteration"), rows
+
+
+def test_a_blanket_failure_with_no_message_is_recorded_and_named(
+        tmp_path, monkeypatch):
+    """F3: two files that vanished, measured on c9e9938.
+
+    A message-less exception in `ingest_worker`'s blanket arm made the
+    reason `''`; the summary read `ingested=0, failures=[]` with no
+    audit row, the files not declined and not skipped.
+    """
+    src, paths = _ingest_folder(tmp_path)
+    _in_process(monkeypatch)
+    calls = []
+
+    def refuse(*_args, **_kwargs):
+        calls.append(1)
+        raise KeyError()
+
+    monkeypatch.setattr(io_handlers, "offset_table_frame_count", refuse)
+
+    summary, rows = _ingest_and_read(tmp_path, src)
+
+    assert len(calls) == 2, "the patched call was not reached by both files"
+    assert summary.ingested == 0
+    assert sorted(summary.failures) == sorted((p, "KeyError") for p in paths)
+    assert sorted(uid for uid, _d in rows) == sorted(paths), rows
+    assert all(d.endswith(": KeyError") for _u, d in rows), rows
+
+
+def test_an_empty_reason_is_still_a_failure(tmp_path, monkeypatch):
+    """F4: the gate, on its own.
+
+    The text half makes every raise site's reason non-empty today; the
+    gate is what makes an empty one impossible to lose. Every
+    `inst is None` return in `ingest_worker` carries a non-None reason
+    and the success return carries None, so `is not None` is the test.
+    """
+    src, paths = _ingest_folder(tmp_path, names=("a.dcm",))
+    monkeypatch.setattr(
+        io_handlers, "run_parallel",
+        lambda fn, items, *args, **kwargs: [
+            ({"path": p}, None, None, None, None, None, None, "")
+            for p in items])
+
+    summary, rows = _ingest_and_read(tmp_path, src)
+
+    assert summary.ingested == 0
+    assert summary.failures == [(paths[0], "")]
+    assert [uid for uid, _d in rows] == paths, rows
+
+
+def test_a_linkage_failure_with_no_message_names_its_type(tmp_path, monkeypatch):
+    """F5: the parent-side arm, which spelled it `Linkage Failed: {e}`."""
+    src, paths = _ingest_folder(tmp_path, names=("a.dcm",))
+    _in_process(monkeypatch)
+    monkeypatch.setattr(io_handlers, "Patient", _raising(KeyError))
+
+    summary, rows = _ingest_and_read(tmp_path, src)
+
+    assert summary.failures == [(paths[0], "Linkage Failed: KeyError")]
+    assert len(rows) == 1 and rows[0][1].endswith("Linkage Failed: KeyError"), rows

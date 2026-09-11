@@ -28,6 +28,7 @@ from pydicom.multival import MultiValue
 
 from .entities import (Patient, Study, Series, Instance, Equipment,
                        PhiStatus, normalize_study_date, resolve_item_path)
+from . import entities
 from .blob_kind import parse_blob_kind, serialize_blob_kind
 from .sidecar import SidecarManager
 from .logger import get_logger
@@ -764,6 +765,12 @@ class SqliteStore:
         #     _sidecar_gate -> _pixel_swap_lock          (rewire; sites 5, 6)
         #     _sidecar_gate -> sqlite                    (every site's commit)
         #     _sidecar_gate -> pass-lock, LOCK_NB only   (compact's refusal)
+        #     _pixel_swap_lock -> entities.PIXEL_STATE_LOCK  (publish; leaf)
+        #
+        # `PIXEL_STATE_LOCK` is innermost: taken by the pixel mutators
+        # holding nothing and by the publish sections under this lock, and
+        # never held while taking any other lock, a flock or sqlite
+        # (#434, Q6).
         #
         # The gate is the one lock deliberately held across a sqlite
         # write: the hazard it closes is a frame appended before
@@ -1898,8 +1905,20 @@ class SqliteStore:
                         # Wait, we populate attributes right after this.
                         # So the lambda calls self.instance methods? No, lambda binds early.
 
+                        # The stored hash goes to the loader, explicitly. A
+                        # loader built with none has no integrity check, and
+                        # the fallback to `inst._pixel_hash` finds nothing
+                        # here: hydration never sets it (and
+                        # `tests/test_blob_storage.py` depends on that). So
+                        # every reopened session read another frame's bytes
+                        # at this offset as this instance's pixels (#436).
+                        # Passed rather than set on the instance for #212's
+                        # reason: an explicit hash has no ordering to get
+                        # wrong. `load_patient` below does the same; change
+                        # them together.
                         inst._pixel_loader = self._create_pixel_loader(
-                            r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
+                            r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst,
+                            pixel_hash=r['pixel_hash'])
 
                     self._wire_waveform_loader(inst, wave_refs.get(r['sop_instance_uid']))
                     self._wire_nested_pixel_refs(
@@ -2051,8 +2070,11 @@ class SqliteStore:
                             # construction below; the two have drifted apart
                             # before, so change them together.
                             if r['pixel_offset'] is not None and r['pixel_length'] is not None:
+                                # With the stored hash, as `load_all` does
+                                # and for its reason (#436).
                                 inst._pixel_loader = self._create_pixel_loader(
-                                    r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst)
+                                    r['pixel_offset'], r['pixel_length'], r['compress_alg'], inst,
+                                    pixel_hash=r['pixel_hash'])
 
                             self._wire_waveform_loader(
                                 inst, wave_refs.get(r['sop_instance_uid']))
@@ -2818,6 +2840,18 @@ class SqliteStore:
             b_data = instance.pixel_array
             if b_data is None:
                 return
+            # The revision beside the read, for the publish below to check
+            # with the identity. `set_pixel_data()` keeps a native-order
+            # array as given, so a caller can edit the resident array in
+            # place and set the same object again: landing after the
+            # write, that set passes an identity check alone while the
+            # sidecar holds the bytes from before the edit, and the flag
+            # cleared over them lets an unload drop the only copy (#293's
+            # shape; review of #466). Read without the leaf: a set caught
+            # half-way reads as a moved revision, so the publish leaves
+            # the flag set -- the safe direction, and the next save's
+            # dedup clears it.
+            read_revision = instance._revision
 
             # Hash Update (CRITICAL for Integrity Checks)
             # Calculate Hash BEFORE writing/compression to ensure we
@@ -2829,7 +2863,15 @@ class SqliteStore:
             else:
                 p_hash = hashlib.sha256(b_data).hexdigest()
 
-            instance._pixel_hash = p_hash
+            # `_pixel_hash` is NOT assigned here. It names the frame the
+            # loader reads, so it moves with the loader, below, after the
+            # write has succeeded. Assigned here, a `write_frame` that
+            # raised (a full disk, an EIO) left the instance holding the
+            # hash of a frame that was never written beside a loader
+            # still on the original; the next save's `arr is None` arm
+            # stored that hash with the original's offset, and a reopened
+            # session -- which checks it since #436 -- refused a correct
+            # frame as a hash mismatch.
 
             # Determine suitable compression? Defaulting to zlib for
             # swap. Ideally we respect original or config, but for
@@ -2842,11 +2884,32 @@ class SqliteStore:
             # This allows instance.unload_pixel_data() to work safely
             # Note: instance attributes ARE populated here (it's a
             # live object), so passing instance=instance works.
-            instance._pixel_loader = self._create_pixel_loader(
+            swapped = self._create_pixel_loader(
                 offset, length, c_alg, instance, pixel_hash=p_hash)
-            # The loader now points at the bytes that are resident, so
-            # the array is recoverable and freeable again (#293).
-            instance._pixel_array_unwritten = False
+            # Under the pixel-state leaf, so a `set_pixel_data()` or
+            # `discard_pixel_data()` on another thread lands wholly
+            # before or after this publish (#434, Q6). The loader is
+            # rebound either way: this is the redaction swap, and leaving
+            # the instance on the pre-redaction frame is #274.
+            with entities.PIXEL_STATE_LOCK:
+                instance._pixel_loader = swapped
+                instance._pixel_hash = p_hash
+                # Only if the array written is still the one resident,
+                # at the revision it was read at. A set that landed since
+                # holds newer, unwritten pixels -- a new array, or this
+                # one edited in place and set again -- and clearing the
+                # flag would let an unload drop them (#293); a discard
+                # since already cleared the record.
+                if (instance.pixel_array is b_data
+                        and instance._revision == read_revision):
+                    # The loader now points at the bytes that are
+                    # resident, so the array is recoverable and freeable
+                    # again (#293).
+                    instance._pixel_array_unwritten = False
+                    # And they are the stored frame now, which the
+                    # current descriptors describe: nothing is left for a
+                    # discard to undo (#434).
+                    instance._pixel_descriptors_replaced = None
 
         # 3. Optional: Persist the linkage to DB immediately?
         # It's safer if we do, so if we crash, we know where the pixels are.
@@ -3488,7 +3551,9 @@ class SqliteStore:
                 # equal to what the loader points at, or a caller
                 # deliberately discarded one -- the redaction `finally`
                 # blocks, where reverting to the loader's frame IS the
-                # intended outcome -- or
+                # intended outcome, and since #434 the discard has also
+                # put back the descriptors that frame was stored with, so
+                # the row this arm records describes it -- or
                 # `Session._apply_redaction_outcomes` nulled it in the
                 # same breath as rebinding the loader to the frame the
                 # worker just redacted (#322), which is the same intended
@@ -3557,29 +3622,38 @@ class SqliteStore:
                 # against the capture, the next save rebuilds again from
                 # the same source, and the offsets handed back are the
                 # loader's own, so nothing is poisoned.
-                inst._pixel_loader = self._create_pixel_loader(
+                rebuilt = self._create_pixel_loader(
                     loader.offset, loader.length, loader.alg, inst,
                     pixel_hash=digest)
-                # These exact bytes are already in the sidecar and the
-                # loader already points at them, so the resident array
-                # is recoverable and freeable again (#293).
-                inst._pixel_array_unwritten = False
+                with entities.PIXEL_STATE_LOCK:
+                    inst._pixel_loader = rebuilt
+                    # Only if nothing moved since the read. This arm has
+                    # no revision guard of its own (it sits above the one
+                    # below), so a `set_pixel_data()` landing after the
+                    # read had its flag cleared here while its array was
+                    # still unwritten (#293's shape), and a discard left
+                    # nothing to clear. Checked under the pixel-state
+                    # leaf, where both mutators move the revision (#434,
+                    # Q6).
+                    if (inst.pixel_array is arr
+                            and (revision is None or inst._revision == revision)):
+                        # These exact bytes are already in the sidecar
+                        # and the loader already points at them, so the
+                        # resident array is recoverable and freeable
+                        # again (#293).
+                        inst._pixel_array_unwritten = False
+                        # The loader just rebuilt describes them under
+                        # the current descriptors, so a discard has
+                        # nothing to put back (#434) -- a same-bytes,
+                        # new-dtype replacement is saved here, not
+                        # appended below.
+                        inst._pixel_descriptors_replaced = None
                 return _StoredFrame(loader.offset, loader.length,
                                     loader.alg, digest)
 
             offset, length = self.sidecar.write_frame(raw, _PIXEL_COMPRESSION)
             tally.pixel_bytes += length
             tally.pixel_frames += 1
-
-            if revision is not None and inst._revision != revision:
-                # The bytes read above no longer describe the instance:
-                # a mutation (a redaction, most importantly) landed after
-                # the caller's capture. Publishing them would write a row
-                # and a loader for state the graph has already left --
-                # exactly #274's poisoning. The frame already appended is
-                # a harmless orphan; the instance is still dirty against
-                # the captured revision, so the next save corrects the row.
-                return _StoredFrame(None, None, None, None)
 
             # Re-point the loader so the array can be unloaded safely
             # later. `pixel_hash=digest` is passed explicitly, the way
@@ -3589,17 +3663,43 @@ class SqliteStore:
             # read after an unload raised an integrity mismatch against
             # correctly-saved data (#212). Passing it removes the ordering
             # dependency between this call and the assignment below.
-            inst._pixel_loader = self._create_pixel_loader(
+            written = self._create_pixel_loader(
                 offset, length, _PIXEL_COMPRESSION, inst, pixel_hash=digest)
-            inst._pixel_hash = digest
-            # Published: the loader now points at these bytes, so the
-            # resident array is recoverable and freeable. This clear is
-            # what keeps `release_memory()` working after a
-            # `set_pixel_data()`; miss it and every replaced-and-saved
-            # instance becomes permanently unfreeable, silently, because
-            # the sweep only logs counts (#293).
-            inst._pixel_array_unwritten = False
-            return _StoredFrame(offset, length, _PIXEL_COMPRESSION, digest)
+            # The guard and the publish under the pixel-state leaf, and
+            # the guard inside it: outside, a `discard_pixel_data()`
+            # landing after the check and before the clears restored the
+            # pre-set descriptors over the frame being published, and a
+            # `set_pixel_data()` there had its flag cleared by a save of
+            # the previous array (#434, Q6). Both mutators move the
+            # revision under the same lock, so the guard sees them. The
+            # loader is built before it: construction reads attributes
+            # and is wasted only when the guard skips.
+            with entities.PIXEL_STATE_LOCK:
+                if revision is not None and inst._revision != revision:
+                    # The bytes read above no longer describe the instance:
+                    # a mutation (a redaction, most importantly) landed after
+                    # the caller's capture. Publishing them would write a row
+                    # and a loader for state the graph has already left --
+                    # exactly #274's poisoning. The frame already appended is
+                    # a harmless orphan; the instance is still dirty against
+                    # the captured revision, so the next save corrects the row.
+                    return _StoredFrame(None, None, None, None)
+
+                inst._pixel_loader = written
+                inst._pixel_hash = digest
+                # Published: the loader now points at these bytes, so the
+                # resident array is recoverable and freeable. This clear is
+                # what keeps `release_memory()` working after a
+                # `set_pixel_data()`; miss it and every replaced-and-saved
+                # instance becomes permanently unfreeable, silently, because
+                # the sweep only logs counts (#293).
+                inst._pixel_array_unwritten = False
+                # Written, so it is the stored frame and a discard has
+                # nothing to undo (#434). After the revision guard above,
+                # never before it: a skipped publish leaves the replacement
+                # unwritten, and its record must survive for a discard.
+                inst._pixel_descriptors_replaced = None
+                return _StoredFrame(offset, length, _PIXEL_COMPRESSION, digest)
 
     def _log_save_summary(self, tally) -> None:
         """One line describing what the save actually wrote."""

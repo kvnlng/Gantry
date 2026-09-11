@@ -509,7 +509,9 @@ TARGETS = {
     #     caller discards the result -- equivalent;
     #   - `unload_waveform_data()`'s `return True` for samples that are
     #     already absent, flipped to False. NOT classed equivalent: a caller
-    #     told False believes the samples could not be released. #443.
+    #     told False believes the samples could not be released. Pinned
+    #     since by `tests/test_waveform_ingest.py::
+    #     test_already_absent_samples_report_as_released` (#443).
     # At budget 3, deleting the DEBUG "Identity regenerated" log also
     # survives: no reader, no contract -- equivalent.
     #
@@ -538,6 +540,7 @@ TARGETS = {
                                "tests/test_dataframe_export.py",
                                "tests/test_declined_remediation_is_recorded.py",
                                "tests/test_deid_tags.py",
+                               "tests/test_descriptor_edit_with_pixels_unloaded.py",
                                "tests/test_empty_sequence_roundtrip.py",
                                "tests/test_entities.py",
                                "tests/test_entity_state_vocabulary.py",
@@ -717,8 +720,10 @@ NOT_PROBED = {
         "deferred: 16 sites, 0 importers -- 12 test files reach DicomStore "
         "by class name, which the import scan cannot see (#441)",
     "isocenter/logger.py":
-        "deferred: 10 sites, 0 importers -- reached only through "
-        "get_logger()",
+        "deferred: 13 sites, 1 importer -- reached through get_logger() "
+        "and describe_exception(), whose spelling "
+        "tests/test_ingest_failure_audit.py pins directly (#435); a row "
+        "would still need its list written by hand",
     "isocenter/exporters/dicom.py":
         "deferred: 2 sites, 0 importers -- reached through "
         "export(format=\"dicom\"), which the import scan cannot see (#441)",
