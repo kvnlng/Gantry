@@ -1763,44 +1763,49 @@ class DicomSession:
         `preview_config()` before performing any destructive actions.
 
         Args:
-            config_file (str): Path to the YAML or JSON configuration file.
+            config_file (str): Path to the YAML configuration file.
+
+        Raises:
+            FileNotFoundError: If `config_file` does not exist.
+            ValueError: If the file fails validation -- not `.yaml`/`.yml`,
+                YAML syntax, a root that is not a mapping, an unknown
+                `privacy_profile`, an unknown `action`, a `phi_tags`,
+                `date_jitter` or `machines` of the wrong shape, or a rule
+                `_validate_rule` rejects. Either way the configuration is
+                exactly what it was before the call.
         """
-        try:
-            get_logger().info(f"Loading configuration from {config_file}...")
-            print(f"Loading configuration from {config_file}...")
+        get_logger().info(f"Loading configuration from {config_file}...")
+        print(f"Loading configuration from {config_file}...")
 
-            # UNIFIED LOAD (v2) - Now loading into IsocenterConfiguration object
-            (tags, rules, jitter, remove_private,
-             profile) = ConfigLoader.load_unified_config(config_file)
+        # No `try`, and nothing assigned until the loader has returned
+        # (#456). This caught every exception, printed `Load failed` beside
+        # an ERROR log of the same text, reset `rules`, `phi_tags` and
+        # `privacy_profile` to empty, and returned normally -- so a file
+        # that failed validation wiped the policy the session already had
+        # and the caller was told nothing. The loader validates every
+        # shape it returns, so the prints below cannot fail after the
+        # assignments either (`date_jitter: soon` used to, leaving half
+        # of a failed file in the session).
+        (tags, rules, jitter, remove_private,
+         profile) = ConfigLoader.load_unified_config(config_file)
 
-            # Update the configuration object
-            self.configuration.phi_tags = tags
-            self.configuration.rules = rules
-            self.configuration.date_jitter = jitter
-            self.configuration.remove_private_tags = remove_private
-            self.configuration.config_path = config_file
-            self.configuration.privacy_profile = profile
+        self.configuration.phi_tags = tags
+        self.configuration.rules = rules
+        self.configuration.date_jitter = jitter
+        self.configuration.remove_private_tags = remove_private
+        self.configuration.config_path = config_file
+        self.configuration.privacy_profile = profile
 
-            get_logger().info(
-                f"Loaded {len(self.configuration.rules)} machine rules and {len(self.configuration.phi_tags)} PHI tags.")
-            print(
-                f"Configuration Loaded:\n - {len(self.configuration.rules)} Machine Redaction Rules\n - {len(self.configuration.phi_tags)} PHI Tags")
-            print(
-                f" - Date Jitter: {
-                    self.configuration.date_jitter['min_days']} to {
-                    self.configuration.date_jitter['max_days']} days")
-            print(f" - Remove Private Tags: {self.configuration.remove_private_tags}")
-            print("Tip: Run .audit() to check PHI, or .redact() to apply redaction.")
-        except Exception as e:
-            import traceback
-            get_logger().error(f"Load failed: {e}")
-            print(f"Load failed: {e}")
-            print(traceback.format_exc())
-            # Reset on failure? OR keep previous?
-            # Original behavior was reset.
-            self.configuration.rules = []
-            self.configuration.phi_tags = {}
-            self.configuration.privacy_profile = None
+        get_logger().info(
+            f"Loaded {len(self.configuration.rules)} machine rules and {len(self.configuration.phi_tags)} PHI tags.")
+        print(
+            f"Configuration Loaded:\n - {len(self.configuration.rules)} Machine Redaction Rules\n - {len(self.configuration.phi_tags)} PHI Tags")
+        print(
+            f" - Date Jitter: {
+                self.configuration.date_jitter['min_days']} to {
+                self.configuration.date_jitter['max_days']} days")
+        print(f" - Remove Private Tags: {self.configuration.remove_private_tags}")
+        print("Tip: Run .audit() to check PHI, or .redact() to apply redaction.")
 
     def preview_config(self):
         """
@@ -2022,15 +2027,14 @@ class DicomSession:
         tags_to_use = self.configuration.phi_tags
 
         if config_path:
-            try:
-                t, _, _, _, _ = ConfigLoader.load_unified_config(config_path)
-                tags_to_use = t
-            except (OSError, ValueError, yaml.YAMLError) as exc:
-                # Not a unified v2 config; try it as a plain PHI tag file.
-                get_logger().debug(
-                    "%s is not a unified config (%s); reading it as PHI tags",
-                    config_path, exc)
-                tags_to_use = ConfigLoader.load_phi_config(config_path)
+            # The same loader, and the same exceptions, as `load_config`
+            # (#456). A fallback here read the file as a plain tag list
+            # whenever the unified loader refused it, so a rule with no
+            # serial number -- rejected one call earlier -- was audited
+            # against happily, a `.json` file `load_config` refuses was
+            # accepted, and a root-level tag file loaded tags the scan
+            # then never matched.
+            tags_to_use, _, _, _, _ = ConfigLoader.load_unified_config(config_path)
 
         # Uses IsocenterConfiguration derived tags
         inspector = PhiInspector(config_tags=tags_to_use,

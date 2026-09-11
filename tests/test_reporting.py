@@ -212,17 +212,25 @@ def test_the_report_states_when_no_profile_was_applied(tmp_path):
 
 
 def test_an_unresolvable_profile_is_not_reported_as_applied(tmp_path):
-    """A misspelled profile name is warned about and ignored at load.
+    """A misspelled profile name is refused at load (#456), so no report
+    can name it.
 
-    Reporting it anyway would describe protection that never ran -- the
-    most dangerous line the report could carry.
+    It was warned about and ignored, and this test pinned that the report
+    did not name it anyway -- reporting it would describe protection that
+    never ran. Refusing at load makes that unreachable: the configuration
+    keeps whatever it had, and here that is a bare session's, which names
+    no profile.
     """
+    import pytest
+
     config = tmp_path / "config.yaml"
     config.write_text("privacy_profile: no_such_profile\nmachines: []\n",
                       encoding="utf-8")
 
     with Session(str(tmp_path / "unknown.db")) as session:
-        session.load_config(str(config))
+        with pytest.raises(ValueError, match="no_such_profile"):
+            session.load_config(str(config))
+        assert session.configuration.privacy_profile is None
         content = _render_report(session, tmp_path)
 
     assert "no_such_profile" not in content, (

@@ -188,7 +188,14 @@ raise `RuntimeError` after the pass when at least one instance failed
 and none could be read (#423); a scan that read some instances returns
 its report with the others in `failures`, and discovery counts only the
 instances it read in `n_sources`. `ValueError` from
-`generate_report` on an unknown format.
+`generate_report` on an unknown format. `load_config(config_file)` and
+`audit(config_path=)` raise `ValueError` when the file fails validation
+(not `.yaml`/`.yml`, YAML syntax, a root that is not a mapping, an
+unknown `privacy_profile`, an unknown `action`, a `phi_tags`,
+`date_jitter` or `machines` of the wrong shape, a rule
+`_validate_rule` rejects) and `FileNotFoundError` when it does not
+exist; after either, the configuration is exactly what it was before
+the call (#456).
 
 **Environment.** Every `ISOCENTER_*` name in
 [Environment Variables](../environment.md), its default and its

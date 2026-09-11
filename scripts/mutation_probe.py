@@ -591,6 +591,7 @@ TARGETS = {
                               "tests/test_ingestion_normalization.py",
                               "tests/test_io_no_pixels.py",
                               "tests/test_legacy_waveform_hydration.py",
+                              "tests/test_load_config_raises.py",
                               "tests/test_lock_identities_signature.py",
                               "tests/test_logging.py",
                               "tests/test_manifest.py",
