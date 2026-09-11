@@ -384,6 +384,29 @@ def _ocr_instance(instance: Instance) -> _InstanceOcr:
             and not instance.file_path):
         return _InstanceOcr([], False, None)
 
+    # Free what this pass loaded, and only that (#428). `get_pixel_data()`
+    # caches the frame on the instance, and nothing released it: under
+    # threads -- the free-threaded build's default, and discovery's on
+    # every build -- every scanned frame stayed resident on the live
+    # graph. **The gate is what protects the caller**, not the choice of
+    # `unload_pixel_data()` over `discard_pixel_data()`: a frame this pass
+    # loaded came through the loader or the file, so it is never an
+    # unwritten replacement and #293's refusal cannot fire on it, while a
+    # frame that was resident before -- an unsaved replacement, or a
+    # written frame the caller loaded and still holds -- is not ours to
+    # free. `unload` is the spelling because this is "free it if it is
+    # safe", not "throw it away". In a `finally`, so a failure after the
+    # load still frees it.
+    was_resident = instance.pixel_array is not None
+    try:
+        return _load_and_ocr(instance)
+    finally:
+        if not was_resident:
+            instance.unload_pixel_data()
+
+
+def _load_and_ocr(instance: Instance) -> _InstanceOcr:
+    """`_ocr_instance`'s body: load, prepare, and OCR each frame."""
     try:
         pixel_array = instance.get_pixel_data()
     except Exception as e:  # pylint: disable=broad-exception-caught
@@ -429,6 +452,11 @@ def analyze_pixels(instance: Instance) -> List[TextRegion]:
     returns a list rather than raising for #422's reason: it runs per
     instance inside workers, where raising would turn one precondition
     into N worker failures.
+
+    A frame this call loaded is released before it returns (#428), with
+    `unload_pixel_data()`; one that was resident before the call is left
+    as it was. A caller who wants the frame afterwards calls
+    `instance.get_pixel_data()`.
     """
     if not HAS_OCR:
         return []
