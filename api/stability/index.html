@@ -1691,6 +1691,21 @@ in a 1.x release with a CHANGELOG entry naming both spellings:</p>
 <li><strong><code>Builder</code>'s fluent chain beyond <code>start_patient()</code>.</strong></li>
 <li><strong><code>ComplianceReport</code>'s fields</strong> and the report's section layout and
   wording; log messages and <code>print</code> lines; the manifest's HTML.</li>
+<li><strong>The JSON manifest's item keys</strong> (<code>generate_manifest(format="json")</code>).
+  Each item's <code>anonymized</code> is <code>true</code> when the last tag-policy PHI scan
+  left no identifier unremediated on that instance's patient, study or
+  instance, and none of the three has been edited since: each carries
+  <code>REMEDIATED</code> or <code>CLEARED</code> at its current revision (#486). Two things it
+  is not. It is not "<code>anonymize()</code> ran": an input the scan found clean
+  reads <code>true</code> after <code>audit()</code> alone. And it says nothing about burned-in
+  pixel text, which the tag scan does not read. And it does not see
+  inside sequences: <code>anonymize()</code> stamps the nested item it changed,
+  not the instance, so an instance whose only findings were inside a
+  sequence reads <code>false</code> until the next <code>audit()</code> records the instance
+  <code>CLEARED</code> (#494). <code>false</code> means the status does not establish it: a
+  session that never scanned, an entity edited since its scan, an
+  entity whose last pass declined a remediation on it, or that nested
+  case.</li>
 <li><strong>The <code>.pass.lock</code> / <code>.lock</code> file names</strong>, the sidecar's <code>_pixels.bin</code>
   suffix, the audit table's columns, the schema's table names.</li>
 </ul>
