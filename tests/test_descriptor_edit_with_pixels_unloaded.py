@@ -679,6 +679,34 @@ def test_a_discard_inside_a_save_leaves_the_instance_dirty(ingested, kind):
     assert _descriptors(reopened_inst) == before
 
 
+def test_a_descriptor_edit_between_the_set_and_the_discard_is_reverted_too(
+        ingested):
+    """R9 (#434, Q3): discard restores every recorded tag, whoever wrote it last.
+
+    While the replacement is resident, a pixel-descriptor edit describes
+    the replacement, and the discard throws the replacement away. Keeping
+    the edit would leave Rows 99 over a stored 4x4 frame -- the read
+    raises, which is #434's own shape. So the edit goes with the set.
+    A descriptor the set cannot write is not in the record and is left
+    alone: BitsStored here.
+    """
+    _session, inst, _db = ingested
+    before = _descriptors(inst)
+    bits_stored = inst.attributes["0028,0101"]
+    inst.set_pixel_data(np.full((8, 8), 7, np.uint8))
+    inst.set_attr(ROWS, 99)
+    inst.set_attr("0028,0101", 7)
+    assert inst.attributes[ROWS] == 99
+
+    assert inst.discard_pixel_data() is True
+    assert _descriptors(inst) == before
+    assert inst.attributes[ROWS] == 4
+    assert inst.attributes["0028,0101"] == 7 != bits_stored
+    inst.set_attr("0028,0101", bits_stored)
+    got = inst.get_pixel_data()
+    assert got.dtype == np.uint16 and np.array_equal(got, ORIGINAL)
+
+
 # ---------------------------------------------------------------------------
 # T -- the loader ingest builds carries the hash of its frame (#436)
 # ---------------------------------------------------------------------------
