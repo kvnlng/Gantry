@@ -54,7 +54,7 @@ class TestVoiLutIntegration(unittest.TestCase):
 
         with patch('isocenter.pixel_analysis.apply_voi_lut', side_effect=lambda arr, ds: arr) as mock_voi, \
              patch('isocenter.pixel_analysis.HAS_OCR', True), \
-             patch('isocenter.pixel_analysis.detect_text_regions', return_value=[]):
+             patch('isocenter.pixel_analysis._detect_text_regions_or_raise', return_value=[]):
 
              analyze_pixels(inst)
              # Check if called

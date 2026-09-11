@@ -701,6 +701,10 @@ def test_the_frozen_shapes_have_these_fields(tmp_path):
     for dunder in ("__len__", "__iter__", "__getitem__"):
         assert dunder in vars(session_module.PhiReport)
     assert callable(session_module.PhiReport.to_dataframe)
+    # `failures` joined the shape with #423. Always a list: omitted, it
+    # is `[]`, never `None`, which every caller iterating it would trip on.
+    assert session_module.PhiReport([]).failures == []
+    assert session_module.PhiReport([], [("u", "r")]).failures == [("u", "r")]
 
     for method in ("filter", "to_zones", "to_dataframe"):
         assert callable(getattr(DiscoveryResult, method))
@@ -796,6 +800,10 @@ def test_the_stability_page_names_every_tier_one_session_method():
                        "date_shifted"], ordered
     for group in (ordered[:3], ordered[3:8], ordered[8:]):
         assert f"`{', '.join(group)}`" in flat, f"stability.md does not list {group} together"
+    # The report's shape as the page spells it, so the page and the class
+    # cannot drift apart (#423 added `failures` to both).
+    assert "`PhiReport(findings, failures)`" in flat, (
+        "stability.md does not list PhiReport's fields as (findings, failures)")
 
     # The *union* is what is frozen, so the union is what this checks:
     # each word appears **exactly once**, backticked, inside the Output

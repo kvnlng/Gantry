@@ -89,26 +89,56 @@ def scan_worker(args):
 
 
 
+class _ScanOutcome(NamedTuple):
+    """What `_verify_worker` sends back for one instance (#423).
+
+    Module scope, so it pickles across the process pool. It carries its
+    own UID because the recycling pool is `imap_unordered`: outcomes
+    arrive in completion order, and zipping them back onto the items that
+    were dispatched would pin each failure on the wrong instance.
+    """
+    entity_uid: Optional[str]
+    findings: List[PhiFinding]
+    read: bool
+    failure: Optional[str]
+
+
 def _verify_worker(args):
     """
     Worker for pixel verification.
     Args:
         args: Tuple(Instance, Equipment, List[Rules])
 
-    Returns: List[PhiFinding] (WITHOUT entities)
+    Returns: `_ScanOutcome` -- the instance's findings (WITHOUT entities),
+    whether any frame was read, and why it could not be read in full.
     """
     from .verification import RedactionVerifier
     instance, equipment, rules = args
     if not instance:
-        return []
+        return _ScanOutcome(None, [], False, None)
+    uid = instance.sop_instance_uid
 
-    verifier = RedactionVerifier(rules)
-    findings = verifier.verify_instance(instance, equipment)
+    # A boundary catch, and it must return an outcome rather than
+    # re-raise: `run_parallel` re-raises a worker's exception by default,
+    # so one instance that fails in a way `_ocr_instance` does not catch
+    # would lose the whole pass, every other instance's findings with it.
+    #
+    # `_ocr_instance` is reached through the module, never a `from`
+    # binding, so a patch on `pixel_analysis` reaches it -- in a thread
+    # and in a child that patches its own import alike.
+    try:
+        ocr = pixel_analysis._ocr_instance(instance)  # pylint: disable=protected-access
+        findings = RedactionVerifier(rules)._findings_for(  # pylint: disable=protected-access
+            instance, ocr.regions, equipment)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        return _ScanOutcome(
+            uid, [], False,
+            pixel_analysis._describe_failure(e))  # pylint: disable=protected-access
 
     # Strip the instance before the findings cross back, as `scan_worker`
     # does; `scan_pixel_content` puts the live one back (#412). The strip
     # is not tidiness. OCR decodes the frame first, `get_pixel_data()`
-    # caches it on the instance, and `verify_instance` attaches that
+    # caches it on the instance, and `_findings_for` attaches that
     # instance to every finding -- so the result carried the decoded
     # frame back to the parent, once per scanned instance with a finding
     # (pickle memoises the shared instance, so a second finding on the
@@ -118,10 +148,49 @@ def _verify_worker(args):
     # hide this: it overwrites the copy, so the entity the caller sees is
     # right while the frame still crosses the pipe. Only
     # `tests/test_scan_pixel_content_dispatches_its_worker.py`'s T-394a
-    # is red without this loop.
+    # is red without this loop. Since #428 `_ocr_instance` frees a
+    # loader-backed frame before this result is built, so what the strip
+    # still guards is the entity's identity (one meaning for
+    # `finding.entity`, which `_rehydrate_findings` restores) and an
+    # in-memory instance whose frame was resident before the scan.
     for f in findings:
         f.entity = None
-    return findings
+    return _ScanOutcome(uid, findings, ocr.read, ocr.failure)
+
+
+def _discover_worker(instance):
+    """Worker for zone discovery: `(entity_uid, _InstanceOcr)` for one instance.
+
+    Discovery read through `pixel_analysis.analyze_pixels` until #423's
+    rule reached it, and that function logs a failed load or frame and
+    returns `[]`, so an instance nobody read counted as a source with no
+    text, and diluted every zone's occurrence rate. Module scope, and
+    `_ocr_instance` reached through the module, for the same reasons as
+    `_verify_worker`; the same boundary catch, so one unexpected error
+    costs one instance rather than the pass.
+    """
+    uid = instance.sop_instance_uid
+    try:
+        return uid, pixel_analysis._ocr_instance(instance)  # pylint: disable=protected-access
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        return uid, pixel_analysis._InstanceOcr(  # pylint: disable=protected-access
+            [], False, pixel_analysis._describe_failure(e))  # pylint: disable=protected-access
+
+
+def _warn_unread_instances(operation, failures, attempted, where):
+    """Warn how many instances an OCR pass could not read (#423).
+
+    The warning is what reaches a caller who reads neither the report's
+    `failures` nor the log file: the `isocenter` logger's console handler
+    prints WARNING and above. Silent when nothing failed.
+    """
+    if not failures:
+        return
+    uid, reason = failures[0]
+    get_logger().warning(
+        f"{operation}: {len(failures)} of {attempted} instance(s) could not "
+        f"be read in full, so their text was not (or not all) scanned; see "
+        f"{where}. First: {uid}: {reason}")
 
 
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -2005,16 +2074,22 @@ class DicomSession:
                 Each finding's `entity` is the live `Instance` in
                 `session.store`, whether the scan ran in threads or in
                 processes, or `None` when that instance cannot be found in
-                the graph; never a worker's copy (#412).
+                the graph; never a worker's copy (#412). Its `failures`
+                lists `(entity_uid, reason)` for each instance whose pixels
+                could not be loaded or whose OCR raised on any frame --
+                including in a spawned worker that cannot find a binary the
+                caller could -- and a WARNING gives the count (#423). An
+                instance with no pixel element is neither scanned nor a
+                failure.
 
         Raises:
             RuntimeError: `pixel_analysis.OcrUnavailableError` when the `ocr`
                 extra is not installed or the `tesseract` binary does not
                 answer in the calling process, before any worker is
-                dispatched and before the graph is read (#422). The check
-                covers only that: a frame whose OCR fails after it passes --
-                including in a spawned worker that cannot find a binary the
-                caller could -- is logged and not reported (#423).
+                dispatched and before the graph is read (#422).
+                `pixel_analysis.PixelScanError`, carrying `.failures` and
+                `.attempted`, after the pass and the warning, when at least
+                one instance failed and none could be read (#423).
         """
         # First, before the graph is read: a scaffolded config would
         # otherwise answer "nothing to scan" without OCR, and the missing
@@ -2073,11 +2148,17 @@ class DicomSession:
             print(msg)
             return PhiReport([])
 
-        results = run_parallel(_verify_worker, worker_items, desc="OCR Verification")
+        outcomes = run_parallel(_verify_worker, worker_items, desc="OCR Verification")
 
         all_findings = []
-        for r in results:
-            all_findings.extend(r)
+        failures = []
+        read = 0
+        for outcome in outcomes:
+            all_findings.extend(outcome.findings)
+            if outcome.failure is not None:
+                failures.append((outcome.entity_uid, outcome.failure))
+            if outcome.read:
+                read += 1
 
         # Unconditionally, in both strategies: the worker strips the
         # entity, and this is the one path that puts it back, so
@@ -2086,8 +2167,21 @@ class DicomSession:
         # findings say nothing about an entity's metadata PHI status.
         self._rehydrate_findings(all_findings)
 
-        print(f"OCR Scan Complete. Found {len(all_findings)} suspicious regions (Uncovered).")
-        return PhiReport(all_findings)
+        _warn_unread_instances("scan_pixel_content()", failures,
+                               len(worker_items), "report.failures")
+        summary = f"OCR Scan Complete. Found {len(all_findings)} suspicious regions (Uncovered)"
+        if failures:
+            summary += (f"; {len(failures)} instance(s) could not be read -- "
+                        "see report.failures")
+        print(summary + ".")
+        # Last, after the warning, as `export()` raises `ExportError`: a
+        # caller who catches this has heard everything the pass produced.
+        # `read == 0` and not "no findings": a scan that read instances
+        # and found nothing on them is a clean result, and an all-SR
+        # series has neither reads nor failures.
+        if failures and read == 0:
+            raise pixel_analysis.PixelScanError(failures, len(worker_items))
+        return PhiReport(all_findings, failures)
 
     def auto_remediate_config(self, report: "PhiReport") -> int:
         """
@@ -2137,11 +2231,19 @@ class DicomSession:
             DiscoveryResult: Object containing all detected text candidates.
             Call .to_zones() on the result to get grouped redaction zones.
 
+            `n_sources` counts only the sampled instances that were read
+            (at least one frame through OCR), so an instance that could
+            not be read does not dilute a zone's occurrence rate. Each one
+            that failed is logged at ERROR and counted in a WARNING (#423).
+
         Raises:
             RuntimeError: `pixel_analysis.OcrUnavailableError` when the `ocr`
                 extra is not installed or the `tesseract` binary does not
                 answer, before any worker is dispatched and before the graph
-                is read (#422).
+                is read (#422). `pixel_analysis.PixelScanError`, carrying
+                `.failures` and `.attempted`, after the pass and the warning,
+                when at least one sampled instance failed and none could be
+                read (#423).
         """
         # First, and read through the module at call time -- never a copy
         # of `HAS_OCR` imported into this module, which a patch or a later
@@ -2173,19 +2275,33 @@ class DicomSession:
             sample = target_instances
 
         # 3. Analyze
-        # We reuse the parallel analysis logic
-        raw_regions_lists = run_parallel(
-            pixel_analysis.analyze_pixels,
+        outcomes = run_parallel(
+            _discover_worker,
             sample,
             desc="Discovery Scan",
             force_threads=True
         )
 
         candidates = []
+        failures = []
+        n_read = 0
 
-        for i, regions in enumerate(raw_regions_lists):
-            # i serves as the unique source index
-            for r in regions:
+        for uid, ocr in outcomes:
+            if ocr.failure is not None:
+                # Kept at ERROR, as `analyze_pixels` logged it: with no
+                # failure field on `DiscoveryResult`, the log is where each
+                # one is named, and the warning below counts them.
+                get_logger().error(f"Failed to analyze pixels for {uid}: {ocr.failure}")
+                failures.append((uid, ocr.failure))
+            # Only a read instance is a source. One that failed outright,
+            # or carries no pixel element, saw no text because nobody
+            # looked, and counting it in `n_sources` lowered every zone's
+            # occurrence rate (#423).
+            if not ocr.read:
+                continue
+            i = n_read
+            n_read += 1
+            for r in ocr.regions:
                 if r.confidence >= min_confidence:
                     # Classify immediately (or could be lazy)
                     cls = ZoneDiscoverer._classify_text(r.text)
@@ -2199,7 +2315,13 @@ class DicomSession:
                     )
                     candidates.append(cand)
 
-        result = DiscoveryResult(candidates, len(sample))
+        _warn_unread_instances("discover_redaction_zones()", failures,
+                               len(sample), "the ERROR log above")
+        # After the warning, and on `ExportError`'s rule, as in
+        # `scan_pixel_content()`: nothing read at all is not a result.
+        if failures and n_read == 0:
+            raise pixel_analysis.PixelScanError(failures, len(sample))
+        result = DiscoveryResult(candidates, n_read)
         print(f"Discovery complete. Found {len(candidates)} raw candidates.")
         return result
 
