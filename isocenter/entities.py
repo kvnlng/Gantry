@@ -1001,8 +1001,17 @@ class Instance(DicomItem):
             except Exception as e:
                 # Try explicit fallback to isocenter.imagecodecs_handler
                 # Pydicom sometimes fails to iterate handlers correctly or swallows errors.
+                #
+                # No `h.is_available()` in this condition, deliberately
+                # (#444). With it, a missing imagecodecs was never asked,
+                # so the handler's refusal -- which names the import
+                # failure -- never reached the caller, who got pydicom's
+                # error and advice to install the codec that was installed
+                # and broken. The handler raises its own refusal when it
+                # is unavailable; let it.
+                fallback_error = None
                 try:
-                    if ds is not None and h.is_available() and h.supports_transfer_syntax(ds.file_meta.TransferSyntaxUID):
+                    if ds is not None and h.supports_transfer_syntax(ds.file_meta.TransferSyntaxUID):
                         arr = h.get_pixel_data(ds)
                         # Same reasoning as the two branches above: a read
                         # must not write (#186).
@@ -1030,9 +1039,21 @@ class Instance(DicomItem):
                         # write would be a second answer to one question.
                         self._pixel_array_unwritten = False
                         return self.pixel_array
-                except (ImportError, AttributeError, RuntimeError):
-                    # Fallback failed, proceed to raise original error
-                    pass
+                except (ImportError, AttributeError, RuntimeError) as exc:
+                    # Fallback failed: raise the original error below, and
+                    # say what the fallback said beside it (#444). This was
+                    # `pass`, which dropped the handler's reason -- a
+                    # frame-count, sign or colour refusal, or an import
+                    # failure -- for pydicom's words alone, so a refusal
+                    # made in the handler never reached this method's
+                    # caller. Bound to a second name because Python unbinds
+                    # an `except ... as` name when the block ends.
+                    fallback_error = exc
+                # Appended only when the handler was actually asked: a
+                # syntax it does not list must leave the message exactly
+                # as it was.
+                fallback_words = ("" if fallback_error is None else
+                                  f"\nimagecodecs fallback: {fallback_error}")
 
                 # Try to get Transfer Syntax UID for better debugging
                 ts_uid = "Unknown"
@@ -1057,11 +1078,14 @@ class Instance(DicomItem):
                         f"Underlying Error: {e}\n"
                         f"Active pydicom handlers: {handlers}\n"
                         "Missing image codecs. Please ensure 'pillow', 'pylibjpeg', or 'gdcm' are installed."
+                        f"{fallback_words}"
                     ) from e
 
                 # If we just caught the re-raised "no pixel data" exception, it would be handled above,
                 # but if dcmread fails completely or something else happens:
-                raise RuntimeError(f"Lazy load failed for {self.file_path}: {e}") from e
+                raise RuntimeError(
+                    f"Lazy load failed for {self.file_path}: {e}{fallback_words}"
+                ) from e
 
         raise FileNotFoundError(f"Pixels missing and file not found: {self.file_path}")
 

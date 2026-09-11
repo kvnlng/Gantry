@@ -170,3 +170,33 @@ def test_supports_exactly_the_nine_syntaxes():
         assert imagecodecs_handler.supports_transfer_syntax(UID(syntax)) is True
     assert imagecodecs_handler.supports_transfer_syntax(
         UID("1.2.840.10008.1.2.1")) is False  # Explicit VR Little Endian
+
+
+# ---------------------------------------------------------------------------
+# #444 -- an unavailable imagecodecs says why
+# ---------------------------------------------------------------------------
+
+#: The shape a broken wheel produces: the module is installed and a shared
+#: library it links is not. Its words are the only clue to the fix.
+_BROKEN_IMPORT = ImportError(
+    "libjpeg.so.8: cannot open shared object file: No such file or directory")
+
+
+@pytest.mark.parametrize("door", ["get_pixel_data", "decode_declared_frames"])
+def test_unavailable_imagecodecs_names_why(monkeypatch, mock_dataset, door):
+    """I1: both raise sites carry the import failure, and chain it (#444).
+
+    Each raised a bare "imagecodecs is not available", and the cause
+    reached only a stderr print in `is_available()`, which a worker, a
+    notebook or a log-only deployment may never show.
+    """
+    monkeypatch.setattr(imagecodecs_handler, "imagecodecs", None)
+    monkeypatch.setattr(imagecodecs_handler, "IMPORT_ERROR", _BROKEN_IMPORT)
+    args = (mock_dataset,) if door == "get_pixel_data" else (mock_dataset, 1)
+    with pytest.raises(RuntimeError) as exc:
+        getattr(imagecodecs_handler, door)(*args)
+    msg = str(exc.value)
+    assert "imagecodecs is not available" in msg, msg
+    assert "ImportError" in msg, msg
+    assert "libjpeg.so.8" in msg, msg
+    assert exc.value.__cause__ is _BROKEN_IMPORT

@@ -54,6 +54,25 @@ def is_available():
     return True
 
 
+def _unavailable() -> RuntimeError:
+    """The one refusal both decoders raise when imagecodecs did not import.
+
+    It carries the import failure's own words (#444). They used to reach
+    only the stderr print in `is_available()`, which a worker, a notebook
+    or a log-only deployment may never show, while the raise said a bare
+    "imagecodecs is not available" -- and "libjpeg.so.8: cannot open
+    shared object file" is the whole clue to the fix. Read at call time,
+    not bound at import, so the module global is what it describes.
+    Callers raise it `from IMPORT_ERROR`, so the cause is chained as well
+    as quoted.
+    """
+    if IMPORT_ERROR is None:
+        return RuntimeError("imagecodecs is not available")
+    return RuntimeError(
+        f"imagecodecs is not available: "
+        f"{type(IMPORT_ERROR).__name__}: {IMPORT_ERROR}")
+
+
 # UID Constants
 JPEGLossless = UID("1.2.840.10008.1.2.4.57")
 JPEGLosslessSV1 = UID("1.2.840.10008.1.2.4.70")
@@ -280,7 +299,7 @@ def decode_declared_frames(ds, number_of_frames):
         caller checks dtype and size against the header.
     """
     if not is_available():
-        raise RuntimeError("imagecodecs is not available")
+        raise _unavailable() from IMPORT_ERROR
     transfer_syntax = ds.file_meta.TransferSyntaxUID
     frames = [_decode_frame(transfer_syntax, bitstream, ds)
               for bitstream in islice(
@@ -310,7 +329,7 @@ def get_pixel_data(ds):
             NumberOfFrames declares M".
     """
     if not is_available():
-        raise RuntimeError("imagecodecs is not available")
+        raise _unavailable() from IMPORT_ERROR
 
     transfer_syntax = ds.file_meta.TransferSyntaxUID
     pixel_bytes = ds.PixelData

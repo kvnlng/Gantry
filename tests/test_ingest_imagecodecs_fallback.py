@@ -629,3 +629,61 @@ def test_a_signed_lossless_jpeg_file_stays_refused_at_every_depth(
     why = _fallback_reason(summary)
     assert f"decoded to uint{signed.itemsize * 8}" in why, why
     assert "PixelRepresentation 1" in why, why
+
+
+# ---------------------------------------------------------------------------
+# #444 -- an unavailable imagecodecs says why, at both doors
+# ---------------------------------------------------------------------------
+
+#: A broken wheel's shape: installed, with a shared library missing.
+_BROKEN_IMPORT = ImportError(
+    "libjpeg.so.8: cannot open shared object file: No such file or directory")
+
+
+def _without_imagecodecs(monkeypatch):
+    from isocenter import imagecodecs_handler
+    monkeypatch.setattr(imagecodecs_handler, "imagecodecs", None)
+    monkeypatch.setattr(imagecodecs_handler, "IMPORT_ERROR", _BROKEN_IMPORT)
+
+
+def test_ingest_names_why_imagecodecs_is_unavailable(tmp_path, monkeypatch):
+    """I2: the ingest row carries the import failure's own words.
+
+    In-process through `ingest_worker`, the function that writes the
+    row: a Session hands ingest to its own process pool, which a
+    monkeypatch does not reach.
+    """
+    from isocenter.io_handlers import ingest_worker
+    path = _write(str(tmp_path), _dataset(LJPEG_SV1, [MONO16],
+                                          photometric="MONOCHROME2"))
+    _assert_pydicom_cannot(path)
+    _without_imagecodecs(monkeypatch)
+    reason = ingest_worker(path)[-1]
+    assert reason.startswith("Decompression Failed:"), reason
+    assert "imagecodecs is not available: ImportError" in reason, reason
+    assert "libjpeg.so.8" in reason, reason
+
+
+def test_the_read_door_names_why_imagecodecs_is_unavailable(tmp_path,
+                                                            monkeypatch):
+    """I3: `Instance.get_pixel_data()` says why, and keeps its advice.
+
+    Its fallback tested `is_available()` first, so a missing imagecodecs
+    was never asked and the caller got pydicom's error alone; and when
+    the handler was asked and refused, the refusal was dropped for
+    pydicom's. The advice line is pinned elsewhere
+    (`tests/test_compression_deps.py`) and must survive the addition.
+    """
+    from isocenter.entities import Instance
+    path = _write(str(tmp_path), _dataset(LJPEG_SV1, [MONO16],
+                                          photometric="MONOCHROME2"))
+    _assert_pydicom_cannot(path)
+    _without_imagecodecs(monkeypatch)
+    inst = Instance(generate_uid(), "1.2.840.10008.5.1.4.1.1.7", 1,
+                    file_path=path)
+    with pytest.raises(RuntimeError) as exc:
+        inst.get_pixel_data()
+    msg = str(exc.value)
+    assert "imagecodecs fallback: imagecodecs is not available" in msg, msg
+    assert "libjpeg.so.8" in msg, msg
+    assert "Missing image codecs" in msg, msg
