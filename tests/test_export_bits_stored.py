@@ -28,6 +28,7 @@ arms call `_export_instance_worker` in this process, as
 against each other at the end.
 """
 import itertools
+import logging
 from datetime import date
 
 import numpy as np
@@ -37,7 +38,7 @@ from pydicom.pixels import get_decoder
 
 from isocenter.entities import Instance, Patient, Series, Study
 from isocenter.io_handlers import (DicomExporter, ExportContext,
-                                   _export_instance_worker)
+                                   ExportOutcome, _export_instance_worker)
 from isocenter.session import DicomSession
 
 CT_STORAGE = "1.2.840.10008.5.1.4.1.1.2"
@@ -123,6 +124,11 @@ def _assert_widened(outcome, arr, inst, declared):
     _assert_exact(outcome, arr)
     assert inst.attributes["0028,0101"] == declared, \
         "the export must not write the graph"
+    # The rewrite travels back to the parent, which is the only process
+    # whose log has a handler (see the logging test at the end).
+    assert len(outcome.corrections) == 1, outcome.corrections
+    assert f"BitsStored {declared} " in outcome.corrections[0], \
+        outcome.corrections
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +317,101 @@ def test_readback_agrees_with_the_written_width(tmp_path, compression):
     assert _width(outcome.output_path)[:3] == (16, 16, 15)
 
 
+@pytest.mark.parametrize("arr", [
+    np.array([[2 ** 31, 0, 1, 2]] * 4, np.uint32),
+    np.array([[-(2 ** 23) - 1, 2 ** 23 - 1, -1, 0]] * 4, np.int32),
+], ids=["uint32 2**31@24", "int32 -(2**23)-1@24"])
+def test_a_32_bit_overflow_widens_to_32_bits(tmp_path, arr):
+    """A declared 24 the values overflow is written as 32, not 16 (#468).
+
+    Uncompressed only: JPEG 2000 refuses 32-bit by name (#404). Every
+    other overflow row is 8- or 16-bit, where "the array's own width"
+    and "16" are the same number, so this is the row that tells them
+    apart. Killing mutation (the review's O8): the widened width capped
+    at 16 bits.
+    """
+    inst = _image(arr, (("0028,0101", 24), ("0028,0102", 23)))
+
+    outcome = _export(tmp_path, inst)
+
+    _assert_widened(outcome, arr, inst, 24)
+
+
+@pytest.mark.parametrize("compression", [None, "j2k"])
+@pytest.mark.parametrize("arr, declared, written", [
+    # A kept BitsStored with a HighBit that is not one less than it.
+    (np.array([[-2048, 2047, -1, 0]] * 4, np.int16),
+     (("0028,0101", 12), ("0028,0102", 15)), (16, 12, 11)),
+    (np.array([[-32768, 32767, -1, 0]] * 4, np.int16),
+     (("0028,0101", 16), ("0028,0102", 11)), (16, 16, 15)),
+    # A HighBit with no BitsStored beside it: 16/16/11 before #468.
+    (np.array([[-32768, 32767, -1, 0]] * 4, np.int16),
+     (("0028,0102", 11),), (16, 16, 15)),
+], ids=["12/15", "16/11", "HighBit 11 alone"])
+def test_high_bit_is_one_less_than_the_written_bits_stored(
+        tmp_path, arr, declared, written, compression):
+    """HighBit is written as BitsStored - 1 whenever BitsStored is (#468).
+
+    The array holds right-aligned values, so its most significant stored
+    bit is BitsStored - 1 whatever the source declared. A declared 12/15
+    used to go to disk as declared, beside samples that are not
+    left-aligned. Killing mutation (the converse of the review's O5): the
+    declared HighBit read back onto the file.
+    """
+    outcome = _export(tmp_path, _image(arr, declared), compression=compression)
+
+    assert _width(outcome.output_path)[:3] == written
+    _assert_exact(outcome, arr)
+    assert outcome.corrections == []
+
+
+@pytest.mark.parametrize("value", ["12", " 12 "], ids=["'12'", "' 12 '"])
+def test_a_numeric_string_bits_stored_is_that_integer(tmp_path, value):
+    """`"12"` is a declared 12 (#468).
+
+    Read by `declared_int`, as the geometry descriptors are, so a
+    string a graph picked up from a buggy writer is still the one
+    declaration it names, and is held against the array like any other.
+    Killing mutation: the declaration read without `declared_int`'s
+    coercion (a string compared against an int range raises).
+    """
+    arr = np.array([[-2048, 2047, -1, 0]] * 4, np.int16)
+    inst = _image(arr, (("0028,0101", value), ("0028,0102", 11)))
+
+    outcome = _export(tmp_path, inst)
+
+    assert _width(outcome.output_path)[:3] == (16, 12, 11)
+    _assert_exact(outcome, arr)
+    assert outcome.corrections == []
+
+
+@pytest.mark.parametrize("value", ["", [12], [12, 13], [], "twelve", None],
+                         ids=["''", "[12]", "[12, 13]", "[]", "'twelve'",
+                              "None"])
+def test_a_bits_stored_that_is_not_one_integer_is_undeclared(tmp_path, value):
+    """Anything `declared_int` does not read as an int is no declaration (#468).
+
+    It gets the array's own width, as a missing one does, and says
+    nothing: there is no width to have rewritten. `''` is the review's
+    O7 arm, which failed the readback before #468. `[12]` is the
+    review's regression: it was exported as 16/12/15 before #468, the
+    first cut of this PR failed it with `int() argument must be ... not
+    'list'`, and it is now read the way the geometry resolver reads a
+    list-valued Rows -- as not declared -- rather than by a second, more
+    lenient rule for this one descriptor. Killing mutations: a
+    present-but-unreadable value treated as a declaration (the export
+    fails, or widens with a note instead of in silence).
+    """
+    arr = np.array([[-2048, 2047, -1, 0]] * 4, np.int16)
+    inst = _image(arr, (("0028,0101", value),))
+
+    outcome = _export(tmp_path, inst)
+
+    assert _width(outcome.output_path)[:3] == (16, 16, 15)
+    _assert_exact(outcome, arr)
+    assert outcome.corrections == []
+
+
 # ---------------------------------------------------------------------------
 # Both public paths.
 # ---------------------------------------------------------------------------
@@ -363,3 +464,92 @@ def test_both_public_export_paths_write_the_same_width(tmp_path):
         w for _, w in session_widths], (exporter_widths, session_widths)
     assert sorted(w[:3] for _, w in exporter_widths) == [
         (16, 12, 11), (16, 16, 15), (32, 32, 31)]
+
+
+_LEVERS = ("ISOCENTER_FORCE_THREADS", "ISOCENTER_FORCE_PROCESSES",
+           "ISOCENTER_MAX_TASKS_PER_CHILD")
+
+
+@pytest.mark.parametrize("path", ["session", "session-threads", "write_tree"])
+def test_the_rewrite_is_logged_in_the_process_that_exported(
+        tmp_path, caplog, monkeypatch, path):
+    """One INFO line per widened instance, on the caller's `isocenter` log (#468).
+
+    The ruling chose this line instead of an audit row, so it is the
+    only record that a declared width was rewritten. It used to be
+    logged inside the worker. `session.export()` always runs the worker
+    in spawned processes (its `maxtasksperchild=25` pins them, with
+    `ISOCENTER_FORCE_THREADS` set or not), and so does `write_tree()`
+    on a GIL build. A spawned child's `isocenter` logger has no handler,
+    so measured in the review of #506, 3 widened instances logged 0
+    lines. The worker now returns the note on `ExportOutcome.corrections`,
+    and the parent logs it, beside the losses.
+
+    Read from `caplog` on the root logger, by channel, as
+    `tests/test_shared_executor_lifecycle.py` reads its lines, because a
+    session's `configure_logger()` resets the `isocenter` logger's own
+    handlers. INFO exactly: the file is correct, so the line must not
+    reach a WARNING filter or move the grade. Killing mutation (the
+    review's O6): the parent's log call dropped.
+    """
+    for name in _LEVERS:
+        monkeypatch.delenv(name, raising=False)
+    if path == "session-threads":
+        monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
+    caplog.set_level(logging.INFO, logger="isocenter")
+
+    arrays = [
+        (np.array([[-3024, 3000, -1, 0]] * 4, np.int16), BITS_STORED_12),
+        (np.array([[4096, 0, 1, 2]] * 4, np.uint16), BITS_STORED_12),
+        (np.array([[-2048, 2047, -1, 0]] * 4, np.int16), BITS_STORED_12),
+    ]
+    graph = _graph(arrays)
+    instances = graph.studies[0].series[0].instances
+    widened = {instances[0].sop_instance_uid, instances[1].sop_instance_uid}
+
+    out = tmp_path / "out"
+    if path == "write_tree":
+        DicomExporter.write_tree(graph, str(out), compression=None,
+                                 show_progress=False)
+    else:
+        with DicomSession(str(tmp_path / "log.db")) as session:
+            session.store.patients.append(graph)
+            session.save()
+            session.export(str(out), use_compression=False,
+                           show_progress=False)
+
+    lines = [r for r in caplog.records
+             if r.name == "isocenter"
+             and "cannot hold the pixel values" in r.getMessage()]
+    assert len(lines) == 2, [r.getMessage() for r in lines]
+    assert {r.levelno for r in lines} == {logging.INFO}
+    assert {r.getMessage().split(":", 1)[0] for r in lines} == widened
+    assert all("written with BitsStored 16 and HighBit 15" in r.getMessage()
+               for r in lines), [r.getMessage() for r in lines]
+
+
+def test_a_correction_is_logged_only_for_a_file_that_was_written(caplog):
+    """No line for a failed outcome or a lost worker (#468).
+
+    A correction describes a file. When the write failed after the
+    width was chosen there is no file, and the failure has its own
+    ERROR row. The parent's results can also hold a bare exception from
+    a lost worker (#232), which has no `corrections` at all. Killing
+    mutation: the `ok` filter dropped (the failed outcome's line
+    appears, and the exception raises `AttributeError`).
+    """
+    caplog.set_level(logging.INFO, logger="isocenter")
+    results = [
+        ExportOutcome(ok=True, output_path="/o/a.dcm", sop_instance_uid="A",
+                      corrections=["written note"]),
+        ExportOutcome(ok=False, output_path="/o/b.dcm", sop_instance_uid="B",
+                      corrections=["unwritten note"],
+                      error=RuntimeError("disk full")),
+        RuntimeError("worker lost"),
+    ]
+
+    logged = DicomExporter._report_export_corrections(results)
+
+    lines = [r.getMessage() for r in caplog.records if r.name == "isocenter"]
+    assert logged == 1
+    assert lines == ["A: written note"], lines
