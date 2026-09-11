@@ -2240,17 +2240,27 @@ class DicomImporter:
         # `ISOCENTER_MAX_TASKS_PER_CHILD` into the strategy, and the
         # session's `ProcessPoolExecutor` -- built once at `Session()`
         # with no `max_tasks_per_child`, and used as given -- never
-        # recycles a worker: measured on both gate builds, 24 tasks
-        # under the variable set to 2 ran on no more distinct worker
-        # PIDs than the pool has workers, where a pool built with the
-        # kwarg recycled six times in twelve. Honouring it here was
-        # weighed and not taken. The kwarg is cheap (3.11+), and
-        # `ProcessPoolExecutor.map` stays ordered under it, so #450 is
-        # not what decides; what decides is that the pool is built at
-        # `Session()`, and a variable read there would be the one
-        # construction-time read of a precedence lever in the package
-        # -- set after the session opened, it would be ignored in the
-        # same silence one step later. The conditions:
+        # recycles a worker: 24 tasks under the variable set to 2 ran on
+        # no more distinct worker PIDs than the pool has workers, on
+        # both gate builds.
+        #
+        # Honouring it here was weighed and not taken, for two reasons,
+        # and the first is the trap for anyone tempted to "just pass
+        # the kwarg". `ProcessPoolExecutor(max_tasks_per_child=)`
+        # DEADLOCKS `map` on 3.12, the floor, the first time a worker
+        # actually has to be replaced. Measured on 3.12.14, macOS spawn,
+        # 2 workers x 2 tasks per child: 4 tasks complete and 12 hang,
+        # 3 runs of 3; at the session's own shape 30 complete and 400
+        # hang. 3.14 and 3.14t are fine (12 tasks on 6 PIDs, in order),
+        # and Ubuntu was not measured. So on the one interpreter the
+        # package promises as its floor, honouring the lever would have
+        # hung `ingest()` rather than recycled it, and "only
+        # `multiprocessing.Pool` recycles" is operationally true there
+        # (#501). Second, the pool is built once at `Session()`: a
+        # variable read there would be the one construction-time read of
+        # a precedence lever in the package, and set after the session
+        # opened it would be ignored in the same silence one step later.
+        # The conditions:
         #   - `maxtasksperchild`, which this call never passes as an
         #     argument, so any value in the strategy is the variable's;
         #     the name comes from `processes_requested_by`, the
@@ -2259,9 +2269,13 @@ class DicomImporter:
         #     `ISOCENTER_FORCE_THREADS` also set, #185's warning --
         #     emitted inside `run_parallel`, and already saying that
         #     `ingest()` takes no lever -- is the one line;
-        #   - any caller-supplied executor. Unlike the threads case there
-        #     is no pool type to exempt: nothing handed in can be shown
-        #     to recycle at the interval the variable names. With none,
+        #   - any caller-supplied executor. Unlike the threads case, no
+        #     pool type is exempted, and that was a choice rather than a
+        #     limit: `ProcessPoolExecutor._max_tasks_per_child` and
+        #     `Pool._maxtasksperchild` could be read to tell a recycling
+        #     pool from one that is not, but both are private, no caller
+        #     hands one in, and a pool recycling at some other interval
+        #     would still not be the one the variable names. With none,
         #     `run_parallel` builds the recycling pool itself.
         if (strategy.maxtasksperchild is not None
                 and strategy.threads_request_overridden_by is None

@@ -129,7 +129,7 @@ def _clear_levers(monkeypatch):
 
 
 def _lever_records(caplog):
-    """Every record that names an `ISOCENTER_` variable.
+    """Every record on the `isocenter` channel that names an `ISOCENTER_` variable.
 
     Read from `caplog`, which hangs on the root logger: `configure_logger()`
     resets the `isocenter` logger's own handlers when a session opens, so
@@ -138,10 +138,20 @@ def _lever_records(caplog):
     "had no effect" is matched as well as the variable's prefix, so a
     warning that fires with no lever to name -- printing `None` where the
     variable belongs -- is still counted rather than filtered out.
+
+    The channel is part of the filter because it is part of the promise:
+    an operator who routes or silences the `isocenter` logger has to find
+    these lines there. Matched on text alone, a warning sent to
+    `logging.getLogger("somewhere.else")` passed every test in this file on
+    both builds (the review of #504, its mutant M10); it now fails the ones
+    that expect the line. The silence tests are correspondingly narrower --
+    a line on another channel does not count as speech here -- which is the
+    right trade, since the positive tests pin where the line goes.
     """
     return [r for r in caplog.records
-            if "ISOCENTER_" in r.getMessage()
-            or "had no effect" in r.getMessage()]
+            if r.name == "isocenter"
+            and ("ISOCENTER_" in r.getMessage()
+                 or "had no effect" in r.getMessage())]
 
 
 def _spy_on_dispatch(monkeypatch, caplog, recorded):
@@ -323,10 +333,15 @@ def test_max_tasks_per_child_does_not_reach_ingest(tmp_path, monkeypatch,
     `max_tasks_per_child`, which `_run_on_shared_executor` uses as
     given: measured on both gate builds, 24 tasks under the variable
     set to 2 ran on no more distinct worker PIDs than the pool has
-    workers, where a pool honouring it recycled six times in twelve.
-    Honouring it would mean reading the variable at `Session()` rather
-    than per call -- a value set after the session opened would then be
-    ignored in the same silence -- so the ruling was #393's: warn, once
+    workers. Honouring it was weighed and not taken, for two reasons.
+    `ProcessPoolExecutor(max_tasks_per_child=)` deadlocks `map` on 3.12
+    the first time a worker has to be replaced (3.12.14, macOS spawn:
+    at 2 workers x 2 tasks per child, 12 tasks hang in 3 runs of 3 and
+    4 complete; 3.14 and 3.14t are fine; Ubuntu not measured), so on
+    the floor honouring it would have hung `ingest()`. And the pool is
+    built at `Session()`, so the variable would be read there rather
+    than per call, and a value set after the session opened would be
+    ignored in the same silence. The ruling was #393's: warn, once
     per `ingest()` call that dispatches, in the same shape and on the
     same channel. The `ISOCENTER_MAX_TASKS_PER_CHILD` row in
     `docs/environment.md` is written from this test (the #333
@@ -335,7 +350,8 @@ def test_max_tasks_per_child_does_not_reach_ingest(tmp_path, monkeypatch,
     Killing mutations: the warning deleted (no record); its condition
     widened to any executor with nothing set (the silence tests above
     go red); the warning moved after the dispatch (the spy sees none
-    when it is called).
+    when it is called); the warning sent to another logger (M10 in the
+    review of #504: `_lever_records` counts only the `isocenter` channel).
     """
     import concurrent.futures
 
@@ -378,16 +394,22 @@ def test_max_tasks_per_child_does_not_reach_ingest(tmp_path, monkeypatch,
         "dispatch that raises cannot swallow it")
 
 
-def test_a_direct_import_with_no_executor_honours_recycling_and_is_silent(
+def test_a_direct_import_with_no_executor_hands_recycling_to_run_parallel_silently(
         tmp_path, monkeypatch, caplog):
     """The recycling warning belongs to a caller-supplied executor (#471).
 
-    A direct `import_files` call with no executor gets `run_parallel`'s
-    own pool, which under `ISOCENTER_MAX_TASKS_PER_CHILD` is the
-    recycling `multiprocessing.Pool` (#450 keeps it ordered). The lever
-    was honoured, so nothing says it was not. Unlike the threads case
-    there is no executor type exempted: no pool a caller hands in can
-    be shown to recycle at the interval the variable names.
+    A direct `import_files` call with no executor leaves the pool to
+    `run_parallel`, which under `ISOCENTER_MAX_TASKS_PER_CHILD` builds the
+    recycling `multiprocessing.Pool` (#450 keeps it ordered). What this
+    test proves is narrower than that, because `run_parallel` is spied
+    out: the variable's value reaches the strategy handed to it, and the
+    call says nothing. That the pool then recycles is
+    `test_parallel_contract.py`'s to hold, not this file's.
+
+    Unlike the threads case, no pool type a caller hands in is exempted.
+    That was declined rather than impossible: `ProcessPoolExecutor.
+    _max_tasks_per_child` and `Pool._maxtasksperchild` exist, but both are
+    private and no caller hands such a pool in.
     """
     from isocenter.io_handlers import DicomImporter
     from isocenter.store import DicomStore
