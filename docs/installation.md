@@ -49,9 +49,12 @@ Without the extra or the binary the rest of Isocenter works normally, but
 the two methods that read burned-in text — `scan_pixel_content()` and
 `discover_redaction_zones()` — raise `OcrUnavailableError`, a
 `RuntimeError`, naming what is missing, before they scan anything. The
-check is made in the calling process, before the scan starts. A frame
-whose OCR fails after it passes — for example in a worker process that
-cannot find a binary the caller could — is still logged and not reported
+check is made in the calling process, before the scan starts. After it
+passes, `scan_pixel_content()` lists each instance whose pixels could not
+be loaded, or whose OCR failed on any frame — for example in a worker
+process that cannot find a binary the caller could — in
+`report.failures` and warns with the count; if it could read none of the
+instances it tried, it raises `PixelScanError`, also a `RuntimeError`
 (#423). `isocenter.pixel_analysis.HAS_OCR` is `False` when `pytesseract`
 did not import; it does not check the binary.
 

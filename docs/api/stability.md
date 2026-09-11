@@ -19,7 +19,9 @@ underscore, and every module not listed below — may change without
 notice. Optional extras (`ocr`, `nlp`) degrade to the documented
 fallback; the fallback is frozen, the extra's internals are not. For
 `ocr`, the fallback of `scan_pixel_content()` and
-`discover_redaction_zones()` is a `RuntimeError` (see Exceptions).
+`discover_redaction_zones()` is a `RuntimeError` (see Exceptions), and
+a scan that ran reports the instances it could not read in
+`PhiReport.failures`.
 
 ## Frozen at 1.0
 
@@ -113,7 +115,7 @@ the `List[Patient]` the quickstart indexes), `configuration` (an
 **Shapes the frozen methods return** (attribute names).
 `IngestSummary(ingested, failures, declined, skipped)` plus `failed`;
 `ExportSummary(written_uids, failures)` plus `written`, `failed`;
-`PhiReport(findings)` with `__len__`, `__iter__`, `__getitem__`,
+`PhiReport(findings, failures)` with `__len__`, `__iter__`, `__getitem__`,
 `to_dataframe()`; `PhiFinding(entity_uid, entity_type, field_name,
 value, reason, tag, patient_id, entity, remediation_proposal, metadata,
 entity_path)`; `DiscoveryResult.filter(...)`, `.to_zones()`,
@@ -131,6 +133,11 @@ by its UID. `ingest()` does not admit a second instance with an SOP
 Instance UID the graph already holds (#431), so only a graph built or
 edited by hand can carry one UID on more than one instance, and findings
 on such a UID all resolve to a single one of those instances.
+
+`PhiReport.failures` is a list of `(entity_uid, reason)`, one per
+instance `scan_pixel_content()` could not read in full, and is always a
+list; `audit()`'s is always empty, because a failure in its workers
+raises (#423).
 
 **Entities, as reached from `session.store`.** The graph is `Patient`
 → `Study` → `Series` → `Instance`. Fields, in dataclass order (which is
@@ -168,7 +175,10 @@ drain and before any work is done (#400). `scan_pixel_content()` and
 `discover_redaction_zones()` raise `RuntimeError` when the `ocr` extra
 or the `tesseract` binary is unavailable to the calling process, before
 any worker is dispatched and before either method reads the graph
-(#422). `ValueError` from
+(#422). That check covers only the calling process: `scan_pixel_content()`
+also raises `RuntimeError` after the pass when at least one instance
+failed and none could be read (#423); a scan that read some instances
+returns its report with the others in `failures`. `ValueError` from
 `generate_report` on an unknown format.
 
 **Environment.** Every `ISOCENTER_*` name in
@@ -284,7 +294,8 @@ in a 1.x release with a CHANGELOG entry naming both spellings:
   `RedactionVerifier` (`__init__`, `get_matching_rule`, `is_covered`,
   `verify_instance`), `ConfigAutomator.suggest_config_updates`,
   `pixel_analysis.analyze_pixels`, `pixel_analysis.detect_text_regions`,
-  `pixel_analysis.HAS_OCR`, `pixel_analysis.OcrUnavailableError`;
+  `pixel_analysis.HAS_OCR`, `pixel_analysis.OcrUnavailableError`,
+  `pixel_analysis.PixelScanError`;
   `DiscoveryResult.get_density_matrix`,
   `visualize_heatmap`, `analyze_temporal_stability`, `inspect_clusters`.
 - **`DicomExporter.write_tree()`** (the serializer alone, used by the

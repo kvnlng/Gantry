@@ -363,6 +363,10 @@ def test_analyze_pixels_splits_a_multiframe_array_into_frames():
     Note this needs a *real* Instance, not the MagicMock the rest of
     `test_pixel_analysis.py` uses: with nothing declared, (3,8,3) resolves
     GUESSED to arm B and would legitimately be one frame.
+
+    It patches `_detect_text_regions_or_raise`, not `detect_text_regions`:
+    since #423 the per-frame OCR call is the raising form, so a patch on
+    the logging wrapper is never reached and this count would read 0.
     """
     from isocenter import pixel_analysis
 
@@ -374,7 +378,7 @@ def test_analyze_pixels_splits_a_multiframe_array_into_frames():
     inst.pixel_array = np.zeros((3, 8, 3), dtype=np.uint8)
 
     with patch.object(pixel_analysis, "HAS_OCR", True), \
-            patch.object(pixel_analysis, "detect_text_regions",
+            patch.object(pixel_analysis, "_detect_text_regions_or_raise",
                          return_value=[]) as detect:
         pixel_analysis.analyze_pixels(inst)
 

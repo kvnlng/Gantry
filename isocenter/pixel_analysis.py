@@ -54,6 +54,53 @@ class OcrUnavailableError(RuntimeError):
     """
 
 
+class PixelScanError(RuntimeError):
+    """An OCR pass could read none of the instances it tried (#423).
+
+    Raised by `Session.scan_pixel_content()` **after** the pass, and after
+    the warning that counts the failures, when at least one instance
+    failed and none was read. Not on a partial scan: an instance read is a
+    result, and the others are in `PhiReport.failures`. This is
+    `ExportError`'s rule (#191) -- a partial result is returned and
+    nothing-at-all is not -- and it keeps `ExportError`'s reason for being
+    a subclass rather than a bare `RuntimeError`: raising bare would throw
+    away the failure list, which is the whole of what a caller can act on.
+
+    `.failures` is a list of `(entity_uid, reason)`; `.attempted` is how
+    many instances the pass dispatched, which is more than the failures
+    when some of them carried no pixel element (neither read nor failed).
+
+    The frozen promise is `RuntimeError`; this subclass is tier 2. It is
+    deliberately **not** an `OcrUnavailableError`: that name means
+    "refused before anything was scanned", and this is raised after a
+    pass, so a script catching `OcrUnavailableError` to treat OCR as
+    optional does not catch this one.
+    """
+
+    def __init__(self, failures, attempted):
+        self.failures = list(failures)   # [(entity_uid, reason)]
+        self.attempted = attempted
+        first = self.failures[0] if self.failures else ("UNKNOWN", "unknown")
+        super().__init__(
+            f"OCR read none of the {attempted} instance(s) it tried; "
+            f"{len(self.failures)} could not be read. First: {first[0]}: "
+            f"{first[1]}. Every failure is in .failures.")
+
+
+def _describe_failure(exc: BaseException) -> str:
+    """`Type: message`, with the direct cause when there is one.
+
+    `get_pixel_data()` wraps a loader's error in `RuntimeError("Pixel
+    Loader failed ...")`, so without the cause a sidecar `OSError` would
+    reach `PhiReport.failures` named only as a `RuntimeError`.
+    """
+    text = f"{type(exc).__name__}: {exc}"
+    cause = exc.__cause__
+    if cause is not None:
+        text += f" (caused by {type(cause).__name__}: {cause})"
+    return text
+
+
 def _ocr_unavailable_reason() -> Optional[str]:
     """`None` when OCR can run, otherwise why it cannot.
 
@@ -170,6 +217,56 @@ def _get_voi_lut_dataset(instance: Instance) -> Dataset:
 
     return ds
 
+def _detect_text_regions_or_raise(pixel_data: np.ndarray,
+                                  frame_idx: int = 0) -> List[TextRegion]:
+    """`detect_text_regions` without its catch: an OCR failure raises.
+
+    The Session path calls this, through `_ocr_instance`, so that a frame
+    whose OCR failed can be told apart from a frame with no text on it
+    (#423). Assumes OCR is available; `_ocr_instance` checks first.
+    """
+    # Normalize pixel types for PIL if not already uint8
+    # Note: VOI LUT should have theoretically handled contrast, but we still need
+    # to ensure it fits in 8-bit for OCR.
+    if pixel_data.dtype != np.uint8:
+        p_min = pixel_data.min()
+        p_max = pixel_data.max()
+        if p_max > p_min:
+            # Linear scaling to 0-255
+            norm = ((pixel_data - p_min) / (p_max - p_min)) * 255.0
+            img_data = norm.astype(np.uint8)
+        else:
+            img_data = np.zeros(pixel_data.shape, dtype=np.uint8)
+    else:
+        img_data = pixel_data
+
+    img = Image.fromarray(img_data)
+
+    # Use image_to_data for detailed box info
+    # config optimized for sparse text
+    config = r'--oem 3 --psm 11'
+
+    # Output is a dict with lists
+    data = pytesseract.image_to_data(img, config=config, output_type=pytesseract.Output.DICT)
+
+    regions = []
+    n_boxes = len(data['text'])
+    for i in range(n_boxes):
+        text = data['text'][i].strip()
+        conf = int(data['conf'][i])
+
+        # Filter low confidence and empty text
+        if conf > 0 and len(text) > 0:
+            (x, y, w, h) = (data['left'][i], data['top'][i], data['width'][i], data['height'][i])
+            regions.append(TextRegion(
+                text=text,
+                box=(x, y, w, h),
+                confidence=float(conf),
+                frame_index=frame_idx
+            ))
+    return regions
+
+
 def detect_text_regions(pixel_data: np.ndarray, frame_idx: int = 0) -> List[TextRegion]:
     """
     Runs OCR on the provided pixel data and returns text regions with bounding boxes.
@@ -180,64 +277,142 @@ def detect_text_regions(pixel_data: np.ndarray, frame_idx: int = 0) -> List[Text
 
     Returns:
         List[TextRegion]: Detected text regions. Also `[]` when OCR is
-        unavailable, so `[]` here does not mean "no text";
-        `Session.scan_pixel_content()` and `discover_redaction_zones()`
-        check first and refuse instead (#422).
+        unavailable, and `[]` when OCR raised (logged at ERROR), so `[]`
+        here does not mean "no text". `Session.scan_pixel_content()` and
+        `discover_redaction_zones()` check availability first and refuse
+        instead (#422), and read `_ocr_instance`, which reports the
+        failures this function only logs (#423).
     """
-    regions = []
     if not HAS_OCR:
-        return regions
-
+        return []
     try:
-        # Normalize pixel types for PIL if not already uint8
-        # Note: VOI LUT should have theoretically handled contrast, but we still need
-        # to ensure it fits in 8-bit for OCR.
-        if pixel_data.dtype != np.uint8:
-            p_min = pixel_data.min()
-            p_max = pixel_data.max()
-            if p_max > p_min:
-                # Linear scaling to 0-255
-                norm = ((pixel_data - p_min) / (p_max - p_min)) * 255.0
-                img_data = norm.astype(np.uint8)
-            else:
-                img_data = np.zeros(pixel_data.shape, dtype=np.uint8)
-        else:
-            img_data = pixel_data
-
-        img = Image.fromarray(img_data)
-
-        # Use image_to_data for detailed box info
-        # config optimized for sparse text
-        config = r'--oem 3 --psm 11'
-
-        # Output is a dict with lists
-        data = pytesseract.image_to_data(img, config=config, output_type=pytesseract.Output.DICT)
-
-        n_boxes = len(data['text'])
-        for i in range(n_boxes):
-            text = data['text'][i].strip()
-            conf = int(data['conf'][i])
-
-            # Filter low confidence and empty text
-            if conf > 0 and len(text) > 0:
-                (x, y, w, h) = (data['left'][i], data['top'][i], data['width'][i], data['height'][i])
-                regions.append(TextRegion(
-                    text=text,
-                    box=(x, y, w, h),
-                    confidence=float(conf),
-                    frame_index=frame_idx
-                ))
-
-    except Exception as e:
+        return _detect_text_regions_or_raise(pixel_data, frame_idx=frame_idx)
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(f"OCR failed: {e}")
-
-    return regions
+        return []
 
 
 def detect_text(pixel_data: np.ndarray) -> str:
     """Legacy wrapper for simple string return."""
     regions = detect_text_regions(pixel_data)
     return " ".join([r.text for r in regions])
+
+
+@dataclass
+class _InstanceOcr:
+    """What one instance's OCR pass produced, failures included (#423).
+
+    `read` is True when at least one frame went through OCR without
+    raising. `failure` is `None`, or why the instance -- or some of its
+    frames -- could not be read. An instance can be both read and failed:
+    a frame that failed does not cost the findings of the frames that did
+    not. An instance with no pixel element is neither: `read` False and
+    `failure` None.
+    """
+    regions: List[TextRegion]
+    read: bool
+    failure: Optional[str]
+
+
+def _frames_for_ocr(instance: Instance, pixel_array: np.ndarray) -> List[np.ndarray]:
+    """Window the array and split it into the frames OCR reads."""
+    # Apply VOI LUT (Windowing) if metadata exists
+    # This converts high-bit DICOM to human-viewable contrast
+    try:
+        ds_voi = _get_voi_lut_dataset(instance)
+        # apply_voi_lut applies the windowing maths for the whole
+        # array, including 3D/4D. It uses index=0, so a series whose
+        # WindowWidth varies per frame is windowed by its first frame.
+        pixel_array = apply_voi_lut(pixel_array, ds_voi)
+    except (ValueError, TypeError, AttributeError) as exc:
+        # Fall back to raw pixel data when VOI LUT cannot be applied
+        # (missing or malformed windowing tags).
+        get_logger().debug("VOI LUT application failed: %s", exc)
+
+    # Frames vs. samples is decided from the instance's descriptors,
+    # not from the array's last axis. The old `shape[-1] in [3, 4]`
+    # test handed a 3-frame 8x3 grayscale image to OCR as one RGB
+    # frame, so text burned into frames 1 and 2 was never looked at
+    # (#186, #205). This runs after apply_voi_lut, which preserves
+    # shape.
+    #
+    # `geom.frames` is the array's first axis on every frames-major
+    # arm and 1 on the others, never the declared NumberOfFrames, so
+    # this range is in bounds by construction rather than by luck.
+    geom = resolve_pixel_geometry(pixel_array.shape, instance.attributes)
+    if geom.frames > 1:
+        return [pixel_array[i] for i in range(geom.frames)]
+    return [pixel_array]
+
+
+def _ocr_instance(instance: Instance) -> _InstanceOcr:
+    """OCR every frame of one instance, and say what could not be read.
+
+    The one place an instance's pixels are loaded and read for text; the
+    Session worker and the tier-2 `analyze_pixels` both come through
+    here. Two catches, each narrow in scope and broad in type, because
+    what they guard -- a sidecar read, a file decode, a tesseract
+    subprocess -- can fail in any way, and the question each answers is
+    only "was this read":
+
+    - around the load: the instance failed, and no frame was read;
+    - around each frame's OCR: that frame failed, the loop goes on, and
+      the frames that succeeded keep their findings.
+
+    Until #423 these were the catches in `analyze_pixels` and
+    `detect_text_regions`, which logged and returned `[]`, so an instance
+    nobody had read reported exactly like a clean one.
+    """
+    if not HAS_OCR:
+        # A failure, not `[]`. The Session methods check availability in
+        # the parent before dispatching (#422), so reaching this is a
+        # spawned worker that cannot import pytesseract when the caller
+        # could -- #423's shape exactly. A module flag rather than
+        # `_ocr_unavailable_reason()`, which would spawn a tesseract
+        # subprocess per instance.
+        return _InstanceOcr(
+            [], False, f"pytesseract could not be imported ({_OCR_IMPORT_ERROR})")
+
+    # No pixel element to read is neither read nor failed. Checked from
+    # the instance's state, not from `get_pixel_data()`'s messages, which
+    # would drift under any rewording there. A hand-built instance with
+    # no array, no loader and no file raises `FileNotFoundError` from
+    # `get_pixel_data()`; counting that as a failure would make a series
+    # holding such an instance report a failure it did not have.
+    if (instance.pixel_array is None
+            and not instance._pixel_loader  # pylint: disable=protected-access
+            and not instance.file_path):
+        return _InstanceOcr([], False, None)
+
+    try:
+        pixel_array = instance.get_pixel_data()
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        return _InstanceOcr(
+            [], False, f"pixels could not be read: {_describe_failure(e)}")
+    # An ingested SR carries its source file and no pixel element, and
+    # `get_pixel_data()` answers `None` for it: neither read nor failed.
+    if pixel_array is None:
+        return _InstanceOcr([], False, None)
+
+    try:
+        frames = _frames_for_ocr(instance, pixel_array)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        return _InstanceOcr(
+            [], False,
+            f"pixels could not be prepared for OCR: {_describe_failure(e)}")
+
+    regions: List[TextRegion] = []
+    read = False
+    frame_failures = []
+    for i, frame in enumerate(frames):
+        # Per frame, not around the loop: a try hoisted around it would
+        # lose every frame after the first failure (#423).
+        try:
+            regions.extend(_detect_text_regions_or_raise(frame, frame_idx=i))
+            read = True
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            frame_failures.append(f"OCR failed on frame {i}: {_describe_failure(e)}")
+    return _InstanceOcr(regions, read, "; ".join(frame_failures) or None)
 
 
 def analyze_pixels(instance: Instance) -> List[TextRegion]:
@@ -248,53 +423,17 @@ def analyze_pixels(instance: Instance) -> List[TextRegion]:
 
     Also returns `[]` when OCR is unavailable, which is not "no text":
     the Session methods that call this check first and refuse instead
-    (#422).
+    (#422). A load or OCR failure is logged at ERROR and what was read is
+    returned, so `[]` is not "no text" there either; the Session path
+    reads `_ocr_instance`, which reports what this logs (#423). This still
+    returns a list rather than raising for #422's reason: it runs per
+    instance inside workers, where raising would turn one precondition
+    into N worker failures.
     """
-    all_regions = []
-
     if not HAS_OCR:
-        return all_regions
-
-    try:
-        pixel_array = instance.get_pixel_data()
-        if pixel_array is None:
-            return all_regions
-
-        # Apply VOI LUT (Windowing) if metadata exists
-        # This converts high-bit DICOM to human-viewable contrast
-        try:
-            ds_voi = _get_voi_lut_dataset(instance)
-            # apply_voi_lut applies the windowing maths for the whole
-            # array, including 3D/4D. It uses index=0, so a series whose
-            # WindowWidth varies per frame is windowed by its first frame.
-            pixel_array = apply_voi_lut(pixel_array, ds_voi)
-        except (ValueError, TypeError, AttributeError) as exc:
-            # Fall back to raw pixel data when VOI LUT cannot be applied
-            # (missing or malformed windowing tags).
-            get_logger().debug("VOI LUT application failed: %s", exc)
-            pass
-
-        # Frames vs. samples is decided from the instance's descriptors,
-        # not from the array's last axis. The old `shape[-1] in [3, 4]`
-        # test handed a 3-frame 8x3 grayscale image to OCR as one RGB
-        # frame, so text burned into frames 1 and 2 was never looked at
-        # (#186, #205). This runs after apply_voi_lut, which preserves
-        # shape.
-        #
-        # `geom.frames` is the array's first axis on every frames-major
-        # arm and 1 on the others, never the declared NumberOfFrames, so
-        # this range is in bounds by construction rather than by luck.
-        geom = resolve_pixel_geometry(pixel_array.shape, instance.attributes)
-        if geom.frames > 1:
-            frames = [pixel_array[i] for i in range(geom.frames)]
-        else:
-            frames = [pixel_array]
-
-        for i, frame in enumerate(frames):
-            regions = detect_text_regions(frame, frame_idx=i)
-            all_regions.extend(regions)
-
-    except Exception as e:
-        logger.error(f"Failed to analyze pixels for {instance.sop_instance_uid}: {e}")
-
-    return all_regions
+        return []
+    result = _ocr_instance(instance)
+    if result.failure is not None:
+        logger.error(
+            f"Failed to analyze pixels for {instance.sop_instance_uid}: {result.failure}")
+    return result.regions

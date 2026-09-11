@@ -18,9 +18,12 @@ hydration. Neither local gate interpreter has `pytesseract`, and CI
 installs the `ocr` extra and the tesseract binary, so a test whose
 result depends on real OCR passes for different reasons in the two
 places, which is the definition of an unreliable pin. The facade tests
-therefore patch `analyze_pixels` out entirely, and the process boundary
-is covered instead by an explicit pickle round-trip, which is
-deterministic everywhere.
+therefore patch `pixel_analysis._ocr_instance` out entirely, and the
+process boundary is covered instead by an explicit pickle round-trip,
+which is deterministic everywhere. (They patched
+`verification.analyze_pixels` until #423, when the worker stopped calling
+it: a patch left there is inert, and the pass runs the real OCR, which
+neither local interpreter has.)
 
 **Why the facade tests take `ocr_present`.** Since #422 the facade
 refuses before reading the graph when OCR cannot run, which it cannot on
@@ -38,7 +41,7 @@ import pytest
 
 from isocenter import session as session_module
 from isocenter.entities import Equipment, Instance, Patient, Series, Study
-from isocenter.pixel_analysis import TextRegion
+from isocenter.pixel_analysis import TextRegion, _InstanceOcr
 from isocenter.session import DicomSession
 
 CT_SOP_CLASS = "1.2.840.10008.5.1.4.1.1.2"
@@ -93,6 +96,11 @@ def _region(box, text="LEAKTEXT"):
     """One OCR hit. The text must exceed two characters: `verify_instance`
     drops anything shorter as noise before it ever raises a finding."""
     return TextRegion(text, box, 90.0)
+
+
+def _read(*regions):
+    """What `_ocr_instance` returns for an instance it read cleanly."""
+    return _InstanceOcr(list(regions), True, None)
 
 
 def _instance(uid, serial, with_pixels=False):
@@ -166,13 +174,13 @@ def test_the_worker_scans_an_instance_that_crossed_a_pickle():
                 "the pixel loader did not survive the pickle; a worker would "
                 "scan nothing and every finding assertion would read 0 == 0")
 
-            with patch("isocenter.verification.analyze_pixels",
-                       return_value=[_region(TEXT_OUTSIDE_THE_ZONE)]):
-                uncovered = session_module._verify_worker(revived)
+            with patch("isocenter.pixel_analysis._ocr_instance",
+                       return_value=_read(_region(TEXT_OUTSIDE_THE_ZONE))):
+                uncovered = session_module._verify_worker(revived).findings
 
-            with patch("isocenter.verification.analyze_pixels",
-                       return_value=[_region(TEXT_INSIDE_THE_ZONE)]):
-                covered = session_module._verify_worker(revived)
+            with patch("isocenter.pixel_analysis._ocr_instance",
+                       return_value=_read(_region(TEXT_INSIDE_THE_ZONE))):
+                covered = session_module._verify_worker(revived).findings
         finally:
             session.close()
 
@@ -200,7 +208,8 @@ def test_the_worker_scans_an_instance_that_crossed_a_pickle():
     assert covered == [], covered
 
     # The only line of the worker the two cases above miss.
-    assert session_module._verify_worker((None, None, [])) == []
+    assert session_module._verify_worker((None, None, [])) == (
+        session_module._ScanOutcome(None, [], False, None))
 
 
 def test_the_facade_dispatches_its_worker_and_applies_its_four_filters(
@@ -239,8 +248,8 @@ def test_the_facade_dispatches_its_worker_and_applies_its_four_filters(
         {"serial_number": "SN-D", "redaction_zones": []},
     ])
     try:
-        with patch("isocenter.verification.analyze_pixels",
-                   return_value=[_region(TEXT_OUTSIDE_THE_ZONE)]):
+        with patch("isocenter.pixel_analysis._ocr_instance",
+                   return_value=_read(_region(TEXT_OUTSIDE_THE_ZONE))):
             report = session.scan_pixel_content()
     finally:
         session.close()
@@ -263,8 +272,8 @@ def test_the_serial_number_argument_narrows_the_scan(tmp_path, ocr_present):
         {"serial_number": "SN-B", "redaction_zones": [ZONE_TOP_LEFT]},
     ])
     try:
-        with patch("isocenter.verification.analyze_pixels",
-                   return_value=[_region(TEXT_OUTSIDE_THE_ZONE)]):
+        with patch("isocenter.pixel_analysis._ocr_instance",
+                   return_value=_read(_region(TEXT_OUTSIDE_THE_ZONE))):
             narrowed = session.scan_pixel_content(serial_number="SN-A")
             everything = session.scan_pixel_content()
     finally:
@@ -280,8 +289,8 @@ def test_a_session_with_no_configured_equipment_scans_nothing_and_says_so(
     session = _session_with(
         tmp_path, "empty", [_series("SE_1", 1, None, ["1.1", "1.2", "1.3"])], [])
     try:
-        with patch("isocenter.verification.analyze_pixels",
-                   return_value=[_region(TEXT_OUTSIDE_THE_ZONE)]):
+        with patch("isocenter.pixel_analysis._ocr_instance",
+                   return_value=_read(_region(TEXT_OUTSIDE_THE_ZONE))):
             report = session.scan_pixel_content()
     finally:
         session.close()

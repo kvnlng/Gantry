@@ -37,7 +37,7 @@ import pytest
 
 from isocenter import session as session_module
 from isocenter.entities import Equipment, Instance, Patient, Series, Study
-from isocenter.pixel_analysis import TextRegion
+from isocenter.pixel_analysis import TextRegion, _InstanceOcr
 from isocenter.session import DicomSession
 
 CT_SOP_CLASS = "1.2.840.10008.5.1.4.1.1.2"
@@ -58,14 +58,17 @@ def _verify_worker_with_one_leak(args):
     """The real worker, with OCR answering one word, stamped with this pid.
 
     The patch is made here, in whichever process runs the worker, so it
-    holds in a spawned child as well as in a thread.
+    holds in a spawned child as well as in a thread. It patches
+    `pixel_analysis._ocr_instance`, which the worker reads through since
+    #423; a patch on `verification.analyze_pixels` would now be inert.
     """
-    with patch("isocenter.verification.analyze_pixels",
-               return_value=[TextRegion("LEAKTEXT", TEXT_OUTSIDE_THE_ZONE, 90.0)]):
-        findings = _REAL_VERIFY_WORKER(args)
-    for finding in findings:
+    with patch("isocenter.pixel_analysis._ocr_instance",
+               return_value=_InstanceOcr(
+                   [TextRegion("LEAKTEXT", TEXT_OUTSIDE_THE_ZONE, 90.0)], True, None)):
+        outcome = _REAL_VERIFY_WORKER(args)
+    for finding in outcome.findings:
         finding.metadata["worker_pid"] = os.getpid()
-    return findings
+    return outcome
 
 
 def _session_with_three_instances():

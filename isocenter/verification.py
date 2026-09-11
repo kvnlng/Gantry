@@ -99,8 +99,17 @@ class RedactionVerifier:
         leaks": `Session.scan_pixel_content()` checks first and refuses
         instead (#422).
         """
-        text_regions = analyze_pixels(instance)
+        return self._findings_for(instance, analyze_pixels(instance), equipment)
 
+    def _findings_for(self, instance: Instance, text_regions: List[Any],
+                      equipment: Any = None) -> List[PhiFinding]:
+        """Classify already-read OCR regions against the matching rule.
+
+        Split out of `verify_instance` so the Session worker can read the
+        instance through `pixel_analysis._ocr_instance`, which reports a
+        failed load or frame, and still classify here: `verify_instance`
+        reads through `analyze_pixels`, which can only log one (#423).
+        """
         if not text_regions:
             return []
 

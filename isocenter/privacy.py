@@ -70,10 +70,21 @@ class PhiReport:
 
     Acts as a list wrapper for backward compatibility but enables
     DataFrame export features.
+
+    `failures` is a list of `(entity_uid, reason)`, one per instance a
+    pixel scan could not read in full: its pixels could not be loaded, or
+    OCR raised on at least one of its frames. `scan_pixel_content()` fills
+    it (#423); an instance that failed on some frames keeps the findings
+    of the frames that were read. It is always a list, never `None` -- an
+    attribute that is sometimes a list and sometimes `None` is a trap for
+    every caller that iterates it. `audit()`'s is always empty: a failure
+    in its workers raises instead.
     """
 
-    def __init__(self, findings: List[PhiFinding]):
+    def __init__(self, findings: List[PhiFinding],
+                 failures: Optional[List[Tuple[str, str]]] = None):
         self.findings = findings
+        self.failures: List[Tuple[str, str]] = list(failures or [])
 
     def to_dataframe(self):
         """
@@ -116,7 +127,8 @@ class PhiReport:
         return self.findings[index]
 
     def __repr__(self):
-        return f"<PhiReport: {len(self.findings)} findings>"
+        return (f"<PhiReport: {len(self.findings)} findings, "
+                f"{len(self.failures)} failures>")
 
 
 class PhiInspector:
