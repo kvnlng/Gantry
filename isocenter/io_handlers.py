@@ -2402,8 +2402,20 @@ class DicomImporter:
                     if p_bytes and sidecar_manager:
                         with gate():
                             off, leng = sidecar_manager.write_frame(p_bytes, p_alg)
+                        # `pixel_hash=p_hash`, explicitly. Left out, the
+                        # loader's integrity check never ran on this path:
+                        # `inst._pixel_hash` was set on the next line, but a
+                        # loader built with no hash has nothing to compare,
+                        # and `save()` keeps this loader object -- so
+                        # another frame's bytes at this offset read back as
+                        # this instance's pixels (#436). `p_hash` is
+                        # `sha256(p_bytes)`, the stored bytes the check
+                        # reads. Passed rather than left to the loader's
+                        # fallback to `inst._pixel_hash`, which would make
+                        # it depend on the order of these two lines (#212).
                         inst._pixel_loader = SidecarPixelLoader(
-                            sidecar_manager.filepath, off, leng, p_alg, instance=inst)
+                            sidecar_manager.filepath, off, leng, p_alg,
+                            instance=inst, pixel_hash=p_hash)
                         inst._pixel_hash = p_hash
 
                     # The frames `ingest_worker` dropped because the

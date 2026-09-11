@@ -32,7 +32,9 @@ also asserts that the array is **not resident** before it reads, since a
 resident array is handed back without consulting the loader and every
 test would then pass on unfixed code.
 """
+import copy
 import glob
+import hashlib
 import os
 import sqlite3
 
@@ -44,6 +46,7 @@ from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
 from isocenter.io_handlers import ExportError, SidecarPixelLoader
 from isocenter.session import DicomSession
+from isocenter.sidecar import SidecarManager
 
 ROWS, COLS, PR, BITS = "0028,0010", "0028,0011", "0028,0103", "0028,0100"
 ORIGINAL = (np.arange(16, dtype=np.uint16) + 40000).reshape(4, 4)
@@ -312,14 +315,27 @@ def test_a_rebuilt_loader_carries_the_old_hash_verbatim(ingested):
     when it is handed no hash -- and `_pixel_hash` can drift from the
     bytes at this offset (it is set outside `if loader:` in
     `_apply_redaction_outcomes`). That fallback caused #212 once already.
+    So `for_instance` copies the old loader's hash, `None` included, and
+    never consults the instance.
     """
     session, inst, _db = ingested
     ingested_loader = inst._pixel_loader
-    # The fixture guard: an ingested loader carries no hash while the
-    # instance does, so a fallback would be visible here.
-    assert ingested_loader.pixel_hash is None
-    assert inst._pixel_hash is not None
-    assert ingested_loader.for_instance(inst).pixel_hash is None
+    # The fixture guard. Since #436 the loader `ingest()` builds carries
+    # the frame's hash (this asserted `is None` until then, which was the
+    # defect itself). A drifted `_pixel_hash` on the instance must not
+    # leak into a rebuild of it.
+    assert ingested_loader.pixel_hash is not None
+    assert ingested_loader.pixel_hash == inst._pixel_hash
+    stored_hash = inst._pixel_hash
+    inst._pixel_hash = "0" * 64
+    assert ingested_loader.for_instance(inst).pixel_hash == stored_hash
+    inst._pixel_hash = stored_hash
+
+    # A loader with no hash rebuilds to one with no hash, however the
+    # instance's `_pixel_hash` reads: the fallback is not reached.
+    unhashed = copy.copy(ingested_loader)
+    unhashed.pixel_hash = None
+    assert unhashed.for_instance(inst).pixel_hash is None
 
     # A loader a save built, which does carry one; then a different
     # `_pixel_hash` on the instance, which must not leak in.
@@ -441,3 +457,101 @@ def test_a_discarded_replacement_reads_the_same_before_and_after_a_save(
         assert got.dtype == np.int16, i
         assert got.min() < 0, i
         assert np.array_equal(got, ORIGINAL.view(np.int16)), i
+
+
+# ---------------------------------------------------------------------------
+# T -- the loader ingest builds carries the hash of its frame (#436)
+# ---------------------------------------------------------------------------
+#
+# Two instances with constant frames, 5 and 9. Constant 4x4 uint16 frames
+# compress to the same length, which `_swap_in` asserts, so writing B's
+# stored bytes over A's decompresses cleanly at A's geometry: only the
+# hash can tell the frames apart. The frames are the same length on
+# purpose -- a length mismatch would be caught by the decompressor or the
+# geometry check, and the test would pass without the hash.
+
+def _write_constant(folder, name, value, patient_id):
+    meta = FileMetaDataset()
+    meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.7"
+    meta.MediaStorageSOPInstanceUID = generate_uid()
+    meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds = FileDataset(None, {}, file_meta=meta, preamble=b"\0" * 128)
+    ds.PatientID, ds.PatientName = patient_id, "DOE^JOHN"
+    ds.StudyInstanceUID, ds.SeriesInstanceUID = generate_uid(), generate_uid()
+    ds.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
+    ds.SOPClassUID = meta.MediaStorageSOPClassUID
+    ds.Modality, ds.SeriesNumber, ds.InstanceNumber = "OT", 1, 1
+    ds.StudyDate = "20230101"
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    ds.Rows = ds.Columns = 4
+    ds.BitsAllocated = ds.BitsStored = 16
+    ds.HighBit, ds.PixelRepresentation = 15, 0
+    ds.PixelData = np.full((4, 4), value, np.uint16).tobytes()
+    ds.save_as(os.path.join(folder, name), enforce_file_format=True)
+    return ds.SOPInstanceUID
+
+
+def _instances_by_uid(session):
+    return {inst.sop_instance_uid: inst
+            for pt in session.store.patients for st in pt.studies
+            for se in st.series for inst in se.instances}
+
+
+@pytest.fixture
+def pair(tmp_path):
+    """Two ingested instances, *not saved*: A holds 5s, B holds 9s."""
+    src = tmp_path / "src"
+    src.mkdir()
+    uid_a = _write_constant(str(src), "a.dcm", 5, "PA")
+    uid_b = _write_constant(str(src), "b.dcm", 9, "PB")
+    db = str(tmp_path / "pair.db")
+    session = DicomSession(persistence_file=db)
+    try:
+        session.ingest(str(src))
+        by_uid = _instances_by_uid(session)
+        yield session, by_uid[uid_a], by_uid[uid_b], db
+    finally:
+        session.close()
+
+
+def _swap_in(a_loader, b_loader):
+    """Overwrite A's stored frame with B's stored bytes, in place."""
+    assert a_loader.length == b_loader.length, (
+        "the fixture's frames must compress to one length, or the "
+        "decompressor rather than the hash would refuse the swap")
+    with open(b_loader.sidecar_path, "rb") as fh:
+        fh.seek(b_loader.offset)
+        b_bytes = fh.read(b_loader.length)
+    with open(a_loader.sidecar_path, "r+b") as fh:
+        fh.seek(a_loader.offset)
+        fh.write(b_bytes)
+
+
+def test_the_ingested_loader_carries_the_hash_of_its_frame(pair):
+    """T1: straight after `ingest()`, before any save.
+
+    `inst._pixel_hash` was always set; the loader beside it was built
+    with no hash, so its integrity check never ran (#436).
+    """
+    _session, a, _b, _db = pair
+    loader = a._pixel_loader
+    assert isinstance(loader, SidecarPixelLoader)
+    raw = SidecarManager(loader.sidecar_path).read_frame(
+        loader.offset, loader.length, loader.alg)
+    assert loader.pixel_hash == a._pixel_hash == hashlib.sha256(raw).hexdigest()
+
+
+def test_a_tampered_frame_is_refused_right_after_ingest(pair):
+    """T2: another instance's bytes at this offset are refused, not read.
+
+    Measured on c9e9938: A read back as B's 9s, in the live session and
+    after a save, with no error.
+    """
+    _session, a, b, _db = pair
+    _not_resident(a)
+    assert np.all(a.get_pixel_data() == 5)
+    _not_resident(a)
+    _swap_in(a._pixel_loader, b._pixel_loader)
+    with pytest.raises(RuntimeError, match="hash mismatch"):
+        a.get_pixel_data()
