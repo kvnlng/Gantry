@@ -307,7 +307,11 @@ def _sign_extend_from_bits_stored(arr, ds):
     bits = arr.dtype.itemsize * 8
     # BitsStored from the header, not the stream's own precision: the
     # header is the authority on what a sample means. The two agree for
-    # every conformant encoder; where they do not, see the CHANGELOG.
+    # every conformant encoder. They disagree for `imagecodecs.jpegls_encode`
+    # output, which is always precision 16 for `uint16`: pydicom with
+    # pyjpegls reads such a stream by its precision (3296 for -800) and
+    # this reads it by BitsStored (-800). Owner question Q4, answered with
+    # the recommendation pending confirmation; S1b pins it.
     bits_stored = int(getattr(ds, "BitsStored", bits) or bits)
     # Owner question Q1, answered with the recommendation pending
     # confirmation: refuse. A JPEG decoder returns right-aligned

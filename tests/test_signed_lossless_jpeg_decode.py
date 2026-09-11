@@ -219,6 +219,26 @@ def test_a_signed_lossless_jpeg_frame_reads_its_values_at_both_doors(
                   want)
 
 
+@pytest.mark.parametrize("ts", [JPEGLS, JPEGLS_NEAR])
+def test_a_precision_16_jpeg_ls_stream_under_bits_stored_12_reads_by_bits_stored(
+        doors, ts):
+    """S1b: where the stream's precision and BitsStored disagree, BitsStored.
+
+    `imagecodecs.jpegls_encode` always writes precision 16 for `uint16`,
+    so a 12-bit pattern under a BitsStored 12 header is a precision-16
+    stream holding 12-bit samples. pydicom with pyjpegls sign-extends
+    from the *stream's* precision and returns 3296 for -800; this reads
+    it by BitsStored, the header's statement of what a sample is, and
+    returns -800. That is owner question Q4, answered with the
+    recommendation pending confirmation. Where pyjpegls is installed,
+    pydicom decodes first, so its answer is the one returned there.
+    """
+    want = SIGNED[12]
+    codestream = _jpegls(_pattern(want, 12), 12)
+    assert codestream[codestream.index(b"\xff\xf7") + 4] == 16
+    _assert_reads(doors(_dataset(ts, codestream, want.shape, 12)), want)
+
+
 # ---------------------------------------------------------------------------
 # S2 -- a precision-12 JPEG-LS stream, as a conformant encoder writes it
 # ---------------------------------------------------------------------------
