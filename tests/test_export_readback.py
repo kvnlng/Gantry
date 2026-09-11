@@ -9,6 +9,9 @@ BitsAllocated -- against the dataset it just serialized. An unreadable
 file or a mismatch is an export failure: it travels back through
 `ExportOutcome(ok=False)`, files an `ERROR` audit row and takes the
 grade to `REVIEW_REQUIRED`, exactly as a write that raised does (#181).
+Since #449 the descriptors are only the first check: the worker then
+decodes the written pixel data and compares it bit for bit with the
+array it was written from, and compares a DICOM waveform's bytes.
 
 The check runs against the temporary file, *before* the rename that
 publishes it (#199) -- so a file that fails verification never appears
