@@ -486,9 +486,10 @@ TARGETS = {
     #
     # Measured at budget 30 (4d34c64, 3.12.14): 25 of 33 killed. The
     # eight survivors, each classified:
-    #   - four `@dataclass(...)` / `field(...)` keyword flips (`slots`,
-    #     `frozen`, and `repr=False` twice): layout and repr, nothing any
-    #     test or caller reads -- equivalent;
+    #   - four `@dataclass(...)` / `field(...)` keyword flips (`slots`
+    #     twice, and `repr=False` twice): layout and repr, nothing any
+    #     test or caller reads -- equivalent. None is a `frozen` flip,
+    #     which would not be: `Equipment` is frozen so value-hashing works;
     #   - the `ds is not None and hasattr(ds, "file_meta")` flip in the
     #     pixel fallback, which only builds the transfer-syntax UID quoted
     #     in an error message -- equivalent;
