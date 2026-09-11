@@ -1526,7 +1526,10 @@ on such a UID all resolve to a single one of those instances.</p>
 <p><code>PhiReport.failures</code> is a list of <code>(entity_uid, reason)</code>, one per
 instance <code>scan_pixel_content()</code> could not read in full, and is always a
 list; <code>audit()</code>'s is always empty, because a failure in its workers
-raises (#423).</p>
+raises (#423). Each instance <code>scan_pixel_content()</code> or
+<code>discover_redaction_zones()</code> could not read also writes one <code>WARNING</code>
+audit row naming it and the reason, before any raise, so a run with a
+scan failure grades <code>REVIEW_REQUIRED</code> (#479).</p>
 <p><strong>Entities, as reached from <code>session.store</code>.</strong> The graph is <code>Patient</code>
 → <code>Study</code> → <code>Series</code> → <code>Instance</code>. Fields, in dataclass order (which is
 the positional constructor order, except where marked <code>init=False</code>):
@@ -1563,7 +1566,9 @@ drain and before any work is done (#400). <code>scan_pixel_content()</code> and
 <code>discover_redaction_zones()</code> raise <code>RuntimeError</code> when the <code>ocr</code> extra
 or the <code>tesseract</code> binary is unavailable to the calling process, before
 any worker is dispatched and before either method reads the graph
-(#422). That check covers only the calling process: both methods also
+(#422). A worker process runs the <code>tesseract_cmd</code> the caller set, so it
+uses the binary that check probed (#458). The check still covers only
+the calling process's view of OCR: both methods also
 raise <code>RuntimeError</code> after the pass when at least one instance failed
 and none could be read (#423); a scan that read some instances returns
 its report with the others in <code>failures</code>, and discovery counts only the
