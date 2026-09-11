@@ -89,7 +89,7 @@ jobs:
     # Run Tests step said 20, so #102's headroom was inert from the day it
     # landed and #250's three hangs each produced a log naming nothing.
     # test_packaging_contract.py pins the inequality.
-    timeout-minutes: 35
+    timeout-minutes: 45
 
     steps:
     - uses: actions/checkout@v7
@@ -146,16 +146,22 @@ jobs:
 
     - name: Run Tests
       id: suite
-      # The suite takes ~4m15s locally and 5m30s-6m on a runner, so the
-      # old 5-minute budget had no margin left: on 2026-08-26 every job
+      # Measured on the 2026-09-11 gate runs, eight per version (#475):
+      # 748-993 s on 3.12 and 574-899 s on 3.14t. The cap was 20 minutes
+      # then and the peak sat at 83% of it with the milestone still
+      # adding tests; before that it was 5, and on 2026-08-26 every job
       # finished between 5m30s and 6m06s and `test (3.14)` was killed
       # mid-run, reported as a test failure with no failing test in the
-      # log -- only "Terminate orphan process: pytest". Raised to leave
-      # real headroom while still catching a genuine hang rather than
-      # letting one burn a runner for six hours.
+      # log -- only "Terminate orphan process: pytest". 30 puts the
+      # measured peak at 55%: real headroom, while still catching a
+      # genuine hang rather than letting one burn a runner for six
+      # hours. test_packaging_contract.py pins this as a floor.
       #
-      # Raise this rather than trimming coverage if it tightens again.
-      timeout-minutes: 20
+      # Raise this rather than trimming coverage if it tightens again,
+      # and raise the job cap above with it: that must exceed the sum
+      # of the steps, and pytest.ini's faulthandler_timeout must stay
+      # under half of this.
+      timeout-minutes: 30
       run: |
         pytest -v
       env:

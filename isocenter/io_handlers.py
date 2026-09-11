@@ -2235,6 +2235,46 @@ class DicomImporter:
                 "audit(), scan_pixel_content() and redact() in this "
                 "process; ingest() has no threads mode.",
                 strategy.threads_requested_by)
+        # The recycling lever has the same shape one rank up (#471,
+        # #393's twin). `_resolve_strategy` read
+        # `ISOCENTER_MAX_TASKS_PER_CHILD` into the strategy, and the
+        # session's `ProcessPoolExecutor` -- built once at `Session()`
+        # with no `max_tasks_per_child`, and used as given -- never
+        # recycles a worker: measured on both gate builds, 24 tasks
+        # under the variable set to 2 ran on no more distinct worker
+        # PIDs than the pool has workers, where a pool built with the
+        # kwarg recycled six times in twelve. Honouring it here was
+        # weighed and not taken. The kwarg is cheap (3.11+), and
+        # `ProcessPoolExecutor.map` stays ordered under it, so #450 is
+        # not what decides; what decides is that the pool is built at
+        # `Session()`, and a variable read there would be the one
+        # construction-time read of a precedence lever in the package
+        # -- set after the session opened, it would be ignored in the
+        # same silence one step later. The conditions:
+        #   - `maxtasksperchild`, which this call never passes as an
+        #     argument, so any value in the strategy is the variable's;
+        #     the name comes from `processes_requested_by`, the
+        #     attribution field, rather than being spelled here (#400);
+        #   - `threads_request_overridden_by is None`: with
+        #     `ISOCENTER_FORCE_THREADS` also set, #185's warning --
+        #     emitted inside `run_parallel`, and already saying that
+        #     `ingest()` takes no lever -- is the one line;
+        #   - any caller-supplied executor. Unlike the threads case there
+        #     is no pool type to exempt: nothing handed in can be shown
+        #     to recycle at the interval the variable names. With none,
+        #     `run_parallel` builds the recycling pool itself.
+        if (strategy.maxtasksperchild is not None
+                and strategy.threads_request_overridden_by is None
+                and executor is not None):
+            logger.warning(
+                "%s had no effect on this ingest(). ingest() runs on the "
+                "session's own process pool, which never recycles its "
+                "workers, so it ran without recycling and its result is "
+                "unaffected. The variable still applies to audit(), "
+                "scan_pixel_content(), discover_redaction_zones() and "
+                "redact() in this process, and export() always recycles "
+                "every 25 tasks; ingest() has no recycling.",
+                strategy.processes_requested_by)
         #
         # `ordered=True` keeps the results in the sorted order above on
         # the one path that would otherwise yield by arrival: the

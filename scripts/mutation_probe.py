@@ -239,7 +239,7 @@ TARGETS = {
     "isocenter/validation.py": (["tests/test_export_error.py", "tests/test_io.py",
                                  "tests/test_structured_export.py",
                                  "tests/test_validation.py", "tests/test_wfdb_writer.py"], 30),
-    # 18 sites, exhaustive: 14 killed. Three files, 1.9s per pass.
+    # 18 sites, exhaustive: 15 killed. Three files, 2s per pass.
     #
     # tests/test_relock_identity_token.py is a hand extra (#441): it reaches
     # the module through `Session.lock_identities`, which the scan cannot
@@ -258,11 +258,13 @@ TARGETS = {
     # above, the WARNING that says an item has no Encrypted Content, and
     # the ERROR that names the instance a wrong key failed.
     #
-    # The four survivors:
-    #   - the deleted `self.logger.error(f"Failed to embed token: {e}")` in
-    #     `embed_identity_token`: equivalent, a `raise` follows carrying
-    #     the same exception;
-    #   - three inside `embed_original_data`: its call to
+    # The deleted ERROR in `embed_identity_token` was a fourth survivor,
+    # classed equivalent because a `raise` follows carrying the same
+    # exception; #487 pinned the line's text (it is what a reader of the
+    # log gets, and it named a bare raise with an empty tail), and
+    # tests/test_reversibility_coverage.py kills it since.
+    #
+    # The three survivors, all inside `embed_original_data`: its call to
     #     `self.embed_identity_token(instance, token)`, its DEBUG line, and
     #     the ERROR in its `except`, which re-raises. The method has no
     #     caller in isocenter/ and its two tests pass empty or raising

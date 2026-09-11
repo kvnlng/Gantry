@@ -220,25 +220,29 @@ def test_force_threads_does_not_reach_ingest(tmp_path, monkeypatch, caplog):
         "dispatch that raises cannot swallow it")
 
 
-def test_ingest_with_no_lever_is_silent_where_threads_are_the_default(
-        tmp_path, monkeypatch, caplog):
-    """A free-threaded build resolves to threads, and nobody asked (#393).
+@pytest.mark.parametrize("gil", [False, True])
+def test_ingest_with_no_lever_is_silent_whatever_the_default(
+        tmp_path, monkeypatch, caplog, gil):
+    """No lever set, no line -- on either build's default (#393, #471).
 
-    `use_threads` is True here with no lever set, so a warning
+    Free-threaded: `use_threads` is True with nothing set, so a warning
     conditioned on `use_threads` alone would fire on every free-threaded
     `ingest()` -- the gate's 3.14t leg -- about a variable the operator
-    never touched.
+    never touched. GIL: `maxtasksperchild` is None with nothing set, so
+    a recycling warning conditioned on anything but that is a line on
+    every 3.12 ingest. Both defaults are simulated rather than taken
+    from the running interpreter, so each leg runs on both gate builds.
     """
     import sys
 
     from isocenter import parallel
 
     _clear_levers(monkeypatch)
-    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: False, raising=False)
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: gil, raising=False)
     assert parallel._resolve_execution_choice(
-        False, None, None).use_threads is True, (
-        "the free-threaded simulation must resolve to threads, or this "
-        "test proves nothing about the default")
+        False, None, None).use_threads is (not gil), (
+        "the simulated default must resolve as the build it simulates, "
+        "or this test proves nothing about that default")
     (tmp_path / "one.dcm").write_bytes(b"not a dicom file; never read")
 
     recorded = {}
@@ -280,15 +284,20 @@ def test_force_threads_with_recycling_warns_exactly_once_at_ingest(
         records[0].getMessage())
 
 
-def test_an_ingest_with_nothing_new_is_silent(tmp_path, monkeypatch, caplog):
-    """No files to read, no dispatch, nothing to warn about (#393).
+@pytest.mark.parametrize("lever", ["ISOCENTER_FORCE_THREADS",
+                                   "ISOCENTER_MAX_TASKS_PER_CHILD"])
+def test_an_ingest_with_nothing_new_is_silent(tmp_path, monkeypatch, caplog,
+                                              lever):
+    """No files to read, no dispatch, nothing to warn about (#393, #471).
 
     Re-ingesting a folder already held lands here too, and an operator
     running the same ingest in a loop should not read the line each time
-    about work that never started.
+    about work that never started. `"2"` is a valid value for both
+    levers -- truthy for the threads one, a recycling interval above the
+    floor for the other -- so one value exercises both arms.
     """
     _clear_levers(monkeypatch)
-    monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
+    monkeypatch.setenv(lever, "2")
     empty = tmp_path / "empty"
     empty.mkdir()
 
@@ -301,6 +310,101 @@ def test_an_ingest_with_nothing_new_is_silent(tmp_path, monkeypatch, caplog):
         records = _lever_records(caplog)
 
     assert "items" not in recorded, "nothing new, so nothing to dispatch"
+    assert records == [], [r.getMessage() for r in records]
+
+
+def test_max_tasks_per_child_does_not_reach_ingest(tmp_path, monkeypatch,
+                                                   caplog):
+    """`ISOCENTER_MAX_TASKS_PER_CHILD` does not reach `ingest()`, which says so (#471).
+
+    #393's twin. The lever resolves to recycling processes, and
+    `ingest()` hands `run_parallel()` the session's own
+    `ProcessPoolExecutor`, built once at `Session()` with no
+    `max_tasks_per_child`, which `_run_on_shared_executor` uses as
+    given: measured on both gate builds, 24 tasks under the variable
+    set to 2 ran on no more distinct worker PIDs than the pool has
+    workers, where a pool honouring it recycled six times in twelve.
+    Honouring it would mean reading the variable at `Session()` rather
+    than per call -- a value set after the session opened would then be
+    ignored in the same silence -- so the ruling was #393's: warn, once
+    per `ingest()` call that dispatches, in the same shape and on the
+    same channel. The `ISOCENTER_MAX_TASKS_PER_CHILD` row in
+    `docs/environment.md` is written from this test (the #333
+    convention).
+
+    Killing mutations: the warning deleted (no record); its condition
+    widened to any executor with nothing set (the silence tests above
+    go red); the warning moved after the dispatch (the spy sees none
+    when it is called).
+    """
+    import concurrent.futures
+
+    from isocenter import parallel
+
+    _clear_levers(monkeypatch)
+    monkeypatch.setenv("ISOCENTER_MAX_TASKS_PER_CHILD", "2")
+    (tmp_path / "one.dcm").write_bytes(b"not a dicom file; never read")
+
+    recorded = {}
+    _spy_on_dispatch(monkeypatch, caplog, recorded)
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        caplog.clear()
+        session.ingest(str(tmp_path / "one.dcm"))
+        records = _lever_records(caplog)
+
+        strategy = recorded.get("strategy")
+        assert strategy is not None and strategy.maxtasksperchild == 2, (
+            "the lever is set; the strategy handed to run_parallel must "
+            "carry it for this to be a characterization of *ignoring* it; "
+            f"got {strategy!r}")
+        assert recorded.get("executor") is session._executor, (
+            "ingest() must hand run_parallel the session's own executor; "
+            f"it passed {recorded.get('executor')!r}")
+        assert isinstance(session._executor,
+                          concurrent.futures.ProcessPoolExecutor)
+        assert parallel._resolve_execution_choice(
+            False, 2, "ISOCENTER_MAX_TASKS_PER_CHILD").use_threads is False
+
+    assert len(records) == 1, [r.getMessage() for r in records]
+    (record,) = records
+    message = record.getMessage()
+    assert record.levelname == "WARNING", record.levelname
+    assert "ISOCENTER_MAX_TASKS_PER_CHILD" in message, message
+    assert "had no effect on this ingest()" in message, message
+    assert "result is unaffected" in message, message
+    assert recorded["lever_records_at_dispatch"] == 1, (
+        "the warning must be said before the work is dispatched, so a "
+        "dispatch that raises cannot swallow it")
+
+
+def test_a_direct_import_with_no_executor_honours_recycling_and_is_silent(
+        tmp_path, monkeypatch, caplog):
+    """The recycling warning belongs to a caller-supplied executor (#471).
+
+    A direct `import_files` call with no executor gets `run_parallel`'s
+    own pool, which under `ISOCENTER_MAX_TASKS_PER_CHILD` is the
+    recycling `multiprocessing.Pool` (#450 keeps it ordered). The lever
+    was honoured, so nothing says it was not. Unlike the threads case
+    there is no executor type exempted: no pool a caller hands in can
+    be shown to recycle at the interval the variable names.
+    """
+    from isocenter.io_handlers import DicomImporter
+    from isocenter.store import DicomStore
+
+    _clear_levers(monkeypatch)
+    monkeypatch.setenv("ISOCENTER_MAX_TASKS_PER_CHILD", "2")
+    junk = tmp_path / "one.dcm"
+    junk.write_bytes(b"not a dicom file; never read")
+
+    recorded = {}
+    _spy_on_dispatch(monkeypatch, caplog, recorded)
+    caplog.clear()
+    DicomImporter.import_files([str(junk)], DicomStore(), executor=None)
+
+    assert "items" in recorded, "the import never dispatched"
+    assert recorded["strategy"].maxtasksperchild == 2
+    records = _lever_records(caplog)
     assert records == [], [r.getMessage() for r in records]
 
 
