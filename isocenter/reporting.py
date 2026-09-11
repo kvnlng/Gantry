@@ -130,10 +130,21 @@ def _pixel_scan_line(report: "ComplianceReport") -> str:
             run += (f"; {scan.skipped} instance(s) skipped because their "
                     f"machine has no configured redaction zones")
         runs.append(run)
+    # Said whenever any run left an instance unread, because #479's rows
+    # are permanent: a later run that reads the instance writes nothing and
+    # removes nothing, so a session whose last scan was clean still grades
+    # REVIEW_REQUIRED on the earlier row. Without this sentence the Grade
+    # Basis above and a clean final run read as a contradiction (#481).
+    kept = ""
+    if any(scan.unread for scan in report.pixel_scans):
+        kept = (" Each instance a run could not read has a `WARNING` row in "
+                "section 4, and a later run that reads it does not remove "
+                "that row.")
     if len(runs) == 1:
-        return label + f"ran once in this session: {runs[0]}.\n"
+        return label + f"ran once in this session: {runs[0]}.{kept}\n"
     numbered = "; ".join(f"run {i}: {run}" for i, run in enumerate(runs, 1))
-    return label + f"ran {len(runs)} times in this session -- {numbered}.\n"
+    return (label + f"ran {len(runs)} times in this session -- "
+            f"{numbered}.{kept}\n")
 
 
 @dataclass

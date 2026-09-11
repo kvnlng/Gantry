@@ -308,3 +308,92 @@ def test_the_metadata_line_is_read_from_the_audit_trail(tmp_path):
     counts = [int(n) for n in re.findall(
         r"\*\*Metadata Remediation:\*\* (\d+) `REMEDIATION_\*` row", _section5(done))]
     assert counts and counts[0] > 0, _section5(done)
+
+
+# --- after #479: the rows a failed scan writes ------------------------------
+
+def _warning_rows(text):
+    return [row for row in _section4_rows(text) if "| WARNING |" in row]
+
+
+def test_a_real_scan_failure_is_counted_where_section_4_lists_it(tmp_path, ocr_present):
+    """#479 writes one `WARNING` row per unread instance; section 5 counts it.
+
+    The invariant helper passes vacuously over an empty section 4, so this
+    first proves the row is there -- a test that only called the helper
+    would pass on a base without #479 for the wrong reason.
+
+    Kills: the section-4 reason removed, and the no-scan wording rendered
+    beside a scan that ran.
+    """
+    ocr_present.image_to_data = lambda *a, **k: WORD
+    with _session(tmp_path, [_instance("1.2.481.1"),
+                             _instance("1.2.481.2", readable=False)]) as session:
+        session.anonymize()
+        session.scan_pixel_content()
+        text = _report(session, tmp_path)
+    rows = _warning_rows(text)
+    assert len(rows) == 1 and "1.2.481.2" in rows[0], _section4_rows(text)
+    assert REVIEW_LINE in text
+    assert "Identified Issues" not in text
+    assert OLD_CLAIM not in text
+    s5 = _section5(text)
+    assert "1 row(s) in section 4" in s5, s5
+    assert "No `scan_pixel_content()` ran" not in s5, s5
+    _assert_section5_agrees_with_section4(text)
+
+
+def test_a_rescan_that_reads_everything_leaves_the_earlier_row_and_says_so(
+        tmp_path, ocr_present):
+    """Failed, then read on a rescan: the row stays, and section 5 says why.
+
+    #479's rows are permanent, so the grade stays REVIEW_REQUIRED after a
+    clean second run. Section 5 lists both runs and says a later read does
+    not remove the earlier row, so the Grade Basis and a clean final run do
+    not read as a contradiction.
+
+    Kills: the "does not remove that row" sentence dropped, and a pixel-scan
+    line that describes only the last run.
+    """
+    ocr_present.image_to_data = lambda *a, **k: WORD
+    broken = _instance("1.2.481.2", readable=False)
+    with _session(tmp_path, [_instance("1.2.481.1"), broken]) as session:
+        session.anonymize()
+        session.scan_pixel_content()
+        broken.set_pixel_data(np.full((32, 32), 1, dtype=np.uint8))
+        second = session.scan_pixel_content()
+        assert second.failures == []
+        text = _report(session, tmp_path)
+    assert len(_warning_rows(text)) == 1, _section4_rows(text)
+    assert REVIEW_LINE in text
+    line = _scan_line(text)
+    assert "ran 2 times in this session" in line, line
+    assert "run 1: read 1 of 2 instance(s)" in line, line
+    assert "run 2: read 2 of 2 instance(s)" in line, line
+    assert "a later run that reads it does not remove that row" in line, line
+    assert "1 row(s) in section 4" in _section5(text)
+    _assert_section5_agrees_with_section4(text)
+
+
+def test_a_discovery_failure_is_counted_and_not_called_a_pixel_scan(
+        tmp_path, ocr_present):
+    """`discover_redaction_zones()` writes #479's rows too, and is not a scan.
+
+    Section 5 counts discovery's row among section 4's, and its pixel-scan
+    line -- which names `scan_pixel_content()` -- still says no such scan
+    ran, which is true: discovery looks for zones, it does not verify them.
+
+    Kills: the section-4 reason removed.
+    """
+    ocr_present.image_to_data = lambda *a, **k: WORD
+    with _session(tmp_path, [_instance("1.2.481.1"),
+                             _instance("1.2.481.2", readable=False)]) as session:
+        session.anonymize()
+        session.discover_redaction_zones(SERIAL)
+        text = _report(session, tmp_path)
+    rows = _warning_rows(text)
+    assert len(rows) == 1 and "discover_redaction_zones()" in rows[0], rows
+    assert REVIEW_LINE in text
+    assert "1 row(s) in section 4" in _section5(text)
+    assert "No `scan_pixel_content()` ran in this session" in _scan_line(text)
+    _assert_section5_agrees_with_section4(text)
