@@ -540,6 +540,7 @@ TARGETS = {
                                "tests/test_dataframe_export.py",
                                "tests/test_declined_remediation_is_recorded.py",
                                "tests/test_deid_tags.py",
+                               "tests/test_descriptor_edit_with_pixels_unloaded.py",
                                "tests/test_empty_sequence_roundtrip.py",
                                "tests/test_entities.py",
                                "tests/test_entity_state_vocabulary.py",
