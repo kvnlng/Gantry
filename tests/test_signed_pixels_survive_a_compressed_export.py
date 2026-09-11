@@ -41,17 +41,16 @@ merely unreadable here, it is **written wrong and read back wrong**.
 - **32- and 64-bit.** The codec does not reject 32-bit: it encodes,
   exactly to 25 bits and wrong above that, and the DICOM file built from
   a 32-bit codestream cannot be decoded by any pydicom plugin.
-- **16-bit multi-sample.** Here the codestream is *exact*, and the
-  decoder is what **this project** does not have. Pillow is the only
-  JPEG 2000 decoding plugin it installs and it reports `Pillow cannot
-  decode 16-bit multi-sample data correctly`, so `session.ingest()` on
-  such an export returns `ingested=0` with a `Decompression Failed` row
-  -- the library cannot re-ingest its own output. Other decoders read
-  those frames fine (`imagecodecs.jpeg2k_decode` bit-exactly,
-  pylibjpeg-openjpeg too), so the standard applied is *what this library
-  can read back*, which is the same standard the 32-bit cell is judged
-  by. Pillow refused this shape at `Image.fromarray`, so it is reachable
-  only *because* of the encoder swap.
+- **16-bit multi-sample**, which this guard refused until #416 and now
+  writes. The codestream was always *exact*; what this project lacked
+  was a decoder at the door. Pillow is the only JPEG 2000 plugin pydicom
+  has here and it reports `Pillow cannot decode 16-bit multi-sample data
+  correctly`, so `session.ingest()` on such an export returned
+  `ingested=0` -- the library could not re-ingest its own output, and
+  the cell was refused on the standard the 32-bit cell is judged by:
+  *what this library can read back*. #416 gave ingest an `imagecodecs`
+  fallback, which reads these frames bit-exactly, so the cell now meets
+  that standard; P8x pins the round trip that makes it true.
 
 So the guard is a **matrix** over `(itemsize, samples > 1)`, not a list
 of widths, and it is **positive** -- encode only what is measured to
@@ -515,70 +514,69 @@ def test_an_rgb_frame_still_round_trips(tmp_path, frames, dtype_name, pixrep):
     assert ds.pixel_array.tolist() == arr.tolist()
 
 
+@pytest.mark.parametrize("frames", [1, 2])
 @pytest.mark.parametrize("dtype_name,pixel_representation", [
     ("uint16", 0),
     ("int16", 1),
 ])
-def test_a_16_bit_colour_frame_is_refused_rather_than_written_unreadable(
-        tmp_path, dtype_name, pixel_representation):
-    """The second cell the guard has to hold, and it is this fix's own.
+def test_our_own_compressed_16_bit_colour_export_re_ingests(
+        tmp_path, dtype_name, pixel_representation, frames):
+    """P8x, the round trip that lets the `(2, True)` cell be written (#416).
 
-    `imagecodecs` encodes a 16-bit multi-sample frame **bit-exactly**,
-    where Pillow refused it at `Image.fromarray`. So the encoder swap
-    turned a loud failure into a written file that `ds.pixel_array` will
-    not open: `Pillow cannot decode 16-bit multi-sample data correctly`,
-    and Pillow is the only JPEG 2000 decoding plugin *this project*
-    installs -- `session.ingest()` on such an export returns
-    `ingested=0`. Measured with the guard removed: `wrote 1 of 1`, a file
-    on disk, and `RuntimeError: Unable to decode as exceptions were
-    raised by all available plugins` on read.
+    Until #416 this cell was refused: `imagecodecs` encoded it
+    bit-exactly, but Pillow -- pydicom's only JPEG 2000 plugin here --
+    cannot decode 16-bit multi-sample data, so `session.ingest()` on the
+    export returned `ingested=0`. The standard was what this library can
+    read back. Ingest now falls back to `imagecodecs`, so the file is
+    written, and this test is the reason that is allowed: it goes through
+    `session.ingest()`, because a handler-only decode passed before the
+    fallback existed and would pin nothing.
 
-    Not a claim about JPEG 2000: `imagecodecs.jpeg2k_decode` reads those
-    frames bit-exactly and so does pylibjpeg-openjpeg. The standard is
-    what this library can read back, and the refusal's sentence has to
-    say that rather than "no decoder reads it" -- which is why the last
-    two assertions below are on the wording and not only on the refusal.
-
-    That is 32-bit's silence arriving through a different door, and it is
-    why the rule is a *matrix* and not a list of widths. *Red when:* the
-    `(2, True)` cell is added to `_J2K_ENCODABLE_FRAMES`.
+    *Red when:* the `(2, True)` cell is removed from
+    `_J2K_ENCODABLE_FRAMES` (no file is written), or ingest's `imagecodecs`
+    fallback is removed (the file is refused at the door).
     """
-    one = ([[[(v - 128) * 128 for v in px] for px in row] for row in RGB_ROWS]
-           if pixel_representation == 1
-           # Above 255 on purpose: a value that fits in a byte would not
-           # tell a 16-bit frame apart from an 8-bit one.
-           else [[[v * 257 for v in px] for px in row] for row in RGB_ROWS])
-    arr = np.array(one, dtype=dtype_name)
+    # Above 255 on purpose: a value that fits in a byte would not tell a
+    # 16-bit frame apart from an 8-bit one.
+    first = ([[[(v - 128) * 128 for v in px] for px in row] for row in RGB_ROWS]
+             if pixel_representation == 1
+             else [[[v * 257 for v in px] for px in row] for row in RGB_ROWS])
+    second = ([[[(v - 128) * 128 + 1 for v in px] for px in row]
+               for row in RGB_ROWS]
+              if pixel_representation == 1
+              else [[[v * 256 + 1 for v in px] for px in row]
+                    for row in RGB_ROWS])
+    literal = first if frames == 1 else [first, second]
+    arr = np.array(literal, dtype=dtype_name)
 
-    _summary, error, files, rows, _out = _export(
-        tmp_path, arr, pixel_representation, f"p8x_{dtype_name}", samples=3,
+    _summary, error, files, _rows, out = _export(
+        tmp_path, arr, pixel_representation,
+        f"p8x_{dtype_name}_{frames}", samples=3, frames=frames,
         photometric="RGB")
 
-    assert error is not None, (
-        "a 16-bit colour frame was compressed; the file it wrote cannot "
-        "be decoded by any plugin this project installs")
-    assert files == []
+    assert error is None, f"a 16-bit colour export failed: {error}"
+    assert len(files) == 1
+    written = pydicom.dcmread(files[0])
+    assert written.file_meta.TransferSyntaxUID == JPEG2000Lossless
+    assert written.BitsAllocated == 16
+    assert written.PixelRepresentation == pixel_representation
+    # The precondition: pydicom cannot read it, so the ingest below is
+    # the fallback's, not pydicom's.
+    with pytest.raises(RuntimeError):
+        _ = written.pixel_array
 
-    message = " ".join(d for _a, _u, d in rows if d)
-    assert dtype_name in message, message
-    assert "3 sample(s) per pixel" in message, message
-    assert "BitsAllocated 16" in message, message
-    assert "use_compression=False" in message, message
-    # The refusal must not borrow 32-bit's reason: the codestream here
-    # would be exact, and telling a user their pixels do not fit sends
-    # them after the wrong thing.
-    assert "exact only to 25 bits" not in message, message
-    # And it must not overclaim in the other direction either. The
-    # sentence has to name the decoder *this library* lacks, because
-    # `imagecodecs.jpeg2k_decode` and pylibjpeg-openjpeg both read these
-    # frames -- "no plugin reads it" would be a false statement in the
-    # one place a user reads, which is the shape this milestone removes.
-    assert "Pillow" in message, (
-        f"the refusal does not name the decoder that cannot read this "
-        f"frame: {message}")
-    assert "this library installs" in message, (
-        f"the refusal states its limit as a fact about JPEG 2000 rather "
-        f"than about this installation: {message}")
+    session = DicomSession(persistence_file=str(tmp_path / "reingest.db"))
+    try:
+        summary = session.ingest(out)
+        assert summary.failures == []
+        assert summary.ingested == 1
+        inst = session.store.patients[0].studies[0].series[0].instances[0]
+        assert inst.unload_pixel_data() is True
+        got = inst.get_pixel_data()
+    finally:
+        session.close()
+    assert got.dtype == np.dtype(dtype_name)
+    assert got.tolist() == literal
 
 
 # ---------------------------------------------------------------------------
@@ -631,7 +629,7 @@ def test_compress_j2k_without_an_array_writes_nothing_and_raises_nothing():
     unreachable: `_compress_j2k`'s only caller is `_finalize_dataset`,
     whose only caller is the export worker, which always passes
     `pixel_array=arr`; and when compression is on the worker never assigns
-    `ds.PixelData` at all, which the comment at io_handlers.py:3154-3155
+    `ds.PixelData` at all, which the comment at io_handlers.py:3650-3652
     already says. `pixel_array is None` therefore means "nothing to
     compress" and nothing else.
 

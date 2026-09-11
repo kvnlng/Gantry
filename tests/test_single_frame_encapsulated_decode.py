@@ -145,10 +145,12 @@ def test_a_multi_frame_dataset_still_decodes_every_frame():
 def _write_16bit_rgb_j2k(folder):
     """A 16-bit RGB J2K file: exactly what Pillow cannot decode.
 
-    `_J2K_ENCODABLE_FRAMES` refuses to *write* this cell (#404), so it is
-    built by hand -- which is the point: it is the population
-    `Instance.get_pixel_data()`'s imagecodecs fallback exists for, and the
-    one the fallback had never been able to read.
+    Built by hand rather than by an export, so the fixture does not
+    depend on the exporter. It is the population
+    `Instance.get_pixel_data()`'s imagecodecs fallback exists for, and
+    the one that fallback had never been able to read before #407. Since
+    #416 the exporter writes this cell too, and ingest reads it back
+    through the same codec (`tests/test_ingest_imagecodecs_fallback.py`).
     """
     arr = (np.arange(4 * 4 * 3, dtype=np.uint16) * 1000).reshape(4, 4, 3)
     ds = _skeleton(arr, samples=3, photometric="RGB")

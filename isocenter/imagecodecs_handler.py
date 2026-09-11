@@ -3,8 +3,16 @@
 `offset_table_frame_count` compares the frame count an encapsulated
 `PixelData`'s offset table names with the one `NumberOfFrames` declares.
 It is shared by this module's `get_pixel_data`, by
-`Instance.get_pixel_data`'s file arm and by `ingest_worker`, so the three
-cannot disagree about what a mismatch is.
+`Instance.get_pixel_data`'s file arm, by `ingest_worker` for the top
+level, by `_decode_nested_pixels` for an icon (#433) and by
+`_decode_pixels`' imagecodecs fallback (#416), so none of them can
+disagree about what a mismatch is.
+
+Two decoders share `_decode_frame`: `get_pixel_data`, the read path's
+fallback, which refuses a mismatch itself; and `decode_declared_frames`,
+ingest's fallback, which decodes exactly the frames its caller asks for
+because that caller has already counted the table and decided (#418's
+truncation, which a refusal here would turn into a rejected file).
 
 **Its limit, stated.** An *empty* Basic Offset Table with no Extended
 Offset Table is legal (PS3.5 A.4) and names no frames, and the fragments
@@ -16,6 +24,7 @@ one.
 """
 import struct
 import sys
+from itertools import islice
 from typing import Optional, Tuple, Union
 
 import numpy as np
@@ -236,6 +245,51 @@ def should_change_PhotometricInterpretation_to_RGB(ds):
     return False
 
 
+def _decode_frame(transfer_syntax, bitstream, ds):
+    """One frame's codestream to an array, by the codec its syntax names."""
+    if transfer_syntax in [JPEGLossless, JPEGLosslessSV1]:
+        return imagecodecs.ljpeg_decode(bitstream)
+    if transfer_syntax in [JPEGBaseline, JPEGExtended]:
+        return imagecodecs.jpeg_decode(bitstream)
+    if transfer_syntax in [JPEG2000Lossless, JPEG2000]:
+        return imagecodecs.jpeg2k_decode(bitstream)
+    if transfer_syntax in [JPEGLSLossless, JPEGLSLossy]:
+        return imagecodecs.jpegls_decode(bitstream)
+    if transfer_syntax == RLELossless:
+        return imagecodecs.rle_decode(bitstream, shape=(ds.Rows, ds.Columns))
+    raise RuntimeError(f"Unsupported syntax: {transfer_syntax}")
+
+
+def decode_declared_frames(ds, number_of_frames):
+    """Decode the first `number_of_frames` frames, and ask nothing else.
+
+    For `io_handlers._decode_pixels`' fallback (#416). **It does not
+    compare the offset table with NumberOfFrames**, and that is the point:
+    its caller has already asked `offset_table_frame_count` and decided --
+    refuse fewer, drop an excess only when told to -- and a second check
+    here would refuse the excess #418 truncates, rejecting a file ingest
+    means to keep. `get_pixel_data` below is the one that refuses a
+    mismatch; this is not a second spelling of it.
+
+    `islice`, because `generate_frames(buf, number_of_frames=1)` yields
+    every frame a populated Basic Offset Table names, not one (measured,
+    pydicom 3.0.2): without it an excess would be decoded whole.
+
+    Returns:
+        np.ndarray: the frame for one, the frames stacked for more. The
+        caller checks dtype and size against the header.
+    """
+    if not is_available():
+        raise RuntimeError("imagecodecs is not available")
+    transfer_syntax = ds.file_meta.TransferSyntaxUID
+    frames = [_decode_frame(transfer_syntax, bitstream, ds)
+              for bitstream in islice(
+                  generate_frames(ds.PixelData,
+                                  number_of_frames=number_of_frames),
+                  number_of_frames)]
+    return frames[0] if number_of_frames == 1 else np.stack(frames)
+
+
 def get_pixel_data(ds):
     """
     Decodes pixel data from an encapsulated dataset using `imagecodecs`.
@@ -276,27 +330,13 @@ def get_pixel_data(ds):
     try:
         num_frames = getattr(ds, 'NumberOfFrames', 1)
 
-        # Helper to decode a single bitstream
-        def decode_frame(bitstream):
-            if transfer_syntax in [JPEGLossless, JPEGLosslessSV1]:
-                return imagecodecs.ljpeg_decode(bitstream)
-            if transfer_syntax in [JPEGBaseline, JPEGExtended]:
-                return imagecodecs.jpeg_decode(bitstream)
-            if transfer_syntax in [JPEG2000Lossless, JPEG2000]:
-                return imagecodecs.jpeg2k_decode(bitstream)
-            if transfer_syntax in [JPEGLSLossless, JPEGLSLossy]:
-                return imagecodecs.jpegls_decode(bitstream)
-            if transfer_syntax == RLELossless:
-                return imagecodecs.rle_decode(bitstream, shape=(ds.Rows, ds.Columns))
-            raise RuntimeError(f"Unsupported syntax: {transfer_syntax}")
-
         # Multi-Frame Handling
         if num_frames > 1 and ds.file_meta.TransferSyntaxUID.is_encapsulated:
 
             # generate_frames handles BOT and fragments logic
             frames = []
             for frame_bitstream in generate_frames(ds.PixelData, number_of_frames=num_frames):
-                decoded = decode_frame(frame_bitstream)
+                decoded = _decode_frame(transfer_syntax, frame_bitstream, ds)
                 frames.append(decoded)
 
             return np.array(frames)
@@ -353,7 +393,7 @@ def get_pixel_data(ds):
             else:
                 codestream = pixel_bytes
 
-            return decode_frame(codestream)
+            return _decode_frame(transfer_syntax, codestream, ds)
 
     except Exception as e:
         print(
