@@ -33,6 +33,7 @@ through `isocenter.remediation`, so it charges that module's probe row;
 see `test_mutation_probe_targets.py`.
 """
 import json
+import re
 import shutil
 import sqlite3
 
@@ -273,6 +274,33 @@ def test_a_patient_level_remove_clears_the_tag_on_each_instance(tmp_path):
             assert inst.has_unsaved_changes
 
 
+def test_a_declined_patient_level_finding_writes_nothing_onto_the_instances(tmp_path):
+    """A decline returns before the success block, so the instance write
+    never runs: the instances keep the original, stay clean, and keep
+    the status the scan gave them. Pinned beside #491's pass-end
+    demotion, which touches only the declined entity itself."""
+    with _built(tmp_path, instance_dates=("20240101", "20240101")) as session:
+        patient = session.store.patients[0]
+        session.audit()
+        for inst in _instances(patient):
+            inst.mark_persisted()
+        finding = PhiFinding(
+            entity_uid=patient.patient_id, entity_type="Patient",
+            field_name="patient_name", value=patient.patient_name,
+            reason="test", tag="0010,0010", patient_id=patient.patient_id,
+            entity=patient,
+            remediation_proposal=PhiRemediation(
+                # No such field on Patient: the REPLACE arm declines it.
+                action_type="REPLACE_TAG", target_attr="patient_alias",
+                new_value="ANONYMIZED"))
+        assert RemediationService().apply_remediation([finding]) == 0
+        assert patient.patient_name == BUILT_NAME
+        for inst in _instances(patient):
+            assert inst.attributes["0010,0010"] == BUILT_NAME
+            assert not inst.has_unsaved_changes
+            assert inst.phi_status is PhiStatus.CLEARED
+
+
 def test_the_instance_write_goes_through_set_attr_and_marks_the_instance_dirty(tmp_path):
     """A saved instance with no findings of its own was not dirty after
     `anonymize()` before this fix; now it holds a changed tag and must
@@ -369,6 +397,84 @@ def test_a_reversible_round_trip_restores_the_originals_on_the_instance(tmp_path
         assert inst.attributes["0010,0020"] == ORIGINAL_ID
         assert patient.patient_name == ORIGINAL_NAME
         assert patient.patient_id == ORIGINAL_ID
+
+
+def test_a_re_lock_after_anonymize_is_refused_and_the_first_stash_survives(tmp_path):
+    """lock -> anonymize -> lock again (#497 review). At the first head of
+    this PR the second lock stashed `ANONYMIZED`/`ANON_<hash>` over the
+    good token and recovery restored the replacements everywhere; on
+    base it re-stashed the originals by accident, because the instance
+    still carried them. Now the second lock raises, names the patient and
+    the value, writes nothing, and recovery still answers with the
+    originals. A re-lock of still-original values is #399's rule and is
+    untouched: this refuses only a value that is already a replacement."""
+    with _ingested(tmp_path) as session:
+        session.enable_reversible_anonymization(str(tmp_path / "k.key"))
+        inst = _only_instance(session)
+        session.lock_identities(ORIGINAL_ID)
+        first_stash = session.reversibility_service.recover_original_data(inst)
+        assert first_stash["0010,0010"] == ORIGINAL_NAME
+        session.audit()
+        session.anonymize()
+        patient = session.store.patients[0]
+        token_before = inst.sequences["0400,0500"].items[0].attributes["0400,0510"]
+        with pytest.raises(RuntimeError,
+                           match=r"already carries a replacement in 0010,0010 \('ANONYMIZED'\)"):
+            session.lock_identities(patient.patient_id)
+        assert inst.sequences["0400,0500"].items[0].attributes["0400,0510"] == token_before
+        assert session.reversibility_service.recover_original_data(inst) == first_stash
+        session.recover_patient_identity(patient.patient_id, restore=True)
+        assert inst.attributes["0010,0010"] == ORIGINAL_NAME
+        assert inst.attributes["0010,0020"] == ORIGINAL_ID
+        assert patient.patient_name == ORIGINAL_NAME
+
+
+def test_a_lock_after_anonymize_is_refused_and_writes_no_token(tmp_path):
+    """The reverse of the documented order, as a single call: nothing to
+    stash, so nothing is written and export cannot later print that the
+    originals are recoverable over a stash of replacements."""
+    with _ingested(tmp_path) as session:
+        session.enable_reversible_anonymization(str(tmp_path / "k.key"))
+        inst = _only_instance(session)
+        session.audit()
+        session.anonymize()
+        patient = session.store.patients[0]
+        with pytest.raises(RuntimeError, match=re.escape(patient.patient_id)):
+            session.lock_identities(patient.patient_id)
+        assert "0400,0500" not in inst.sequences
+
+
+def test_the_write_does_not_apply_to_an_item_handed_a_field_name():
+    """Kills dropping the `hasattr(entity, "set_attr")` guard (#497 review,
+    R4). An item's own arm wrote its tag directly; handed a Patient field
+    name it must answer "does not apply" (None), not walk itself as a
+    study and report 0 copies. No shipped finding reaches this -- an
+    instance-level `target_attr` is a tag and misses the table -- which
+    is why it is pinned on the helper rather than through a session."""
+    instance = Instance("1.2.826.0.1.492.9", SC_SOP_CLASS, 1)
+    instance.set_attr("0010,0010", BUILT_NAME)
+    service = RemediationService()
+    assert service._write_to_instances(instance, "patient_name") is None  # pylint: disable=protected-access
+    assert instance.attributes["0010,0010"] == BUILT_NAME
+
+
+def test_an_instance_level_audit_row_carries_no_instance_copies_suffix(tmp_path):
+    """The suffix belongs to patient/study rows only: on the documented
+    path every instance-level row (CT_small's private-tag removals here)
+    carries none, and each of the three entity rows says one copy."""
+    with _ingested(tmp_path) as session:
+        session.audit()
+        session.anonymize()
+        session.save(sync=True)
+    with sqlite3.connect(str(tmp_path / "m.db")) as conn:
+        rows = conn.execute(
+            "SELECT entity_uid, details FROM audit_log WHERE action_type IN "
+            "('REMEDIATION_REPLACE','REMEDIATION_REMOVE','REMEDIATION_SHIFT_DATE')").fetchall()
+    instance_rows = [d for uid, d in rows if uid != ORIGINAL_ID and "study_date" not in d]
+    entity_rows = [d for uid, d in rows if uid == ORIGINAL_ID or "study_date" in d]
+    assert len(instance_rows) > 100, len(instance_rows)
+    assert not any("instance cop" in d for d in instance_rows)
+    assert len(entity_rows) == 3 and all("1 instance cop" in d for d in entity_rows), entity_rows
 
 
 def test_the_audit_row_says_how_many_instance_copies_were_written(tmp_path):

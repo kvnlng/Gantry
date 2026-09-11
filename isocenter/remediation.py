@@ -359,7 +359,9 @@ class RemediationService:
             # `entity`; the instances keep their own status.
             written = self._write_to_instances(entity, proposal.target_attr)
             if written is not None:
-                details += f"; written to {written} instance copies"
+                verb = ("removed from" if action_type == "REMEDIATION_REMOVE"
+                        else "written to")
+                details += f"; {verb} {written} instance copies"
             # Recorded after the change, never before: remediation modifies
             # the entity, so a status stamped first would name a revision
             # the entity immediately leaves behind and would read as
@@ -470,6 +472,13 @@ class RemediationService:
         "patient_name": "0010,0010",
         "patient_id": "0010,0020",
         "study_date": "0008,0020",
+        # Unreachable by any shipped scan: `Study.study_time` is never
+        # populated by ingest, and no inspector raises a finding on it.
+        # Kept deliberately, because the exporter stamps it from the
+        # entity (`_study_attributes`) and the rule of this table is
+        # "the fields the exporter stamps", not "the fields a scan
+        # reaches today" -- a hand-built finding on it gets the same
+        # one-truth treatment (#497 review, R7).
         "study_time": "0008,0030",
     }
 

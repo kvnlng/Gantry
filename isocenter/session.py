@@ -3061,6 +3061,31 @@ class DicomSession:
             if "0010,0020" in tags_to_lock:
                 original_attrs["0010,0020"] = patient.patient_id
 
+        # A replacement is not an identity to keep. Since #492 the
+        # instance carries `anonymize()`'s replacement in its own tags,
+        # so a lock taken after it -- the reverse of the documented
+        # order, or a re-lock of an already-anonymized patient -- would
+        # stash `ANONYMIZED`/`ANON_<hash>` over a good token, report
+        # success, and `recover_patient_identity()` would then restore
+        # the replacements everywhere while export prints that the
+        # originals are recoverable. Before #492 the same call stashed
+        # the originals by accident, because the instance still carried
+        # them. Refused, naming the value, rather than skipped: a lock
+        # that silently kept nothing is #399's shape again. The
+        # predicate is `scan_patient`'s own (privacy.py, the
+        # `"ANONYMIZED"` / `startswith("ANON_")` tests it skips by).
+        # A re-lock of still-original values is unchanged and is what
+        # recovery answers with (#399).
+        for tag, val in original_attrs.items():
+            if val == "ANONYMIZED" or str(val).startswith("ANON_"):
+                raise RuntimeError(
+                    f"lock_identities: patient {patient_id!r} already "
+                    f"carries a replacement in {tag} ({val!r}), so there "
+                    "is no original identity left to stash. Lock "
+                    "identities before anonymize(), and do not re-lock a "
+                    "patient after it; the token this call would have "
+                    "written is unchanged.")
+
         # Optimization: Encrypt once per patient
         token = self.reversibility_service.generate_identity_token(
             original_attributes=original_attrs)
