@@ -2053,20 +2053,26 @@ would turn a correct passthrough into silent destruction.</p>
 </code></pre></div>
 <h2 id="auto-discovery-of-redaction-zones">Auto-Discovery of Redaction Zones</h2>
 <p>To help identify pixel redaction zones (e.g., for burned-in PHI), Isocenter provides a discovery tool that analyzes a sample of images from a specific machine to find common text "hotspots".</p>
+<p><code>discover_redaction_zones()</code> returns a <code>DiscoveryResult</code> holding the raw text
+candidates, not zones. <code>to_zones()</code> groups them, and each group's <code>zone</code> entry
+is the <code>[y1, y2, x1, x2]</code> list a rule stores; see
+<a href="../ocr/#setting-up-new-machines-zone-discovery">Zone Discovery</a> for filtering
+and tuning the grouping.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Discover potential redaction zones for a machine</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">suggested_zones</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">discover_redaction_zones</span><span class="p">(</span>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">serial_number</span><span class="o">=</span><span class="s2">"US-12345"</span><span class="p">,</span> 
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">result</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">discover_redaction_zones</span><span class="p">(</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">serial_number</span><span class="o">=</span><span class="s2">"US-12345"</span><span class="p">,</span>
 <a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="n">sample_size</span><span class="o">=</span><span class="mi">50</span>
 <a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="p">)</span>
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
-<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Discovered </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">suggested_zones</span><span class="p">)</span><span class="si">}</span><span class="s2"> zones: </span><span class="si">{</span><span class="n">suggested_zones</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>
-<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="c1"># Apply these zones to your configuration</span>
-<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="k">if</span> <span class="n">suggested_zones</span><span class="p">:</span>
-<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>    <span class="n">session</span><span class="o">.</span><span class="n">configuration</span><span class="o">.</span><span class="n">add_rule</span><span class="p">(</span>
-<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>        <span class="n">serial_number</span><span class="o">=</span><span class="s2">"US-12345"</span><span class="p">,</span>
-<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>        <span class="n">zones</span><span class="o">=</span><span class="n">suggested_zones</span>
-<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>    <span class="p">)</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="n">zones</span> <span class="o">=</span> <span class="p">[</span><span class="n">z</span><span class="p">[</span><span class="s2">"zone"</span><span class="p">]</span> <span class="k">for</span> <span class="n">z</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">to_zones</span><span class="p">()]</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Discovered </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">zones</span><span class="p">)</span><span class="si">}</span><span class="s2"> zones: </span><span class="si">{</span><span class="n">zones</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="c1"># Apply these zones to your configuration</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="k">if</span> <span class="n">zones</span><span class="p">:</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>    <span class="n">session</span><span class="o">.</span><span class="n">configuration</span><span class="o">.</span><span class="n">add_rule</span><span class="p">(</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>        <span class="n">serial_number</span><span class="o">=</span><span class="s2">"US-12345"</span><span class="p">,</span>
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>        <span class="n">zones</span><span class="o">=</span><span class="n">zones</span>
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>    <span class="p">)</span>
 </code></pre></div>
 
 

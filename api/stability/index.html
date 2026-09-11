@@ -1329,7 +1329,9 @@ underscore, and every module not listed below — may change without
 notice. Optional extras (<code>ocr</code>, <code>nlp</code>) degrade to the documented
 fallback; the fallback is frozen, the extra's internals are not. For
 <code>ocr</code>, the fallback of <code>scan_pixel_content()</code> and
-<code>discover_redaction_zones()</code> is a <code>RuntimeError</code> (see Exceptions).</p>
+<code>discover_redaction_zones()</code> is a <code>RuntimeError</code> (see Exceptions), and
+a scan that ran reports the instances it could not read in
+<code>PhiReport.failures</code>.</p>
 <h2 id="frozen-at-10">Frozen at 1.0</h2>
 <p><strong>Package.</strong> <code>isocenter.Session</code>, <code>isocenter.Builder</code>,
 <code>isocenter.Equipment</code>, <code>isocenter.RedactionError</code>,
@@ -1504,7 +1506,7 @@ the <code>List[Patient]</code> the quickstart indexes), <code>configuration</cod
 <p><strong>Shapes the frozen methods return</strong> (attribute names).
 <code>IngestSummary(ingested, failures, declined, skipped)</code> plus <code>failed</code>;
 <code>ExportSummary(written_uids, failures)</code> plus <code>written</code>, <code>failed</code>;
-<code>PhiReport(findings)</code> with <code>__len__</code>, <code>__iter__</code>, <code>__getitem__</code>,
+<code>PhiReport(findings, failures)</code> with <code>__len__</code>, <code>__iter__</code>, <code>__getitem__</code>,
 <code>to_dataframe()</code>; <code>PhiFinding(entity_uid, entity_type, field_name,
 value, reason, tag, patient_id, entity, remediation_proposal, metadata,
 entity_path)</code>; <code>DiscoveryResult.filter(...)</code>, <code>.to_zones()</code>,
@@ -1521,6 +1523,10 @@ by its UID. <code>ingest()</code> does not admit a second instance with an SOP
 Instance UID the graph already holds (#431), so only a graph built or
 edited by hand can carry one UID on more than one instance, and findings
 on such a UID all resolve to a single one of those instances.</p>
+<p><code>PhiReport.failures</code> is a list of <code>(entity_uid, reason)</code>, one per
+instance <code>scan_pixel_content()</code> could not read in full, and is always a
+list; <code>audit()</code>'s is always empty, because a failure in its workers
+raises (#423).</p>
 <p><strong>Entities, as reached from <code>session.store</code>.</strong> The graph is <code>Patient</code>
 → <code>Study</code> → <code>Series</code> → <code>Instance</code>. Fields, in dataclass order (which is
 the positional constructor order, except where marked <code>init=False</code>):
@@ -1554,7 +1560,11 @@ drain and before any work is done (#400). <code>scan_pixel_content()</code> and
 <code>discover_redaction_zones()</code> raise <code>RuntimeError</code> when the <code>ocr</code> extra
 or the <code>tesseract</code> binary is unavailable to the calling process, before
 any worker is dispatched and before either method reads the graph
-(#422). <code>ValueError</code> from
+(#422). That check covers only the calling process: both methods also
+raise <code>RuntimeError</code> after the pass when at least one instance failed
+and none could be read (#423); a scan that read some instances returns
+its report with the others in <code>failures</code>, and discovery counts only the
+instances it read in <code>n_sources</code>. <code>ValueError</code> from
 <code>generate_report</code> on an unknown format.</p>
 <p><strong>Environment.</strong> Every <code>ISOCENTER_*</code> name in
 <a href="../../environment/">Environment Variables</a>, its default and its
@@ -1662,7 +1672,8 @@ in a 1.x release with a CHANGELOG entry naming both spellings:</p>
   <code>RedactionVerifier</code> (<code>__init__</code>, <code>get_matching_rule</code>, <code>is_covered</code>,
   <code>verify_instance</code>), <code>ConfigAutomator.suggest_config_updates</code>,
   <code>pixel_analysis.analyze_pixels</code>, <code>pixel_analysis.detect_text_regions</code>,
-  <code>pixel_analysis.HAS_OCR</code>, <code>pixel_analysis.OcrUnavailableError</code>;
+  <code>pixel_analysis.HAS_OCR</code>, <code>pixel_analysis.OcrUnavailableError</code>,
+  <code>pixel_analysis.PixelScanError</code>;
   <code>DiscoveryResult.get_density_matrix</code>,
   <code>visualize_heatmap</code>, <code>analyze_temporal_stability</code>, <code>inspect_clusters</code>.</li>
 <li><strong><code>DicomExporter.write_tree()</code></strong> (the serializer alone, used by the
