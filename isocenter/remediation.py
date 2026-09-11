@@ -350,6 +350,18 @@ class RemediationService:
 
         # Logging & Auditing
         if action_type:
+            # A Patient or Study field was written, so the same value
+            # goes onto each instance's own copy of the tag (#492).
+            # Here and not in the arms above: the arms end in the five
+            # `mark_modified()` lines `tests/test_remediation_invariants.py`
+            # pins by number, and this block sits below all of them.
+            # Before the REMEDIATED stamp below, which is only about
+            # `entity`; the instances keep their own status.
+            written = self._write_to_instances(entity, proposal.target_attr)
+            if written is not None:
+                verb = ("removed from" if action_type == "REMEDIATION_REMOVE"
+                        else "written to")
+                details += f"; {verb} {written} instance copies"
             # Recorded after the change, never before: remediation modifies
             # the entity, so a status stamped first would name a revision
             # the entity immediately leaves behind and would read as
@@ -439,6 +451,115 @@ class RemediationService:
         else:
             self.store_backend.log_audit(
                 REMEDIATION_DECLINED, finding.entity_uid, details)
+
+    #: The `Patient`/`Study` fields the exporter stamps onto every exported
+    #: instance from the entity, with the tag each is the value of
+    #: (`session._patient_attributes`, `_study_attributes`). Exactly these
+    #: four: those helpers also read `birth_date`, `sex` and
+    #: `accession_number` through `getattr`, and neither slots dataclass
+    #: has such a field, so those arms never fire.
+    #:
+    #: Keyed on the field, not on `PhiFinding.tag`: a hand-built finding
+    #: can carry a tag that disagrees with the field its proposal writes,
+    #: and it is the field that was written.
+    #:
+    #: A class attribute this far down the class rather than a module
+    #: constant at the top, on purpose: every line above the success
+    #: block of `_apply_single_remediation` is counted by the five
+    #: line-number pins in `tests/test_remediation_invariants.py`, and a
+    #: constant at the top of the module would move all five (#310).
+    ENTITY_FIELD_TAGS = {
+        "patient_name": "0010,0010",
+        "patient_id": "0010,0020",
+        "study_date": "0008,0020",
+        # Unreachable by any shipped scan: `Study.study_time` is never
+        # populated by ingest, and no inspector raises a finding on it.
+        # Kept deliberately, because the exporter stamps it from the
+        # entity (`_study_attributes`) and the rule of this table is
+        # "the fields the exporter stamps", not "the fields a scan
+        # reaches today" -- a hand-built finding on it gets the same
+        # one-truth treatment (#497 review, R7).
+        "study_time": "0008,0030",
+    }
+
+    def _write_to_instances(self, entity, field: str) -> Optional[int]:
+        """Write the value a Patient/Study field now holds onto each
+        instance beneath it that carries the field's tag (#492).
+
+        Returns how many instances were written, or None when the write
+        does not apply: `entity` has `set_attr` (it is an item, and the
+        arm wrote its tag directly), or `field` is not one the exporter
+        stamps.
+
+        The value is read back off the entity, after the arm wrote it,
+        rather than passed in from the arm: that is the one source the
+        exporter reads too (`_patient_attributes`, `_study_attributes`),
+        and it makes the three actions one case. REPLACE_TAG left the
+        replacement; SHIFT_DATE left the shifted date, rendered here as
+        the exporter renders it (`format_study_date`, "YYYYMMDD"), so an
+        instance's DA string stays a DA string; REMOVE_TAG left None,
+        which removes the tag from the instance as the exporter would
+        write nothing for it. Written as the entity's value and not as a
+        relative shift of the instance's own copy: a shift applied to a
+        copy already shifted by the instance's own SHIFT_DATE finding --
+        `anonymize(findings=[...])` takes them in any order -- would
+        shift it twice, and an instance whose own StudyDate differed
+        from the study's would stay different from what the file says.
+
+        Only a copy that exists is replaced. An instance without the tag
+        is not given one: the exporter stamps the patient module on
+        every file because the module is mandatory there, but a tag
+        fabricated onto the graph is #57's decoy in a new place.
+        Top-level `attributes` only, because the exporter's stamp
+        (`_merge(ds, ctx.patient_attributes)`) reaches the dataset root
+        only; a nested copy is the instance scan's to find.
+
+        Each instance keeps the PHI status it had, re-recorded at the
+        revision the write produced -- the "edit whose content is known"
+        exception, and the values written here are the patient module's
+        own replacements, which identify nobody. Not stamped REMEDIATED:
+        `anonymize(findings=[...])` with the patient's findings alone
+        would then vouch for an instance whose own IDENTIFIED findings
+        were never applied. Not left alone either: the write moves the
+        revision, and a status at the old revision reads UNSCANNED,
+        which the manifest reads as not anonymized (#486). An instance
+        already UNSCANNED stays so; a status it has left is not revived.
+        """
+        if hasattr(entity, "set_attr"):
+            return None
+        tag = self.ENTITY_FIELD_TAGS.get(field)
+        if tag is None:
+            return None
+
+        value = getattr(entity, field, None)
+        if hasattr(value, "strftime"):
+            # Lazy: io_handlers is the heavy module, and this is the
+            # one spelling of "a Study's date as a DA string" (#189).
+            from .io_handlers import format_study_date
+            value = format_study_date(value)
+
+        # A Patient walks its studies; a Study walks its own series and
+        # no sibling's. `getattr` with defaults because the arm fires
+        # for any object carrying the field, test doubles included.
+        studies = getattr(entity, "studies", None)
+        if studies is None:
+            studies = [entity]
+        written = 0
+        for study in studies:
+            for series in getattr(study, "series", []):
+                for instance in getattr(series, "instances", []):
+                    if tag not in instance.attributes:
+                        continue
+                    status = instance.phi_status
+                    if value is None:
+                        del instance.attributes[tag]
+                        instance.mark_modified()
+                    else:
+                        instance.set_attr(tag, value)
+                    if status is not PhiStatus.UNSCANNED:
+                        instance.record_phi_status(status)
+                    written += 1
+        return written
 
     def _resolve_patient_id(self, entity, proposal: PhiRemediation = None) -> Optional[str]:
         """

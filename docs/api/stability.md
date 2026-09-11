@@ -318,8 +318,8 @@ in a 1.x release with a CHANGELOG entry naming both spellings:
   Each item's `anonymized` is `true` when the last tag-policy PHI scan
   left no identifier unremediated on that instance's patient, study or
   instance, and none of the three has been edited since: each carries
-  `REMEDIATED` or `CLEARED` at its current revision (#486). Two things it
-  is not. It is not "`anonymize()` ran": an input the scan found clean
+  `REMEDIATED` or `CLEARED` at its current revision (#486). Three things
+  it is not. It is not "`anonymize()` ran": an input the scan found clean
   reads `true` after `audit()` alone. And it says nothing about burned-in
   pixel text, which the tag scan does not read. And it does not see
   inside sequences: `anonymize()` stamps the nested item it changed,

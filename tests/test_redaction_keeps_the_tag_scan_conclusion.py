@@ -237,9 +237,18 @@ def _derivation_item_edit(inst):
     inst.sequences["0008,9215"].items.append(item)
 
 
+def _burned_in_annotation_edit(inst):
+    # The one flag the first three arms left uncovered: a comparison
+    # that accepted whatever BurnedInAnnotation held after the pass
+    # (`expected[1]` read back off `after_values`) passed all three
+    # (#491 re-check).
+    inst.set_attr("0028,0301", "NO John^Smith")
+
+
 @pytest.mark.parametrize("edit", [_derivation_description_edit, _image_type_edit,
-                                  _derivation_item_edit],
-                         ids=["derivation-description", "image-type", "derivation-item"])
+                                  _derivation_item_edit, _burned_in_annotation_edit],
+                         ids=["derivation-description", "image-type", "derivation-item",
+                              "burned-in-annotation"])
 @pytest.mark.parametrize("path", ["session", "serial"])
 def test_a_foreign_value_in_a_tag_redaction_writes_is_not_carried(
         tmp_path, threads, monkeypatch, edit, path):
@@ -262,7 +271,12 @@ def test_a_foreign_value_in_a_tag_redaction_writes_is_not_carried(
         session.save(sync=True)
         _edit_during_the_pass(monkeypatch, edit)
         _redact_by(path, session, instance)
-        assert _redacted(instance), instance.attributes
+        # Proof the pass wrote. The burned-in arm overwrites the very
+        # flag `_redacted` reads, so for it the new SOP UID is the proof.
+        if edit is _burned_in_annotation_edit:
+            assert instance.sop_instance_uid != UID, instance.attributes
+        else:
+            assert _redacted(instance), instance.attributes
         assert instance.phi_status is PhiStatus.UNSCANNED
 
 
