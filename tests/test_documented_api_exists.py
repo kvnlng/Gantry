@@ -74,17 +74,20 @@ NOT_OURS = frozenset({
 # short alias in a future fence goes unchecked until someone adds it.
 #
 # The deliberate blind spot, stated in full because understating it
-# would be the same defect this file exists for: twelve documented calls
+# would be the same defect this file exists for: thirteen documented calls
 # sit on receivers outside this set and are values of ours --
-# `result.*` (eleven: six in `docs/ocr.md`, five in README's zone
-# discovery section) and `filtered.to_zones()`. All twelve were
-# hand-resolved against `isocenter/discovery.py` and
-# `isocenter/privacy.py` and all exist, and README's five are executed
-# for their *output* by `tests/test_documented_output_matches.py` (#304),
-# which resolves them for real. The count moved from seven to twelve
-# when #303 restored the README section; it is stated here rather than
-# left vague because an understated blind spot is the same defect this
-# file exists for. The rest (`plt`, `df`, `re`,
+# `result.*` (twelve: six in `docs/ocr.md`, five in README's zone
+# discovery section, one in `docs/configuration.md`) and
+# `filtered.to_zones()`. All thirteen were hand-resolved against
+# `isocenter/discovery.py` and `isocenter/privacy.py` and all exist;
+# README's five are executed for their *output* by
+# `tests/test_documented_output_matches.py` (#304), and configuration.md's
+# `result.to_zones()` is executed by
+# `tests/test_documented_zones_are_zone_space.py` (#424), both of which
+# resolve them for real. The count moved from seven to twelve when #303
+# restored the README section, and to thirteen with #424; it is stated
+# here rather than left vague because an understated blind spot is the
+# same defect this file exists for. The rest (`plt`, `df`, `re`,
 # and calls on unnamed receivers) are third-party or chained
 # expressions and are none of our business. Do not widen `ROOTS` to a
 # bare "every attribute call" without reading the allowlist cost above.

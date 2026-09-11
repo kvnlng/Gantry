@@ -178,13 +178,15 @@ Discovery uses a tiered approach to classify text:
 ### Applying Zones
 
 Once identified, add the `zone` coordinates to your `priv_config.yaml`.
+Take them from `zone["zone"]` in `to_zones()`, which is `[y1, y2, x1, x2]`,
+not from a candidate's `box`, which is `[x, y, w, h]`.
 
 ```yaml
 machines:
   - serial_number: "SN-NEW"
     redaction_zones:
-      # Found: PROPER_NOUN ['Smith^John']
-      - [20, 50, 200, 30]
+      # Found: PROPER_NOUN ['Smith^John'] (candidate box [20, 50, 200, 30])
+      - [50, 80, 20, 220]
 ```
 
 ### Validation
@@ -235,9 +237,9 @@ machines:
   - serial_number: "SN-12345"
     model_name: "CT-Scanner-X"
     redaction_zones:
-      # [x, y, width, height]
-      - [0, 0, 200, 100]       # Top-Left Info Box
-      - [400, 400, 100, 50]    # Bottom-Right Label
+      # [y1, y2, x1, x2] (row start, row end, column start, column end)
+      - [0, 100, 0, 200]       # Top-Left Info Box
+      - [400, 450, 400, 500]   # Bottom-Right Label
 ```
 
 ## API Reference

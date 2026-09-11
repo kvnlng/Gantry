@@ -359,19 +359,26 @@ session.configuration.set_phi_tag("0008,1030", "REPLACE", replacement="RESEARCH 
 
 To help identify pixel redaction zones (e.g., for burned-in PHI), Isocenter provides a discovery tool that analyzes a sample of images from a specific machine to find common text "hotspots".
 
+`discover_redaction_zones()` returns a `DiscoveryResult` holding the raw text
+candidates, not zones. `to_zones()` groups them, and each group's `zone` entry
+is the `[y1, y2, x1, x2]` list a rule stores; see
+[Zone Discovery](ocr.md#setting-up-new-machines-zone-discovery) for filtering
+and tuning the grouping.
+
 ```python
 # Discover potential redaction zones for a machine
-suggested_zones = session.discover_redaction_zones(
-    serial_number="US-12345", 
+result = session.discover_redaction_zones(
+    serial_number="US-12345",
     sample_size=50
 )
+zones = [z["zone"] for z in result.to_zones()]
 
-print(f"Discovered {len(suggested_zones)} zones: {suggested_zones}")
+print(f"Discovered {len(zones)} zones: {zones}")
 
 # Apply these zones to your configuration
-if suggested_zones:
+if zones:
     session.configuration.add_rule(
         serial_number="US-12345",
-        zones=suggested_zones
+        zones=zones
     )
 ```
