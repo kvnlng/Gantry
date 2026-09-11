@@ -16,6 +16,11 @@ ingest none. §3 filed the fallback that would move the cell as a
 capability decision (§9 Q2); the owner ruled it in for v0.9.6, and #416
 added it to `_decode_pixels` and `(2, True)` to the frozenset in the same
 change. Both clauses are struck in place below.
+**Superseded in part:** #447 (v0.9.6). §6.2's ruling to leave
+`README.md:34` alone because the fix "makes the sentence true" -- it
+never did for RLE, whose handler arm called a function imagecodecs does
+not have -- and §6.3's rewrite of `test_rle_lossless_handling`, which
+#447 deletes with the arm. Both are struck in place.
 
 Both issues are about a **snapshot that stopped describing the thing it was
 taken of**, and in both the snapshot is between the caller's pixels and the
@@ -669,10 +674,13 @@ for is the one case it has never handled.**
 
 `README.md:34` -- "JPEG Lossless, JPEG 2000, JPEG-LS, RLE, and baseline JPEG,
 through `imagecodecs`, with strict validation on the way out" -- is the
-sentence #407 calls an overstatement. **Ruling: leave `README.md` alone.** The
+sentence #407 calls an overstatement. ~~**Ruling: leave `README.md` alone.** The
 fix makes the sentence true rather than requiring it to be softened; editing
 it in the same PR would be a claims change made on the strength of a defect
-that no longer exists. Recorded here so a reviewer does not file its absence.
+that no longer exists. Recorded here so a reviewer does not file its absence.~~
+*[Superseded in part, #447: the fix never made the RLE clause true -- the
+handler's RLE arm called `imagecodecs.rle_decode`, which does not exist --
+and #447 rewrites the README line.]*
 
 ### 6.3 The fix
 
@@ -722,11 +730,14 @@ on passing because the real `generate_frames` also raises on `b"fake_pixel_data"
 so the test proves nothing about the arm it names. **Delete the import first,
 watch both fail, then rewrite them.** The rewrites:
 
-- `test_rle_lossless_handling` -- build real encapsulated bytes
+- ~~`test_rle_lossless_handling` -- build real encapsulated bytes
   (`encapsulate([b"rle_chunk"])`), keep the `imagecodecs` mock, and add the
   assertion that makes it a #407 test:
   `assert mock_ic.rle_decode.call_args[0][0] == b"rle_chunk"` -- the codec is
-  handed the fragment, not the BOT and the fragment.
+  handed the fragment, not the BOT and the fragment.~~
+  *[Superseded in part, #447: the mock pinned a function imagecodecs does
+  not have; the test is deleted with the arm and replaced by
+  `test_the_handler_does_not_claim_rle`.]*
 - `test_decode_error_handling` -- same shape, with
   `mock_ic.ljpeg_decode.side_effect = ValueError("Bad data")`, still asserting
   the `RuntimeError` wrap. Now it fails for the reason it names.

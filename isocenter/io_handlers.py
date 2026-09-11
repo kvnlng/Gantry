@@ -303,10 +303,23 @@ _NESTED_PIXEL_DATA_TAG = Tag(0x7fe0, 0x0010)
 #: meta through the same `_decode_pixels` the top level uses. The top
 #: level had the same problem for every 8-bit YBR source, native ones
 #: included; it is fixed in the same change. So JPEG Baseline (`.4.50`)
-#: and JPEG 2000 (`.4.91`) are in. JPEG Extended (`.4.51`), JPEG-LS
-#: Near-Lossless (`.4.81`) and HTJ2K (`.4.203`) stay out because they are
-#: unmeasured, not because they are unsafe -- an allow-list's whole point
-#: is that its unmeasured side is the refusing side.
+#: and JPEG 2000 (`.4.91`) are in.
+#:
+#: JPEG Extended (`.4.51`) and JPEG-LS Near-Lossless (`.4.81`) joined them
+#: in #387, measured the same way through a sequence item. Under `.4.51`,
+#: pydicom's Pillow plugin decodes an 8-bit baseline stream and labels it
+#: RGB exactly as under `.4.50`; a true 12-bit SOF1 icon still fails to
+#: decode here and keeps its loss row, because admission only stops the
+#: gate refusing what the decoder can read -- it claims no decode. `.4.81`
+#: decodes through the imagecodecs fallback (#416), within the stream's
+#: NEAR bound, under the labels `_FALLBACK_PHOTOMETRICS` gives it.
+#:
+#: HTJ2K (`.4.203`) stays out: pydicom has no plugin for it here and the
+#: imagecodecs handler has no HTJ2K arm, so nothing in this environment
+#: decodes it. `.4.201` and `.4.202` are listed and are no better off --
+#: every such icon still drops, from the decode's `except` arm with the
+#: generic row. An allow-list's whole point is that its unmeasured side is
+#: the refusing side.
 #:
 #: Written as UID strings rather than `pydicom.uid` names on purpose: the
 #: names are not stable across pydicom versions, and a draft of #183's spec
@@ -320,9 +333,11 @@ _CARRIABLE_TRANSFER_SYNTAXES = frozenset({
     "1.2.840.10008.1.2.2",      # Explicit VR Big Endian (native)
     "1.2.840.10008.1.2.5",      # RLE Lossless
     "1.2.840.10008.1.2.4.50",   # JPEG Baseline (Process 1), measured (#372)
+    "1.2.840.10008.1.2.4.51",   # JPEG Extended (Process 2 & 4), measured (#387)
     "1.2.840.10008.1.2.4.57",   # JPEG Lossless, Non-Hierarchical
     "1.2.840.10008.1.2.4.70",   # JPEG Lossless, First-Order Prediction
     "1.2.840.10008.1.2.4.80",   # JPEG-LS Lossless
+    "1.2.840.10008.1.2.4.81",   # JPEG-LS Near-Lossless, measured (#387)
     "1.2.840.10008.1.2.4.90",   # JPEG 2000 Image Compression (Lossless Only)
     "1.2.840.10008.1.2.4.91",   # JPEG 2000 Image Compression, measured (#372)
     "1.2.840.10008.1.2.4.201",  # HTJ2K Lossless
@@ -374,10 +389,18 @@ _IMAGECODECS_FALLBACK_SYNTAXES = frozenset({
 #: - **Monochrome and palette indices** come back as stored under every
 #:   syntax here (measured: a PALETTE COLOR JPEG Lossless frame decodes to
 #:   its index array, and pydicom's `as_array` applies no palette either).
-#: - **RGB** maps to itself under JPEG 2000 and JPEG-LS, where a colour
+#: - **RGB** maps to itself under all three families, where a colour
 #:   decode is measured exact and interleaved, 8- and 16-bit. A
 #:   planar/interleaved swap holds the same samples in the same shape, so
 #:   no check after the decode would see one; only a measurement can.
+#:   **JPEG Lossless joined in #387.** #416 left it out believing no
+#:   colour JPEG Lossless stream could be built here: `ljpeg_encode`
+#:   refuses three components. `jpeg8_encode(lossless=True)` does not, and
+#:   its 3-component streams decode exactly, predictors 1 and 5, at
+#:   imagecodecs 2024.6.1 and 2026.8.16, with every channel distinct so a
+#:   plane swap would show. Measure with that encoder, not `ljpeg_encode`,
+#:   before concluding a colour row is unmeasured. YBR stays out under
+#:   JPEG Lossless: no YBR stream was measured.
 #: - **`YBR_RCT` and `YBR_ICT` map to RGB under JPEG 2000** (#448).
 #:   `jpeg2k_decode` undoes the codestream's colour transform and returns
 #:   RGB, whatever the multiple-component-transform flag says (measured
@@ -390,9 +413,10 @@ _FALLBACK_GREY = {label: label for label in
 _FALLBACK_J2K = {**_FALLBACK_GREY, "RGB": "RGB",
                  "YBR_RCT": "RGB", "YBR_ICT": "RGB"}
 _FALLBACK_JPEGLS = {**_FALLBACK_GREY, "RGB": "RGB"}
+_FALLBACK_LJPEG = {**_FALLBACK_GREY, "RGB": "RGB"}
 _FALLBACK_PHOTOMETRICS = {
-    "1.2.840.10008.1.2.4.57": _FALLBACK_GREY,
-    "1.2.840.10008.1.2.4.70": _FALLBACK_GREY,
+    "1.2.840.10008.1.2.4.57": _FALLBACK_LJPEG,
+    "1.2.840.10008.1.2.4.70": _FALLBACK_LJPEG,
     "1.2.840.10008.1.2.4.80": _FALLBACK_JPEGLS,
     "1.2.840.10008.1.2.4.81": _FALLBACK_JPEGLS,
     "1.2.840.10008.1.2.4.90": _FALLBACK_J2K,

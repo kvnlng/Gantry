@@ -754,48 +754,145 @@ def test_a_lossy_icon_is_carried_and_relabelled(tmp_path):
     assert all(abs(int(a) - e) <= 4 for a, e in zip(px, LOSSY_ICON_RGB)), tuple(px)
 
 
-def test_an_unmeasured_lossy_icon_keeps_its_loss_row_and_carries_nothing(
-        tmp_path):
-    """The allow-list gate refuses a syntax it does not name, in behaviour.
+def test_a_jpeg_extended_icon_is_carried_and_relabelled(tmp_path):
+    """N1: a JPEG Extended (.4.51) icon is carried, as RGB (#387).
 
-    Added by review of #391. Until then nothing witnessed the gate at
-    `_decode_nested_pixels` -- deleting its three lines (`if
-    transfer_syntax not in _CARRIABLE_TRANSFER_SYNTAXES: dropped.append(
-    ...); continue`) left this file and `test_private_binary_ingest.py`
-    at 40 passed. The reason is which fixtures can *witness* a refusal:
-    an icon under JPEG-LS Near-Lossless or HTJ2K fails to decode in this
-    venv and lands in `dropped` from the `except` arm, gate or no gate,
-    and main's `.4.50` test was a raw `MONOCHROME2` icon that failed the
-    same way (spec §10 item 2). So the only refusal the gate ever made
-    on its own was for a syntax whose bytes the decoder *would* have
-    taken -- and the one such syntax pydicom's Pillow plugin decodes
-    under a declaration the list excludes is JPEG Extended (.4.51),
-    over a baseline codestream. That is this fixture: `_jpeg_icon_item`
-    unchanged, the file declaring `.4.51`. Without the gate it is
-    carried and relabelled `RGB`; with it, the loss row files and the
-    exported item has no Pixel Data at all -- refused, never half-done
-    (property 3 of the module docstring).
+    Until #387 this file declared `.4.51` to witness the gate: the icon was
+    refused only because the allow-list did not name the syntax. It was
+    measured instead, through a sequence item: pydicom's Pillow plugin
+    decodes an 8-bit baseline stream under a `.4.51` label and labels it
+    RGB, exactly as it does under `.4.50` (the test above), so the item is
+    relabelled from the decoder's meta. A true 12-bit SOF1 icon still
+    fails to decode here and keeps its row -- admission is not a decode
+    claim, it only stops the gate refusing what the decoder can read.
 
-    Killed by deleting the gate: `pixels:` appears in the blob kinds and
-    the `7fe0,0010` row is gone.
+    Killed by removing JPEG Extended from `_CARRIABLE_TRANSFER_SYNTAXES`
+    (the loss row returns and the export carries no Pixel Data).
     """
-    db, _src = _ingest(tmp_path, "unmeasured", icons=[_jpeg_icon_item()],
+    db, _src = _ingest(tmp_path, "extended", icons=[_jpeg_icon_item()],
                        transfer_syntax=JPEGExtended12Bit,
                        top_level_pixels=False)
 
-    kinds = _blob_kinds(db)
-    assert not [k for k in kinds if k.startswith("pixels:")], (
-        "an icon under JPEG Extended (.4.51), which is not in "
-        "`_CARRIABLE_TRANSFER_SYNTAXES`, was carried: %r" % kinds)
-    rows = _data_loss_rows(db)
-    assert [d for d, _s in rows if "7fe0,0010" in d], (
-        "the refused icon filed no DATA_LOSS row for (7fe0,0010): %r" % rows)
+    assert [k for k in _blob_kinds(db) if k.startswith("pixels:")], \
+        _blob_kinds(db)
+    assert not [d for d, _s in _data_loss_rows(db) if "7fe0,0010" in d], \
+        _data_loss_rows(db)
 
     out = tmp_path / "out"
     _export(db, out)
     icon = _exported(out).IconImageSequence[0]
-    assert "PixelData" not in icon, (
-        "the exported icon item carries Pixel Data the store refused")
+    assert icon.PhotometricInterpretation == "RGB", \
+        icon.PhotometricInterpretation
+    raw = icon.PixelData
+    assert len(raw) == LOSSY_ICON_SIZE * LOSSY_ICON_SIZE * 3, len(raw)
+    assert all(abs(a - e) <= 4 for a, e in zip(raw[:3], LOSSY_ICON_RGB)), (
+        "the icon's first triple is %r, not %r" % (tuple(raw[:3]),
+                                                   LOSSY_ICON_RGB))
+
+
+#: A 4x4 icon and its colour twin, channels distinct so a plane swap shows.
+NEAR_ICON_MONO = np.array([[10, 60, 110, 160], [20, 70, 120, 170],
+                           [30, 80, 130, 180], [40, 90, 140, 250]],
+                          dtype=np.uint8)
+NEAR_ICON_RGB = np.stack([NEAR_ICON_MONO, 255 - NEAR_ICON_MONO,
+                          NEAR_ICON_MONO // 2], axis=-1)
+#: What a NEAR=2 JPEG-LS decode of each returns, captured once from
+#: `imagecodecs.jpegls_decode` (2026.8.16) and checked in. Near-lossless
+#: means each sample may differ from its source by up to NEAR, so the
+#: source alone is not the answer; this is.
+NEAR_ICON_DECODED = {
+    "MONOCHROME2": [
+        [10, 60, 110, 161],
+        [20, 70, 121, 171],
+        [31, 82, 129, 181],
+        [38, 92, 138, 252],
+    ],
+    "RGB": [
+        [[10, 245, 5], [60, 195, 30], [109, 145, 55], [158, 95, 79]],
+        [[20, 235, 10], [70, 184, 35], [121, 137, 61], [168, 85, 84]],
+        [[31, 223, 16], [79, 174, 42], [132, 125, 64], [179, 73, 90]],
+        [[39, 214, 18], [89, 167, 47], [139, 114, 72], [250, 5, 127]],
+    ],
+}
+
+
+@pytest.mark.parametrize("photometric", ["MONOCHROME2", "RGB"])
+def test_a_jpeg_ls_near_lossless_icon_is_carried(tmp_path, photometric):
+    """N2: a JPEG-LS Near-Lossless (.4.81) icon is carried (#387).
+
+    Measured through a sequence item: pydicom has no JPEG-LS plugin here,
+    so the icon decodes through the imagecodecs fallback (#416), within
+    the stream's NEAR bound, and keeps its label. Until #387 the gate
+    refused it before any decode.
+
+    Killed by removing JPEG-LS Near-Lossless from
+    `_CARRIABLE_TRANSFER_SYNTAXES` (the loss row returns).
+    """
+    import imagecodecs
+    from pydicom.encaps import encapsulate
+    from pydicom.uid import JPEGLSNearLossless
+
+    source = NEAR_ICON_RGB if photometric == "RGB" else NEAR_ICON_MONO
+    samples = 3 if photometric == "RGB" else 1
+    icon = _icon_item(
+        payload=encapsulate([imagecodecs.jpegls_encode(source, level=2)]),
+        rows=4, cols=4, samples=samples, photometric=photometric,
+        planar=0 if samples == 3 else None, encapsulated=True)
+    db, _src = _ingest(tmp_path, "near", icons=[icon],
+                       transfer_syntax=JPEGLSNearLossless,
+                       top_level_pixels=False)
+
+    assert not [d for d, _s in _data_loss_rows(db) if "7fe0,0010" in d], \
+        _data_loss_rows(db)
+    out = tmp_path / "out"
+    _export(db, out)
+    exported = _exported(out).IconImageSequence[0]
+    assert exported.PhotometricInterpretation == photometric
+    got = np.frombuffer(exported.PixelData, dtype=np.uint8).reshape(
+        source.shape)
+    assert got.tolist() == NEAR_ICON_DECODED[photometric]
+    assert int(np.abs(got.astype(int) - source.astype(int)).max()) <= 2
+
+
+def test_the_gate_refuses_a_syntax_it_does_not_name(monkeypatch):
+    """N4: the allow-list gate refuses, in behaviour, and only it does.
+
+    Added by review of #391, when deleting the gate's three lines left
+    this file green: every icon a fixture could build under an unlisted
+    syntax failed to decode anyway and landed in `dropped` from the
+    `except` arm, gate or no gate. Its witness was a JPEG Extended icon,
+    the one unlisted syntax the decoder reads -- and #387 measured and
+    listed `.4.51`, so that witness is gone and no listed-or-not syntax
+    is left that the decoder takes. So the gate is exercised directly:
+    the allow-list narrowed to exclude JPEG Baseline, whose icon the
+    decoder does read (the control, unpatched, carries it).
+
+    In-process on purpose. A Session hands ingest to its own process
+    pool, which a monkeypatch of the module global does not reach.
+
+    Killed by deleting the gate: the narrowed call carries the icon.
+    """
+    from isocenter import io_handlers
+
+    def decode(allow_list):
+        monkeypatch.setattr(io_handlers, "_CARRIABLE_TRANSFER_SYNTAXES",
+                            allow_list)
+        ds = Dataset()
+        ds.file_meta = FileMetaDataset()
+        ds.file_meta.TransferSyntaxUID = JPEGBaseline8Bit
+        dropped = []
+        carried = io_handlers._decode_nested_pixels(
+            ds, [((), "7fe0,0010", "OB", _jpeg_icon_item())], dropped,
+            None, offset_tables=[])
+        return carried, dropped
+
+    carried, dropped = decode(_CARRIABLE_TRANSFER_SYNTAXES)
+    assert (len(carried), dropped) == (1, []), dropped
+
+    carried, dropped = decode(
+        _CARRIABLE_TRANSFER_SYNTAXES - {str(JPEGBaseline8Bit)})
+    assert carried == []
+    assert dropped == [("7fe0,0010", "OB")]
 
 
 def test_the_carriable_transfer_syntaxes_are_the_uids_pydicom_names(tmp_path):
@@ -808,24 +905,26 @@ def test_the_carriable_transfer_syntaxes_are_the_uids_pydicom_names(tmp_path):
     that syntax, which reads exactly like "this codec is not supported".
 
     The list is no longer lossless-only. JPEG Baseline and JPEG 2000 are
-    in it since #372, because their colour-space behaviour through a
-    nested item was measured and the label is corrected from the
-    decoder's meta. JPEG Extended, JPEG-LS Near-Lossless and HTJ2K stay
-    out until measured the same way -- an allow-list's unmeasured side
-    is its refusing side.
+    in it since #372, and JPEG Extended and JPEG-LS Near-Lossless since
+    #387, each because its behaviour through a nested item was measured
+    (N1, N2) and the label is corrected from the decoder's meta. HTJ2K
+    (.4.203) stays out: nothing in this environment decodes it -- an
+    allow-list's unmeasured side is its refusing side.
+
+    An exact set, not a membership check, so a syntax added without a
+    test that names it is red here too.
     """
     from pydicom import uid
 
-    for name in ("ImplicitVRLittleEndian", "ExplicitVRLittleEndian",
-                 "DeflatedExplicitVRLittleEndian", "ExplicitVRBigEndian",
-                 "RLELossless", "JPEGLossless", "JPEGLosslessSV1",
-                 "JPEGLSLossless", "JPEG2000Lossless", "HTJ2KLossless",
-                 "HTJ2KLosslessRPCL", "JPEGBaseline8Bit", "JPEG2000"):
-        assert str(getattr(uid, name)) in _CARRIABLE_TRANSFER_SYNTAXES, name
-
-    for name in ("JPEGExtended12Bit", "JPEGLSNearLossless", "HTJ2K"):
-        assert str(getattr(uid, name)) not in _CARRIABLE_TRANSFER_SYNTAXES, \
-            name
+    names = ("ImplicitVRLittleEndian", "ExplicitVRLittleEndian",
+             "DeflatedExplicitVRLittleEndian", "ExplicitVRBigEndian",
+             "RLELossless", "JPEGLossless", "JPEGLosslessSV1",
+             "JPEGLSLossless", "JPEG2000Lossless", "HTJ2KLossless",
+             "HTJ2KLosslessRPCL", "JPEGBaseline8Bit", "JPEG2000",
+             "JPEGExtended12Bit", "JPEGLSNearLossless")
+    assert _CARRIABLE_TRANSFER_SYNTAXES == frozenset(
+        str(getattr(uid, name)) for name in names)
+    assert str(uid.HTJ2K) not in _CARRIABLE_TRANSFER_SYNTAXES
 
 
 # --- 4. Both export paths ------------------------------------------------

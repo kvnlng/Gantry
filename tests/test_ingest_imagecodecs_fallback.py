@@ -520,7 +520,7 @@ def test_three_samples_under_a_one_sample_header_are_refused(ingest):
 
 
 # ---------------------------------------------------------------------------
-# F13 -- which colour spaces are labelled is decided per syntax
+# Y4, Y5, F13 -- which colour spaces are labelled is decided per syntax
 # ---------------------------------------------------------------------------
 
 #: A 4x12 greyscale frame: 48 samples, the count a 4x4 RGB header needs.
@@ -544,40 +544,82 @@ def test_the_colour_spaces_the_fallback_labels_are_chosen_per_syntax():
 
     Every syntax has a row. A label maps to itself where the decode is
     measured to leave it true: greyscale and palette everywhere, RGB under
-    JPEG 2000 and JPEG-LS. It maps to another where the decode changes it:
-    JPEG 2000's `YBR_RCT` and `YBR_ICT` come back RGB (Y1, #448).
+    all three families (JPEG Lossless since #387, Y5). It maps to another
+    where the decode changes it: JPEG 2000's `YBR_RCT` and `YBR_ICT` come
+    back RGB (Y1, #448).
     """
     grey = {label: label for label in _GREY}
     assert set(_FALLBACK_PHOTOMETRICS) == _IMAGECODECS_FALLBACK_SYNTAXES
     j2k = {**grey, "RGB": "RGB", "YBR_RCT": "RGB", "YBR_ICT": "RGB"}
     jpegls = {**grey, "RGB": "RGB"}
+    ljpeg = {**grey, "RGB": "RGB"}
     assert {ts: dict(labels) for ts, labels in
             _FALLBACK_PHOTOMETRICS.items()} == {
-        LJPEG: grey, LJPEG_SV1: grey,
+        LJPEG: ljpeg, LJPEG_SV1: ljpeg,
         JPEGLS: jpegls, JPEGLS_NEAR: jpegls,
         J2K_LOSSLESS: j2k, J2K: j2k}
 
 
-@pytest.mark.parametrize("ts", [LJPEG, LJPEG_SV1])
-def test_a_colour_jpeg_lossless_file_is_refused_naming_space_and_syntax(
-        ingest, ts):
-    """F13: RGB is not labelled under JPEG Lossless.
+def _colour_ljpeg(ts, want, photometric="RGB"):
+    """A 3-component JPEG Lossless stream, written by libjpeg-turbo.
 
-    There is no colour JPEG Lossless stream here to measure a decode
-    against: `imagecodecs.ljpeg_encode` refuses three components. And
-    imagecodecs ignores PlanarConfiguration, so a planar/interleaved
-    swap would pass both the size and the shape checks. So the colour
-    space is refused before any decode. This fixture's stream is
-    greyscale with the right sample count; the shape check would refuse
-    it too, in other words, which is why the assertion is on the reason.
+    `imagecodecs.ljpeg_encode` refuses three components, which is why
+    #416 concluded no colour JPEG Lossless stream could be built here.
+    `jpeg8_encode(lossless=True)` writes one. Predictor 1 under .70,
+    which allows only that one; 5 under .57, any other.
     """
-    ds = _dataset(ts, [WIDE_MONO16], photometric="RGB")
-    ds.SamplesPerPixel, ds.Columns = 3, 4
+    ds = _dataset(ts, [WIDE_MONO16], photometric=photometric)
+    ds.SamplesPerPixel, ds.Columns = 3, want.shape[1]
+    ds.Rows = want.shape[0]
     ds.PlanarConfiguration = 0
-    _session, summary, _db = ingest(ds)
+    ds.BitsAllocated = ds.BitsStored = want.dtype.itemsize * 8
+    ds.HighBit = ds.BitsStored - 1
+    ds.PixelData = encapsulate([imagecodecs.jpeg8_encode(
+        want, lossless=True, predictor=1 if ts == LJPEG_SV1 else 5,
+        bitspersample=ds.BitsStored)], has_bot=True)
+    ds["PixelData"].is_undefined_length = True
+    return ds
+
+
+@pytest.mark.parametrize("ts", [LJPEG, LJPEG_SV1])
+@pytest.mark.parametrize("want", [RGB8, RGB16["uint16"]],
+                         ids=["uint8", "uint16"])
+def test_a_colour_jpeg_lossless_file_ingests_exactly(ingest, ts, want):
+    """Y5 (was F13's refusal): RGB under JPEG Lossless, measured (#387).
+
+    F13 refused it, on the premise that no colour JPEG Lossless stream
+    could be built here to measure a decode against. That premise was
+    false: this stream is one. It decodes exactly at 8 and 16 bits, at
+    imagecodecs 2024.6.1 and 2026.8.16, on 3.12 and 3.14t. Every sample
+    in `RGB8` and `RGB16` differs from its neighbours in the pixel, so a
+    plane swap or a planar/interleaved mix-up after the decode would not
+    compare equal.
+    """
+    session, summary, _db = ingest(_colour_ljpeg(ts, want))
+    assert (summary.ingested, summary.failures) == (1, [])
+    inst, got = _stored(session)
+    assert got.dtype == want.dtype
+    assert got.shape == want.shape
+    assert got.tolist() == want.tolist()
+    assert inst.attributes["0028,0004"] == "RGB"
+
+
+@pytest.mark.parametrize("ts", [LJPEG, LJPEG_SV1])
+def test_a_ybr_jpeg_lossless_file_is_refused_naming_space_and_syntax(
+        ingest, ts):
+    """F13, what stays: YBR under JPEG Lossless is still refused.
+
+    No YBR JPEG Lossless stream was measured. JPEG Lossless has no colour
+    transform of its own, so a decoder would hand back the stored YBR
+    samples, and whether this fallback should convert them is a decision
+    nobody has measured for this syntax. Refused before the decode,
+    naming the declared space and the syntax.
+    """
+    _session, summary, _db = ingest(_colour_ljpeg(ts, RGB8,
+                                                  photometric="YBR_FULL"))
     assert summary.ingested == 0
     why = _fallback_reason(summary)
-    assert "'RGB'" in why, why
+    assert "'YBR_FULL'" in why, why
     assert ts in why, why
 
 
