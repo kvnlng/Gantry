@@ -411,7 +411,8 @@ TARGETS = {
                                   "tests/test_wfdb_conformance.py",
                                   "tests/test_wfdb_writer.py",
                                   "tests/test_worker_loss_is_reported.py",
-                                  "tests/test_ybr_jpegls_read_doors.py"], 30),
+                                  "tests/test_ybr_jpegls_read_doors.py",
+                                  "tests/test_ybr_read_door_labels.py"], 30),
     # 453 sites. Until #383 this module had no row at all, so no mutant
     # of `_hold_sidecar_gate`, `_hold_pass_lock`, `_refuse_while_pass_open`,
     # `_flock_within`, `_SIDECAR_GATE_TIMEOUT_S`, the `:memory:` temp-file
@@ -677,7 +678,8 @@ TARGETS = {
                               "tests/test_wfdb_start_date_honesty.py",
                               "tests/test_wfdb_writer.py",
                               "tests/test_worker_loss_is_reported.py",
-                              "tests/test_ybr_jpegls_read_doors.py"],
+                              "tests/test_ybr_jpegls_read_doors.py",
+                              "tests/test_ybr_read_door_labels.py"],
                              30),
     # 196 sites. Until #419 this module had no row, so the persistence
     # bookkeeping every CLAUDE.md trap is about -- `mark_modified`,
@@ -869,13 +871,15 @@ TARGETS = {
                                "tests/test_wfdb_writer.py",
                                "tests/test_worker_loss_is_reported.py",
                                "tests/test_worker_start_is_serialised.py",
-                               "tests/test_ybr_jpegls_read_doors.py"],
+                               "tests/test_ybr_jpegls_read_doors.py",
+                               "tests/test_ybr_read_door_labels.py"],
                               30),
-    # 79 sites; budget 60 is stride 1 (79 // 60), so every site is
+    # 81 sites; budget 60 is stride 1 (81 // 60), so every site is
     # probed, exhaustive because it is cheap, like parallel.py's 80. It
     # stays stride 1 until the module passes 119 sites.
     #
-    # Seven files (the seventh, test_ybr_jpegls_read_doors.py, is #483's),
+    # Eight files -- the seventh, test_ybr_jpegls_read_doors.py, is
+    # #483's, and the eighth, test_ybr_read_door_labels.py, is #482's --
     # and it takes the widened `_importers` (#419) to see them: several
     # reach this module as `from isocenter import
     # imagecodecs_handler`, which the old stem-only scan could not read.
@@ -900,6 +904,16 @@ TARGETS = {
     #   - the print in `is_available()` is equivalent now. It was the only
     #     place the import failure's cause reached anyone until #444 put
     #     the cause in the raise itself.
+    # #482 then added 2 sites, taking the module to 81. Every other site
+    # is the one #489 measured: the operator kinds are unchanged and only
+    # line numbers moved, so the 77 above carries. The two new ones are
+    # NOT the table -- `DECODER_RELABELS` is a dict literal, which no
+    # operator in this probe can see. They are the `or ""` in the lookup
+    # that reads it (`Or -> And`) and the `is not None` guard on the
+    # relabel (`IsNot -> Is`). Both measured here at stride 1 on this
+    # branch (3.12.14, 27.6s control against #489's 28.6s), both KILLED,
+    # by tests/test_ybr_read_door_labels.py. That is 79 of 81, with the
+    # same two known-equivalent survivors named above and no new one.
     # The RLE arm, which no mutant could reach through a real decode, is
     # gone (#447).
     "isocenter/imagecodecs_handler.py": (["tests/test_codecs_strict.py",
@@ -908,7 +922,8 @@ TARGETS = {
                                           "tests/test_offset_table_frame_count.py",
                                           "tests/test_signed_lossless_jpeg_decode.py",
                                           "tests/test_single_frame_encapsulated_decode.py",
-                                          "tests/test_ybr_jpegls_read_doors.py"],
+                                          "tests/test_ybr_jpegls_read_doors.py",
+                                          "tests/test_ybr_read_door_labels.py"],
                                          60),
 }
 

@@ -439,7 +439,11 @@ _FALLBACK_PHOTOMETRICS = {
     "1.2.840.10008.1.2.4.91": _FALLBACK_J2K,
 }
 #: The syntaxes whose decoder returns the stored label's colour space
-#: itself, so a relabel there is a label change only (see above).
+#: itself, so a relabel there is a label change only (see above). The
+#: handler makes the same relabel at the read doors from its own
+#: `imagecodecs_handler.DECODER_RELABELS` (#482), which
+#: `test_the_handler_relabels_exactly_the_rows_ingest_relabels_without_converting`
+#: holds to these rows.
 _FALLBACK_DECODER_CONVERTS = frozenset({
     "1.2.840.10008.1.2.4.90",
     "1.2.840.10008.1.2.4.91",

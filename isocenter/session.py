@@ -3755,6 +3755,33 @@ class DicomSession:
                 with lock, entities.PIXEL_STATE_LOCK:
                     if loader:
                         instance._pixel_loader = loader
+                        # And the label of the frame it reads (#482). The
+                        # worker's read relabelled its own copy wherever
+                        # the decode converted, so this is `RGB` over a YBR
+                        # file that pydicom or the handler returned as RGB.
+                        # Under threads the worker *is* this instance and
+                        # the write repeats what is already there.
+                        #
+                        # Not `Instance._relabel_to_decoded_colour`, which
+                        # is a *read's* relabel: this copies a result
+                        # across, and that helper takes `PIXEL_STATE_LOCK`,
+                        # a plain `threading.Lock` this block already
+                        # holds, so calling it here would deadlock. A dict
+                        # write takes no lock and logs nothing, so the leaf
+                        # stays a leaf. The `mark_modified()` after the
+                        # lock moves the revision.
+                        #
+                        # Inside `if loader:`, beside the rebind, for the
+                        # reason the `_pixel_descriptors_replaced` null
+                        # below gives: the label describes the frame the
+                        # loader reads, and a mutation carrying only a hash
+                        # leaves the loader, and so the label, where they
+                        # were. That placement is reasoned, not pinned: no
+                        # test here sends a hash-only mutation that
+                        # carries a label.
+                        label = mutation.get('photometric_interpretation')
+                        if label is not None:
+                            instance.attributes["0028,0004"] = label
                         # The loader reads the worker's frame now, and the
                         # descriptors in `attributes` describe it: a record
                         # from a `set_pixel_data()` made before the pass
