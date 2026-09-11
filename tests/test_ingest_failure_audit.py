@@ -334,6 +334,40 @@ def test_an_exception_is_described_by_its_type_and_its_message():
         assert describe_exception(e) == "KeyError"
 
 
+def test_an_unrenderable_or_blank_message_names_the_type():
+    """F1b: a `__str__` that raises, or a blank message, gives `Type`.
+
+    A reason is built while a failure is being recorded, and a
+    `describe_exception` that raised there would replace that failure
+    with its own. `'   '` is no more a reason than `''`, and `Type:   `
+    said nothing. Both hold for the cause too (review of #466).
+    """
+    from isocenter.logger import describe_exception
+
+    class Unrenderable(Exception):
+        def __str__(self):
+            raise ValueError("cannot render")
+
+    assert describe_exception(Unrenderable()) == "Unrenderable"
+    assert describe_exception(ValueError("   ")) == "ValueError"
+    assert describe_exception(OSError("\t\n")) == "OSError"
+    assert describe_exception(ValueError(" padded ")) == "ValueError:  padded "
+
+    def chained(outer, inner):
+        try:
+            try:
+                raise inner
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                raise outer from e
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            return e
+
+    assert describe_exception(chained(RuntimeError("read failed"), Unrenderable())) == (
+        "RuntimeError: read failed (caused by Unrenderable)")
+    assert describe_exception(chained(Unrenderable(), OSError("  "))) == (
+        "Unrenderable (caused by OSError)")
+
+
 def test_a_decode_failure_with_no_message_names_its_type(tmp_path, monkeypatch):
     """F2: `Decompression Failed: ` said a decode failed and not how.
 

@@ -155,7 +155,9 @@ tier 2). `Equipment`: `manufacturer, model_name, device_serial_number`.
 `get_waveform_data()`, and the two-names-two-behaviours rule between
 `unload` and `discard` (`unload` refuses an unsaved replacement;
 `discard` throws it away, with the descriptors `set_pixel_data()`
-wrote for it (#434)). On `DicomItem`: `set_attr()`.
+wrote for it -- and a `set_attr()` edit to any of those descriptors
+made since the set, which described the replacement (#434)). On
+`DicomItem`: `set_attr()`.
 
 **`Builder`.** The name, `Builder.start_patient()`, and `Equipment`'s
 three fields. The rest of the fluent chain is tier 2.

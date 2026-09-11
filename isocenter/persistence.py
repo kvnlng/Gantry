@@ -2840,6 +2840,18 @@ class SqliteStore:
             b_data = instance.pixel_array
             if b_data is None:
                 return
+            # The revision beside the read, for the publish below to check
+            # with the identity. `set_pixel_data()` keeps a native-order
+            # array as given, so a caller can edit the resident array in
+            # place and set the same object again: landing after the
+            # write, that set passes an identity check alone while the
+            # sidecar holds the bytes from before the edit, and the flag
+            # cleared over them lets an unload drop the only copy (#293's
+            # shape; review of #466). Read without the leaf: a set caught
+            # half-way reads as a moved revision, so the publish leaves
+            # the flag set -- the safe direction, and the next save's
+            # dedup clears it.
+            read_revision = instance._revision
 
             # Hash Update (CRITICAL for Integrity Checks)
             # Calculate Hash BEFORE writing/compression to ensure we
@@ -2851,7 +2863,15 @@ class SqliteStore:
             else:
                 p_hash = hashlib.sha256(b_data).hexdigest()
 
-            instance._pixel_hash = p_hash
+            # `_pixel_hash` is NOT assigned here. It names the frame the
+            # loader reads, so it moves with the loader, below, after the
+            # write has succeeded. Assigned here, a `write_frame` that
+            # raised (a full disk, an EIO) left the instance holding the
+            # hash of a frame that was never written beside a loader
+            # still on the original; the next save's `arr is None` arm
+            # stored that hash with the original's offset, and a reopened
+            # session -- which checks it since #436 -- refused a correct
+            # frame as a hash mismatch.
 
             # Determine suitable compression? Defaulting to zlib for
             # swap. Ideally we respect original or config, but for
@@ -2873,11 +2893,15 @@ class SqliteStore:
             # the instance on the pre-redaction frame is #274.
             with entities.PIXEL_STATE_LOCK:
                 instance._pixel_loader = swapped
-                # Only if the array written is still the one resident. A
-                # set that landed since holds newer, unwritten pixels,
-                # and clearing the flag would let an unload drop them
-                # (#293); a discard since already cleared the record.
-                if instance.pixel_array is b_data:
+                instance._pixel_hash = p_hash
+                # Only if the array written is still the one resident,
+                # at the revision it was read at. A set that landed since
+                # holds newer, unwritten pixels -- a new array, or this
+                # one edited in place and set again -- and clearing the
+                # flag would let an unload drop them (#293); a discard
+                # since already cleared the record.
+                if (instance.pixel_array is b_data
+                        and instance._revision == read_revision):
                     # The loader now points at the bytes that are
                     # resident, so the array is recoverable and freeable
                     # again (#293).

@@ -527,6 +527,10 @@ _ABSENT = object()
 # both arms of `SqliteStore._persist_pixels`, and the redaction rebind in
 # `Session._apply_redaction_outcomes` -- each of which checks what it read
 # still stands, rebinds the loader and clears the flag and the record.
+# `get_pixel_data()`'s three read arms (the loader, the file and the
+# imagecodecs fallback) also fill the array and clear the flag, and they
+# do it **without** this lock, so a set landing during a load is
+# overwritten and marked written (#465, open).
 #
 # Without it a publish could interleave with a mutator. A discard landing
 # after `_persist_pixels`' revision guard and before its clears restored
@@ -539,7 +543,9 @@ _ABSENT = object()
 # -> this. It is never held while taking any other lock -- no frame write,
 # no sqlite, and no logging either (a handler takes its own lock), which
 # is why `set_pixel_data` and the refusals log after releasing it.
-# `tests/test_sidecar_gate_order.py` records it with the other two.
+# `tests/test_sidecar_gate_order.py` records it with the other two, and
+# its site detector fails on any write of the flag or the record that is
+# neither under this lock nor listed with the issue that says why.
 #
 # **Module-level, not per instance.** `Instance` is a slots dataclass
 # whose generated `__getstate__` pickles every field to a worker; a
@@ -657,8 +663,12 @@ class Instance(DicomItem):
     # `Session._apply_redaction_outcomes` clears (its loader reads the
     # worker's frame, which the *current* descriptors describe); and the
     # three persistence sites that make the resident array the stored
-    # frame clear it beside the flag. `get_pixel_data()`'s read arms run
-    # only with the array absent, so never with a record.
+    # frame clear it beside the flag. **Except** `get_pixel_data()`'s
+    # three read arms, which do not hold the leaf: each checks that the
+    # array is absent, loads, then assigns the loaded frame and clears
+    # the flag, and a `set_pixel_data()` landing between the check and
+    # the assignment is overwritten -- leaving this record set beside a
+    # flag that says written (measured in the review of #466; #465, open).
     #
     # On the instance, not the loader: after #417 the loader's capture is
     # not authoritative, and the loader is rebuilt per read, replaced by

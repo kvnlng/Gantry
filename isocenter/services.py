@@ -777,9 +777,17 @@ class RedactionService:
                                 inst.sop_instance_uid}: No pixel data found (or file missing).")
                     continue
 
-                # Safety: Invalidates current hash since we are about to modify.
-                # If persist/save fails later, we don't want to match the Old Hash.
-                inst._pixel_hash = None
+                # `_pixel_hash` is left alone. It names the frame the loader
+                # reads, and until the swap below has written a new frame
+                # that is still the original: the swap assigns the new hash
+                # with the new loader, after its write. This arm used to set
+                # it to None here, "so a failed save does not match the old
+                # hash" -- but the loader still reads the old frame after a
+                # failure, and the None reached the row: a failed persist
+                # (a full disk, an EIO) on an instance whose UID the pass
+                # had regenerated saved a new row with no hash, so a
+                # reopened session read that frame unchecked (#436, review
+                # of #466). The threads and processes arm never cleared it.
 
                 # One call, the whole zone list. See the note in
                 # `execute_redaction_task`: a per-zone loop here kept only

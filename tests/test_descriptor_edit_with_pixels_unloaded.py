@@ -32,12 +32,15 @@ also asserts that the array is **not resident** before it reads, since a
 resident array is handed back without consulting the loader and every
 test would then pass on unfixed code.
 """
+import contextlib
 import copy
 import glob
 import hashlib
 import os
 import pickle
 import sqlite3
+import sys
+import threading
 
 import numpy as np
 import pydicom
@@ -45,8 +48,10 @@ import pytest
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
+from isocenter import entities as entities_module
+from isocenter.entities import Equipment
 from isocenter.io_handlers import ExportError, SidecarPixelLoader
-from isocenter.services import RedactionOutcome
+from isocenter.services import RedactionError, RedactionOutcome, RedactionService
 from isocenter.session import DicomSession
 from isocenter.sidecar import SidecarManager
 
@@ -774,6 +779,214 @@ def test_a_set_inside_a_pixel_swap_stays_unwritten(ingested):
 
 
 # ---------------------------------------------------------------------------
+# Q6, at the lock -- a mutator landing as a publish asks for the leaf
+# ---------------------------------------------------------------------------
+#
+# The two tests above inject on the publishing thread at the section's
+# last call before the leaf. These inject *at* the leaf: a stand-in for
+# `PIXEL_STATE_LOCK` runs the mutator, holding nothing, the moment a named
+# publish section asks for the lock -- after the frame is appended and, in
+# a tree that checks its guard outside the lock, after the guard. Only a
+# check made under the lock sees it. A section is told apart by a local it
+# has bound by then: `written` in `_persist_pixels`' new-write arm,
+# `rebuilt` in its dedup arm, `swapped` in the swap. The first two tests
+# are the #466 reviewer's, adapted.
+
+class _ActOnAcquire:
+    """`PIXEL_STATE_LOCK`, but it runs `act` once, first, when `function`
+    asks for the lock with `local` bound."""
+
+    def __init__(self, act, function, local):
+        self._lock = threading.Lock()
+        self._act = act
+        self._function = function
+        self._local = local
+        self.fired = False
+
+    def _asked_by_the_section(self):
+        frame = sys._getframe(1)  # pylint: disable=protected-access
+        while frame is not None:
+            if frame.f_code.co_name == self._function:
+                return self._local in frame.f_locals
+            frame = frame.f_back
+        return False
+
+    def acquire(self, blocking=True, timeout=-1):
+        if not self.fired and self._asked_by_the_section():
+            self.fired = True
+            self._act()   # before taking it: the mutator takes it itself
+        return self._lock.acquire(blocking, timeout)
+
+    def release(self):
+        self._lock.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+
+def test_a_discard_after_the_append_is_seen_by_the_guard(ingested, monkeypatch):
+    """The new-write arm checks its revision guard under the leaf (M1)."""
+    session, inst, db = ingested
+    before = _descriptors(inst)
+    inst.set_pixel_data(np.full((8, 8), 7, np.uint8))
+    proxy = _ActOnAcquire(inst.discard_pixel_data, "_persist_pixels", "written")
+    monkeypatch.setattr(entities_module, "PIXEL_STATE_LOCK", proxy)
+    session.save(sync=True)
+    assert proxy.fired, "the new-write arm never asked for the leaf"
+    monkeypatch.undo()
+
+    assert _descriptors(inst) == before
+    got = inst.get_pixel_data()
+    assert got.dtype == np.uint16 and np.array_equal(got, ORIGINAL)
+    session.save(sync=True)
+    reopened, r_inst = _reopened_read(db)
+    assert np.array_equal(reopened, ORIGINAL)
+    assert _descriptors(r_inst) == before
+
+
+def test_a_set_after_the_append_keeps_the_first_record(ingested, monkeypatch):
+    """A skipped publish clears nothing, the record included (M17)."""
+    session, inst, _db = ingested
+    before = _descriptors(inst)
+    inst.set_pixel_data(np.full((8, 8), 7, np.uint8))
+    newer = np.full((2, 2), 3, np.uint16)
+    proxy = _ActOnAcquire(lambda: inst.set_pixel_data(newer),
+                          "_persist_pixels", "written")
+    monkeypatch.setattr(entities_module, "PIXEL_STATE_LOCK", proxy)
+    session.save(sync=True)
+    assert proxy.fired, "the new-write arm never asked for the leaf"
+    monkeypatch.undo()
+
+    assert inst._pixel_array_unwritten
+    assert inst.discard_pixel_data() is True
+    assert _descriptors(inst) == before
+    got = inst.get_pixel_data()
+    assert got.dtype == np.uint16 and np.array_equal(got, ORIGINAL)
+
+
+def _edit_in_place_and_set_again(inst, mine, value):
+    def act():
+        mine[...] = value
+        inst.set_pixel_data(mine)
+    return act
+
+
+def test_an_edit_set_again_inside_a_dedup_save_stays_unwritten(
+        ingested, monkeypatch):
+    """The dedup arm checks the revision, not identity alone (M7).
+
+    `set_pixel_data()` keeps a native-order array as given
+    (`_accepted_pixel_array` copies only to fix byte order), so a caller
+    can edit the array in place and set it again: the same object, new
+    bytes. Landing after the dedup arm hashed it, that passes an identity
+    check, and the flag was cleared over bytes the sidecar never held.
+    """
+    session, inst, db = ingested
+    mine = ORIGINAL.copy()            # the stored bytes, so the save dedups
+    inst.set_pixel_data(mine)
+    assert inst.pixel_array is mine
+    proxy = _ActOnAcquire(_edit_in_place_and_set_again(inst, mine, 3),
+                          "_persist_pixels", "rebuilt")
+    monkeypatch.setattr(entities_module, "PIXEL_STATE_LOCK", proxy)
+    session.save(sync=True)
+    assert proxy.fired, "the dedup arm never asked for the leaf"
+    monkeypatch.undo()
+
+    assert inst.pixel_array is mine
+    assert inst._pixel_array_unwritten
+    assert inst.unload_pixel_data() is False
+    session.save(sync=True)
+    reopened, _ = _reopened_read(db)
+    assert np.array_equal(reopened, np.full((4, 4), 3, np.uint16))
+
+
+def test_an_edit_set_again_inside_a_pixel_swap_stays_unwritten(
+        ingested, monkeypatch):
+    """The swap checks the revision as well as identity (review of #466)."""
+    session, inst, db = ingested
+    mine = np.full((4, 4), 5, np.uint16)
+    inst.set_pixel_data(mine)
+    assert inst.pixel_array is mine
+    proxy = _ActOnAcquire(_edit_in_place_and_set_again(inst, mine, 3),
+                          "_swap_pixels_under_gate", "swapped")
+    monkeypatch.setattr(entities_module, "PIXEL_STATE_LOCK", proxy)
+    session.store_backend.persist_pixel_data(inst)
+    assert proxy.fired, "the swap never asked for the leaf"
+    monkeypatch.undo()
+
+    assert inst.pixel_array is mine
+    assert inst._pixel_array_unwritten
+    assert inst.unload_pixel_data() is False
+    session.save(sync=True)
+    reopened, _ = _reopened_read(db)
+    assert np.array_equal(reopened, np.full((4, 4), 3, np.uint16))
+
+
+class _ActOnRelease:
+    """`PIXEL_STATE_LOCK`, but it runs `act` once, holding nothing, the
+    first time `function` lets go of the lock."""
+
+    def __init__(self, act, function):
+        self._lock = threading.Lock()
+        self._act = act
+        self._function = function
+        self.fired = False
+
+    def _on_stack(self):
+        frame = sys._getframe(1)  # pylint: disable=protected-access
+        while frame is not None:
+            if frame.f_code.co_name == self._function:
+                return True
+            frame = frame.f_back
+        return False
+
+    def acquire(self, blocking=True, timeout=-1):
+        return self._lock.acquire(blocking, timeout)
+
+    def release(self):
+        self._lock.release()
+        if not self.fired and self._on_stack():
+            self.fired = True
+            self._act()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+
+def test_unload_checks_and_drops_under_one_hold(ingested, monkeypatch):
+    """No set can land between unload's check and its drop (M25).
+
+    Deterministic, no timing: the set runs the moment unload first lets
+    go of the lock. Held once, that is after the drop, and the set's
+    array stays. Checked under one hold and dropped under a second, the
+    set lands between them and the second hold drops it, unwritten.
+    """
+    _session, inst, _db = ingested
+    inst.get_pixel_data()
+    newer = np.full((4, 4), 3, np.uint16)
+    proxy = _ActOnRelease(lambda: inst.set_pixel_data(newer),
+                          "unload_pixel_data")
+    monkeypatch.setattr(entities_module, "PIXEL_STATE_LOCK", proxy)
+    assert inst.unload_pixel_data() is True
+    assert proxy.fired, "unload never let go of the lock"
+    monkeypatch.undo()
+
+    assert inst.pixel_array is not None, "unload dropped a set it never checked"
+    assert np.array_equal(inst.pixel_array, newer)
+    assert inst._pixel_array_unwritten
+
+
+# ---------------------------------------------------------------------------
 # T -- the loader ingest builds carries the hash of its frame (#436)
 # ---------------------------------------------------------------------------
 #
@@ -905,6 +1118,89 @@ def test_load_patient_wires_the_stored_hash(pair):
                  for i in se.instances]
     assert loaded._pixel_loader.pixel_hash == a._pixel_hash
     assert loaded._pixel_loader.pixel_hash is not None
+
+
+# ---------------------------------------------------------------------------
+# H -- a failed redaction swap leaves the hash of the frame the loader reads
+# ---------------------------------------------------------------------------
+#
+# `_swap_pixels_under_gate` assigned `_pixel_hash` before `write_frame`, so
+# an append that failed left the instance holding the hash of a frame that
+# was never written, beside a loader still on the original. The next save's
+# `arr is None` arm stores `_pixel_hash` with the loader's offset, and since
+# Q1 (#436) a reopened session checks that hash: a correct frame read back
+# as `Integrity Error: Pixel data hash mismatch`. `write_frame` fails once
+# here, as a full disk or an EIO would.
+#
+# The save comes before any read, on purpose. A read makes the original
+# resident, its digest misses the stale hash, and the save re-appends the
+# frame under the right one -- which would pass on the defect.
+
+def _fail_the_next_write(sidecar):
+    real = sidecar.write_frame
+    fired = []
+
+    def fail_once(*_args, **_kwargs):
+        sidecar.write_frame = real
+        fired.append(1)
+        raise OSError(5, "EIO injected")
+
+    sidecar.write_frame = fail_once
+    return fired
+
+
+def _the_original_frame_survives(session, inst, db):
+    digest = hashlib.sha256(ORIGINAL.tobytes()).hexdigest()
+    assert inst.pixel_array is None
+    session.save(sync=True)
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        stored = [r[0] for r in conn.execute("SELECT pixel_hash FROM instances")]
+    assert stored == [digest], "the row carries the hash of a frame never written"
+    reopened, _ = _reopened_read(db)
+    assert reopened.dtype == ORIGINAL.dtype
+    assert np.array_equal(reopened, ORIGINAL)
+    live = inst.get_pixel_data()
+    assert live.dtype == ORIGINAL.dtype and np.array_equal(live, ORIGINAL)
+
+
+def test_a_failed_swap_in_a_threads_redaction_keeps_the_frame_readable(
+        ingested, monkeypatch):
+    """H1: the threads path, where the worker swaps the live instance."""
+    monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
+    session, inst, db = ingested
+    for patient in session.store.patients:
+        for study in patient.studies:
+            for series in study.series:
+                series.equipment = Equipment("M", "X", "SN1")
+    inst.set_attr("0018,1000", "SN1")
+    session.save(sync=True)
+    assert inst.unload_pixel_data() is True
+    session.configuration.rules = [
+        {"serial_number": "SN1", "redaction_zones": [[0, 2, 0, 2]]}]
+    fired = _fail_the_next_write(session.store_backend.sidecar)
+
+    with pytest.raises(RedactionError):
+        session.redact(show_progress=False)
+    assert fired == [1], "the swap never reached its write"
+
+    _the_original_frame_survives(session, inst, db)
+
+
+def test_a_failed_swap_in_a_serial_redaction_keeps_the_frame_readable(ingested):
+    """H2: `redact_machine_instances`, whose `finally` persist swaps."""
+    session, inst, db = ingested
+    fired = _fail_the_next_write(session.store_backend.sidecar)
+    service = RedactionService(session.store, session.store_backend)
+
+    # Suppressed rather than expected: this arm swallows the persist
+    # failure and raises nothing today, which is its own defect (#474).
+    # This test is about the hash, whichever way that goes.
+    with contextlib.suppress(RedactionError):
+        service.redact_machine_instances(
+            "SN1", [(0, 2, 0, 2)], targets=[inst], show_progress=False)
+    assert fired == [1], "the swap never reached its write"
+
+    _the_original_frame_survives(session, inst, db)
 
 
 # ---------------------------------------------------------------------------

@@ -72,8 +72,9 @@ def get_logger():
 def describe_exception(exc: BaseException) -> str:
     """How an exception is spelled wherever it becomes a recorded reason.
 
-    `Type: message`, or `Type` alone when the message is empty, and the
-    direct cause (`raise ... from`) in the same spelling:
+    `Type: message`, or `Type` alone when the message is empty, blank,
+    or cannot be rendered at all (its `__str__` raises), and the direct
+    cause (`raise ... from`) in the same spelling:
     `RuntimeError: Pixel Loader failed ... (caused by OSError: EIO)`.
 
     **Why the type leads.** `str()` is `''` for `KeyError()`,
@@ -106,6 +107,14 @@ def describe_exception(exc: BaseException) -> str:
 
 
 def _type_and_message(exc: BaseException) -> str:
-    message = str(exc)
     name = type(exc).__name__
-    return f"{name}: {message}" if message else name
+    # `str()` runs the exception's own `__str__`, which can raise. This
+    # is called while a failure is being recorded, and raising here would
+    # replace that failure with this one; the type is still a reason. A
+    # whitespace-only message is no more a reason than an empty one, so
+    # it gets the bare type too (review of #466).
+    try:
+        message = str(exc)
+    except Exception:  # pylint: disable=broad-exception-caught
+        return name
+    return f"{name}: {message}" if message.strip() else name

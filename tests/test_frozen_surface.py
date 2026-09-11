@@ -814,6 +814,14 @@ def test_the_stability_page_names_every_tier_one_session_method():
             "`set_pixel_data()` wrote for it") in flat, (
         "stability.md's unload/discard rule no longer says discard puts "
         "back the descriptors set_pixel_data() wrote (#434)")
+    # And a descriptor edit made between the set and the discard goes back
+    # with them (#434, Q3 (a)): while the replacement is resident, that edit
+    # describes the replacement. The behaviour is pinned by
+    # `test_a_descriptor_edit_between_the_set_and_the_discard_is_reverted_too`.
+    assert ("and a `set_attr()` edit to any of those descriptors made "
+            "since the set") in flat, (
+        "stability.md's unload/discard rule no longer says discard also "
+        "reverts a descriptor edit made since the set (#434, Q3)")
 
     # The *union* is what is frozen, so the union is what this checks:
     # each word appears **exactly once**, backticked, inside the Output

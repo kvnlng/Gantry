@@ -517,6 +517,116 @@ def test_the_pixel_state_lock_is_a_leaf(recorded):
         "_pixel_swap_lock")
 
 
+#: The pixel state the leaf guards: the unwritten flag (#293) and the
+#: descriptor record (#434).
+_PIXEL_STATE_FIELDS = ("_pixel_array_unwritten", "_pixel_descriptors_replaced")
+
+#: Helpers that write that state for a caller already holding the leaf.
+#: Checked below, transitively: every call to one is itself under the
+#: leaf, or inside another of these.
+_CALLER_HOLDS = {"_replace_pixel_array", "_drop_resident_array",
+                 "_restore_replaced_descriptors"}
+
+#: Every write of the pixel state under isocenter/, by (file, enclosing
+#: def): how many, and how each is serialised against `PIXEL_STATE_LOCK`.
+#: "leaf" -- lexically inside `with ... PIXEL_STATE_LOCK`; "caller holds"
+#: -- in one of `_CALLER_HOLDS`; anything else is unlocked, and names the
+#: issue that says why. Keyed on function names, like
+#: `_WRITE_FRAME_SITES`, so it is green through unrelated edits and red on
+#: a new site wherever it lands.
+_PIXEL_STATE_WRITES = {
+    ("isocenter/entities.py", "_replace_pixel_array"): (2, "caller holds"),
+    ("isocenter/entities.py", "_restore_replaced_descriptors"): (1, "caller holds"),
+    # The three read arms -- loader, file, imagecodecs fallback -- fill the
+    # array and clear the flag without the lock, so a set landing during a
+    # load is overwritten and marked written (#465, open).
+    ("isocenter/entities.py", "get_pixel_data"): (3, "unlocked: #465"),
+    ("isocenter/persistence.py", "_swap_pixels_under_gate"): (2, "leaf"),
+    ("isocenter/persistence.py", "_persist_pixels"): (4, "leaf"),
+    ("isocenter/session.py", "_apply_redaction_outcomes"): (1, "leaf"),
+}
+
+
+def _is_leaf_with(node):
+    return isinstance(node, ast.With) and any(
+        (isinstance(item.context_expr, ast.Name)
+         and item.context_expr.id == "PIXEL_STATE_LOCK")
+        or (isinstance(item.context_expr, ast.Attribute)
+            and item.context_expr.attr == "PIXEL_STATE_LOCK")
+        for item in node.items)
+
+
+def _scope_of(node, parents):
+    """The enclosing def's name, and whether a leaf `with` lies between."""
+    in_leaf = False
+    scope = parents.get(node)
+    while scope is not None and not isinstance(
+            scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        in_leaf = in_leaf or _is_leaf_with(scope)
+        scope = parents.get(scope)
+    return (scope.name if scope is not None else "<module>"), in_leaf
+
+
+def _pixel_state_sites():
+    """Writes of the pixel state, and calls of `_CALLER_HOLDS`, by site."""
+    writes = collections.defaultdict(list)
+    calls = collections.defaultdict(list)
+    for path in sorted((REPO / "isocenter").rglob("*.py")):
+        rel = path.relative_to(REPO).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        parents = {child: node for node in ast.walk(tree)
+                   for child in ast.iter_child_nodes(node)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                targets = [node.target]
+            else:
+                targets = []
+            if any(isinstance(t, ast.Attribute) and t.attr in _PIXEL_STATE_FIELDS
+                   for t in targets):
+                scope, in_leaf = _scope_of(node, parents)
+                writes[(rel, scope)].append(in_leaf)
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in _CALLER_HOLDS):
+                scope, in_leaf = _scope_of(node, parents)
+                calls[node.func.attr].append((rel, scope, in_leaf))
+    return writes, calls
+
+
+def test_every_write_of_the_pixel_state_is_under_the_leaf_or_listed():
+    """The pixel-state site detector (#434, Q6; review of #466).
+
+    `_LEAF_TAKERS` above shows each taker took the lock under one fixture;
+    it cannot see a write moved out from under it. This reads the source:
+    every write of the unwritten flag or the descriptor record is inside
+    `with ... PIXEL_STATE_LOCK`, or in a helper every call to which is, or
+    is listed as unlocked with the issue that says why. If this fails
+    because you added a write: put it under the leaf and add it to
+    `_PIXEL_STATE_WRITES`. An unlocked one needs an issue.
+    """
+    writes, calls = _pixel_state_sites()
+    assert {k: len(v) for k, v in writes.items()} == {
+        k: n for k, (n, _how) in _PIXEL_STATE_WRITES.items()}
+    for (rel, scope), (_n, how) in _PIXEL_STATE_WRITES.items():
+        if how == "leaf":
+            assert all(writes[(rel, scope)]), (
+                f"{rel}:{scope} writes the pixel state outside PIXEL_STATE_LOCK")
+        elif how == "caller holds":
+            assert scope in _CALLER_HOLDS, f"{scope} is not in _CALLER_HOLDS"
+        else:
+            assert how.startswith("unlocked: #"), (
+                f"{rel}:{scope} is listed as unlocked with no issue: {how!r}")
+    for helper in sorted(_CALLER_HOLDS):
+        assert calls[helper], f"{helper} is never called; drop it from _CALLER_HOLDS"
+        outside = [(rel, scope) for rel, scope, in_leaf in calls[helper]
+                   if not in_leaf and scope not in _CALLER_HOLDS]
+        assert not outside, (
+            f"{helper} writes the pixel state for a caller holding "
+            f"PIXEL_STATE_LOCK, and is called without it from {outside}")
+
+
 class _PausingLock:
     """A lock that parks the first `_persist_pixels` holder until told."""
 
