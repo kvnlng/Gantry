@@ -11,7 +11,7 @@ This file allows you to define a reproducible privacy policy that can be shared 
 | **[privacy_profile](#privacy-profile)** | Base set of rules: "basic", "none", or a path to a YAML profile. |
 | **[date_jitter](#date-jitter)** | Randomly shifts dates to preserve intervals while hiding exact dates. |
 | **[remove_private_tags](#private-tags)** | Removes vendor-specific private tags (odd groups). |
-| **[phi_tags](#phi-tags)** | Overrides or adds specific tag rules (e.g., `PatientName`). |
+| **[phi_tags](#phi-tags)** | Overrides or adds specific tag rules, keyed by quoted `"gggg,eeee"` hex (e.g., `"0010,0010"` for Patient's Name). |
 | **[machines](#pixel-redaction-machines)** | Defines burn-in redaction zones for specific equipment. |
 
 ---

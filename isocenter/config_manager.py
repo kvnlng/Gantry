@@ -130,6 +130,38 @@ def _names_no_profile(profile_name: Any) -> bool:
 _PHI_ACTIONS = frozenset({"KEEP", "REMOVE", "EMPTY", "REPLACE", "SHIFT", "JITTER"})
 
 
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _is_tag_key(key: str) -> bool:
+    """True for a `gggg,eeee` key: four hex digits, a comma, four more.
+
+    The spelling every tag table here uses, and the only one the scan
+    looks up. `'8,80'` (for 0008,0080) or a keyword such as `PatientName`
+    loaded before #456 and matched nothing, so the rule never ran and
+    nothing said so.
+    """
+    return (len(key) == 9 and key[4] == ","
+            and all(ch in _HEX_DIGITS for ch in key[:4] + key[5:]))
+
+
+def _external_profile_tags(path: str) -> Any:
+    """The `phi_tags:` mapping of an external profile file.
+
+    A file with no `phi_tags` key had its root mapping used as the tags
+    (`load_phi_config`'s legacy fallback), so a profile written as a
+    config -- `privacy_profile: basic` and its rules at the top level --
+    loaded `privacy_profile` itself as a "tag" (review of #509). Refused,
+    naming the file; the value is validated by the caller.
+    """
+    data = ConfigLoader._load_yaml(path)
+    if not isinstance(data, dict) or "phi_tags" not in data:
+        raise ValueError(
+            f"{path}: an external privacy profile must carry its rules under "
+            f"a 'phi_tags:' mapping; this file has no phi_tags key")
+    return data["phi_tags"]
+
+
 def _validated_phi_tags(tags: Any, source: str) -> Dict[str, Any]:
     """`tags` as a lowercase-keyed mapping, or a `ValueError` naming the tag.
 
@@ -152,6 +184,12 @@ def _validated_phi_tags(tags: Any, source: str) -> Dict[str, Any]:
             raise ValueError(
                 f"{source}: phi_tags key {tag!r} must be a quoted "
                 f"'gggg,eeee' string, got {type(tag).__name__}")
+        if not _is_tag_key(tag):
+            raise ValueError(
+                f"{source}: phi_tags key {tag!r} is not a 'gggg,eeee' tag "
+                f"(four hex digits, a comma, four hex digits, such as "
+                f"'0010,0010'); the scan reads no tag by that key, so the "
+                f"rule would never run")
         if isinstance(rule, dict):
             action = rule.get("action", "REPLACE")
             if not isinstance(action, str) or action.upper() not in _PHI_ACTIONS:
@@ -249,7 +287,7 @@ def load_unified_config(path: str) -> Dict[str, Any]:
         # no profile, which is #456's silence one file further out.
         elif isinstance(profile_name, str) and os.path.isfile(profile_name):
             profile_rules = _validated_phi_tags(
-                ConfigLoader.load_phi_config(profile_name), profile_name)
+                _external_profile_tags(profile_name), profile_name)
             get_logger().info("Loaded custom privacy profile from '%s' with %d rules.", profile_name, len(profile_rules))
 
         else:

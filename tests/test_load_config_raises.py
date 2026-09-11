@@ -64,6 +64,15 @@ CASES = {
                                     ValueError, "/no/such/profile.yaml"),
     "date_jitter_a_word": (".yaml", "date_jitter: soon\n", ValueError, "date_jitter"),
     "date_jitter_wrong_keys": (".yaml", "date_jitter: {days: 3}\n", ValueError, "date_jitter"),
+    # O5 (review of #509): the right keys with a value that is not an int.
+    "date_jitter_values_not_ints": (".yaml", "date_jitter: {min_days: a, max_days: 5}\n",
+                                    ValueError, "date_jitter"),
+    # A key that is not 'gggg,eeee' hex matched no tag the scan reads, so
+    # the rule was a silent no-op: '8,80' for 0008,0080, or a keyword.
+    "tag_key_not_padded": (".yaml", "phi_tags:\n  '8,80': {action: REMOVE}\n",
+                           ValueError, "'8,80'"),
+    "tag_key_a_keyword": (".yaml", "phi_tags:\n  PatientName: {action: REMOVE}\n",
+                          ValueError, "'PatientName'"),
     "machines_a_mapping": (".yaml", "machines: {a: 1}\n", ValueError, "machines"),
     "machines_of_strings": (".yaml", "machines:\n  - X\n", ValueError, "machines"),
 }
@@ -116,6 +125,30 @@ def test_a_config_the_loader_rejects_raises_and_changes_nothing(name, tmp_path):
 
     if fragment is not None:
         assert fragment in str(excinfo.value), str(excinfo.value)
+    assert after == before
+
+
+def test_an_external_profile_with_no_phi_tags_mapping_raises(tmp_path):
+    """An external profile file is read for its `phi_tags:` mapping. One
+    without it had its root dict used as the tags, so `privacy_profile`
+    and every other top-level key became a "tag" and the rules nested
+    wrongly were dropped (review of #509, `extprof.py`). Refused, naming
+    the profile file, and nothing is assigned. The file here holds only
+    well-formed tag keys at its root, so the key check cannot be what
+    refuses it. Kills the root-as-tags fallback restored."""
+    profile = tmp_path / "prof.yaml"
+    profile.write_text("'0008,0080': {action: KEEP}\n'0010,0010': {action: KEEP}\n",
+                       encoding="utf-8")
+    config = tmp_path / "cfg.yaml"
+    config.write_text(f"privacy_profile: {profile}\n", encoding="utf-8")
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        before = _set_sentinels(session.configuration, tmp_path)
+        with pytest.raises(ValueError) as excinfo:
+            session.load_config(str(config))
+        after = {field: getattr(session.configuration, field) for field in before}
+    assert str(profile) in str(excinfo.value)
+    assert "phi_tags" in str(excinfo.value)
     assert after == before
 
 

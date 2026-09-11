@@ -307,9 +307,10 @@ def test_a_lock_after_anonymize_is_refused_on_the_floor_path(tmp_path):
     instance's own 0010,0010/0010,0020, so a refusal that read only those
     copies saw nothing: measured, lock -> anonymize -> lock again raised
     nothing and wrote a token holding only `{'0010,0040': 'O'}` over the
-    good one, and recovery lost the name and ID. Kills the patient-entity
-    check in `_lock_patient_identity` deleted (both orders stop raising,
-    and the token and recovery change)."""
+    good one, and recovery lost the name and ID. Kills the stash's
+    fallback to the patient's name and ID removed (M17): the absent copies
+    are then never stashed, so never checked, and both orders stop
+    raising."""
     _ct_small_into(str(tmp_path / "in"))
     with Session(str(tmp_path / "s.db")) as session:
         session.enable_reversible_anonymization(str(tmp_path / "k.key"))
@@ -340,6 +341,35 @@ def test_a_lock_after_anonymize_is_refused_on_the_floor_path(tmp_path):
         with pytest.raises(RuntimeError, match=patient.patient_id):
             session.lock_identities(patient.patient_id)
         assert "0400,0500" not in inst.sequences
+
+
+def test_a_re_lock_after_an_instance_only_anonymize_stashes_the_patients_identity(tmp_path):
+    """The third route: only the instance findings are applied, so the
+    floor removes the instance's own 0010,0010/0010,0020 while the patient
+    still holds the originals. Nothing is a replacement, so nothing is
+    refused -- and the stash read only the (now absent) copies: measured
+    by review of #509, the new token held only `{'0010,0040': 'O'}` and
+    recovery lost the name and ID. The stash now takes an absent copy's
+    value from the patient, as the no-instances fallback already did.
+    Kills that fallback removed (recovery has no name or ID)."""
+    _ct_small_into(str(tmp_path / "in"))
+    with Session(str(tmp_path / "s.db")) as session:
+        session.enable_reversible_anonymization(str(tmp_path / "k.key"))
+        session.ingest(str(tmp_path / "in"))
+        patient = session.store.patients[0]
+        inst = patient.studies[0].series[0].instances[0]
+        session.lock_identities("1CT1")
+
+        session.anonymize([f for f in session.audit() if f.entity_type == "Instance"])
+        assert "0010,0010" not in inst.attributes, "the floor did not remove the copy"
+        assert "0010,0020" not in inst.attributes, "the floor did not remove the copy"
+        assert (str(patient.patient_name), patient.patient_id) == (
+            "CompressedSamples^CT1", "1CT1"), "the patient was anonymized too"
+
+        session.lock_identities(patient.patient_id)
+        again = session.reversibility_service.recover_original_data(inst)
+    assert again["0010,0010"] == "CompressedSamples^CT1", again
+    assert again["0010,0020"] == "1CT1", again
 
 
 # ---------------------------------------------------------------------------
@@ -571,13 +601,79 @@ def test_the_default_phi_policy_is_the_floor():
     with no policy calls, returns a fresh copy of the floor now that
     `resources/phi_tags.json` is gone. Kills a loader that still reads
     the resource (RuntimeError on the deleted file) and one that returns
-    the module table itself."""
+    the module table itself. The expectation is built here from the two
+    source tables, never from `FLOOR_POLICY`: comparing a result against
+    the table it was copied from passes when both have been edited by the
+    same leak (review of #509, mutant O1)."""
     from isocenter.config_manager import ConfigLoader
     from isocenter.privacy import PhiInspector
-    from isocenter.profiles import FLOOR_POLICY
+    from isocenter.profiles import BASIC_PROFILE, FLOOR_POLICY, RESEARCH_DEFAULTS
 
+    expected = {tag: dict(rule) for tag, rule in {**BASIC_PROFILE, **RESEARCH_DEFAULTS}.items()}
     tags = ConfigLoader.load_phi_config()
-    assert tags == FLOOR_POLICY
+    assert tags == expected
     assert tags is not FLOOR_POLICY
     assert tags["0010,0010"] is not FLOOR_POLICY["0010,0010"]
-    assert PhiInspector().phi_tags == FLOOR_POLICY
+    assert PhiInspector().phi_tags == expected
+
+
+def test_a_loaded_config_does_not_edit_the_floor_a_later_session_seeds_from(tmp_path):
+    """Session 1 loads `0008,0080: KEEP` with no profile line; a later
+    bare Session still REMOVEs it. Kills the loader's floor taken by
+    reference (`floor = FLOOR_POLICY`, O1): the user's KEEP is merged into
+    the module table, and every later bare session in the process -- and
+    `load_phi_config()` -- keeps Institution Name."""
+    from isocenter.profiles import BASIC_PROFILE, FLOOR_POLICY, RESEARCH_DEFAULTS
+
+    expected = {tag: dict(rule) for tag, rule in {**BASIC_PROFILE, **RESEARCH_DEFAULTS}.items()}
+    config = tmp_path / "keep.yaml"
+    config.write_text(
+        "phi_tags:\n  '0008,0080': {action: KEEP, name: Institution Name}\n",
+        encoding="utf-8")
+    with Session(str(tmp_path / "a.db")) as first:
+        first.load_config(str(config))
+        assert first.configuration.phi_tags["0008,0080"]["action"] == "KEEP"
+    with Session(str(tmp_path / "b.db")) as later:
+        assert later.configuration.phi_tags["0008,0080"]["action"] == "REMOVE"
+        assert later.configuration.phi_tags == expected
+    assert FLOOR_POLICY == expected
+
+
+def test_privacy_profile_none_lowercases_the_files_keys(tmp_path):
+    """The `none` branch returns the file's tags as the whole policy, so
+    they must be lowercased before it returns, not only in the arms that
+    merge. Kills lowercasing moved from validation into the merge arms
+    (O2): `0008,103E` loads as spelled and the inspector, whose tags are
+    lowercase throughout, reads a second key for one tag."""
+    config = tmp_path / "none.yaml"
+    config.write_text(
+        "privacy_profile: none\n"
+        "phi_tags:\n  '0008,103E': {action: REMOVE, name: Series Description}\n",
+        encoding="utf-8")
+    with Session(str(tmp_path / "s.db")) as session:
+        session.load_config(str(config))
+        assert session.configuration.phi_tags == {
+            "0008,103e": {"action": "REMOVE", "name": "Series Description"}}
+
+
+def test_report_section_5_names_the_decline_on_a_bare_session(tmp_path):
+    """A floor finding that declines costs the bare run its PASS, and
+    section 5 says why. The decline is made as in the manifest test:
+    Station Name is flagged by the audit and gone before the remediation
+    runs. Kills the declined-remediation term dropped from
+    `generate_report`'s review reasons (section 5 then gives no reason
+    for the decline)."""
+    _ct_small_into(str(tmp_path / "in"))
+    with Session(str(tmp_path / "s.db")) as session:
+        session.ingest(str(tmp_path / "in"))
+        report = session.audit()
+        instance = session.store.patients[0].studies[0].series[0].instances[0]
+        assert any(f.tag == "0008,1010" for f in report)
+        del instance.attributes["0008,1010"]
+        session.anonymize(report)
+        path = tmp_path / "report.md"
+        session.generate_report(str(path))
+    text = path.read_text(encoding="utf-8")
+    s5 = text.split("## 5. Validation & Verification", 1)[1].split("---\n", 1)[0]
+    assert "**Grade Basis:** REVIEW_REQUIRED" in s5, s5
+    assert "1 declined remediation(s) in section 3.3" in s5, s5

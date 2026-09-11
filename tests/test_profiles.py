@@ -167,7 +167,7 @@ def test_documented_basic_profile_tag_count_matches_the_code():
     doc = pathlib.Path(__file__).resolve().parent.parent / "docs" / "waveforms.md"
     text = doc.read_text(encoding="utf-8")
 
-    # Matches the "**34 tags, 33 effective**" phrasing.
+    # Matches the "**35 tags, 35 effective**" phrasing.
     match = re.search(r"\*\*(\d+) tags, (\d+)\s+effective\*\*", text)
     assert match, (
         "could not find the Basic-profile tag-count sentence in "

@@ -135,6 +135,19 @@ jobs:
               f"resolved {path}, which is not the installed wheel -- this "
               "check is reading the source tree")
           print(f"machine redaction rules present in the wheel: {path}")
+          #
+          # The other shipped resource, through the same helper and with
+          # the same consequence _load_ctp_rules names at runtime.
+          ctp = require_package_resource(
+              RESOURCES_DIR, "ctp_rules.json",
+              "matched no CTP de-identification rules")
+          assert os.path.getsize(ctp) > 0, (
+              f"the built wheel ships an empty {ctp} -- this release would "
+              "match no CTP de-identification rules")
+          assert "site-packages" in ctp, (
+              f"resolved {ctp}, which is not the installed wheel -- this "
+              "check is reading the source tree")
+          print(f"CTP rules present in the wheel: {ctp}")
           PY
 
       - uses: actions/upload-artifact@v7

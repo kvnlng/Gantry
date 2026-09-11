@@ -1971,8 +1971,12 @@ class DicomSession:
         supplement of names) beside a floor that did not exist, so the
         scaffold and what a bare session applied could not be checked
         against each other. Now the floor is the one table and this is a
-        diff of it, so the file loads back to exactly the policy it was
-        written from.
+        diff of it, so a bare session's scaffold loads back to exactly the
+        floor. It is exact only because the policy it diffs is a superset
+        of the basic profile: a session under `privacy_profile: none`
+        (or one whose basic tags were deleted) is still scaffolded under
+        `basic`, and its file reloads with the basic profile beneath its
+        own tags -- more protection than the session had, never less.
 
         A plain-string value is a tag's display name and leaves the
         inspector's action at REPLACE (`PhiInspector.__init__`), so it is
@@ -3026,9 +3030,21 @@ class DicomSession:
             if first_instance:
                 break
 
+        # A name or ID the first instance no longer carries is stashed from
+        # the patient (#495), as the no-instances arm below always did. The
+        # floor's instance rules remove those copies, so after an
+        # instance-only anonymize() the copies are gone while the patient
+        # still holds the originals, nothing reads as a replacement, and a
+        # stash of the copies alone wrote a token holding only
+        # {'0010,0040': 'O'} over the good one (review of #509). Where the
+        # patient is itself a replacement, the refusal below names it.
+        entity_fallback = {"0010,0010": patient.patient_name,
+                           "0010,0020": patient.patient_id}
         if first_instance:
             for tag in tags_to_lock:
                 val = first_instance.attributes.get(tag)
+                if val is None:
+                    val = entity_fallback.get(tag)
                 if val is not None:
                     original_attrs[tag] = val
         else:
@@ -3054,19 +3070,19 @@ class DicomSession:
         # A re-lock of still-original values is unchanged and is what
         # recovery answers with (#399).
         #
-        # The patient entity is checked first (#495). Under the floor
-        # policy `anonymize()` removes the instance's own 0010,0010 and
-        # 0010,0020, so the copies read above can hold nothing to refuse
-        # on while the patient already reads ANONYMIZED / ANON_<hash>.
-        # Measured on CT_small, bare session: lock -> anonymize -> lock
-        # again raised nothing and wrote a token holding only
-        # {'0010,0040': 'O'} over the good one, so recovery lost the name
-        # and ID -- #492's defect by another route. The entity is also
-        # the object `scan_patient` applies this predicate to. The stash
-        # itself is still read from the instance copies, as before.
-        entity_values = (("0010,0010", patient.patient_name),
-                         ("0010,0020", patient.patient_id))
-        for tag, val in (*entity_values, *original_attrs.items()):
+        # What is refused, exactly (#495): any value about to be stashed
+        # that reads ANONYMIZED or starts ANON_ -- each tag's
+        # first-instance copy, and for name and ID the patient's own
+        # value where that copy is absent (above). Under the floor
+        # `anonymize()` removes the instance's own name and ID, so a
+        # refusal reading only the copies saw nothing: measured on
+        # CT_small, bare session, lock -> anonymize -> lock again raised
+        # nothing and wrote a token holding only {'0010,0040': 'O'} over
+        # the good one -- #492's defect by another route. A copy that is
+        # present is what gets stashed, so it alone is checked: a patient
+        # reading ANONYMIZED beside copies that still hold the originals
+        # has originals to stash.
+        for tag, val in original_attrs.items():
             if val == "ANONYMIZED" or str(val).startswith("ANON_"):
                 raise RuntimeError(
                     f"lock_identities: patient {patient_id!r} already "
