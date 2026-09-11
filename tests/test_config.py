@@ -52,17 +52,15 @@ def test_validation_logic(tmp_path):
         ConfigLoader.load_redaction_rules(str(p))
 
 def test_phi_config_default():
-    # The positive control for #388, and kept as-is on purpose. In a
-    # correct checkout the shipped `phi_tags.json` is present, parseable,
-    # and returns a mapping; without this assertion,
-    # `tests/test_shipped_resource_is_required.py`'s negative test proves
-    # only that *something* raises. Converting this one to
-    # `pytest.raises` would assert the same refusal in two files, which is
-    # the duplicate spelling this project deletes on sight -- the refusal
-    # when the resource is absent is that file's
-    # `test_a_missing_phi_tag_policy_refuses_instead_of_auditing_against_nothing`.
+    # With no path the default PHI policy is the floor, in Python (#495).
+    # It was the shipped `phi_tags.json`, and this was #388's positive
+    # control for that resource being present; the resource is deleted,
+    # so the control is now that the default is the floor and not merely
+    # "a mapping" -- `{}` is a mapping.
+    from isocenter.profiles import FLOOR_POLICY
+
     tags = ConfigLoader.load_phi_config(None)
-    assert isinstance(tags, dict)
+    assert tags == FLOOR_POLICY
 
 def test_phi_config_override(tmp_path):
     data = {"phi_tags": {"0010,0010": "PatientName"}}

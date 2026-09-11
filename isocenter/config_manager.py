@@ -10,25 +10,24 @@ import os
 import logging
 import copy
 from typing import Dict, Any, List, Optional
-import json
 import re
 import yaml
 
 from dotenv import load_dotenv
 
-from .profiles import PRIVACY_PROFILES
+from .profiles import FLOOR_POLICY, PRIVACY_PROFILES
 
 CONFIG_VERSION = "2.0"
 
 #: Where this package's own shipped resources live.
 #:
-#: Hoisted out of `load_phi_config`'s body in #388. Computed inline there,
-#: there was nothing for a test to monkeypatch, so a test of the
-#: missing-resource arm either passed against the real source tree -- the
-#: correct-by-accident shape -- or was written against the `filepath`
-#: argument instead, which exercises the *user-config* branch and never
-#: enters the arm under test. `session.py` has had its own `RESOURCES_DIR`
-#: all along; this is the same constant for the same reason.
+#: Hoisted out of `load_phi_config`'s body in #388 so a test could
+#: monkeypatch it. `load_phi_config` no longer reads a resource -- the
+#: default PHI policy is `profiles.FLOOR_POLICY`, in Python, since #495
+#: deleted `resources/phi_tags.json` -- and the constant stays because
+#: `publish.yml`'s wheel gate passes it to `require_package_resource` from
+#: an installed wheel, where it is the only spelling of "this package's
+#: resources directory" that does not point back at the source tree.
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "resources")
 
@@ -82,7 +81,7 @@ def require_package_resource(directory: str, basename: str,
             caller so `test_every_shipped_resource_is_named_by_the_package`
             can still see it in the AST.
         consequence (str): what a silent continue would have done, e.g.
-            "audited against an empty PHI tag list".
+            "scanned every frame with no machine redaction rules".
 
     Returns:
         str: the resolved path, which exists.
@@ -112,6 +111,18 @@ def get_logger() -> logging.Logger:
     return logging.getLogger("isocenter")
 
 
+def _lowercase_tag_keys(tags: Dict[Any, Any]) -> Dict[Any, Any]:
+    """`tags` with every string key lowercased, order kept."""
+    return {(key.lower() if isinstance(key, str) else key): value
+            for key, value in tags.items()}
+
+
+def _names_no_profile(profile_name: Any) -> bool:
+    """True for `privacy_profile: none` and `privacy_profile: null`."""
+    return profile_name is None or (
+        isinstance(profile_name, str) and profile_name.strip().lower() == "none")
+
+
 def load_unified_config(path: str) -> Dict[str, Any]:
     """
     Loads the unified configuration file (YAML).
@@ -136,6 +147,23 @@ def load_unified_config(path: str) -> Dict[str, Any]:
 
     # Handle Standard Config
     config = data
+
+    # Lowercase the user's tag keys before anything is merged. The
+    # profiles' keys are lowercase (profiles.py's header comment), so a
+    # user's `0008,103E` merged as spelled sat beside the profile's
+    # `0008,103e` as a second rule for one tag: `PhiInspector` collapsed
+    # the pair at scan time with the later entry winning by dict order,
+    # and the report counted both (#495).
+    if isinstance(config.get("phi_tags"), dict):
+        config["phi_tags"] = _lowercase_tag_keys(config["phi_tags"])
+
+    # `privacy_profile: none` (or `null`): the file's `phi_tags` are the
+    # whole policy, with no base beneath them. The scaffold's header has
+    # told users to write this "for manual control" since v2.0, and it
+    # warned "Unknown privacy profile" and loaded nothing until #495.
+    if "privacy_profile" in config and _names_no_profile(config["privacy_profile"]):
+        config.pop("privacy_profile")
+        return config
 
     # Merge Privacy Profile
     if "privacy_profile" in config:
@@ -269,7 +297,8 @@ class ConfigLoader:
         Legacy/Convenience support for loading only PHI Tags.
 
         Arg:
-            filepath (str, optional): Path to config file. If None, loads internal defaults.
+            filepath (str, optional): Path to config file. If None, returns
+                a copy of the floor policy, `profiles.FLOOR_POLICY`.
 
         Returns:
             Dict: Mapping of tags to configuration (action/name).
@@ -281,20 +310,15 @@ class ConfigLoader:
             if "phi_tags" in data:
                 return data["phi_tags"]
             return data.get("phi_tags", data)  # Fallback to assumes root dict is tags if no key
-        else:
-            # Load default from package resources. The refusal replaces a
-            # `return {}` that made `audit()` report success on data full
-            # of PHI -- `publish.yml`'s own words for the same failure
-            # (#388), so the release gate and the runtime now say the same
-            # thing about the same file.
-            filepath = require_package_resource(
-                RESOURCES_DIR, "phi_tags.json",
-                "audited against an empty PHI tag list")
-            # Read with json, not the YAML helper: user-facing config
-            # files are YAML-only by design, but this is a shipped
-            # package resource and stays JSON.
-            with open(filepath, 'r', encoding="utf-8") as f:
-                return json.load(f).get("phi_tags", {})
+        # The default policy is the floor a bare session applies (#495).
+        # It was `resources/phi_tags.json` -- six name-only tags, every
+        # one of them already in the basic profile -- which only this
+        # arm, the scaffold's tag names and the report's rule count ever
+        # read, while `audit()` on a bare session scanned against `{}`:
+        # the report named six rules the scan never ran. A copy, because
+        # `PhiInspector` normalizes what it is handed and a caller may
+        # edit it.
+        return copy.deepcopy(FLOOR_POLICY)
 
     @staticmethod
     def clean_filename(filename: str) -> str:

@@ -46,12 +46,14 @@ def test_safe_export_skips_phi(tmp_path):
         se2 = Series("SE2", "OT", 1)
 
         inst2 = Instance("I2", "1.2.840.2", 1)
-        # We must reset attributes that might be picked up?
-        # Inspector currently scans OBJECT attributes (Patient.patient_name), not the instance dict.
-        # But let's be safe.
+        # Carries no value any floor-policy rule would act on (#495): no
+        # Study Date at all (JITTER flags even an empty one, since it has
+        # not been shifted), and Study Time already empty (EMPTY is
+        # satisfied by ""). Before #495 the bare session scanned no
+        # instance tags, so this instance carried Study Time "120000" and
+        # an empty Study Date and still counted as clean.
         inst2.attributes.update({
-            "0008,0020": "", # Empty Study Date
-            "0008,0030": "120000",
+            "0008,0030": "",
             "0018,0050": "1.0",
             "0018,0060": "120",
             "0020,0032": ["0","0","0"],
@@ -73,6 +75,24 @@ def test_safe_export_skips_phi(tmp_path):
         p_clean.studies.append(st2)
         sess.store.patients.append(p_clean)
 
+        # --- A patient whose name is already ANONYMIZED, but whose
+        # instance still carries a real Study Time. The pin on #495's
+        # Breaking change: before it, a bare session's scan saw only the
+        # patient name, ID and study date, so this instance was written;
+        # under the floor policy Study Time is an identifier and the
+        # instance is skipped until `anonymize()` has run.
+        p_floor = Patient("ANON_FLOOR", "ANONYMIZED")
+        st3 = Study("S3", None)
+        se3 = Series("SE3", "OT", 1)
+        inst3 = Instance("I3", "1.2.840.3", 1)
+        inst3.attributes.update(dict(inst2.attributes))
+        inst3.attributes["0008,0030"] = "120000"
+        inst3.set_pixel_data(np.zeros((10,10), dtype=np.uint8))
+        se3.instances.append(inst3)
+        st3.series.append(se3)
+        p_floor.studies.append(st3)
+        sess.store.patients.append(p_floor)
+
         # 2. Config for PHI Scan (Minimal)
         # We need a PHI config to define what is "dirty"
         # Create a simple config file
@@ -92,9 +112,10 @@ def test_safe_export_skips_phi(tmp_path):
         # Wait, privacy.py hardcodes "ANONYMIZED" check?
         # Yes: if patient.patient_name != "ANONYMIZED" -> Finding.
 
-        # No config_path is loaded on `sess`, so this relies on the hardcoded
-        # baseline PHI check in privacy.py. check_burned_in=True makes export()
-        # run audit() first and skip any patient with a finding.
+        # No config is loaded on `sess`, so the scan is the floor policy
+        # (#495) plus the hardcoded patient/study checks in privacy.py.
+        # check_burned_in=True makes export() run audit() first and skip
+        # any instance with a finding on itself or a parent.
 
         sess.export(str(out_dir), check_burned_in=True)
 
@@ -112,3 +133,8 @@ def test_safe_export_skips_phi(tmp_path):
         clean_files = [f for f in all_files if "Subject_ANON_CLEAN" in str(f) and f.name == "I2.dcm"]
         assert len(clean_files) == 1
         assert clean_files[0].exists()
+
+        floor_files = [f for f in all_files if "Subject_ANON_FLOOR" in str(f)]
+        assert floor_files == [], (
+            "an instance carrying a real Study Time was exported by a "
+            "safe export on a bare session; the floor policy flags it")

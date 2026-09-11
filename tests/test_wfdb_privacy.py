@@ -52,7 +52,17 @@ def test_header_contains_no_comment_lines(session_with_ecg):
     lines = header.splitlines()
     assert len(lines) >= 2, "header has no signal line beyond the record line"
     assert len(lines[0].split()) >= 4, "record line missing expected leading fields"
-    assert not any(line.startswith("#") for line in lines)
+    # Since #495 a bare session applies the floor policy, which empties
+    # Study Time and removes Acquisition DateTime, so the writer has a
+    # shifted date and no time of day and takes its documented comment
+    # path (`_start_datetime`). That comment is the only `#` line allowed,
+    # and it carries the shifted date and nothing from the source.
+    comments = [line for line in lines if line.startswith("#")]
+    study = session.store.patients[0].studies[0]
+    assert comments == [
+        f"# de-identified start date: {study.study_date.strftime('%d/%m/%Y')}"], comments
+    assert "01/01/2026" not in header, "the source study date reached the header"
+    assert "Doe" not in header and "MRN-12345678" not in header
 
 
 def test_record_name_excludes_the_source_patient_id(session_with_ecg):
@@ -95,11 +105,15 @@ def test_header_date_reflects_the_real_shifted_study_date(tmp_path):
     """The header date must come from a REAL `session.anonymize()` shift,
     not merely an injected instance tag.
 
-    ROUND-1 DEFECT (coordinator CRITICAL 1, fixed here): the shipped
-    `isocenter/resources/phi_tags.json` has no date tags, so instance-level
-    Acquisition DateTime (0008,002A) / Study Date (0008,0020) / Study
-    Time (0008,0030) are never covered by the default remediation config
-    and are NEVER shifted by `session.anonymize()`. The date shift that
+    ROUND-1 DEFECT (coordinator CRITICAL 1, fixed here): when this was
+    written the default PHI policy (the since-deleted `phi_tags.json`) had
+    no date tags, so instance-level Acquisition DateTime (0008,002A) /
+    Study Date (0008,0020) / Study Time (0008,0030) were never remediated
+    by `session.anonymize()` on a bare session. Since #495 the floor
+    policy removes the first, jitters the second and empties the third,
+    so the header has a shifted date and no time of day: the writer puts
+    the date in its `# de-identified start date:` comment and leaves the
+    record line's timing fields off. The date shift that
     actually runs is a Study-level scan (`isocenter/privacy.py:_scan_study`)
     whose SHIFT_DATE remediation (`isocenter/remediation.py`) writes the new
     date onto `study.study_date` and sets `study.date_shifted = True`.
@@ -140,15 +154,17 @@ def test_header_date_reflects_the_real_shifted_study_date(tmp_path):
         assert paths, "export produced no .hea files"
         header = _header_text(paths)
         assert header.strip(), "header file was empty"
-        record_line = header.splitlines()[0].split()
-        assert len(record_line) == 6, (
-            f"expected record line with timing fields, got: {record_line!r}")
+        lines = header.splitlines()
+        record_line = lines[0].split()
+        assert len(record_line) == 4, (
+            "expected a record line without timing fields (no time of day "
+            f"survives the floor policy), got: {record_line!r}")
     finally:
         session.close()
 
-    assert record_line[5] == expected_date_token
-    assert record_line[5] != source_date_token
-    assert source_date_token not in " ".join(record_line)
+    assert lines[1] == f"# de-identified start date: {expected_date_token}"
+    assert expected_date_token != source_date_token
+    assert source_date_token not in header
 
 
 def test_start_datetime_falls_back_to_instance_tags_without_study_date(tmp_path):

@@ -480,15 +480,18 @@ def built(tmp_path_factory):
 def test_the_wheel_ships_every_resource_the_package_reads(built):
     """A data file left out of the wheel silently disables a feature.
 
-    isocenter/resources/phi_tags.json is the whole default PHI policy, and
-    leaving it out of the wheel is still release-blocking.
+    isocenter/resources/redaction_rules.json is the machine redaction
+    knowledge base, and leaving it out of the wheel is still
+    release-blocking. (This named `phi_tags.json`, the default PHI
+    policy, until #495 moved that policy into Python as `FLOOR_POLICY`
+    and deleted the file.)
 
-    What changed in #388 is the failure mode, not the requirement. When it
-    is absent, `load_phi_config()` now raises `RuntimeError` at the first
-    call that needs it -- naming the file, the path it looked in, and that
-    continuing would have "audited against an empty PHI tag list" -- where
-    it used to return `{}`, so a scan found nothing and reported success
-    on data full of PHI. A wheel without it therefore refuses at first use
+    What changed in #388 is the failure mode, not the requirement. When a
+    shipped resource is absent, its loader now raises `RuntimeError` at
+    the first call that needs it -- naming the file, the path it looked
+    in, and what continuing would have done -- where it used to return an
+    empty collection and let the run report success. A wheel without it
+    therefore refuses at first use
     instead of degrading, which is why this test still has to fail rather
     than leave the check to runtime: a build that ships without the file
     is broken for every user of it, and finding that out one `pip install`
@@ -560,8 +563,8 @@ def test_every_shipped_resource_is_named_by_the_package():
     `ctp_rules.yaml` is named by `session.py` and deliberately does not
     ship, so "every literal names a file" would be red on purpose. And
     it is a *basename* match against a string literal, because that is
-    how every loader here spells its path (`os.path.join(RESOURCES_DIR,
-    "phi_tags.json")`); a loader that built the name from parts would
+    how every loader here spells its path (`require_package_resource(
+    RESOURCES_DIR, "redaction_rules.json", ...)`); a loader that built the name from parts would
     need this test taught the new spelling, which is the right cost.
 
     Mutations that kill it: restore the file (red: no literal names it);

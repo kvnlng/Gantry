@@ -37,7 +37,7 @@ from .parallel import run_parallel, _env_int, _resolve_strategy, resolve_worker_
 from .configuration import IsocenterConfiguration, FlowList
 from .entities import (PhiStatus, SOURCE_SOP_UID_ATTR, clone_sequences,
                        resolve_item_path, iter_item_tree)
-from .profiles import PRIVACY_PROFILES
+from .profiles import BASIC_PROFILE, FLOOR_POLICY, PRIVACY_PROFILES
 from . import entities
 from . import pixel_analysis
 from .automation import ConfigAutomator
@@ -420,20 +420,6 @@ def _match_kb_by_model(equipment, kb_machines):
     return None
 
 
-def _default_action_for_tag(tag: str) -> str:
-    """The research-friendly default action for a PHI tag.
-
-    Only three tags deviate from REMOVE. Earlier versions also branched on
-    "Date"/"Time"/"ID" appearing in the tag's name, but every one of those
-    branches also chose REMOVE, so they never changed an outcome.
-    """
-    if tag == "0008,0020":      # Study Date: keep intervals, lose the date
-        return "JITTER"
-    if tag in ("0010,0040", "0010,1010"):   # Sex, Age: research-relevant
-        return "KEEP"
-    return "REMOVE"
-
-
 def _render_config_yaml(data: Dict[str, Any]) -> str:
     """Renders the config dict as the commented YAML users actually edit.
 
@@ -599,19 +585,6 @@ def _report_phi_findings(findings) -> None:
     _print_suggested_config(counts)
 
 
-# Names for tags the shipped `resources/phi_tags.json` does not list.
-# `_scaffold_phi_tags` needs them because they are the research-friendly
-# defaults a scaffold should mention, and `_suggested_tag_name` needs them
-# because Study Date is one of the tags a safety scan flags most often.
-# Kept in one place so the two cannot drift into disagreeing about what a
-# tag is called.
-_SUPPLEMENTAL_TAG_NAMES = {
-    "0008,0020": "Study Date",
-    "0010,0040": "Patient Sex",
-    "0010,1010": "Patient Age",
-}
-
-
 def _print_suggested_config(counts) -> None:
     """Prints a config fragment removing every tag the scan flagged.
 
@@ -640,29 +613,21 @@ def _print_suggested_config(counts) -> None:
 
 
 def _suggested_tag_name(tag: str) -> str:
-    """A readable name for a flagged tag, from the shipped PHI defaults.
+    """A readable name for a flagged tag, from the floor policy.
 
     This recognised three tags by hand and called everything else
-    `unknown_tag`, while `resources/phi_tags.json` already named more --
-    two spellings of the same mapping, with the smaller one facing the
-    user at the exact moment they need it to be right.
+    `unknown_tag`, then read the six-tag `resources/phi_tags.json` plus a
+    three-entry supplement. Since #495 it reads `profiles.FLOOR_POLICY`,
+    the one table that names every tag a bare session or the scaffold
+    applies, so the name here is the name the config file uses.
 
     Falls back to the tag itself rather than to `unknown_tag`: the name is
     a comment to the reader, and a tag repeated is at least true, where
     three rules all called `unknown_tag` are indistinguishable.
     """
-    try:
-        names = dict(ConfigLoader.load_phi_config())
-    except (OSError, ValueError):
-        names = {}
-    for extra_tag, extra_name in _SUPPLEMENTAL_TAG_NAMES.items():
-        names.setdefault(extra_tag, extra_name)
-
-    entry = names.get(tag)
-    if isinstance(entry, dict):
-        return str(entry.get("name") or tag)
-    if isinstance(entry, str) and entry:
-        return entry
+    entry = FLOOR_POLICY.get(tag)
+    if isinstance(entry, dict) and entry.get("name"):
+        return str(entry["name"])
     return tag
 
 
@@ -1988,34 +1953,32 @@ class DicomSession:
     def _scaffold_phi_tags(self) -> Dict[str, Any]:
         """The PHI tag section of a scaffolded config.
 
-        Only tags that *deviate* from the basic profile are written. The
-        scaffold sets `privacy_profile: basic`, which already removes
-        everything listed there, so re-listing a REMOVE tag would add a
-        line that changes nothing. What survives is the research-friendly
-        defaults: a jittered study date, and age and sex kept.
+        Every entry of the session's policy whose action differs from the
+        basic profile's -- the scaffold sets `privacy_profile: basic`, so
+        a line repeating the profile would change nothing. On a bare
+        session the policy is the floor, and the difference is exactly
+        `profiles.RESEARCH_DEFAULTS`: a jittered study date, and sex and
+        age kept.
+
+        Derived rather than listed (#495). The research defaults used to
+        live here as their own table (`_default_action_for_tag` and a
+        supplement of names) beside a floor that did not exist, so the
+        scaffold and what a bare session applied could not be checked
+        against each other. Now the floor is the one table and this is a
+        diff of it, so the file loads back to exactly the policy it was
+        written from.
+
+        A plain-string value is a tag's display name and leaves the
+        inspector's action at REPLACE (`PhiInspector.__init__`), so it is
+        written structured, as the REPLACE it is.
         """
-        phi_tags = dict(self.configuration.phi_tags)
-        if not phi_tags:
-            try:
-                phi_tags = dict(ConfigLoader.load_phi_config())
-            except (OSError, ValueError) as exc:
-                get_logger().warning("Failed to load default PHI tags: %s", exc)
-
-        for tag, name in _SUPPLEMENTAL_TAG_NAMES.items():
-            phi_tags.setdefault(tag, name)
-
         structured = {}
-        for tag, val in phi_tags.items():
-            if isinstance(val, dict):
-                # Already structured by a loaded config; pass it through.
-                structured[tag] = val
-                continue
-
-            action = _default_action_for_tag(tag)
-            if action == "REMOVE":
-                continue
-            structured[tag] = {"name": val, "action": action}
-
+        for tag, val in self.configuration.phi_tags.items():
+            rule = dict(val) if isinstance(val, dict) else {
+                "name": str(val), "action": "REPLACE"}
+            base = BASIC_PROFILE.get(tag, {}).get("action")
+            if str(rule.get("action", "REPLACE")).upper() != base:
+                structured[tag] = rule
         return structured
 
     # =========================================================================
@@ -2073,7 +2036,14 @@ class DicomSession:
         inspector = PhiInspector(config_tags=tags_to_use,
                                  remove_private_tags=self.configuration.remove_private_tags)
         if not inspector.phi_tags:
-            get_logger().warning("PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
+            # Reachable only when a config said `privacy_profile: none`
+            # and listed no tags: a session with no config applies the
+            # floor policy (#495). The scan still runs the hardcoded
+            # patient/study checks and the private-tag sweep.
+            get_logger().warning(
+                "PHI Scan Warning: No PHI tags defined (privacy_profile: none "
+                "with no phi_tags). Only patient name, patient ID, study date "
+                "and private tags will be checked.")
 
         get_logger().info("Scanning for PHI (Parallel)...")
 
@@ -2724,15 +2694,14 @@ class DicomSession:
         # "Safe Harbor (Basic Profile)" that nothing assigned, so every
         # report -- including a bare session's, scanning six tags --
         # asserted HIPAA Safe Harbor above a DPO signature line.
-        # The tag count mirrors what PhiInspector actually scans with:
-        # the configured policy, or the shipped defaults when there is
-        # none (see PhiInspector.__init__).
+        # The tag count is what `audit()` scans with: the session's
+        # policy, with no fallback. This fell back to the shipped
+        # `phi_tags.json` when `phi_tags` was empty, while `audit()` used
+        # the empty dict -- so a bare session's report said "6 tag rules"
+        # over a scan that applied none (#495). A bare session now
+        # carries the floor; an empty policy means `privacy_profile:
+        # none` with no tags, and "0 tag rules" is then the truth.
         effective_tags = self.configuration.phi_tags
-        if not effective_tags:
-            try:
-                effective_tags = ConfigLoader.load_phi_config()
-            except (OSError, ValueError):
-                effective_tags = {}
 
         profile_name = self.configuration.privacy_profile
         if not profile_name:

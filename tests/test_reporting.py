@@ -196,12 +196,19 @@ def test_the_report_names_the_profile_that_was_actually_applied(tmp_path):
 
 
 def test_the_report_states_when_no_profile_was_applied(tmp_path):
-    """Silence reads as 'a profile was applied'. Say the opposite."""
+    """Silence reads as 'a profile was applied'. Say the opposite.
+
+    The count is the floor policy a bare session scans with (#495). It
+    read "6 tag rules" -- the since-deleted `phi_tags.json` -- while the
+    scan it described applied none.
+    """
+    from isocenter.profiles import FLOOR_POLICY
+
     with Session(str(tmp_path / "bare.db")) as session:
         content = _render_report(session, tmp_path)
 
     assert "session defaults" in content.lower()
-    assert "6 tag rules" in content
+    assert f"{len(FLOOR_POLICY)} tag rules" in content
 
 
 def test_an_unresolvable_profile_is_not_reported_as_applied(tmp_path):

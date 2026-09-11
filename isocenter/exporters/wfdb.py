@@ -757,11 +757,13 @@ class WfdbExporter(Exporter):
         that is a supported value, just no longer an accidental default.
 
         APPROVED DEVIATION from the brief (Task 9 review round 1,
-        coordinator override): the shipped `isocenter/resources/phi_tags.json`
-        contains no date tags, so instance-level Acquisition DateTime
-        (0008,002A), Study Date (0008,0020), and Study Time (0008,0030)
-        are NEVER covered by the default remediation config and are
-        NEVER shifted by `session.anonymize()`. The date shift that
+        coordinator override): when this was written the default PHI
+        policy (the since-deleted `resources/phi_tags.json`) carried no
+        date tags, so instance-level Acquisition DateTime (0008,002A),
+        Study Date (0008,0020) and Study Time (0008,0030) were never
+        remediated on a bare session. Since #495 the floor policy removes
+        the first, jitters the second and empties the third, but the
+        instance tags are still not what this reads: the date shift that
         actually runs is a Study-level scan (`isocenter/privacy.py`,
         `PhiScanner._scan_study`) whose SHIFT_DATE remediation
         (`isocenter/remediation.py`) writes the new date onto

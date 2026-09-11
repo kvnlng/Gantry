@@ -236,7 +236,8 @@ TARGETS = {
     #     returning None, is equivalent: the one caller,
     #     `DicomExporter._finalize_dataset` in io_handlers.py, only
     #     truth-tests the result.
-    "isocenter/validation.py": (["tests/test_export_error.py", "tests/test_io.py",
+    "isocenter/validation.py": (["tests/test_export_error.py",
+                                 "tests/test_floor_policy.py", "tests/test_io.py",
                                  "tests/test_structured_export.py",
                                  "tests/test_validation.py", "tests/test_wfdb_writer.py"], 30),
     # 18 sites, exhaustive: 15 killed. Three files, 2s per pass.
@@ -297,6 +298,7 @@ TARGETS = {
                               "tests/test_audit_suppression.py", "tests/test_automation.py",
                               "tests/test_config_tags_shapes.py",
                               "tests/test_declined_remediation_is_recorded.py",
+                              "tests/test_floor_policy.py",
                               "tests/test_multiprocessing.py",
                               "tests/test_mutation_gaps.py", "tests/test_ocr_formal.py",
                               "tests/test_patient_level_remediation_reaches_instances.py",
@@ -580,6 +582,7 @@ TARGETS = {
                               "tests/test_export_ybr_full_422.py",
                               "tests/test_feature_regression.py",
                               "tests/test_float_pixel_data_export.py",
+                              "tests/test_floor_policy.py",
                               "tests/test_frozen_surface.py",
                               "tests/test_full_logging.py",
                               "tests/test_import_validation.py",
@@ -782,6 +785,7 @@ TARGETS = {
                                "tests/test_export_worker_graph_purity.py",
                                "tests/test_export_ybr_full_422.py",
                                "tests/test_float_pixel_data_export.py",
+                               "tests/test_floor_policy.py",
                                "tests/test_flush_orphan_recovery.py",
                                "tests/test_frozen_surface.py",
                                "tests/test_ingest_imagecodecs_fallback.py",
