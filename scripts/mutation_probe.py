@@ -21,6 +21,7 @@ mutant surviving:
     default run, before the session/entities/imagecodecs rows   ~3.7 h
     default run, with them (#414, #419)                         ~8.4 h
     the eleven #439 rows, on top of that                       +~1.1 h
+    default run, with the #439 rows too                         ~9.5 h
     `python -m scripts.mutation_probe 10`, the cheap pass       ~3.0 h
 
 `session.py` and `entities.py` each list over 120 test files, one full
@@ -912,9 +913,7 @@ TARGETS = {
 # counts and seconds per pass (one pass of those importers) were measured
 # at 0e3e38c on 3.12.14, at budget 30 unless an entry says otherwise, on
 # a machine running other suites: controls ran 1.2-1.8x the unloaded
-# 4d34c64 figures, so read the seconds as upper-side. The logger.py entry
-# is #466's and is dated by it; discovery.py's importer count is
-# 0e3e38c's, and e184933 has 5.
+# 4d34c64 figures, so read the seconds as upper-side.
 NOT_PROBED = {
     # Permanently excluded.
     "isocenter/__init__.py":
@@ -937,7 +936,7 @@ NOT_PROBED = {
         "a hand list needs a mutant run over them first, ~80 minutes at "
         "session-sized passes",
     "isocenter/logger.py":
-        "deferred: 13 sites, 1 importer -- reached through get_logger() "
+        "deferred: 14 sites, 2 importers -- reached through get_logger() "
         "and describe_exception(), whose spelling "
         "tests/test_ingest_failure_audit.py pins directly (#435); a row "
         "would still need its list written by hand",
@@ -983,7 +982,8 @@ NOT_PROBED = {
         "deferred: 52 sites, 1 importer, 2.6s per pass; killed 42/52, ten "
         "survivors unclassified",
     "isocenter/discovery.py":
-        "deferred: 77 sites, 4 importers, 0.3s per pass; over 20 survivors "
+        "deferred: 77 sites, 5 importers, 0.9s per pass; a budget-30 "
+        "sample (stride 2, 39 mutants) killed 28 and left ten survivors "
         "unclassified. Flipping the BFS's `visited[neighbor] = True` to "
         "False never terminates; it is caught in 2s today only because -x "
         "stops on test_merge_disjoint first, and would cost "

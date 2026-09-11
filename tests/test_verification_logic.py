@@ -165,10 +165,6 @@ class TestVerifierReadsZoneSpace(unittest.TestCase):
         self.assertEqual(findings[0].metadata.get("coverage_score"), 0.0)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 def test_text_clear_of_a_zone_has_zero_coverage_never_a_negative_one():
     """Text clear of a zone on either axis has coverage exactly 0.0 (#439).
 
@@ -200,3 +196,7 @@ def test_text_clear_of_a_zone_has_zero_coverage_never_a_negative_one():
     below = (100, 110, 0, 10)            # same columns, rows clear
     assert verifier._coverage(text_box, beside) == 0.0
     assert verifier._coverage(text_box, below) == 0.0
+
+
+if __name__ == '__main__':
+    unittest.main()
