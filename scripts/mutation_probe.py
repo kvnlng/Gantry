@@ -198,14 +198,14 @@ TARGETS = {
     # per pass for the pair.
     "isocenter/exporters/dicom.py": (["tests/test_api_coherence.py",
                                       "tests/test_export_contract.py"], 30),
-    # 7 sites, exhaustive: 6 killed. One file, 1.8s per pass. The survivor
-    # is NOT equivalent: `ManifestItem.anonymized: bool = True` flipped to
-    # False. `generate_manifest()` never passes the field, so every
-    # manifest says `"anonymized": true` for every instance, even from a
-    # session that never anonymized. No test can pin today's value without
-    # pinning a false claim, so it is filed (#486), as the entities.py row
-    # did with #443.
-    "isocenter/manifest.py": (["tests/test_manifest.py"], 30),
+    # 7 sites, exhaustive: all 7 killed, measured in the review of #491.
+    # The survivor #439 filed as #486 -- `ManifestItem.anonymized: bool =
+    # True` flipped to False -- was the defect that issue fixed: the
+    # default is False now, and the mutant flipping it back to True dies
+    # on test_manifest_says_what_was_done.py::
+    # test_a_manifest_item_nobody_described_is_not_anonymized. Two files.
+    "isocenter/manifest.py": (["tests/test_manifest.py",
+                               "tests/test_manifest_says_what_was_done.py"], 30),
     # 24 sites, exhaustive: 23 killed. Three files, 6.6s per pass.
     #   - `_coverage`'s `x_right <= x_left or y_bottom <= y_top` weakened
     #     to `and` survived until #439, and is not equivalent: a box clear
@@ -316,7 +316,16 @@ TARGETS = {
                                   "tests/test_remediation_dates.py",
                                   "tests/test_remediation_invariants.py",
                                   "tests/test_phi_retention.py",
-                                  "tests/test_scaffold_features.py"], 30),
+                                  "tests/test_scaffold_features.py",
+                                  # A hand extra (#441): it reaches
+                                  # `apply_remediation` through
+                                  # `Session.anonymize()` without importing
+                                  # this module, and its
+                                  # test_a_declined_finding_on_the_same_instance_says_false
+                                  # is the one test that kills the pass-end
+                                  # demotion deleted (measured, review of
+                                  # #491); nothing the scan demands does.
+                                  "tests/test_manifest_says_what_was_done.py"], 30),
     "isocenter/io_handlers.py": (["tests/test_api_coherence.py",
                                   "tests/test_audit_read_barrier.py",
                                   "tests/test_binary_retention_threshold.py",
@@ -571,6 +580,7 @@ TARGETS = {
                               "tests/test_lock_identities_signature.py",
                               "tests/test_logging.py",
                               "tests/test_manifest.py",
+                              "tests/test_manifest_says_what_was_done.py",
                               "tests/test_memory_redaction.py",
                               "tests/test_memory_store_redaction_strategy.py",
                               "tests/test_memory_store_reports_its_processes_lever.py",
@@ -612,6 +622,7 @@ TARGETS = {
                               "tests/test_redaction_consistency.py",
                               "tests/test_redaction_export.py",
                               "tests/test_redaction_failure_is_reported.py",
+                              "tests/test_redaction_keeps_the_tag_scan_conclusion.py",
                               "tests/test_redaction_multizone.py",
                               "tests/test_redaction_names_its_strategy.py",
                               "tests/test_redaction_parallel.py",
@@ -625,6 +636,7 @@ TARGETS = {
                               "tests/test_remediation_actions.py",
                               "tests/test_report_action_evidence.py",
                               "tests/test_report_export_boundary.py",
+                              "tests/test_report_section5_says_what_happened.py",
                               "tests/test_reporting_features.py",
                               "tests/test_reversibility.py",
                               "tests/test_safe_export.py",
@@ -762,6 +774,7 @@ TARGETS = {
                                "tests/test_io_no_pixels.py",
                                "tests/test_legacy_waveform_hydration.py",
                                "tests/test_lock_identities_signature.py",
+                               "tests/test_manifest_says_what_was_done.py",
                                "tests/test_memory_redaction.py",
                                "tests/test_memory_store_redaction_strategy.py",
                                "tests/test_memory_store_reports_its_processes_lever.py",
@@ -797,6 +810,7 @@ TARGETS = {
                                "tests/test_redact_reports_outcome.py",
                                "tests/test_redaction_consistency.py",
                                "tests/test_redaction_failure_is_reported.py",
+                               "tests/test_redaction_keeps_the_tag_scan_conclusion.py",
                                "tests/test_redaction_multizone.py",
                                "tests/test_redaction_names_its_strategy.py",
                                "tests/test_redaction_optimization.py",
@@ -811,6 +825,7 @@ TARGETS = {
                                "tests/test_remediation_accounting.py",
                                "tests/test_remediation_actions.py",
                                "tests/test_remediation_invariants.py",
+                               "tests/test_report_section5_says_what_happened.py",
                                "tests/test_reporting_features.py",
                                "tests/test_reversibility.py",
                                "tests/test_reversibility_coverage.py",

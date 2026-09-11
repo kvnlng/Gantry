@@ -19,11 +19,13 @@ from .io_handlers import (DicomImporter, DicomExporter, ExportContext,
                           GRADED_LOSS_SCOPES, redaction_in_effect)
 from .store import DicomStore
 from .services import (RedactionService, RedactionOutcome, RedactionError,
+                       capture_phi_status_for_redaction,
+                       carry_phi_status_across_redaction,
                        _report_redaction_failures)
 from .config_manager import ConfigLoader, require_package_resource
 from .privacy import PhiInspector, PhiFinding, PhiReport
 from .logger import configure_logger, describe_exception, get_logger
-from .reporting import (ComplianceReport, get_renderer, GAP_REMOVED,
+from .reporting import (ComplianceReport, PixelScanSummary, get_renderer, GAP_REMOVED,
                         GAP_RETAINED, GAP_UNRESOLVED)
 from .manifest import Manifest, ManifestItem, generate_manifest_file
 from .blob_kind import serialize_blob_kind
@@ -890,6 +892,14 @@ class DicomSession:
         # its audit rows, so a call that performed no work demands no
         # evidence; see the two recording sites.
         self._actions_performed: Set[str] = set()
+
+        # Each `scan_pixel_content()` call this session made, for the
+        # report's section 5 (#481), which used to say "pixel data was
+        # scanned" for every session. Transient for `_actions_performed`'s
+        # reason above, which is also why section 5 says "in this
+        # session": a scan an earlier session ran over this store is not
+        # known here, and the report says so rather than guessing.
+        self._pixel_scans: List[PixelScanSummary] = []
 
         if os.path.exists("isocenter.key"):
             self.enable_reversible_anonymization("isocenter.key")
@@ -2100,6 +2110,11 @@ class DicomSession:
         and would report UNSCANNED for every session, which reads as a
         gap rather than as "not applicable".
 
+        `redact()` is the one edit that keeps an instance's status: an
+        instance REMEDIATED or CLEARED before the pass reads the same
+        after it, provided nothing but redaction's own writes changed
+        (#486; confirmed by the owner on 2026-09-11). See `PhiStatus`.
+
         Returns:
             Dict[str, Counter]: Keyed "patients", "studies", "instances";
             each a Counter of PhiStatus to how many carry it.
@@ -2241,6 +2256,12 @@ class DicomSession:
             if skipped_count > 0:
                 msg += f" (Skipped {skipped_count} unconfigured instances)"
             print(msg)
+            # Recorded: a call that found nothing configured to read still
+            # ran, and "no scan ran" would be the wrong thing for section 5
+            # to say about it (#481).
+            self._pixel_scans.append(PixelScanSummary(
+                serial_number=serial_number, attempted=0, read=0, unread=0,
+                findings=0, skipped=skipped_count))
             return PhiReport([])
 
         outcomes = run_parallel(_verify_worker, worker_items, desc="OCR Verification")
@@ -2254,6 +2275,15 @@ class DicomSession:
                 failures.append((outcome.entity_uid, outcome.failure))
             if outcome.read:
                 read += 1
+
+        # Here, before anything below can raise: a pass that read nothing
+        # ends in `PixelScanError`, and recorded after that raise it would
+        # read in section 5 as "no scan ran" beside section 4's rows for
+        # the very instances it could not read (#481, #479).
+        self._pixel_scans.append(PixelScanSummary(
+            serial_number=serial_number, attempted=len(worker_items),
+            read=read, unread=len(failures), findings=len(all_findings),
+            skipped=skipped_count))
 
         # Unconditionally, in both strategies: the worker strips the
         # entity, and this is the one path that puts it back, so
@@ -2558,6 +2588,47 @@ class DicomSession:
             resolved.append((timestamp, uid, details, disposition))
         return resolved
 
+    @staticmethod
+    def _review_reasons(*, audit_summary, exceptions, graded_losses,
+                        open_gaps, declined_remediations,
+                        unattested) -> List[str]:
+        """Why a run is not PASS, one entry per term of the grade (#481).
+
+        The grade IS this list: `generate_report` grades PASS exactly when
+        it is empty. It used to be a boolean, with section 5 rendering a
+        count nothing set, so every report said "Identified Issues: 0" --
+        beside a REVIEW_REQUIRED whose section 4 listed the issue. One list
+        means a new grade term cannot move the grade without also appearing
+        in section 5, because there is no second expression for it to live
+        in. Every term is here, including the two with no row anywhere else
+        in the report: an empty audit trail and an unattested verb.
+        """
+        review_reasons = []
+        if not audit_summary:
+            review_reasons.append(
+                "the audit trail holds no rows, so nothing this run did is "
+                "attested (section 2)")
+        if exceptions:
+            review_reasons.append(
+                f"{len(exceptions)} row(s) in section 4 (Exceptions & Errors)")
+        if graded_losses:
+            review_reasons.append(
+                f"{len(graded_losses)} graded data loss(es) in section 3.1 "
+                f"(scope {' or '.join(sorted(GRADED_LOSS_SCOPES))})")
+        if open_gaps:
+            review_reasons.append(
+                f"{len(open_gaps)} unscanned element(s) in section 3.2 not "
+                "removed before export")
+        if declined_remediations:
+            review_reasons.append(
+                f"{len(declined_remediations)} declined remediation(s) in "
+                "section 3.3")
+        for verb in unattested:
+            review_reasons.append(
+                f"{verb} ran in this session and the audit trail holds none "
+                "of the rows it writes")
+        return review_reasons
+
     def generate_report(self, output_path: str, format: str = "markdown") -> None:
         """
         Generates a formal Compliance Report for the current session.
@@ -2747,6 +2818,17 @@ class DicomSession:
         unattested = [verb for verb in sorted(self._actions_performed)
                       if not expected_evidence[verb] & audit_summary.keys()]
 
+        # The grade IS this list: PASS exactly when it is empty (#481). See
+        # `_review_reasons` for why it is a list and not a boolean.
+        # Keyword-only: six lists in a row is an easy pair to transpose,
+        # and a transposed pair would still grade -- it would name the
+        # wrong section.
+        review_reasons = self._review_reasons(
+            audit_summary=audit_summary, exceptions=exceptions,
+            graded_losses=graded_losses, open_gaps=open_gaps,
+            declined_remediations=declined_remediations,
+            unattested=unattested)
+
         # 5. Build Report DTO
         report = ComplianceReport(
             isocenter_version=ver,
@@ -2765,16 +2847,45 @@ class DicomSession:
             scan_gaps=scan_gaps,
             declined_remediations=declined_remediations,
             export_recorded=export_recorded,
-            validation_status=("PASS"
-                               if audit_summary and not exceptions
-                               and not graded_losses and not open_gaps
-                               and not declined_remediations
-                               and not unattested
-                               else "REVIEW_REQUIRED")
+            validation_status="REVIEW_REQUIRED" if review_reasons else "PASS",
+            review_reasons=review_reasons,
+            metadata_remediations=sum(
+                audit_summary.get(action, 0)
+                for action in REMEDIATION_ACTION_TYPES),
+            pixel_scans=list(self._pixel_scans),
         )
 
         renderer = get_renderer(format)
         renderer.render(report, output_path)
+
+    @staticmethod
+    def _manifest_anonymized(patient, study, instance) -> bool:
+        """The manifest's `anonymized` for one instance (#486).
+
+        True when the patient, the study and the instance each carry
+        REMEDIATED or CLEARED at their current revision: the last
+        tag-policy scan left nothing unremediated on any of the three, and
+        nothing has edited them since. `phi_status` reads UNSCANNED for an
+        entity edited after its scan, so the revision check is structural
+        rather than repeated here.
+
+        **The series is deliberately not consulted.** The inspector never
+        scans one (`_record_scan_results` leaves it alone), so it is
+        UNSCANNED in every session and would make every item False.
+
+        **REMEDIATED is not required anywhere.** A re-audit of an
+        anonymized graph records CLEARED over it, and a rule that required
+        it would call a re-checked graph un-anonymized. The consequence is
+        that an input the scan found clean reads True after `audit()`
+        alone -- stated where the key is documented, not hidden.
+
+        **The study matters.** A declined study-date remediation leaves the
+        study IDENTIFIED while its instances read CLEARED; consulting the
+        instance alone would say True over a date that reaches the export
+        unshifted.
+        """
+        return all(entity.phi_status in (PhiStatus.REMEDIATED, PhiStatus.CLEARED)
+                   for entity in (patient, study, instance))
 
     def generate_manifest(self, output_path: str, format: str = "html") -> None:
         """
@@ -2782,6 +2893,13 @@ class DicomSession:
 
         This manifest lists every SOP Instance currently tracked in the session,
         along with its file path and key metadata (Modality, Manufacturer, etc.).
+
+        Each JSON item's `anonymized` is True when the last tag-policy PHI
+        scan left no identifier unremediated on that instance's patient,
+        study or instance, and none of the three has been edited since.
+        It is not "`anonymize()` ran" -- a clean input reads True after
+        `audit()` alone -- and it says nothing about burned-in pixel text
+        (#486). See `docs/api/stability.md`.
 
         Args:
             output_path (str): The file path where the manifest should be saved.
@@ -2808,7 +2926,8 @@ class DicomSession:
                             file_path=str(fpath),
                             modality=modality,
                             manufacturer=manufacturer,
-                            model_name=model
+                            model_name=model,
+                            anonymized=self._manifest_anonymized(p, st, inst),
                         )
                         items.append(item)
 
@@ -3420,6 +3539,14 @@ class DicomSession:
         # `ISOCENTER_FORCE_PROCESSES` by the documented order and loses to
         # worker recycling, which is why that combination is refused
         # before this point rather than failing here (#400).
+        # Before dispatch, not when each outcome lands: under threads the
+        # worker writes to the live instance, so by the time the parent
+        # sees an outcome the status it would read is already UNSCANNED.
+        # See `capture_phi_status_for_redaction` for what is kept and why
+        # (#486; confirmed by the owner on 2026-09-11).
+        captured = {sop: capture_phi_status_for_redaction(inst)
+                    for sop, inst in instances.items()}
+
         mutations = run_parallel(
             service.execute_redaction_task,
             tasks,
@@ -3429,6 +3556,14 @@ class DicomSession:
 
         applied, failures = self._apply_redaction_outcomes(
             mutations, instances, self.store_backend, passes)
+
+        # Every instance, landed or not, and before the raise below: a
+        # skipped instance was not written to and records the status it
+        # already carries, which `record_phi_status` ignores; a failed one
+        # may have been half-written under threads, and the guard decides
+        # on what actually changed, not on the outcome's word for it.
+        for sop, inst in instances.items():
+            carry_phi_status_across_redaction(inst, captured[sop])
 
         # The audit row for every pass that targeted anything, written in
         # the parent (#126) and before the failure raise below, exactly

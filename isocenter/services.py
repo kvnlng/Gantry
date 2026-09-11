@@ -15,7 +15,9 @@ from typing import Dict, List, Optional
 from tqdm import tqdm
 import numpy as np
 
-from .entities import Instance, DicomItem, DicomSequence
+from .entities import (Instance, DicomItem, DicomSequence, PhiStatus,
+                       SOURCE_SOP_UID_ATTR, _SET_PIXEL_DATA_TAGS,
+                       iter_item_tree)
 from .pixel_geometry import PixelGeometry, resolve_pixel_geometry
 from .store import DicomStore
 from .logger import describe_exception, get_logger
@@ -167,6 +169,169 @@ def _report_redaction_failures(failures, store_backend=None):
             store_backend.log_audit(action_type="ERROR", entity_uid=uid,
                                     details=detail)
     return reported
+
+
+#: What `_apply_redaction_flags` writes, spelled once. The #486 guard
+#: (`_flags_are_redactions`) accepts each of these tags at the value
+#: captured before the pass or at exactly this value, and nothing else.
+#: A second spelling of any of them would let an edit to the flags
+#: quietly widen what redaction is allowed to carry.
+_REDACTION_FLAG_TAGS = ("0008,0008", "0028,0301", "0008,2111")
+_REDACTION_FLAG_SEQUENCE = "0008,9215"        # Derivation Code Sequence
+_REDACTION_BURNED_IN = "NO"
+_REDACTION_DERIVATION_DESCRIPTION = "Isocenter Pixel Redaction: Burned-in PHI removed"
+#: Code 113062, DCM: Pixel Data modification.
+_REDACTION_DERIVATION_CODE = (("0008,0100", "113062"), ("0008,0102", "DCM"),
+                              ("0008,0104", "Pixel Data modification"))
+#: `_apply_redaction_flags` replaces the whole sequence with this one item.
+_REDACTION_DERIVATION_ITEM = (tuple(sorted(
+    (tag, repr(value)) for tag, value in _REDACTION_DERIVATION_CODE)), ())
+_NO_VALUE = ("absent",)   # a flag tag the instance does not carry
+
+
+def _derived_image_type(current) -> list:
+    """The ImageType redaction writes over `current`: DERIVED first,
+    ORIGINAL gone, and SECONDARY as Value 2 where nothing else fills it."""
+    if isinstance(current, str):
+        current = [current]
+    derived = ["DERIVED"] + [x for x in (current or [])
+                            if x not in ("ORIGINAL", "DERIVED")]
+    if len(derived) < 2:
+        derived.append("SECONDARY")
+    return derived
+
+
+#: Bookkeeping pixel redaction writes to an instance itself, and so may
+#: change without invalidating the instance's tag-scan conclusion (#486;
+#: confirmed by the owner on 2026-09-11): `regenerate_uid()` writes the
+#: SOP Instance UID and records the one it replaced; the attestation
+#: hash; and `set_pixel_data()` the descriptors in `_SET_PIXEL_DATA_TAGS`.
+#: The flags redaction writes (`_REDACTION_FLAG_TAGS`, the Derivation
+#: Code Sequence) are deliberately not here: a caller can author a value
+#: in any of them, so they are compared to what redaction writes rather
+#: than skipped. **A tag added here is a tag an edit to which, by anyone,
+#: during a pass, will be carried past the revision rule** -- so add one
+#: only for a value no caller authors and that identifies no one.
+_REDACTION_OWN_ATTRS = frozenset({
+    "0008,0018",                    # SOPInstanceUID, from regenerate_uid()
+    SOURCE_SOP_UID_ATTR,            # the UID regenerate_uid() replaced
+    "_ISOCENTER_REDACTION_HASH",    # the attestation
+    *_SET_PIXEL_DATA_TAGS,
+})
+#: Left out of the fingerprint, and checked by `_flags_are_redactions`.
+_REDACTION_SKIPPED_ATTRS = _REDACTION_OWN_ATTRS | frozenset(_REDACTION_FLAG_TAGS)
+_REDACTION_OWN_SEQUENCES = frozenset({_REDACTION_FLAG_SEQUENCE})
+
+#: Only an assurance is worth carrying. UNSCANNED has nothing to carry, and
+#: IDENTIFIED is not an assurance; both are left to the revision rule.
+_CARRIED_STATUSES = (PhiStatus.REMEDIATED, PhiStatus.CLEARED)
+
+
+def _metadata_outside_redaction(inst: Instance) -> tuple:
+    """Everything a tag scan could conclude from, minus redaction's own writes.
+
+    The whole tree, not the top level: an edit inside a nested item is as
+    much an edit the scan has not seen as one at the top, and #57 is what
+    a nested value skipped by a top-level-only view cost once. `repr`
+    because values include lists, and comparison is all this is for.
+    Sequence keys are included per item, so an emptied or added sequence
+    counts as a change even though it holds no attribute.
+    """
+    def flat(item, skip_attrs=frozenset(), skip_seqs=frozenset()):
+        return (tuple(sorted((tag, repr(value))
+                             for tag, value in item.attributes.items()
+                             if tag not in skip_attrs)),
+                tuple(sorted(tag for tag in item.sequences
+                             if tag not in skip_seqs)))
+
+    nested = []
+    for tag in sorted(inst.sequences):
+        if tag in _REDACTION_OWN_SEQUENCES:
+            continue
+        for index, item in enumerate(inst.sequences[tag].items):
+            for sub, path in iter_item_tree(item, ((tag, index),)):
+                nested.append((path, flat(sub)))
+    return (flat(inst, _REDACTION_SKIPPED_ATTRS, _REDACTION_OWN_SEQUENCES),
+            tuple(nested))
+
+
+def _redaction_flags(inst: Instance) -> tuple:
+    """The flag tags and the Derivation Code Sequence as they stand."""
+    seq = inst.sequences.get(_REDACTION_FLAG_SEQUENCE)
+    items = None if seq is None else tuple(
+        (tuple(sorted((tag, repr(value)) for tag, value in item.attributes.items())),
+         tuple(sorted(item.sequences)))
+        for item in seq.items)
+    return (tuple(inst.attributes.get(tag, _NO_VALUE) for tag in _REDACTION_FLAG_TAGS),
+            items)
+
+
+def _flags_are_redactions(before: tuple, after: tuple) -> bool:
+    """Each flag is as captured, or exactly what redaction writes over the
+    captured value; the sequence is as captured, or exactly the one item.
+
+    Either, because a hash-match skip and a failed instance leave the
+    captured values in place, and neither is an edit. Anything else --
+    a caller's text in DerivationDescription, a value appended to
+    ImageType, a second item in the Derivation Code Sequence -- is an
+    edit the scan has not seen. These tags used to be skipped by the
+    fingerprint, so such an edit was carried (found in the review of
+    #486).
+    """
+    (before_values, before_items), (after_values, after_items) = before, after
+    image_type = None if before_values[0] is _NO_VALUE else before_values[0]
+    expected = (_derived_image_type(image_type), _REDACTION_BURNED_IN,
+                _REDACTION_DERIVATION_DESCRIPTION)
+    for was, now, wanted in zip(before_values, after_values, expected):
+        if now not in (was, wanted):
+            return False
+    return after_items in (before_items, (_REDACTION_DERIVATION_ITEM,))
+
+
+def capture_phi_status_for_redaction(inst: Instance) -> Optional[tuple]:
+    """What to carry across a redaction pass, read before the pass (#486).
+
+    Returns `(status, metadata, flags)` when the instance's status is REMEDIATED
+    or CLEARED at its current revision, else None. **Call it before
+    dispatch**: under threads the worker writes to the live instance, so a
+    status read when the outcome lands is already UNSCANNED.
+
+    This is option 2 on #486, confirmed by the owner on 2026-09-11.
+    Without it,
+    `redact()`'s own writes move every redacted instance to UNSCANNED --
+    measured, revision 12 to 19 -- and the documented anonymize -> redact
+    -> export path produces a manifest saying `"anonymized": false` for
+    every instance it redacted.
+    """
+    status = inst.phi_status
+    if status not in _CARRIED_STATUSES:
+        return None
+    return status, _metadata_outside_redaction(inst), _redaction_flags(inst)
+
+
+def carry_phi_status_across_redaction(inst: Instance, captured) -> bool:
+    """Re-record a captured status if only redaction touched the instance.
+
+    **The guard is the point.** The revision rule exists so an edit nobody
+    re-scanned cannot inherit an assurance; this is the one place that
+    overrides it, and it does so only when every attribute and nested item
+    outside `_REDACTION_OWN_ATTRS` and `_REDACTION_OWN_SEQUENCES` is
+    exactly as captured, and every flag redaction writes is as captured
+    or exactly what redaction writes (`_flags_are_redactions`). Any other
+    change -- a concurrent `set_attr` of another tag, top-level or nested,
+    or a caller's value in a flag -- and nothing is recorded, so the
+    instance stays UNSCANNED as the rule requires. Returns whether it
+    re-recorded.
+    """
+    if captured is None:
+        return False
+    status, before, flags_before = captured
+    if _metadata_outside_redaction(inst) != before:
+        return False
+    if not _flags_are_redactions(flags_before, _redaction_flags(inst)):
+        return False
+    inst.record_phi_status(status)
+    return True
 
 
 class RedactionService:
@@ -745,6 +910,9 @@ class RedactionService:
                 unit="img",
                 disable=not show_progress):
             original_uid = inst.sop_instance_uid  # Capture before mutation
+            # Before the pass touches it, as `_apply_redaction_rules`
+            # does for the parallel path (#486; confirmed by the owner).
+            captured = capture_phi_status_for_redaction(inst)
             failed = False
             # Bound before the `try`: every `continue` below and the
             # exception path reach the `finally`, which reads it.
@@ -848,6 +1016,13 @@ class RedactionService:
                 # the loader, and `unload_pixel_data()` now refuses exactly
                 # that case (#293). Byte-for-byte the pre-#293 behaviour.
                 inst.discard_pixel_data()
+
+            # After the `finally`, not inside `if modified:` -- the persist
+            # and `discard_pixel_data()` above can move the revision too,
+            # and a carry made before them would be undone by them. A skip
+            # (`continue` above) never reaches here and needs nothing: it
+            # wrote nothing, so its status never moved.
+            carry_phi_status_across_redaction(inst, captured)
 
         # After the pass and before the raise, for the same reason the
         # ERROR rows are: a caller that catches `RedactionError` still
@@ -1055,31 +1230,26 @@ class RedactionService:
         # We need to preserve existing values but ensure 'DERIVED' is first.
         # Note: In a robust implementation, we'd read the old value first.
         # Here we force a standard Derived type.
-        current_type = inst.attributes.get("0008,0008", [])
-        if isinstance(current_type, str):
-            current_type = [current_type]
-
-        # Ensure 'DERIVED' is the first value (Value 1)
-        new_type = ["DERIVED"] + [x for x in current_type if x != "ORIGINAL" and x != "DERIVED"]
-        # Ensure we have at least 'PRIMARY' or 'SECONDARY' as Value 2
-        if len(new_type) < 2:
-            new_type.append("SECONDARY")
-
-        inst.set_attr("0008,0008", new_type)
+        # Every value here is a module constant the #486 guard reads:
+        # `_flags_are_redactions` accepts these tags only at the value
+        # captured before the pass or at exactly what is written here,
+        # so a value spelled a second time would be one the guard
+        # refuses to carry.
+        inst.set_attr("0008,0008",
+                      _derived_image_type(inst.attributes.get("0008,0008", [])))
 
         # 2. Burned In Annotation (0028,0301) -> NO
-        inst.set_attr("0028,0301", "NO")
+        inst.set_attr("0028,0301", _REDACTION_BURNED_IN)
 
         # 3. Derivation Description (0008,2111)
-        inst.set_attr("0008,2111", "Isocenter Pixel Redaction: Burned-in PHI removed")
+        inst.set_attr("0008,2111", _REDACTION_DERIVATION_DESCRIPTION)
 
         # 4. Derivation Code Sequence (0008,9215)
         # Code 113062: Pixel Data modification
-        seq = DicomSequence(tag="0008,9215")
+        seq = DicomSequence(tag=_REDACTION_FLAG_SEQUENCE)
         item = DicomItem()
-        item.set_attr("0008,0100", "113062")
-        item.set_attr("0008,0102", "DCM")
-        item.set_attr("0008,0104", "Pixel Data modification")
+        for tag, value in _REDACTION_DERIVATION_CODE:
+            item.set_attr(tag, value)
         seq.items.append(item)
 
-        inst.sequences["0008,9215"] = seq
+        inst.sequences[_REDACTION_FLAG_SEQUENCE] = seq

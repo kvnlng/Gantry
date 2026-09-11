@@ -52,6 +52,9 @@ class RemediationService:
         """
         self.logger = get_logger()
         self.store_backend = store_backend
+        # Entities `_record_decline` named during the current pass;
+        # reset by `apply_remediation` and read at its end.
+        self._declined_entities: list = []
         self.jitter_config = date_jitter_config or {"min_days": -365, "max_days": -1}
 
     def apply_remediation(self, findings: List[PhiFinding]):
@@ -70,6 +73,7 @@ class RemediationService:
         """
         processed_entities = set()  # To avoid double-processing if multiple findings point to same entity/attr
         audit_buffer = []
+        self._declined_entities = []
         failures = 0
         # How many proposals actually reached
         # `_apply_single_remediation`, which is what the failure warning
@@ -125,6 +129,25 @@ class RemediationService:
                     f"Failed to apply remediation for {
                         finding.entity_uid} ({
                         finding.field_name}): {e}")
+
+        # An entity that declined during this pass does not leave it
+        # REMEDIATED. The success block stamps REMEDIATED per proposal
+        # and the decline path stamps nothing, so an instance with one
+        # remediated finding and one declined ended the pass REMEDIATED
+        # with the declined value still in it: the manifest read
+        # `"anonymized": true` off that status while the same session's
+        # report graded REVIEW_REQUIRED and named the decline in section
+        # 3.3 (#486). Demoted here rather than by withholding the stamp,
+        # because the success arm cannot know what a later proposal on
+        # the same entity will do; the pass is the unit that can. Only
+        # an entity the pass left REMEDIATED is touched: one that only
+        # declined keeps whatever status it had, which
+        # `test_a_pass_that_only_declined_leaves_the_status_alone` pins, and the
+        # manifest keeps reading the status rather than the audit
+        # trail's declines, so there is one source for the answer.
+        for entity in self._declined_entities:
+            if entity.phi_status is PhiStatus.REMEDIATED:
+                entity.record_phi_status(PhiStatus.IDENTIFIED)
 
         # Flush audit logs
         if self.store_backend and audit_buffer:
@@ -388,15 +411,24 @@ class RemediationService:
         docstring and `log_audit_batch`'s), and filling it here would
         falsify all three.
 
-        Deliberately does **not** call `record_phi_status`. The success
-        block stamps `REMEDIATED`; a declined entity has not been
-        remediated and its status has to keep saying so.
+        Deliberately does **not** call `record_phi_status` here. The
+        success block stamps `REMEDIATED` per proposal, and a declined
+        entity has not been remediated, so its status has to keep
+        saying so -- but per proposal is the wrong unit for that: a
+        later proposal on the same entity can succeed and stamp
+        REMEDIATED over the decline. So the entity is named in
+        `_declined_entities` instead, and `apply_remediation` demotes
+        every named entity that ends the pass REMEDIATED back to
+        IDENTIFIED (#486). Named before the no-backend return below:
+        the demotion is about the graph, not the audit table.
 
         Same two-shape dispatch as the success block, for the same
         reason: `log_audit_batch` takes one tuple shape, so a caller with
         no `loss_scope` and no `element_tag` to describe still writes
         both slots.
         """
+        if finding.entity is not None:
+            self._declined_entities.append(finding.entity)
         details = f"Remediation declined for {finding.entity_uid}: {reason}"
         if not self.store_backend:
             return

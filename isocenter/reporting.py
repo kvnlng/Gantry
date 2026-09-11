@@ -1,6 +1,6 @@
 import datetime
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Protocol
+from typing import Dict, List, Optional, Protocol
 
 #: What section 3.2 says became of an element the PHI scan could not
 #: open. The `SCAN_GAP` row is written at ingest, before
@@ -24,6 +24,127 @@ GAP_RETAINED = "retained for export"
 #: REVIEW_REQUIRED: a disposition that cannot be established is not a
 #: clean one.
 GAP_UNRESOLVED = "unresolved"
+
+
+@dataclass(frozen=True)
+class PixelScanSummary:
+    """What one `scan_pixel_content()` call did, for section 5 (#481).
+
+    Recorded by the session on every exit of the call -- the early return
+    with nothing configured to read, the normal return, and just before a
+    `PixelScanError` -- and never persisted, for the reason
+    `_actions_performed` is not: a stored copy would be a second answer to
+    "what happened" beside the audit log, and could disagree with it. So
+    section 5 speaks for *this session* and says so.
+
+    Attributes:
+        serial_number (str, optional): The serial the call was restricted
+            to, or None for every configured machine.
+        attempted (int): Instances dispatched to OCR.
+        read (int): Of those, instances at least one frame of which was
+            read.
+        unread (int): Instances that could not be read in full -- the
+            length of `PhiReport.failures`.
+        findings (int): Text regions found outside the configured zones.
+        skipped (int): Instances not dispatched because their machine has
+            no rule, or a rule with no zones.
+    """
+    serial_number: Optional[str]
+    attempted: int
+    read: int
+    unread: int
+    findings: int
+    skipped: int
+
+
+#: Kept verbatim from the sentence it outlived; the rest of that sentence
+#: ("Metadata was remediated ...; pixel data was scanned ...") was printed
+#: for every session whatever it had done, and is now the two lines above
+#: this one, each read from what happened (#481).
+_METHODOLOGY_DISCLAIMER = (
+    "This section records what the tooling was configured to do and what it "
+    "logged doing -- whether the result meets HIPAA Safe Harbor, a Limited "
+    "Data Set, or any other standard is a determination for the data "
+    "steward, not for Isocenter.")
+
+
+def _grade_basis_lines(report: "ComplianceReport") -> str:
+    """Section 5's account of the grade, from the list the grade came from.
+
+    `generate_report` grades PASS exactly when `review_reasons` is empty,
+    so rendering the list is what keeps this section from saying "no
+    issues" beside a REVIEW_REQUIRED -- which is what the two dead fields
+    this replaced did on every report (#481).
+    """
+    if report.validation_status == "PASS":
+        return ("*   **Grade Basis:** PASS -- nothing recorded in sections 2 "
+                "to 4 costs this run its PASS.\n")
+    if report.validation_status != "REVIEW_REQUIRED":
+        return f"*   **Grade Basis:** {report.validation_status} -- not graded.\n"
+    lines = (f"*   **Grade Basis:** REVIEW_REQUIRED, for "
+             f"{len(report.review_reasons)} reason(s):\n")
+    for reason in report.review_reasons:
+        lines += f"    *   {reason}\n"
+    return lines
+
+
+def _metadata_line(report: "ComplianceReport") -> str:
+    """Whether the audit trail records a metadata remediation.
+
+    Read from the same rows section 2 prints, so the two cannot disagree,
+    and durable where the session's own memory is not: a report over a
+    reopened store still sees the remediation rows an earlier session
+    wrote.
+    """
+    if report.metadata_remediations:
+        return (f"*   **Metadata Remediation:** {report.metadata_remediations} "
+                "`REMEDIATION_*` row(s) in the audit trail (section 2) record "
+                "tag values replaced, date-shifted or removed under the tag "
+                "policy in force.\n")
+    return ("*   **Metadata Remediation:** No `REMEDIATION_*` row is in the "
+            "audit trail, so no metadata remediation is recorded.\n")
+
+
+def _pixel_scan_line(report: "ComplianceReport") -> str:
+    """What `scan_pixel_content()` did in this session, one line.
+
+    Names the method because `discover_redaction_zones()` also runs OCR,
+    and its failures reach section 4 too (#479); a line that said only
+    "pixel scan" would read as contradicting a discovery row there.
+    """
+    label = "*   **Pixel Scan (`scan_pixel_content()`):** "
+    if not report.pixel_scans:
+        return (label + "No `scan_pixel_content()` ran in this session, so "
+                "this report does not say burned-in text was checked by OCR. "
+                "A scan run by another session over this store is not "
+                "described here.\n")
+    runs = []
+    for scan in report.pixel_scans:
+        run = (f"read {scan.read} of {scan.attempted} instance(s), found "
+               f"{scan.findings} text region(s) outside the configured "
+               f"redaction zones, and {scan.unread} instance(s) could not be "
+               f"read")
+        if scan.serial_number:
+            run += f" (restricted to serial {scan.serial_number})"
+        if scan.skipped:
+            run += (f"; {scan.skipped} instance(s) skipped because their "
+                    f"machine has no configured redaction zones")
+        runs.append(run)
+    # Said whenever any run left an instance unread, because #479's rows
+    # are permanent: a later run that reads the instance writes nothing and
+    # removes nothing, so a session whose last scan was clean still grades
+    # REVIEW_REQUIRED on the earlier row. Without this sentence the Grade
+    # Basis above and a clean final run read as a contradiction (#481).
+    kept = ""
+    if any(scan.unread for scan in report.pixel_scans):
+        kept = (" Each instance a run could not read has a `WARNING` row in "
+                "section 4, and a later run that reads it does not remove "
+                "that row.")
+    if len(runs) == 1:
+        return label + f"ran once in this session: {runs[0]}.{kept}\n"
+    numbered = "; ".join(f"run {i}: {run}" for i, run in enumerate(runs, 1))
+    return (label + f"ran {len(runs)} times in this session -- "
+            f"{numbered}.{kept}\n")
 
 
 @dataclass
@@ -78,8 +199,18 @@ class ComplianceReport:
             report is generated, then `PASS` or `REVIEW_REQUIRED`.
             Nothing emits `FAIL`: this report describes a run, and a run
             that fails raises rather than grading itself.
-        validation_issues (int): Count of validation issues found.
-        verification_details (str): Additional context on verification.
+        review_reasons (List[str]): Why the run is not PASS, one entry
+            per term of the grade -- empty exactly when it is PASS, because
+            `generate_report` derives the grade from this list. Section 5
+            renders it, so the section cannot contradict the grade.
+            Replaces `validation_issues` and `verification_details`, which
+            nothing ever set: every report said "Identified Issues: 0"
+            (#481).
+        metadata_remediations (int): `REMEDIATION_*` rows in the audit
+            trail, the evidence section 5's metadata line reads.
+        pixel_scans (List[PixelScanSummary]): Each `scan_pixel_content()`
+            call made in this session, in order. Empty means none ran here,
+            not that a scan found nothing.
     """
     generated_at: datetime.datetime = field(default_factory=datetime.datetime.now)
     isocenter_version: str = "Unknown"
@@ -159,8 +290,13 @@ class ComplianceReport:
     # PENDING until graded; then PASS or REVIEW_REQUIRED. No FAIL --
     # see the class docstring.
     validation_status: str = "PENDING"
-    validation_issues: int = 0
-    verification_details: str = ""
+    review_reasons: List[str] = field(default_factory=list)
+
+    # Section 5 (#481). Both are what happened, never what was configured:
+    # the sentence they replace said "pixel data was scanned" and
+    # "metadata was remediated" for every session, whatever it had done.
+    metadata_remediations: int = 0
+    pixel_scans: List[PixelScanSummary] = field(default_factory=list)
 
 
 class ReportRenderer(Protocol):
@@ -346,13 +482,19 @@ The following actions were recorded in the secure audit trail:
         else:
             md_content += f"\n## 4. Exceptions & Errors\n\n*No exceptions or errors were recorded.*\n"
 
-        md_content += f"""
-## 5. Validation & Verification
-
-*   **Identified Issues:** {report.validation_issues}
-*   **Methodology:** {report.deid_method}. Metadata was remediated according to the tag policy in force; pixel data was scanned against the configured machine redaction zones. This section records what the tooling was configured to do and what it logged doing -- whether the result meets HIPAA Safe Harbor, a Limited Data Set, or any other standard is a determination for the data steward, not for Isocenter.
-*   **Verification Details:** {report.verification_details if report.verification_details else "Standard automated checks performed."}
-
+        # Section 5 says only what happened (#481). It used to be two
+        # fields nothing set and a sentence that claimed a pixel scan and a
+        # metadata remediation for every session, so a run that never
+        # scanned and one whose scan failed rendered it identically --
+        # "Identified Issues: 0" beside a section 4 listing the failure.
+        # The heading is split on verbatim by tests; keep it byte-for-byte.
+        md_content += "\n## 5. Validation & Verification\n\n"
+        md_content += _grade_basis_lines(report)
+        md_content += _metadata_line(report)
+        md_content += _pixel_scan_line(report)
+        md_content += (f"*   **Methodology:** {report.deid_method}. "
+                       f"{_METHODOLOGY_DISCLAIMER}\n")
+        md_content += """
 ---
 **Data Protection Officer Signature:**
 
