@@ -266,6 +266,50 @@ def test_a_signed_decode_narrower_than_bits_stored_is_refused_at_both_doors(
 
 
 # ---------------------------------------------------------------------------
+# S5 -- a signed header whose HighBit is not BitsStored - 1 is refused
+# ---------------------------------------------------------------------------
+
+def test_a_signed_frame_whose_high_bit_is_not_bits_stored_minus_one_is_refused_at_both_doors(  # noqa: E501  pylint: disable=line-too-long
+        doors):
+    """S5: no JPEG decode produces the layout that header describes.
+
+    A JPEG decoder returns right-aligned BitsStored-bit samples, so
+    sign-extending from BitsStored is right only when HighBit is
+    BitsStored - 1. HighBit 15 under BitsStored 12 says the samples sit in
+    bits 4..15, which no decoder output does; pydicom never reads HighBit
+    and sign-extends anyway. Of the three readings -- refuse, ignore it as
+    pydicom does, or shift from HighBit -- refusing is the one that cannot
+    return a wrong value (owner question Q1, answered with the
+    recommendation pending confirmation). Refused at ingest, and at the
+    read door in the handler's words (#444's `imagecodecs fallback:` line).
+    """
+    want = SIGNED[12]
+    codestream = _ljpeg(_pattern(want, 12), 12)
+    got = doors(_dataset(LJPEG_SV1, codestream, want.shape, 12, high_bit=15))
+    ingested, failures, _stored = got["ingest"]
+    assert ingested == 0
+    reason = failures[0][1]
+    for door, words in (("ingest", reason),
+                        ("instance", str(got["instance"])),
+                        ("handler", str(got["handler"]))):
+        assert "HighBit 15" in words, f"{door}: {words}"
+        assert "BitsStored 12" in words, f"{door}: {words}"
+
+
+def test_an_unsigned_frame_whose_high_bit_is_not_bits_stored_minus_one_is_untouched(  # noqa: E501  pylint: disable=line-too-long
+        doors):
+    """S5's twin: the HighBit check is inside the signed branch only.
+
+    An unsigned frame is returned as the codec decoded it, whatever its
+    HighBit says, which is what pydicom does at every door.
+    """
+    want = _pattern(SIGNED[12], 12)
+    codestream = _ljpeg(want, 12)
+    _assert_reads(doors(_dataset(LJPEG_SV1, codestream, want.shape, 12,
+                                 high_bit=15, pixel_representation=0)), want)
+
+
+# ---------------------------------------------------------------------------
 # S3 -- a JPEG Lossless fragment of odd length decodes
 # ---------------------------------------------------------------------------
 

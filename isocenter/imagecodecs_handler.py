@@ -309,6 +309,21 @@ def _sign_extend_from_bits_stored(arr, ds):
     # header is the authority on what a sample means. The two agree for
     # every conformant encoder; where they do not, see the CHANGELOG.
     bits_stored = int(getattr(ds, "BitsStored", bits) or bits)
+    # Owner question Q1, answered with the recommendation pending
+    # confirmation: refuse. A JPEG decoder returns right-aligned
+    # BitsStored-bit samples, so HighBit other than BitsStored - 1
+    # describes a layout no decode produces, and each other reading
+    # (ignore it as pydicom does, or shift from HighBit) can return a
+    # wrong value. Inside the signed branch only: an unsigned frame is
+    # returned untouched, as pydicom returns it. Skipped when HighBit is
+    # absent. This block is the whole of Q1; delete it to reverse it.
+    high_bit = getattr(ds, "HighBit", None)
+    if high_bit is not None and int(high_bit) != bits_stored - 1:
+        raise RuntimeError(
+            f"HighBit {int(high_bit)} with BitsStored {bits_stored}: a JPEG "
+            f"decode returns right-aligned {bits_stored}-bit samples, so a "
+            f"signed sample is sign-extended from BitsStored only when "
+            f"HighBit is BitsStored - 1")
     if arr.dtype.kind != "u" or not 1 <= bits_stored <= bits:
         raise RuntimeError(
             f"cannot sign-extend a {arr.dtype} decode from BitsStored "
