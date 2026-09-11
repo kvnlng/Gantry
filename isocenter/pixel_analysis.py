@@ -365,8 +365,8 @@ def _ocr_instance(instance: Instance) -> _InstanceOcr:
 
     # Free what this pass loaded, and only that (#428). `get_pixel_data()`
     # caches the frame on the instance, and nothing released it: under
-    # threads -- the free-threaded build's default, and discovery's on
-    # every build -- every scanned frame stayed resident on the live
+    # threads -- the free-threaded build's default, and discovery's
+    # unless recycling is set (#458) -- every scanned frame stayed resident on the live
     # graph. **The gate is what protects the caller**, not the choice of
     # `unload_pixel_data()` over `discard_pixel_data()`: a frame this pass
     # loaded came through the loader or the file, so it is never an
