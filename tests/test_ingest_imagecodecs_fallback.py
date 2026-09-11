@@ -16,9 +16,12 @@ pydicom is always tried first, and only its plugin failures
 (`RuntimeError`) fall through, so a file that ingested before decodes to
 the same bytes and label, and a header pydicom rejects stays refused in
 its words (F7). The fallback's output is checked against the header,
-because one case was measured wrong: a signed 12-bit JPEG Lossless frame
-decodes unsigned, -800 read as 3296 (F4; the read path's copy of that
-defect is #446).
+because a decode can disagree with it: F11 and F12 are the size and
+shape halves, and a signedness mismatch is the dtype half. A signed JPEG
+Lossless or JPEG-LS frame decoded unsigned, -800 read as 3296, and this
+file refused it (F4) until #446 taught the handler to sign-extend from
+BitsStored; those files are now pinned as read, at both doors, in
+`tests/test_signed_lossless_jpeg_decode.py`.
 
 **Every fixture first asserts that `pydicom.dcmread(p).pixel_array`
 raises.** Without that, a test passes through pydicom's door and says
@@ -68,10 +71,6 @@ RGB16_FRAME1 = (np.arange(48, dtype=np.int64) * 1000 + 7).astype(
     np.uint16).reshape(4, 4, 3)
 #: 4x4 unsigned 16-bit monochrome, values above 255.
 MONO16 = (np.arange(16, dtype=np.int64) * 4000).astype(np.uint16).reshape(4, 4)
-#: Signed 12-bit samples, and the two's-complement 12-bit pattern a JPEG
-#: Lossless stream of them carries (-800 & 0xFFF == 3296).
-SIGNED12 = np.array([[-800, -700, -600, -500]] * 4, dtype=np.int16)
-SIGNED12_PATTERN = (SIGNED12.astype(np.int32) & 0xFFF).astype(np.uint16)
 #: Palette indices.
 PALETTE8 = np.arange(16, dtype=np.uint8).reshape(4, 4)
 
@@ -245,30 +244,6 @@ def test_a_two_frame_16_bit_rgb_file_ingests_both_frames(ingest):
 
 
 # ---------------------------------------------------------------------------
-# F4 -- output that does not match the header is refused, not stored
-# ---------------------------------------------------------------------------
-
-def test_a_signed_12_bit_jpeg_lossless_frame_is_refused_not_misread(ingest):
-    """F4: imagecodecs hands back 3296 for -800; nothing sign-extends it.
-
-    `Instance.get_pixel_data()` returns those same wrong values today
-    (#446). Ingest refuses instead, naming what it got and what the
-    header declared.
-    """
-    _session, summary, _db = ingest(_dataset(
-        LJPEG_SV1, [SIGNED12], photometric="MONOCHROME2",
-        pixel_representation=1, bits_stored=12,
-        encode_as=[SIGNED12_PATTERN]))
-    assert summary.ingested == 0
-    assert len(summary.failures) == 1
-    reason = summary.failures[0][1]
-    assert reason.startswith("Decompression Failed:"), reason
-    assert "all plugins are missing dependencies" in reason, reason
-    assert "decoded to uint16" in reason, reason
-    assert "PixelRepresentation 1" in reason, reason
-
-
-# ---------------------------------------------------------------------------
 # F5 -- the widening, stated: every syntax in the constant now ingests
 # ---------------------------------------------------------------------------
 
@@ -299,21 +274,40 @@ def test_every_fallback_syntax_ingests():
 
 
 # ---------------------------------------------------------------------------
-# F6, F7 -- what the fallback does not decode
+# Y1 (was F6) -- YBR under JPEG 2000 is stored as the RGB it decodes to;
+# F7 -- what the fallback does not decode
 # ---------------------------------------------------------------------------
 
-def test_a_ybr_declared_16_bit_j2k_is_refused_naming_the_colour_space(ingest):
-    """F6: openjpeg emits RGB under a YBR_RCT label, which is #372 again.
+@pytest.mark.parametrize("ts,photometric,mct", [
+    (J2K_LOSSLESS, "YBR_RCT", True),
+    (J2K_LOSSLESS, "YBR_RCT", False),
+    (J2K, "YBR_ICT", True),
+], ids=["rct-mct1", "rct-mct0", "ict-mct1"])
+def test_a_16_bit_ybr_j2k_ingests_as_the_rgb_it_decodes_to(ingest, ts,
+                                                         photometric, mct):
+    """Y1: openjpeg undoes the transform, so the stored label is RGB (#448).
 
-    Our own exports are RGB, so the round trip does not need this door;
-    what YBR through the fallback should become is #448.
+    This was F6, which refused the file naming `'YBR_RCT'`: the fallback
+    could only repeat the declared label, and repeating `YBR_RCT` over the
+    RGB samples `jpeg2k_decode` returns would be #372's defect through a
+    new door. The decode is RGB whatever the codestream's
+    multiple-component-transform flag says (both states here) and whatever
+    the label says, which is also what pydicom's own plugins return and
+    label. So the label is rewritten, as the top level does for pydicom's
+    door. `.91` permits a reversible codestream, and the decode does not
+    read the label, so its case is exact too.
     """
-    _session, summary, _db = ingest(_dataset(
-        J2K_LOSSLESS, [RGB16["uint16"]], photometric="YBR_RCT"))
-    assert summary.ingested == 0
-    reason = summary.failures[0][1]
-    assert reason.startswith("Decompression Failed:"), reason
-    assert "'YBR_RCT'" in reason, reason
+    want = RGB16["uint16"]
+    ds = _dataset(ts, [want], photometric=photometric)
+    ds.PixelData = encapsulate([imagecodecs.jpeg2k_encode(
+        want, level=0, codecformat="J2K", mct=mct)], has_bot=True)
+    ds["PixelData"].is_undefined_length = True
+    session, summary, _db = ingest(ds)
+    assert (summary.ingested, summary.failures) == (1, [])
+    inst, got = _stored(session)
+    assert got.dtype == np.dtype("uint16")
+    assert got.tolist() == want.tolist()
+    assert inst.attributes["0028,0004"] == "RGB"
 
 
 def test_a_header_pydicom_rejects_is_not_decoded_by_the_fallback(ingest):
@@ -546,18 +540,22 @@ def _fallback_reason(summary):
 
 
 def test_the_colour_spaces_the_fallback_labels_are_chosen_per_syntax():
-    """The table is the one place to widen, and every syntax has a row.
+    """Y4: declared label -> stored label, per syntax; the one place to widen.
 
-    RGB is labelled where a colour decode has been measured exact:
-    JPEG 2000 (F1, F3, N4) and JPEG-LS (below). JPEG Lossless is
-    greyscale and palette only (F13); widening it belongs to #387.
+    Every syntax has a row. A label maps to itself where the decode is
+    measured to leave it true: greyscale and palette everywhere, RGB under
+    JPEG 2000 and JPEG-LS. It maps to another where the decode changes it:
+    JPEG 2000's `YBR_RCT` and `YBR_ICT` come back RGB (Y1, #448).
     """
+    grey = {label: label for label in _GREY}
     assert set(_FALLBACK_PHOTOMETRICS) == _IMAGECODECS_FALLBACK_SYNTAXES
-    assert {ts: set(labels) for ts, labels in
+    j2k = {**grey, "RGB": "RGB", "YBR_RCT": "RGB", "YBR_ICT": "RGB"}
+    jpegls = {**grey, "RGB": "RGB"}
+    assert {ts: dict(labels) for ts, labels in
             _FALLBACK_PHOTOMETRICS.items()} == {
-        LJPEG: _GREY, LJPEG_SV1: _GREY,
-        JPEGLS: _GREY | {"RGB"}, JPEGLS_NEAR: _GREY | {"RGB"},
-        J2K_LOSSLESS: _GREY | {"RGB"}, J2K: _GREY | {"RGB"}}
+        LJPEG: grey, LJPEG_SV1: grey,
+        JPEGLS: jpegls, JPEGLS_NEAR: jpegls,
+        J2K_LOSSLESS: j2k, J2K: j2k}
 
 
 @pytest.mark.parametrize("ts", [LJPEG, LJPEG_SV1])
@@ -598,37 +596,6 @@ def test_a_colour_jpeg_ls_file_ingests_bit_exactly(ingest, ts, want):
     assert got.dtype == want.dtype
     assert got.tolist() == want.tolist()
     assert inst.attributes["0028,0004"] == "RGB"
-
-
-# ---------------------------------------------------------------------------
-# Signed JPEG Lossless and JPEG-LS stay refused at every depth (#446)
-# ---------------------------------------------------------------------------
-
-#: Signed 16-bit samples, CT's common case.
-SIGNED16 = np.array([[-1000, -500, 0, 1500]] * 4, dtype=np.int16)
-SIGNED8 = np.array([[-100, -50, 0, 100]] * 4, dtype=np.int8)
-
-
-@pytest.mark.parametrize("ts,signed", [
-    (LJPEG_SV1, SIGNED16), (JPEGLS, SIGNED16), (JPEGLS, SIGNED8),
-], ids=["ljpeg-16", "jpegls-16", "jpegls-8"])
-def test_a_signed_lossless_jpeg_file_stays_refused_at_every_depth(
-        ingest, ts, signed):
-    """Not only sub-16-bit (F4): 8 and 16 bits are refused too.
-
-    Both codecs return unsigned samples at every depth, which the dtype
-    check refuses. At 16 bits the bit pattern is right and only the
-    signedness is wrong, but admitting it is #446's work, which covers
-    16-bit as well. (8-bit JPEG Lossless does not decode at all.)
-    """
-    unsigned = signed.view(np.dtype(f"u{signed.itemsize}"))
-    _session, summary, _db = ingest(_dataset(
-        ts, [signed], photometric="MONOCHROME2", pixel_representation=1,
-        encode_as=[unsigned]))
-    assert summary.ingested == 0
-    why = _fallback_reason(summary)
-    assert f"decoded to uint{signed.itemsize * 8}" in why, why
-    assert "PixelRepresentation 1" in why, why
 
 
 # ---------------------------------------------------------------------------

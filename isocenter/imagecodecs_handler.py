@@ -271,16 +271,79 @@ def should_change_PhotometricInterpretation_to_RGB(ds):
     return False
 
 
+def _sign_extend_from_bits_stored(arr, ds):
+    """A lossless-JPEG or JPEG-LS decode, as the signed values it holds (#446).
+
+    `ljpeg_decode`, `jpegsof3_decode` and `jpegls_decode` return every
+    sample as its masked unsigned bit pattern and never sign-extend, at
+    every BitsStored: a signed 12-bit -800 comes back as `uint16` 3296.
+    `Instance.get_pixel_data()` returned exactly that, with no error, and
+    `ingest()` refused the same file (#416). This is the rule pydicom
+    applies with its own plugins -- keep the low BitsStored bits and
+    extend bit BitsStored - 1 -- measured bit-exact against pydicom with
+    pylibjpeg-libjpeg and pyjpegls at 8, 12 and 16 bits. At BitsStored
+    equal to the output's width it is a pure reinterpretation.
+
+    Called for .57/.70/.80/.81 only, never JPEG 2000: `jpeg2k_decode`
+    already returns signed, sign-extended samples, so this would either
+    raise on them or, on an unsigned codestream under PixelRepresentation
+    1, admit it with wrong values that the fallback's dtype guard now
+    refuses. That is pydicom's split too.
+
+    With PixelRepresentation other than 1 it returns the codec's array
+    object itself, not a view: an unsigned decode is untouched. Read with
+    `getattr`, never `ds.get`: on a `MagicMock(spec=Dataset)` `ds.get`
+    hands back a mock, where `getattr(..., 0)` hands back the default.
+    """
+    if int(getattr(ds, "PixelRepresentation", 0) or 0) != 1:
+        return arr
+    bits = arr.dtype.itemsize * 8
+    # BitsStored from the header, not the stream's own precision: the
+    # header is the authority on what a sample means. The two agree for
+    # every conformant encoder; where they do not, see the CHANGELOG.
+    bits_stored = int(getattr(ds, "BitsStored", bits) or bits)
+    if arr.dtype.kind != "u" or not 1 <= bits_stored <= bits:
+        raise RuntimeError(
+            f"cannot sign-extend a {arr.dtype} decode from BitsStored "
+            f"{bits_stored}: the codec returns unsigned samples at most "
+            f"{bits} bits wide")
+    shift = bits - bits_stored
+    # Shift left while unsigned, reinterpret, then shift right while
+    # signed: numpy's `>>` is arithmetic on a signed dtype and logical on
+    # an unsigned one, so the order is the whole of the sign extension.
+    return (arr << shift).view(np.dtype(f"i{arr.dtype.itemsize}")) >> shift
+
+
 def _decode_frame(transfer_syntax, bitstream, ds):
     """One frame's codestream to an array, by the codec its syntax names."""
     if transfer_syntax in [JPEGLossless, JPEGLosslessSV1]:
-        return imagecodecs.ljpeg_decode(bitstream)
+        # lj92 reads one byte past the end of its input. On an odd-length
+        # codestream with nothing after it -- `ljpeg_encode` output handed
+        # straight in -- it raises `LJ92_ERROR_CORRUPT` (measured on
+        # imagecodecs 2024.6.1 and 2026.8.16: 11 of 1260 random and flat
+        # streams, and every flat 8-bit frame at 4x4 and 8x8). A
+        # conformant file pads every item to even length (PS3.5 7.5), and
+        # that pad is the byte lj92 reads: through `generate_frames`, 0 of
+        # the same 1260 fail. But pydicom writes and reads an odd item
+        # length without complaint and `generate_frames` hands it over as
+        # stored, so a nonconformant file reached here unpadded at every
+        # door and was refused (#446). So the pad is added here, the one
+        # call every door reaches. Appended, after the EOI marker, where
+        # conformant framing would have written it; never prepended, which
+        # breaks the SOI. `jpegsof3_decode` needs no pad and is exact on
+        # all of the above; it is the codec to switch to if this is ever
+        # not enough.
+        if len(bitstream) % 2:
+            bitstream = bytes(bitstream) + b"\x00"
+        return _sign_extend_from_bits_stored(
+            imagecodecs.ljpeg_decode(bitstream), ds)
     if transfer_syntax in [JPEGBaseline, JPEGExtended]:
         return imagecodecs.jpeg_decode(bitstream)
     if transfer_syntax in [JPEG2000Lossless, JPEG2000]:
         return imagecodecs.jpeg2k_decode(bitstream)
     if transfer_syntax in [JPEGLSLossless, JPEGLSLossy]:
-        return imagecodecs.jpegls_decode(bitstream)
+        return _sign_extend_from_bits_stored(
+            imagecodecs.jpegls_decode(bitstream), ds)
     raise RuntimeError(f"Unsupported syntax: {transfer_syntax}")
 
 

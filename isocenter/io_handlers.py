@@ -362,39 +362,41 @@ _IMAGECODECS_FALLBACK_SYNTAXES = frozenset({
     "1.2.840.10008.1.2.4.91",   # JPEG 2000
 })
 
-#: The declared colour spaces the fallback will label its output with,
-#: per transfer syntax. pydicom's decoder *states* what colour space it
-#: returned (#372). `imagecodecs` does not, and does not read
-#: PlanarConfiguration either, so the fallback can only repeat the
-#: declared label, and that is honest only where the decode cannot have
-#: converted or rearranged anything. Monochrome and palette indices come
-#: back as stored under every syntax here (measured: a PALETTE COLOR
-#: JPEG Lossless frame decodes to its index array, and pydicom's
-#: `as_array` applies no palette either).
-#:
-#: RGB is labelled only where a colour decode is measured exact and
-#: interleaved: JPEG 2000 and JPEG-LS, 8- and 16-bit, on imagecodecs
-#: 2026.8.16. **Not JPEG Lossless.** `ljpeg_encode` refuses three
-#: components, so there is no colour stream here to measure a decode
-#: against. And a planar/interleaved swap holds the same samples in the
-#: same shape, so no check after the decode would see one. Widening a
-#: row is #387's.
-#:
-#: The YBR family is out everywhere: openjpeg undoes a codestream's
-#: colour transform and returns RGB under a `YBR_RCT`/`YBR_ICT` label,
-#: which is #372's defect through a new door. What those should become
-#: is #448. This library's own exports are RGB JPEG 2000, so the round
-#: trip #416 is about does not need them. Keyed on exactly
-#: `_IMAGECODECS_FALLBACK_SYNTAXES`; a syntax missing here labels
+#: The colour space the fallback stores for each declared one, per transfer
+#: syntax: ``{syntax: {declared label: stored label}}``. pydicom's decoder
+#: *states* what colour space it returned (#372). `imagecodecs` does not,
+#: and does not read PlanarConfiguration either, so the stored label is
+#: what a decode under that syntax has been *measured* to return for that
+#: declaration, and a declaration with no entry is refused. Keyed on
+#: exactly `_IMAGECODECS_FALLBACK_SYNTAXES`; a syntax missing here labels
 #: nothing.
-_FALLBACK_GREY = frozenset({"MONOCHROME1", "MONOCHROME2", "PALETTE COLOR"})
+#:
+#: - **Monochrome and palette indices** come back as stored under every
+#:   syntax here (measured: a PALETTE COLOR JPEG Lossless frame decodes to
+#:   its index array, and pydicom's `as_array` applies no palette either).
+#: - **RGB** maps to itself under JPEG 2000 and JPEG-LS, where a colour
+#:   decode is measured exact and interleaved, 8- and 16-bit. A
+#:   planar/interleaved swap holds the same samples in the same shape, so
+#:   no check after the decode would see one; only a measurement can.
+#: - **`YBR_RCT` and `YBR_ICT` map to RGB under JPEG 2000** (#448).
+#:   `jpeg2k_decode` undoes the codestream's colour transform and returns
+#:   RGB, whatever the multiple-component-transform flag says (measured
+#:   under both, 8- and 16-bit), and pydicom's own plugins label that
+#:   output RGB too. Repeating the declared label over RGB samples is
+#:   #372's defect; refusing it, as this table did first, turned away a
+#:   file both doors can read.
+_FALLBACK_GREY = {label: label for label in
+                  ("MONOCHROME1", "MONOCHROME2", "PALETTE COLOR")}
+_FALLBACK_J2K = {**_FALLBACK_GREY, "RGB": "RGB",
+                 "YBR_RCT": "RGB", "YBR_ICT": "RGB"}
+_FALLBACK_JPEGLS = {**_FALLBACK_GREY, "RGB": "RGB"}
 _FALLBACK_PHOTOMETRICS = {
     "1.2.840.10008.1.2.4.57": _FALLBACK_GREY,
     "1.2.840.10008.1.2.4.70": _FALLBACK_GREY,
-    "1.2.840.10008.1.2.4.80": _FALLBACK_GREY | {"RGB"},
-    "1.2.840.10008.1.2.4.81": _FALLBACK_GREY | {"RGB"},
-    "1.2.840.10008.1.2.4.90": _FALLBACK_GREY | {"RGB"},
-    "1.2.840.10008.1.2.4.91": _FALLBACK_GREY | {"RGB"},
+    "1.2.840.10008.1.2.4.80": _FALLBACK_JPEGLS,
+    "1.2.840.10008.1.2.4.81": _FALLBACK_JPEGLS,
+    "1.2.840.10008.1.2.4.90": _FALLBACK_J2K,
+    "1.2.840.10008.1.2.4.91": _FALLBACK_J2K,
 }
 
 
@@ -1473,7 +1475,8 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
 
     ts = ds.file_meta.TransferSyntaxUID
     photometric = str(getattr(ds, "PhotometricInterpretation", "") or "")
-    if photometric not in _FALLBACK_PHOTOMETRICS.get(str(ts), ()):
+    labels = _FALLBACK_PHOTOMETRICS.get(str(ts), {})
+    if photometric not in labels:
         name = getattr(ts, "name", "")
         syntax = f"{name} ({ts})" if name and name != str(ts) else str(ts)
         raise refused(
@@ -1528,7 +1531,7 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
             f"it decoded {arr.size} samples, where {frames} frame(s) of "
             f"{rows}x{cols}x{samples} need {int(np.prod(shape))}") \
             from pydicom_error
-    return np.ascontiguousarray(arr.reshape(shape)), photometric
+    return np.ascontiguousarray(arr.reshape(shape)), labels[photometric]
 
 
 def _item_path_words(path) -> str:
