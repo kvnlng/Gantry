@@ -211,3 +211,28 @@ def test_a_legacy_three_item_sequence_is_still_read_at_item_zero(tmp_path):
 
         assert len(_items(inst)) == 3
         assert service.recover_original_data(inst) == captures[0]
+
+
+def test_the_token_item_names_its_payload_transfer_syntax(tmp_path):
+    """Each token item carries `(0400,0520)`, and a re-lock keeps it (#439).
+
+    Recovery never reads the Transfer Syntax UID, so deleting the
+    `set_attr` that writes it left every recovery test green -- yet the
+    item is exported, and PS3.15's Encrypted Attributes item carries it
+    to say how the decrypted payload is encoded. Asserted after the
+    second lock too, because the re-lock replaces the item (#399): a
+    replacement built without it would lose it from then on.
+    """
+    with DicomSession(str(tmp_path / "relock_syntax.db")) as session:
+        session.enable_reversible_anonymization(str(tmp_path / "isocenter.key"))
+        inst = _build_patient(session)
+
+        session.lock_identities(PID, tags_to_lock=["0010,0010"])
+        items = _items(inst)
+        assert len(items) == 1
+        assert items[0].attributes.get(SYNTAX) == "1.2.840.10008.1.2"
+
+        session.lock_identities(PID, tags_to_lock=["0010,0010"])
+        items = _items(inst)
+        assert len(items) == 1
+        assert items[0].attributes.get(SYNTAX) == "1.2.840.10008.1.2"

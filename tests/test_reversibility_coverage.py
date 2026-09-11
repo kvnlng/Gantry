@@ -1,6 +1,7 @@
 """
 Tests for reversibility coverage.
 """
+import logging
 from unittest.mock import MagicMock, patch
 from cryptography.fernet import Fernet
 import pytest
@@ -73,7 +74,15 @@ def test_recover_empty_sequence(rev_service, mock_instance):
     mock_instance.sequences = {ReversibilityService.TAG_ENCRYPTED_ATTRS_SEQ: seq_mock}
     assert rev_service.recover_original_data(mock_instance) is None
 
-def test_recover_missing_content_item(rev_service, mock_instance):
+def test_recover_missing_content_item(rev_service, mock_instance, caplog):
+    """An item with no Encrypted Content says so, not just "no token" (#439).
+
+    `recover_identity` prints one sentence for every None -- "No encrypted
+    identity token found or decryption failed." -- so this WARNING is the
+    only word that says the item is there and malformed rather than
+    absent. Deleting it left the suite green until the record was
+    asserted, not just the None.
+    """
     # Sequence exists, has item, but item has no encrypted bytes
     item_mock = MagicMock()
     item_mock.attributes = {}
@@ -81,7 +90,12 @@ def test_recover_missing_content_item(rev_service, mock_instance):
     seq_mock.items = [item_mock]
     mock_instance.sequences = {ReversibilityService.TAG_ENCRYPTED_ATTRS_SEQ: seq_mock}
 
-    assert rev_service.recover_original_data(mock_instance) is None
+    with caplog.at_level(logging.WARNING, logger="isocenter"):
+        assert rev_service.recover_original_data(mock_instance) is None
+    warnings = [r for r in caplog.records
+                if r.name == "isocenter" and r.levelno == logging.WARNING]
+    assert len(warnings) == 1, caplog.text
+    assert "0400,0510" in warnings[0].getMessage()
 
 def test_recover_decryption_failure(rev_service, mock_instance):
     # Setup valid structure but mock decryption fail
@@ -95,3 +109,36 @@ def test_recover_decryption_failure(rev_service, mock_instance):
     with patch.object(rev_service.engine, 'decrypt', side_effect=Exception("Decrypt fail")):
         # helper logs error but returns None
         assert rev_service.recover_original_data(mock_instance) is None
+
+
+def test_a_recovery_that_cannot_decrypt_names_the_instance(caplog):
+    """A token under the wrong key is an ERROR naming the instance (#439).
+
+    `recover_original_data` returns None for an absent token, a malformed
+    item and a failed decryption alike, and the one thing that tells the
+    last apart -- and says *which* instance could not be recovered -- is
+    the ERROR its `except` logs. Deleting it left the suite green: the
+    test above mocks `decrypt` and asserts only the None.
+
+    A real token and a real wrong key, no mock: Fernet's `InvalidToken`
+    has an empty message, so the record's tail after the UID is blank
+    today, and the assertion matches the UID by substring rather than
+    pinning that tail.
+    """
+    def service():
+        km = MagicMock()
+        km.get_key.return_value = Fernet.generate_key()
+        return ReversibilityService(km)
+
+    locker, stranger = service(), service()
+    inst = Instance("SOP_WRONG_KEY_439", "1.2.840.10008.5.1.4.1.1.2", 1)
+    locker.embed_identity_token(
+        inst, locker.generate_identity_token({"0010,0010": "Original^Name"}))
+    assert locker.recover_original_data(inst) == {"0010,0010": "Original^Name"}
+
+    with caplog.at_level(logging.WARNING, logger="isocenter"):
+        assert stranger.recover_original_data(inst) is None
+    errors = [r for r in caplog.records
+              if r.name == "isocenter" and r.levelno == logging.ERROR]
+    assert len(errors) == 1, caplog.text
+    assert "SOP_WRONG_KEY_439" in errors[0].getMessage()

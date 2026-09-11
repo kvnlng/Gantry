@@ -226,3 +226,45 @@ def test_scaffold_flow_style(tmp_path):
         # checking strict substring might be fragile due to spacing, but let's try typical yaml flow output
         assert "[[10, 20, 30, 40], [50, 60, 70, 80]]" in content or "[[10, 20, 30, 40],[50, 60, 70, 80]]" in content
 
+
+def test_a_ctp_rule_matches_on_manufacturer_and_model_containment():
+    """The CTP knowledge-base match, driven with a rule that matches (#445).
+
+    `_match_ctp_rule` is what `create_config()` consults to pre-fill a
+    scanner's redaction zones from the shipped CTP rules, and until this
+    test no rule whose manufacturer *and* model both matched ever reached
+    it. So flipping `r_man in eq_man` to `not in` -- a matcher that never
+    matches the scanner it names -- left the suite green: the `session.py`
+    row's one budget-30 survivor that was a gap rather than equivalent.
+
+    The equipment is mixed-case and the rule upper-case, so a matcher that
+    stopped folding case is red too. The two misses each change one half
+    of the pair, so an `and` weakened to `or` matches one of them. And the
+    rule handed in must come back untouched: the match is a *copy* carrying
+    this scanner's serial, and writing the serial into the knowledge-base
+    entry itself would stamp it on the next scanner that entry matches.
+    """
+    from isocenter.entities import Equipment
+    from isocenter.session import _match_ctp_rule
+
+    rule = {"manufacturer": "GE MEDICAL", "model_name": "LOGIQ",
+            "redaction_zones": [[0, 0, 100, 40]]}
+    pristine = {"manufacturer": "GE MEDICAL", "model_name": "LOGIQ",
+                "redaction_zones": [[0, 0, 100, 40]]}
+    equipment = Equipment("GE Medical Systems", "LOGIQ E9", "SN-445")
+
+    matched = _match_ctp_rule(equipment, [rule])
+
+    assert matched == {
+        "manufacturer": "GE MEDICAL",
+        "model_name": "LOGIQ",
+        "redaction_zones": [[0, 0, 100, 40]],
+        "serial_number": "SN-445",
+        "comment": "Auto-matched from CTP Knowledge Base (GE MEDICAL LOGIQ)",
+    }
+    assert rule == pristine, "the knowledge-base rule itself was written to"
+
+    other_maker = Equipment("SIEMENS", "LOGIQ E9", "SN-445")
+    assert _match_ctp_rule(other_maker, [rule]) is None
+    other_model = Equipment("GE Medical Systems", "Vivid E95", "SN-445")
+    assert _match_ctp_rule(other_model, [rule]) is None

@@ -360,3 +360,33 @@ def test_a_single_module_run_does_not_print_the_ledger(tmp_path, monkeypatch, ca
     out = capsys.readouterr().out
     assert "victim.py" in out
     assert "NOT PROBED" not in out
+
+
+def test_neither_ledger_names_a_module_twice():
+    """A module appears at most once in each of `TARGETS` and `NOT_PROBED`.
+
+    Both are dict literals, and a dict literal keeps the later of two
+    equal keys without a word. That is the shape a merge leaves when the
+    resolver keeps both sides of a ledger hunk: a module one branch
+    refreshed comes back a second time with the other branch's text. A
+    module in both ledgers is already reported as BOTH above, but two
+    `NOT_PROBED` entries for one module collapse into one before any test
+    can import them, so the refreshed reason reverts to the stale one and
+    every check that reads the dict stays green (#489's review, against
+    #480's side of the ledger). Only the source still holds both, so this
+    reads the source.
+    """
+    tree = ast.parse((ROOT / "scripts" / "mutation_probe.py").read_text())
+    keys = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict)
+                and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in ("TARGETS", "NOT_PROBED")):
+            keys[node.targets[0].id] = [
+                k.value if isinstance(k, ast.Constant) else ast.dump(k)
+                for k in node.value.keys]
+    assert set(keys) == {"TARGETS", "NOT_PROBED"}, (
+        "a ledger is no longer a single dict literal; this guard cannot see it")
+    repeated = {name: sorted({k for k in ks if ks.count(k) > 1})
+                for name, ks in keys.items()}
+    assert repeated == {"TARGETS": [], "NOT_PROBED": []}

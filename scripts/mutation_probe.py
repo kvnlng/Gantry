@@ -20,6 +20,8 @@ mutant surviving:
 
     default run, before the session/entities/imagecodecs rows   ~3.7 h
     default run, with them (#414, #419)                         ~8.4 h
+    the eleven #439 rows, on top of that                       +~1.1 h
+    default run, with the #439 rows too                         ~9.5 h
     `python -m scripts.mutation_probe 10`, the cheap pass       ~3.0 h
 
 `session.py` and `entities.py` each list over 120 test files, one full
@@ -28,6 +30,8 @@ module's control pass, 30s minimum (`mutant_timeout()`), and is reported
 as TIMEOUT and counted as detected (#442). A real run
 is much shorter, since most mutants die in seconds, but the survival
 rates any such estimate rests on were sampled too thinly to print here.
+The #439 rows' figure was measured with other suites running, so it is
+upper-side.
 The positional budget is the override for every module at once; nothing
 in CI runs this script.
 
@@ -97,6 +101,28 @@ PYTEST = [str(REPO / ".venv/bin/python"), "-m", "pytest", "-x", "-q", "--no-head
 # `test_redaction_export.py` and `test_reversibility.py` do the same for
 # `io_handlers.py` (the `apply_redaction_to_array` call and the
 # `(0400,0510)` write, both verified kills).
+#
+# That is the whole rule for reach the scan cannot see (#441): the scan
+# stays the only thing the guard demands, and a file beyond it joins a
+# row only with a measured kill, named in the row's comment. Both halves
+# were measured. Without such files the probe reports survivors that are
+# not there: on the two files the scan names, the reversibility.py row
+# prints 6 survivors of 18, and a file that reaches the module through
+# the session kills two of them. And a runtime trace
+# is no replacement demand, because executing a line is not being able to
+# kill a mutant of it: it would put 127 test files on store.py's row and
+# 168 on logger.py's.
+#
+# Where candidates come from: a per-test coverage trace. Run the suite
+# under `.coveragerc`'s [run] section plus `dynamic_context =
+# test_function`, `coverage combine`, and for the module take the test
+# files named by the contexts in `CoverageData.contexts_by_lineno(path)`,
+# minus what `_importers` already demands. That is a candidate list, not
+# a row: run the module's sample against the candidates, and keep only a
+# file some mutant dies on. Spawned workers carry no dynamic context, so a
+# test that reaches the module only inside a `run_parallel()` worker is
+# missing from the trace. One trace of the whole suite took 68 minutes
+# (0e3e38c, 3.12.14, on a loaded machine).
 # The budget is per module because the knob does two jobs at once
 # globally: `io_handlers.py` has ~5x the sites of any other target, so
 # raising its sampling density with one shared number forces the
@@ -126,6 +152,145 @@ TARGETS = {
                                "tests/test_duplicate_sop_uid_at_ingest.py"],
                               80),
     "isocenter/crypto.py": (["tests/test_crypto.py", "tests/test_reversibility.py"], 30),
+    # --- The #439 rows. Each was measured at budget 30 on 3.12.14 with other
+    # suites running on the same machine, so the seconds are upper-side.
+    # Every list holds what `_importers` demands; a file beyond it is named
+    # with the mutant it kills (#441, the rule in the comment above).
+    #
+    # 17 sites, exhaustive: all 17 killed. One file, 1.4s per pass.
+    "isocenter/automation.py": (["tests/test_automation.py"], 30),
+    # 5 sites, exhaustive: all 5 killed. Seven files, 20.3s per pass.
+    "isocenter/exporters/__init__.py": (["tests/test_exporter_registry.py",
+                                         "tests/test_murmur_annotations.py",
+                                         "tests/test_study_date_roundtrip.py",
+                                         "tests/test_wfdb_option_strictness.py",
+                                         "tests/test_wfdb_partial_export_is_audited.py",
+                                         "tests/test_wfdb_start_date_honesty.py",
+                                         "tests/test_wfdb_writer.py"], 30),
+    # 11 sites, exhaustive: all 11 killed. Two files, 46.0s per pass.
+    "isocenter/blob_kind.py": (["tests/test_blob_kind_grammar.py",
+                                "tests/test_nested_pixel_carriage.py"], 30),
+    # 16 sites, exhaustive: all 16 killed. Twelve files, 18.5s per pass.
+    "isocenter/builders.py": (["tests/test_entities.py", "tests/test_export_contract.py",
+                               "tests/test_full_logging.py", "tests/test_io.py",
+                               "tests/test_phi_retention.py", "tests/test_phi_status.py",
+                               "tests/test_recursive_import.py",
+                               "tests/test_report_action_evidence.py",
+                               "tests/test_safe_export_feedback.py",
+                               "tests/test_save_all_contract.py",
+                               "tests/test_scaffolding.py",
+                               "tests/test_tag_key_normalisation.py"], 30),
+    # 99 sites; budget 30 is a stride of 3, 33 mutants: all 33
+    # killed. Seven files, 75.6s per pass -- the slowest of the #439 rows,
+    # measured with other suites on the machine.
+    "isocenter/pixel_geometry.py": (["tests/test_automation.py",
+                                    "tests/test_descriptor_edit_with_pixels_unloaded.py",
+                                    "tests/test_float_pixel_data_export.py",
+                                    "tests/test_pixel_dtype_roundtrip.py",
+                                    "tests/test_pixel_geometry.py",
+                                    "tests/test_redaction_robustness.py",
+                                    "tests/test_verification_logic.py"], 30),
+    # 2 sites, exhaustive: both killed. No test names this module -- it is
+    # reached through `export(format="dicom")` -- so the scan demands
+    # nothing and both files are hand extras (#441). Each was measured to
+    # kill both mutants alone, so either would do; two, because a row
+    # resting on one file is one refactor of that file from empty. 10.3s
+    # per pass for the pair.
+    "isocenter/exporters/dicom.py": (["tests/test_api_coherence.py",
+                                      "tests/test_export_contract.py"], 30),
+    # 7 sites, exhaustive: 6 killed. One file, 1.8s per pass. The survivor
+    # is NOT equivalent: `ManifestItem.anonymized: bool = True` flipped to
+    # False. `generate_manifest()` never passes the field, so every
+    # manifest says `"anonymized": true` for every instance, even from a
+    # session that never anonymized. No test can pin today's value without
+    # pinning a false claim, so it is filed (#486), as the entities.py row
+    # did with #443.
+    "isocenter/manifest.py": (["tests/test_manifest.py"], 30),
+    # 24 sites, exhaustive: 23 killed. Three files, 6.6s per pass.
+    #   - `_coverage`'s `x_right <= x_left or y_bottom <= y_top` weakened
+    #     to `and` survived until #439, and is not equivalent: a box clear
+    #     of the zone on one axis only falls through to the area product
+    #     and gets a negative coverage (-9.0 in the test), outside the
+    #     0.0-1.0 range `is_covered` documents, so `is_covered(...,
+    #     threshold=0.0)` turns false for it. `_findings_for` is immune
+    #     (its best coverage starts at 0.0 and only rises). Killed since by
+    #     tests/test_verification_logic.py::
+    #     test_text_clear_of_a_zone_has_zero_coverage_never_a_negative_one.
+    #   - The survivor, `_coverage`'s `if text_area <= 0: return 0.0` with
+    #     the value replaced by None, is equivalent because it is
+    #     unreachable. `tw <= 0` makes `x_right = min(tx + tw, zx2) <= tx
+    #     <= x_left`, so the guard above has already returned, and `th <= 0`
+    #     is the same on the other axis; the second guard only ever sees a
+    #     positive area. Nothing is filed: the guard costs nothing.
+    "isocenter/verification.py": (["tests/test_ocr_formal.py",
+                                   "tests/test_scan_reports_what_it_could_not_read.py",
+                                   "tests/test_verification_logic.py"], 30),
+    # 13 sites, exhaustive: 12 killed (10 before #439's Type 2 test). Five
+    # files, 5.7s per pass.
+    #   - The Type 2 check inverted (`req == '2'` to `!=`) and its
+    #     `errors.append` deleted both survived until #439: nothing built a
+    #     CT missing a Type 2 element. Killed since by
+    #     tests/test_validation.py::
+    #     test_a_missing_type_2_element_is_reported_and_an_empty_one_is_not.
+    #   - The survivor, `if sop not in IODValidator._SOP_RULES: return []`
+    #     returning None, is equivalent: the one caller,
+    #     `DicomExporter._finalize_dataset` in io_handlers.py, only
+    #     truth-tests the result.
+    "isocenter/validation.py": (["tests/test_export_error.py", "tests/test_io.py",
+                                 "tests/test_structured_export.py",
+                                 "tests/test_validation.py", "tests/test_wfdb_writer.py"], 30),
+    # 18 sites, exhaustive: 14 killed. Three files, 1.9s per pass.
+    #
+    # tests/test_relock_identity_token.py is a hand extra (#441): it reaches
+    # the module through `Session.lock_identities`, which the scan cannot
+    # see, and kills two mutants nothing else does -- the deleted
+    # `item.set_attr(self.TAG_TRANSFER_SYNTAX_UID, ...)` (its
+    # test_the_token_item_names_its_payload_transfer_syntax) and the
+    # deleted `instance.mark_modified()` (its
+    # test_a_re_lock_reaches_the_store). On the two demanded files alone
+    # the row prints 6 survivors. tests/test_reversibility.py was measured
+    # as a candidate too, and stays off: before #439's tests it killed
+    # six mutants, and after them it kills nothing these three miss.
+    #
+    # Three more were gaps until #439 and are killed since by
+    # tests/test_relock_identity_token.py and
+    # tests/test_reversibility_coverage.py: the transfer-syntax write
+    # above, the WARNING that says an item has no Encrypted Content, and
+    # the ERROR that names the instance a wrong key failed.
+    #
+    # The four survivors:
+    #   - the deleted `self.logger.error(f"Failed to embed token: {e}")` in
+    #     `embed_identity_token`: equivalent, a `raise` follows carrying
+    #     the same exception;
+    #   - three inside `embed_original_data`: its call to
+    #     `self.embed_identity_token(instance, token)`, its DEBUG line, and
+    #     the ERROR in its `except`, which re-raises. The method has no
+    #     caller in isocenter/ and its two tests pass empty or raising
+    #     input, so the whole wrapper is dead (#488).
+    "isocenter/reversibility.py": (["tests/test_feature_regression.py",
+                                    "tests/test_reversibility_coverage.py",
+                                    "tests/test_relock_identity_token.py"], 30),
+    # 7 sites, exhaustive: 6 killed. Five files, 43.3s per pass.
+    #
+    # Two are hand extras (#441), reaching the renderer through
+    # `generate_report()`, which the scan cannot see. On the three
+    # demanded files alone the row prints 3 survivors of 7, and the two
+    # beyond the default are exactly these files' kills:
+    #   - tests/test_export_delivery_counters.py kills
+    #     `if report.instances_written is not None:` flipped to `is`
+    #     (test_an_empty_plan_does_not_reuse_the_previous_exports_numbers);
+    #   - tests/test_report_export_boundary.py kills the dropped `not` in
+    #     `if not report.export_recorded:` (its
+    #     test_a_report_generated_before_any_export_carries_the_boundary_note).
+    #
+    # The survivor, the dataclass default `export_recorded: bool = False`
+    # flipped to True, is equivalent: the one construction, in
+    # `Session.generate_report`, passes `export_recorded=` explicitly.
+    "isocenter/reporting.py": (["tests/test_data_loss_reporting.py",
+                                "tests/test_private_sequence_implicit_vr.py",
+                                "tests/test_reporting.py",
+                                "tests/test_report_export_boundary.py",
+                                "tests/test_export_delivery_counters.py"], 30),
     "isocenter/privacy.py": (["tests/test_analysis.py", "tests/test_analysis_persistence.py",
                               "tests/test_audit_suppression.py", "tests/test_automation.py",
                               "tests/test_config_tags_shapes.py",
@@ -300,38 +465,66 @@ TARGETS = {
                                   "tests/test_study_date_roundtrip.py",
                                   "tests/test_vertical_table.py",
                                   "tests/test_worker_start_is_serialised.py"], 30),
-    # 566 sites. Until #414 the facade had no row, so no mutant of
-    # `Session` -- the ingest/audit/anonymize/redact/export ordering,
+    # 587 sites (e184933). Until #414 the facade had no row, so no mutant
+    # of `Session` -- the ingest/audit/anonymize/redact/export ordering,
     # `_make_lightweight_copy`, `_verify_worker`, the report's boundary
     # note -- was ever generated.
     #
-    # Budget 30 is a stride of 18, the same density as io_handlers.py
-    # (533/30, stride 17) and persistence.py (453/30, stride 15); a
-    # different number here would need a reason.
+    # Budget 30 is a stride of 19, the density io_handlers.py and
+    # persistence.py are sampled at; a different number here would need a
+    # reason.
     #
     # The list is measured, not curated: every file `_importers` in
-    # tests/test_mutation_probe_targets.py demands, which is 126 of the
-    # suite's 221 -- nearly all of it, because nearly every test drives
-    # the facade. One full pass is ~300s (3.12.14), so a surviving mutant
-    # costs five minutes and a kill costs seconds.
+    # tests/test_mutation_probe_targets.py demands, which is 131 of the
+    # suite's 227 -- nearly all of it, because nearly every test drives
+    # the facade. One full pass is ~350s under load (0e3e38c, 3.12.14;
+    # ~300s unloaded at 4d34c64), so a surviving mutant costs six minutes
+    # and a kill costs seconds. A coverage trace (#441) finds 12 more
+    # files that execute this module without naming it; run against the
+    # five survivors below they killed none, so the list gains nothing.
     #
-    # Its survivors at budget 30 are NOT yet classified: this row landed
-    # without a full budget-30 run, and classifying what one prints is
-    # #445. Until then a survivor from this row is a question, not a
-    # finding. What is known (4d34c64, 3.12.14): at budget 3 all four
-    # sampled mutants are killed, among them the deleted WARNING
-    # `reconcile_private_tags()` logs when it drops stored rows -- a real
-    # gap until #414, now pinned by tests/test_private_tag_reload.py.
-    # Deleting the `print(f"  {line}")` that echoes each safe-export
-    # feedback line (then at line 488) is killed by
+    # Measured at budget 30 (0e3e38c, 3.12.14, loaded machine): 26 of 31
+    # killed. #466 moved lines and left the 31 sampled mutants identical,
+    # so the survivors are cited by code, not line. Each is classified
+    # (#445):
+    #   - `_match_ctp_rule`'s `r_man in eq_man` flipped to `not in`: a gap.
+    #     No test handed the CTP matcher a rule whose manufacturer and
+    #     model both match, so a matcher that never matches was green.
+    #     Pinned since by tests/test_scaffold_features.py::
+    #     test_a_ctp_rule_matches_on_manufacturer_and_model_containment,
+    #     and killed by it on this row's list;
+    #   - the suggested-config print's `sort_keys=False` flipped to True:
+    #     equivalent. The printed block loads to the same mapping and only
+    #     `action` moves ahead of `name`; test_suggested_config.py asserts
+    #     the loaded mapping, and nothing documents the key order;
+    #   - `_restart_executor`'s `cancel_futures=True` flipped: dead in
+    #     production. The method has no caller in isocenter/, only the #220
+    #     spawn-pin test in test_parallel_contract.py (#484);
+    #   - the deleted `print("Persistence backend does not support
+    #     compaction.")` in `compact()`'s `else`: unreachable, because
+    #     `__init__` sets `store_backend` unconditionally and nothing
+    #     removes it (#484);
+    #   - the deleted `print(f"Load failed: {e}")` in `load_config`:
+    #     equivalent for what anyone learns, since the ERROR log just above
+    #     and the traceback print just below carry the same text. The
+    #     silence there is that `load_config` swallows the failure and
+    #     returns None (#456), which no print could fix.
+    #
+    # Off the budget-30 sample (4d34c64, 3.12.14), kept because they were
+    # measured: at budget 3 all four sampled mutants are killed, among
+    # them the deleted WARNING `reconcile_private_tags()` logs when it
+    # drops stored rows -- a real gap until #414, now pinned by
+    # tests/test_private_tag_reload.py. Deleting the `print(f"  {line}")`
+    # that echoes each safe-export feedback line is killed by
     # test_safe_export_feedback.py. Deleting the INFO log "Batch preserved
-    # identity for N patients" in the chunked identity-lock path (then at
-    # line 2807) survives a full pass.
+    # identity for N patients" in the chunked identity-lock path survives
+    # a full pass.
     #
-    # Cost: at budget 30 this row is ~2.7 h of a default run as an upper
-    # bound (every mutant surviving). Written down because an unexplained
-    # tripling of the run time is the kind of thing someone later "fixes"
-    # by cutting the budget.
+    # Cost: at budget 30 this row is ~3.0 h of a default run as an upper
+    # bound (31 mutants at ~350s each, loaded), and the measured run took
+    # 85 minutes. Written down because an unexplained tripling of the run
+    # time is the kind of thing someone later "fixes" by cutting the
+    # budget.
     "isocenter/session.py": (["tests/test_analysis.py",
                               "tests/test_analysis_persistence.py",
                               "tests/test_api_coherence.py",
@@ -659,8 +852,9 @@ TARGETS = {
     # probed, exhaustive because it is cheap, like parallel.py's 80. It
     # stays stride 1 until the module passes 119 sites.
     #
-    # Six files, and it takes the widened `_importers` (#419) to see
-    # them: several reach this module as `from isocenter import
+    # Seven files (the seventh, test_ybr_jpegls_read_doors.py, is #483's),
+    # and it takes the widened `_importers` (#419) to see them: several
+    # reach this module as `from isocenter import
     # imagecodecs_handler`, which the old stem-only scan could not read.
     # Without test_offset_table_frame_count.py, nine of the #418
     # frame-count helpers' mutants survive; without
@@ -671,10 +865,12 @@ TARGETS = {
     # killed, and a seventh (the sign rule's `or` -> `and` in
     # `_sign_extend_from_bits_stored`) was then pinned by that file's S6
     # and killed by a real edit. Re-measured at stride 1 once #440 deleted
-    # two dead handler hooks (3.12.14): 58 of 60 killed. #478 and
-    # #464 then added 19 sites (`CONVERTS_TO`, `colour_conversion`,
-    # `convert_colour`, `_jpegls_precision`) and those are not yet
-    # re-measured here. The two survivors of the 60 are both known and
+    # two dead handler hooks (3.12.14): 58 of 60 killed. #483 then added
+    # 19 sites (`CONVERTS_TO`, `colour_conversion`, `convert_colour`,
+    # `_jpegls_precision`; #478, #464) and the seventh file. Re-measured
+    # at stride 1 on ba804ae (3.12.14, 28.6s control, other suites on the
+    # machine): 77 of 79 killed, every one of the 19 new sites among them,
+    # no timeout. The two survivors are the same two, both known and
     # both equivalent:
     #   - the decode-error print in `get_pixel_data` is equivalent: the
     #     exception it describes is re-raised carrying the same text;
@@ -705,16 +901,22 @@ TARGETS = {
 # sees what it does not measure: a default run prints it last, because the
 # tail of a multi-hour run is what gets read.
 #
-# The 24 deferred entries are #439. Two of their obstacles had issues of
-# their own: reach by class name or format string, which no import scan
-# sees (#441), and the flat 900s per-mutant timeout a hang cost, which is
-# fixed -- a mutant's limit is now derived from its control (#442).
+# #439 rowed eleven of the 24 modules this ledger first deferred; the
+# 13 still deferred are below. Two of their obstacles are named by
+# issue: reach by class name or format string, which no import scan sees
+# (#441, settled by the rule in the comment above TARGETS: a row carries
+# such a file only with a measured kill), and the flat 900s per-mutant
+# timeout a hang cost, which is fixed -- a mutant's limit is now derived
+# from its control (#442).
 #
 # A reason that starts "0 sites" is recomputed by that test and must stay
-# true. The other numbers are dated notes (measured at 4d34c64 on 3.12.14:
-# sites by `count_ops`, importers by the test's `_importers`, seconds for
-# one pass of those importers), not checked -- an edit that moves them
-# does not make the reason wrong.
+# true. The other numbers are dated notes, not checked -- an edit that
+# moves them does not make the reason wrong. Sites (`count_ops`) and
+# importers (the test's `_importers`) are counted at e184933. Survivor
+# counts and seconds per pass (one pass of those importers) were measured
+# at 0e3e38c on 3.12.14, at budget 30 unless an entry says otherwise, on
+# a machine running other suites: controls ran 1.2-1.8x the unloaded
+# 4d34c64 figures, so read the seconds as upper-side.
 NOT_PROBED = {
     # Permanently excluded.
     "isocenter/__init__.py":
@@ -727,61 +929,73 @@ NOT_PROBED = {
         "0 sites: data only, the shipped profile tables; what reads them "
         "is probed where it lives",
 
-    # Deferred: no test names the module, so the scan demands no list and
-    # a row needs one written by hand (#439).
+    # Deferred: the scan demands almost nothing, and the reach is by class
+    # name or through the facade. A row needs a hand list, and #441's rule
+    # admits a file only with a measured kill, so a mutant run over the
+    # files that execute the module comes first.
     "isocenter/store.py":
-        "deferred: 16 sites, 0 importers -- 12 test files reach DicomStore "
-        "by class name, which the import scan cannot see (#441)",
+        "deferred: 16 sites, 1 importer (test_shared_executor_lifecycle.py), "
+        "but 127 test files execute DicomStore through the facade (#441); "
+        "a hand list needs a mutant run over them first, ~80 minutes at "
+        "session-sized passes",
     "isocenter/logger.py":
-        "deferred: 13 sites, 1 importer -- reached through get_logger() "
+        "deferred: 14 sites, 2 importers -- reached through get_logger() "
         "and describe_exception(), whose spelling "
         "tests/test_ingest_failure_audit.py pins directly (#435); a row "
         "would still need its list written by hand",
-    "isocenter/exporters/dicom.py":
-        "deferred: 2 sites, 0 importers -- reached through "
-        "export(format=\"dicom\"), which the import scan cannot see (#441)",
 
-    # Deferred: at least 5s per pass of the demanded list (#439).
-    "isocenter/services.py": "deferred: 151 sites, 21 importers, 36.9s per pass",
-    "isocenter/pixel_geometry.py": "deferred: 99 sites, 7 importers, 22.8s per pass",
+    # Deferred: at budget 30 a default run would print survivors nobody
+    # has read, or sample a mutant that never terminates. Rowing one means
+    # classifying its survivors first, as the eleven #439 rowed were.
+    "isocenter/services.py":
+        "deferred: 151 sites, 23 importers, 47.3s per pass; a sample of 9 "
+        "killed 6, and budget 30 is 31 mutants at that pass cost",
     "isocenter/persistence_manager.py":
-        "deferred: 99 sites, 7 importers, 18.8s per pass",
-    "isocenter/exporters/wfdb.py": "deferred: 97 sites, 6 importers, 17.6s per pass",
-    "isocenter/waveform.py": "deferred: 69 sites, 5 importers, 15.2s per pass",
-    "isocenter/pixel_analysis.py": "deferred: 34 sites, 10 importers, 13.6s per pass",
-    "isocenter/sidecar.py": "deferred: 19 sites, 5 importers, 17.9s per pass",
-    "isocenter/builders.py": "deferred: 16 sites, 12 importers, 11.2s per pass",
-    "isocenter/blob_kind.py": "deferred: 11 sites, 2 importers, 17.6s per pass",
-    "isocenter/reporting.py": "deferred: 7 sites, 3 importers, 23.5s per pass",
-    "isocenter/exporters/__init__.py":
-        "deferred: 5 sites, 7 importers, 17.6s per pass",
-
-    # Deferred: cheap (seconds per pass), but a row would put unclassified
-    # survivors in every default run's output; classifying them is its own
-    # piece of work (#439).
-    "isocenter/automation.py":
-        "deferred: 17 sites, 1 importer, ~0s per pass; killed 17/17 at "
-        "stride 1, rowable as it stands",
-    "isocenter/manifest.py":
-        "deferred: 7 sites, 1 importer, ~0s per pass; killed 6/7, one "
-        "survivor unclassified",
+        "deferred: 99 sites, 7 importers, 22.8s per pass; a sample of 9 "
+        "killed only 2, and 126 test files execute it that the scan does "
+        "not name (#441), so its survivors may be phantoms",
+    "isocenter/exporters/wfdb.py":
+        "deferred: 97 sites, 6 importers, 16.5s per pass; killed 28/32 at "
+        "stride 3, four survivors unclassified, and site 45 -- `while "
+        "candidate in seen:` flipped to `not in` -- never terminates, so a "
+        "row would report it as a TIMEOUT once mutant_timeout() expires, "
+        "three times the control (about 50s here; #442)",
+    "isocenter/waveform.py":
+        "deferred: 69 sites, 5 importers, 12.1s per pass; killed 30/35 at "
+        "stride 2, five survivors unclassified",
+    "isocenter/pixel_analysis.py":
+        "deferred: 63 sites, 12 importers, 20.0s per pass; killed 26/33 at "
+        "stride 2 on its 65 sites before #466 moved them, seven survivors "
+        "unclassified",
+    "isocenter/sidecar.py":
+        "deferred: 19 sites, 6 importers, 20.5s per pass; killed 14/19 on "
+        "its then 5 importers -- the survivors are both flocks, a flush, "
+        "an fsync and the decompressor's flush(), durability and "
+        "cross-process locking, unclassified",
     "isocenter/configuration.py":
-        "deferred: 31 sites, 4 importers, 0.6s per pass; killed 21/31, ten "
+        "deferred: 31 sites, 5 importers, 3.5s per pass; killed 21/31, ten "
+        "survivors unclassified",
+    "isocenter/config_manager.py":
+        "deferred: 40 sites, 10 importers, 4.4s per pass; killed 29/40, "
+        "eleven survivors unclassified",
+    "isocenter/utils/ctp_parser.py":
+        "deferred: 22 sites, 2 importers, 1.3s per pass; killed 15/22 -- "
+        "four sys.exit or print deletions in the CLI main(), two yaml "
+        "flags and `if not criteria`, unclassified",
+    "isocenter/murmur.py":
+        "deferred: 52 sites, 1 importer, 2.6s per pass; killed 42/52, ten "
         "survivors unclassified",
     "isocenter/discovery.py":
-        "deferred: 77 sites, 4 importers, 0.3s per pass; over 20 survivors "
+        "deferred: 77 sites, 5 importers, 0.9s per pass; a budget-30 "
+        "sample (stride 2, 39 mutants) killed 28 and left ten survivors "
         "unclassified. Flipping the BFS's `visited[neighbor] = True` to "
         "False never terminates; it is caught in 2s today only because -x "
         "stops on test_merge_disjoint first, and would cost "
-        "mutant_timeout()'s 30s floor, not 900s, if the order changed (#442)",
-    "isocenter/reversibility.py": "deferred: 18 sites, 2 importers, 0.8s per pass; not run",
-    "isocenter/verification.py": "deferred: 23 sites, 4 importers, 0.5s per pass; not run",
-    "isocenter/utils/ctp_parser.py":
-        "deferred: 22 sites, 2 importers, 0.3s per pass; not run",
-    "isocenter/config_manager.py":
-        "deferred: 40 sites, 9 importers, 2.6s per pass; not run",
-    "isocenter/murmur.py": "deferred: 52 sites, 1 importer, 3.0s per pass; not run",
-    "isocenter/validation.py": "deferred: 13 sites, 5 importers, 3.6s per pass; not run",
+        "mutant_timeout()'s 30s floor if the order changed (#442). The one "
+        "sampled mutant that timed out is another: site 60, `if not "
+        "visited[neighbor]:` with the `not` dropped, which does not "
+        "terminate even under -x and is a TIMEOUT at that 30s floor "
+        "(0e3e38c)",
 }
 
 class Mut(ast.NodeTransformer):
