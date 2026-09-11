@@ -567,31 +567,87 @@ def _scope_of(node, parents):
     return (scope.name if scope is not None else "<module>"), in_leaf
 
 
+def _attribute_targets(node):
+    """Every attribute name a statement assigns or deletes (#477).
+
+    Tuple and list targets are unpacked, nested ones too, and a starred
+    target is read through: `a.x, (b.y, *c.z) = ...` writes all three.
+    """
+    if isinstance(node, (ast.Assign, ast.Delete)):
+        pending = list(node.targets)
+    elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+        pending = [node.target]
+    else:
+        return []
+    names = []
+    while pending:
+        target = pending.pop()
+        if isinstance(target, (ast.Tuple, ast.List)):
+            pending.extend(target.elts)
+        elif isinstance(target, ast.Starred):
+            pending.append(target.value)
+        elif isinstance(target, ast.Attribute):
+            names.append(target.attr)
+    return names
+
+
+def _writes_pixel_state(node):
+    """Does this node write or delete a field of the pixel state? (#477)
+
+    Plain, tuple/list (nested, starred), augmented and annotated
+    assignment; `del`; and `setattr`/`delattr` whose name is a string
+    literal. **Not covered, deliberately:** a name computed at runtime
+    (`setattr(self, name, ...)`), `object.__setattr__`, and
+    `vars(self)[...]` -- `Instance` is a slots dataclass with no
+    `__dict__` for that to reach. A computed name is not a site a reader
+    can find by searching for the field either; matching every
+    `setattr` would put every dynamic write in the package on the list.
+    """
+    if any(name in _PIXEL_STATE_FIELDS for name in _attribute_targets(node)):
+        return True
+    return (isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in ("setattr", "delattr")
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in _PIXEL_STATE_FIELDS)
+
+
+def _pixel_state_sites_in(source, rel):
+    """Writes of the pixel state, and calls of `_CALLER_HOLDS`, in one module.
+
+    Takes source text rather than a path so the per-form tests below can
+    feed it a snippet without editing the package (#477).
+    """
+    writes = collections.defaultdict(list)
+    calls = collections.defaultdict(list)
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree)
+               for child in ast.iter_child_nodes(node)}
+    for node in ast.walk(tree):
+        if _writes_pixel_state(node):
+            scope, in_leaf = _scope_of(node, parents)
+            writes[(rel, scope)].append(in_leaf)
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _CALLER_HOLDS):
+            scope, in_leaf = _scope_of(node, parents)
+            calls[node.func.attr].append((rel, scope, in_leaf))
+    return writes, calls
+
+
 def _pixel_state_sites():
     """Writes of the pixel state, and calls of `_CALLER_HOLDS`, by site."""
     writes = collections.defaultdict(list)
     calls = collections.defaultdict(list)
     for path in sorted((REPO / "isocenter").rglob("*.py")):
         rel = path.relative_to(REPO).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        parents = {child: node for node in ast.walk(tree)
-                   for child in ast.iter_child_nodes(node)}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                targets = node.targets
-            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
-                targets = [node.target]
-            else:
-                targets = []
-            if any(isinstance(t, ast.Attribute) and t.attr in _PIXEL_STATE_FIELDS
-                   for t in targets):
-                scope, in_leaf = _scope_of(node, parents)
-                writes[(rel, scope)].append(in_leaf)
-            if (isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr in _CALLER_HOLDS):
-                scope, in_leaf = _scope_of(node, parents)
-                calls[node.func.attr].append((rel, scope, in_leaf))
+        module_writes, module_calls = _pixel_state_sites_in(
+            path.read_text(encoding="utf-8"), rel)
+        for site, in_leaf in module_writes.items():
+            writes[site].extend(in_leaf)
+        for helper, sites in module_calls.items():
+            calls[helper].extend(sites)
     return writes, calls
 
 
@@ -625,6 +681,57 @@ def test_every_write_of_the_pixel_state_is_under_the_leaf_or_listed():
         assert not outside, (
             f"{helper} writes the pixel state for a caller holding "
             f"PIXEL_STATE_LOCK, and is called without it from {outside}")
+
+
+def _snippet_sites(snippet):
+    writes, _calls = _pixel_state_sites_in(snippet, "<snippet>")
+    return {site: len(in_leaf) for site, in_leaf in writes.items()}
+
+
+@pytest.mark.parametrize("snippet", [
+    "self._pixel_array_unwritten = False",
+    "self._pixel_array_unwritten, other.x = False, None",
+    "[other.x, (self._pixel_descriptors_replaced, other.y)] = 1, (2, 3)",
+    "(other.x, (*self._pixel_descriptors_replaced, other.y)) = 1, (2, 3)",
+    "*self._pixel_descriptors_replaced, x = 1, 2",
+    "self._pixel_array_unwritten |= True",
+    "self._pixel_array_unwritten: bool = False",
+    "del self._pixel_descriptors_replaced",
+    "del other.x, self._pixel_array_unwritten",
+    "setattr(self, '_pixel_array_unwritten', False)",
+    "delattr(self, '_pixel_descriptors_replaced')",
+], ids=["plain", "tuple", "nested list", "starred in a nested tuple",
+        "starred", "augassign", "annassign", "del", "del of two",
+        "setattr", "delattr"])
+def test_the_detector_sees_every_form_of_write(snippet):
+    """One write of the pixel state, in each form Python spells one (#477).
+
+    The detector matched `self.<field> = ...` and augmented and annotated
+    assignment only, so a tuple target, `del`, and `setattr`/`delattr`
+    with a literal name wrote the state past it (the #466 re-review's
+    D2-D4). Each form is fed to the detector as a one-statement function,
+    and must be reported as exactly one write in it. `augassign` and
+    `annassign` were already seen; they are here so a simplification of
+    the detector cannot drop them unnoticed.
+    """
+    source = "def f(self, other):\n    %s\n" % snippet
+    assert _snippet_sites(source) == {("<snippet>", "f"): 1}
+
+
+def test_the_detector_ignores_other_attributes_and_computed_names():
+    """The negative half: not every `setattr` is a site (#477).
+
+    A computed name cannot be read from the source by the detector or by
+    a reader, and is deliberately out of scope; matching every `setattr`
+    would put every dynamic write in the package on the allow-list.
+    """
+    assert _snippet_sites(
+        "def f(self, name):\n"
+        "    self.other = 1\n"
+        "    setattr(self, name, 2)\n"
+        "    setattr(self, 'other', 3)\n"
+        "    del self.other\n"
+        "    other_unwritten = self._pixel_array_unwritten\n") == {}
 
 
 class _PausingLock:
