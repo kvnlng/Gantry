@@ -3086,17 +3086,38 @@ def _bit_patterns(arr: np.ndarray) -> np.ndarray:
     return flat.view(np.dtype(f"u{flat.itemsize}"))
 
 
-def _readback_pixel_mismatch(decoded: np.ndarray,
-                             written: np.ndarray) -> Optional[str]:
-    """Why `decoded` is not bit for bit `written`, or None if it is."""
+def _readback_pixel_mismatch(decoded: np.ndarray, written: np.ndarray,
+                             pixel_representation=None) -> Optional[str]:
+    """Why `decoded` is not bit for bit `written`, or None if it is.
+
+    `pixel_representation` is the file's own PixelRepresentation, named
+    in the reason when the two disagree about signedness.
+    """
     if written.dtype == np.bool_:
         written = written.view(np.uint8)
     # Size, not shape: the descriptors are already compared, and pydicom
     # squeezes a single frame and a single sample out of the shape.
+    #
+    # **The dtype comparison is not redundant with the bitwise compare
+    # below.** int16 [-1, -2, -3] declared PixelRepresentation 0 reaches
+    # the file with every bit intact, so the bit patterns agree -- and a
+    # reader gets uint16 [65535, 65534, 65533]. Only the dtype says so.
     if decoded.dtype != written.dtype or decoded.size != written.size:
-        return (f"the written pixel data decodes as {decoded.dtype} x "
-                f"{decoded.size} where {written.dtype} x {written.size} "
-                f"was written")
+        reason = (f"the written pixel data decodes as {decoded.dtype} x "
+                  f"{decoded.size} where {written.dtype} x {written.size} "
+                  f"was written")
+        kinds = {decoded.dtype.kind, written.dtype.kind}
+        if kinds == {"i", "u"}:
+            # Signed against unsigned: the element that decides it is
+            # PixelRepresentation, so the reason points the reader there.
+            reason += (
+                f"; the file declares PixelRepresentation "
+                f"{pixel_representation} "
+                f"({'unsigned' if decoded.dtype.kind == 'u' else 'signed'}) "
+                f"where "
+                f"{'signed' if written.dtype.kind == 'i' else 'unsigned'} "
+                f"samples were written")
+        return reason
     differ = _bit_patterns(decoded) != _bit_patterns(written)
     count = int(np.count_nonzero(differ))
     if count == 0:
@@ -3217,7 +3238,9 @@ def _verify_readback(path: str, ds, written_pixels=None,
                 f"Readback verification failed: the written pixel data "
                 f"could not be decoded ({type(exc).__name__}: {exc})"
             ) from exc
-        reason = _readback_pixel_mismatch(decoded, written_pixels)
+        reason = _readback_pixel_mismatch(
+            decoded, written_pixels,
+            getattr(readback, "PixelRepresentation", None))
         if reason is not None:
             raise RuntimeError(f"Readback verification failed: {reason}")
 

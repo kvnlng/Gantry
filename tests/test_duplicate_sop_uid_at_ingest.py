@@ -449,7 +449,7 @@ def test_the_printout_counts_declined_files_among_the_new_files(tmp_path,
 
 
 # ---------------------------------------------------------------------------
-# #450 -- which file is kept does not depend on the volume
+# #450 -- which file is kept does not depend on the listing order
 # ---------------------------------------------------------------------------
 
 _REAL_WALK = os.walk
@@ -485,19 +485,62 @@ def _across_directories(root):
     return uid, first, second, values
 
 
-@pytest.mark.parametrize("layout", [_same_directory, _across_directories],
-                         ids=["same-directory", "across-directories"])
+def _full_path_decides(root):
+    """`src/one/y.dcm` (7s) and `src/two/x.dcm` (9s).
+
+    The whole path sorts `one/y` first; the basenames alone sort `x`
+    first. A sort on the basename keeps the other file.
+    """
+    uid, study, series = generate_uid(), generate_uid(), generate_uid()
+    first = _write(os.path.join(root, "one", "y.dcm"), uid, study, series,
+                   X_VALUE)
+    second = _write(os.path.join(root, "two", "x.dcm"), uid, study, series,
+                    Y_VALUE)
+    return uid, first, second, {first: X_VALUE, second: Y_VALUE}
+
+
+def _case_decides(root):
+    """`src/B.dcm` (7s) and `src/a.dcm` (9s), side by side.
+
+    By code point `B` (0x42) sorts before `a` (0x61); case-folded, `a`
+    sorts first. A case-insensitive sort keeps the other file.
+
+    Not a pair that differs *only* in case, such as `A.dcm` and `a.dcm`:
+    APFS is case-insensitive by default, so that pair cannot exist on
+    this volume at all. Moving the two into separate directories does not
+    help either, because the directory component then decides the order
+    before case is ever compared. This pair can coexist on any volume, and
+    the two orders disagree about it.
+    """
+    uid, study, series = generate_uid(), generate_uid(), generate_uid()
+    first = _write(os.path.join(root, "B.dcm"), uid, study, series, X_VALUE)
+    second = _write(os.path.join(root, "a.dcm"), uid, study, series, Y_VALUE)
+    return uid, first, second, {first: X_VALUE, second: Y_VALUE}
+
+
+@pytest.mark.parametrize("layout", [_same_directory, _across_directories,
+                                    _full_path_decides, _case_decides],
+                         ids=["same-directory", "across-directories",
+                              "full-path-not-basename",
+                              "code-point-not-case-folded"])
 def test_the_file_kept_is_the_one_whose_path_sorts_first_whatever_the_listing_order(
         tmp_path, monkeypatch, layout):
-    """The same folder keeps the same file on every volume (#450).
+    """The file kept is the one whose path sorts first, as walked (#450).
 
     Before #450 `import_files` dispatched in `os.walk` order, and the
     shared executor yields in submission order, so the file kept was the
     first the *filesystem* listed: `f001.dcm` over `f000.dcm` on APFS,
     `f000.dcm` on HFS+, measured on one folder. The listing is now sorted
     before dispatch, so the path that sorts first is linked first and
-    kept. Killing mutation: the sort deleted -- the reversed listing then
-    keeps the second file.
+    kept. "Sorts first" means the whole path string as `os.walk` reports
+    it, compared by code point, with no key.
+
+    Killing mutations:
+    - the sort deleted: the reversed listing keeps the second file;
+    - a basename key (`key=os.path.basename`): `full-path-not-basename`
+      keeps `two/x.dcm`;
+    - a case-folded key (`key=str.lower`): `code-point-not-case-folded`
+      keeps `a.dcm`.
     """
     uid, first, second, values = layout(str(tmp_path / "src"))
     assert sorted((first, second)) == [first, second]

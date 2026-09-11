@@ -521,9 +521,12 @@ def test_values_outside_bits_stored_fail_an_uncompressed_readback(
     bit-exactly" it fails -- measured, 8 of these 16 samples. Under JPEG
     2000 the decoder does not mask and the samples come back exact.
     That decode, a 16-bit codestream under BitsStored 12, is where
-    pydicom could warn on the caller's stream (#144, #248), and nothing
-    does. Killing mutations: comparing under a BitsStored mask; the
-    compare skipped for native syntaxes; a readback that warns.
+    pydicom could warn on the caller's stream (#144, #248), and in this
+    case nothing does. That is a claim about this case only. The readback
+    does not suppress pydicom's warnings, and a bool J2K frame whose
+    codestream happens to be as long as its uncompressed data does warn
+    (#473). Killing mutations: comparing under a BitsStored mask; the
+    compare skipped for native syntaxes; a readback that warns here.
     """
     src = np.array([[-3024, 3000, -1, 0]] * 4, dtype=np.int16)
 
@@ -540,6 +543,107 @@ def test_values_outside_bits_stored_fail_an_uncompressed_readback(
     else:
         assert outcome.ok, outcome.error
         assert [str(w.message) for w in recwarn] == []
+
+
+@pytest.mark.parametrize("compression", [None, "j2k"])
+def test_signed_samples_declared_unsigned_fail_readback(tmp_path,
+                                                        compression):
+    """int16 [-1, -2, -3] under PixelRepresentation 0 is not what was meant (#449).
+
+    Every sample's bits reach the file intact, so a bitwise compare alone
+    passes this file. But the file declares unsigned samples, so a reader
+    gets uint16 [65535, 65534, 65533]: the export without the check shows
+    it. The dtype comparison is what catches it, and the reason names
+    PixelRepresentation, because that is the element a reader needs to
+    look at. Killing mutations:
+    - the dtype comparison dropped (the review's R1);
+    - the PixelRepresentation clause dropped from the reason.
+    """
+    src = np.array([[-1, -2, -3, 4]] * 4, dtype=np.int16)
+
+    def declared_unsigned():
+        # After the pixels, not before: `set_pixel_data()` rewrites
+        # PixelRepresentation from the array's dtype, so a value set
+        # first is replaced with 1 and the file comes out correct.
+        inst = _image(src)
+        inst.set_attr("0028,0103", 0)
+        return inst
+
+    unchecked = _export_instance_worker(
+        _ctx_for(tmp_path, declared_unsigned(), compression=compression))
+    assert unchecked.ok, unchecked.error
+    read = _stored_samples(unchecked.output_path)
+    assert read.dtype == np.uint16
+    if compression is None:
+        assert read.reshape(-1)[:4].tolist() == [65535, 65534, 65533, 4]
+    # Under JPEG 2000 a reader gets uint16 as well, but shifted: measured
+    # [32767, 32766, 32765, 32772]. That is pydicom's J2K path and not
+    # something to pin; that the reader gets unsigned samples is enough.
+
+    outcome = _export_instance_worker(
+        _ctx_for(tmp_path, declared_unsigned(), compression=compression,
+                 verify_readback=True))
+
+    assert not outcome.ok
+    message = str(outcome.error)
+    assert "decodes as uint16 x 16 where int16 x 16 was written" in message, \
+        message
+    assert ("the file declares PixelRepresentation 0 (unsigned) where "
+            "signed samples were written") in message, message
+
+
+@pytest.mark.parametrize("compression", [None, "j2k"])
+def test_a_bool_mask_export_passes_readback(tmp_path, compression):
+    """A correct bool export is not a mismatch (#449).
+
+    `bool` is written one byte per sample and decodes as `uint8`, so the
+    written array is viewed as `uint8` before the dtype comparison.
+    Killing mutation: that view dropped (the review's R2), after which
+    every correct bool export fails, uncompressed and J2K alike.
+    """
+    mask = np.arange(64).reshape(8, 8) % 3 == 0
+
+    outcome = _export_instance_worker(
+        _ctx_for(tmp_path, _image(mask, sop=SC_STORAGE, modality="OT"),
+                 compression=compression, verify_readback=True))
+
+    assert outcome.ok, outcome.error
+    assert (_stored_samples(outcome.output_path).reshape(-1).tolist()
+            == mask.astype(np.uint8).reshape(-1).tolist())
+
+
+@pytest.mark.parametrize("damage", ["sequence-deleted", "sequence-emptied"])
+def test_a_waveform_that_vanished_from_the_file_fails_readback(
+        tmp_path, monkeypatch, damage):
+    """A file with no waveform left is not the file that was meant (#449).
+
+    `_readback_waveform_mismatch` reads a missing `WaveformSequence`
+    (`AttributeError`) or an empty one (`IndexError`) as zero bytes, which
+    differ from every waveform written. Killing mutation: that except
+    branch returning None, which passes the file (the review's R3).
+    """
+    session, inst = _ingested_ecg(tmp_path)
+    try:
+        written = len(inst.get_waveform_bytes())
+
+        def _vanished(*args, **kwargs):
+            ds = _REAL_DCMREAD(*args, **kwargs)
+            if damage == "sequence-deleted":
+                del ds.WaveformSequence
+            else:
+                ds.WaveformSequence = pydicom.Sequence()
+            return ds
+        monkeypatch.setattr(pydicom, "dcmread", _vanished)
+
+        outcome = _export_instance_worker(
+            _ctx_for(tmp_path, inst, verify_readback=True))
+    finally:
+        session.close()
+
+    assert not outcome.ok
+    assert (f"the written WaveformData reads back as different bytes "
+            f"({written} of {written} differ)") in str(outcome.error), \
+        outcome.error
 
 
 def test_a_message_less_decode_failure_still_names_its_type(tmp_path,
