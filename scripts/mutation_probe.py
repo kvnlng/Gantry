@@ -852,8 +852,9 @@ TARGETS = {
     # probed, exhaustive because it is cheap, like parallel.py's 80. It
     # stays stride 1 until the module passes 119 sites.
     #
-    # Six files, and it takes the widened `_importers` (#419) to see
-    # them: several reach this module as `from isocenter import
+    # Seven files (the seventh, test_ybr_jpegls_read_doors.py, is #483's),
+    # and it takes the widened `_importers` (#419) to see them: several
+    # reach this module as `from isocenter import
     # imagecodecs_handler`, which the old stem-only scan could not read.
     # Without test_offset_table_frame_count.py, nine of the #418
     # frame-count helpers' mutants survive; without
@@ -864,10 +865,12 @@ TARGETS = {
     # killed, and a seventh (the sign rule's `or` -> `and` in
     # `_sign_extend_from_bits_stored`) was then pinned by that file's S6
     # and killed by a real edit. Re-measured at stride 1 once #440 deleted
-    # two dead handler hooks (3.12.14): 58 of 60 killed. #478 and
-    # #464 then added 19 sites (`CONVERTS_TO`, `colour_conversion`,
-    # `convert_colour`, `_jpegls_precision`) and those are not yet
-    # re-measured here. The two survivors of the 60 are both known and
+    # two dead handler hooks (3.12.14): 58 of 60 killed. #483 then added
+    # 19 sites (`CONVERTS_TO`, `colour_conversion`, `convert_colour`,
+    # `_jpegls_precision`; #478, #464) and the seventh file. Re-measured
+    # at stride 1 on ba804ae (3.12.14, 28.6s control, other suites on the
+    # machine): 77 of 79 killed, every one of the 19 new sites among them,
+    # no timeout. The two survivors are the same two, both known and
     # both equivalent:
     #   - the decode-error print in `get_pixel_data` is equivalent: the
     #     exception it describes is re-raised carrying the same text;
@@ -954,8 +957,9 @@ NOT_PROBED = {
     "isocenter/exporters/wfdb.py":
         "deferred: 97 sites, 6 importers, 16.5s per pass; killed 28/32 at "
         "stride 3, four survivors unclassified, and site 45 -- `while "
-        "candidate in seen:` flipped to `not in` -- never terminates, which "
-        "costs run()'s full 900s timeout (#442)",
+        "candidate in seen:` flipped to `not in` -- never terminates, so a "
+        "row would report it as a TIMEOUT once mutant_timeout() expires, "
+        "three times the control (about 50s here; #442)",
     "isocenter/waveform.py":
         "deferred: 69 sites, 5 importers, 12.1s per pass; killed 30/35 at "
         "stride 2, five survivors unclassified",
