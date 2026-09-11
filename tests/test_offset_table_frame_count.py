@@ -637,7 +637,8 @@ def test_an_icon_keeps_its_declared_frame_and_reports_the_excess(
         assert len(rows) == 1, rows
         _uid, details, scope = rows[0]
         assert scope == LOSS_SCOPE_STANDARD
-        assert ICON_PATH_WORDS in details, details
+        assert details.startswith(
+            f"Standard tag 7fe0,0010 (OB) at {ICON_PATH_WORDS}: "), details
         assert "Basic Offset Table names 2 frames" in details, details
         assert declared_words in details, details
         assert "Kept the first 1 and discarded 1" in details, details
@@ -685,8 +686,9 @@ def test_an_icon_naming_fewer_frames_is_not_carried_and_says_why(tmp_path):
         assert len(rows) == 1, rows
         _uid, details, scope = rows[0]
         assert scope == LOSS_SCOPE_STANDARD
-        assert "7fe0,0010" in details, details
-        assert ICON_PATH_WORDS in details, details
+        assert details.startswith(
+            f"Standard tag 7fe0,0010 (OB) at {ICON_PATH_WORDS} was not "
+            f"ingested: "), details
         assert "Basic Offset Table names 1 frames" in details, details
         assert "NumberOfFrames declares 2" in details, details
         assert "unrouted" not in details, details
@@ -743,5 +745,32 @@ def test_a_16_bit_colour_icon_is_truncated_through_the_fallback(tmp_path):
         assert scope == LOSS_SCOPE_STANDARD
         assert ICON_PATH_WORDS in details, details
         assert "Basic Offset Table names 2 frames" in details, details
+    finally:
+        session.close()
+
+
+def test_an_icon_two_items_deep_is_named_by_its_whole_path(tmp_path):
+    """N5: the row names every item on the way down, in order.
+
+    An icon inside the second item of a Referenced Image Sequence. The
+    path is the only identity a nested item has, and a depth-1 fixture
+    cannot tell a path from its last step: joining the steps with a
+    comma instead of " > " survived every depth-1 test.
+    """
+    outer = Dataset()
+    outer.IconImageSequence = Sequence([_icon(2, 1)])
+    ds = _dataset(1, 1)
+    ds.ReferencedImageSequence = Sequence([Dataset(), outer])
+    session, summary, db = _ingest(tmp_path, ds)
+    try:
+        assert summary.ingested == 1
+        rows = _audit_rows(db, "DATA_LOSS")
+        assert len(rows) == 1, rows
+        _uid, details, scope = rows[0]
+        assert scope == LOSS_SCOPE_STANDARD
+        assert details.startswith(
+            "Standard tag 7fe0,0010 (OB) at "
+            "0008,1140[1] > 0088,0200[0]: "), details
+        assert "Kept the first 1 and discarded 1" in details, details
     finally:
         session.close()

@@ -344,3 +344,99 @@ def test_a_clean_pair_of_distinct_uids_declines_nothing(tmp_path):
         assert _warning_rows(session) == []
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# U8 -- a file that failed holds nothing
+# ---------------------------------------------------------------------------
+
+def test_a_file_whose_linkage_failed_does_not_hold_the_uid(tmp_path,
+                                                           monkeypatch):
+    """U8: the UID is held only once the instance is linked.
+
+    The first frame write raises, whichever file reaches it first, so
+    that file is a failure. The other must then be ingested, not
+    declined against an instance the session never kept. Moving
+    `held[uid] = inst` above sidecar site 1 declines it: ingested=0,
+    declined=1, and no instance at all. That mutant survived the full
+    suite on both interpreters until this test (review of #451).
+    """
+    uid, values = _pair(str(tmp_path / "src"))
+    session = DicomSession(persistence_file=str(tmp_path / "s.db"))
+    try:
+        sidecar = session.store_backend.sidecar
+        real_write = sidecar.write_frame
+        calls = []
+
+        def first_write_fails(*args, **kwargs):
+            calls.append(None)
+            if len(calls) == 1:
+                raise OSError("injected: the first frame write fails")
+            return real_write(*args, **kwargs)
+
+        monkeypatch.setattr(sidecar, "write_frame", first_write_fails)
+        summary = session.ingest(str(tmp_path / "src"))
+        assert (summary.ingested, summary.declined) == (1, 0)
+        assert len(summary.failures) == 1, summary.failures
+        ((failed_path, reason),) = summary.failures
+        assert "injected" in reason, reason
+        assert failed_path in values, (failed_path, list(values))
+        assert _warning_rows(session) == []
+        kept = next(p for p in values if p != failed_path)
+        _assert_the_holder_is_what_is_held(session, uid, kept, values)
+    finally:
+        session.close()
+
+
+def test_a_holder_with_no_source_file_is_called_that(tmp_path):
+    """The row does not say "ingested from an instance with no source file".
+
+    A graph built or edited by hand can hold an instance with neither
+    path. The row still declines the file, and names the holder by the
+    only thing known about it.
+    """
+    uid = generate_uid()
+    study, series = generate_uid(), generate_uid()
+    _write(str(tmp_path / "first" / "one" / "x.dcm"), uid, study, series,
+           X_VALUE)
+    y = _write(str(tmp_path / "second" / "two" / "y.dcm"), uid, study,
+               series, Y_VALUE)
+    session = DicomSession(persistence_file=str(tmp_path / "s.db"))
+    try:
+        session.ingest(str(tmp_path / "first"))
+        (holder,) = _instances(session)
+        holder.source_path = None
+        holder.file_path = None
+        summary = session.ingest(str(tmp_path / "second"))
+        assert (summary.ingested, summary.declined) == (0, 1)
+        (row,) = _warning_rows(session)
+        detail = row[1]
+        assert detail.startswith(f"Not importing {y}:"), detail
+        assert ("is already held by an instance in this session that has "
+                "no source file.") in detail, detail
+        assert "ingested from" not in detail, detail
+    finally:
+        session.close()
+
+
+def test_the_printout_counts_declined_files_among_the_new_files(tmp_path,
+                                                                capsys):
+    """"ingested X of N new files" counts every new file it read.
+
+    One duplicate pair and one file that is not DICOM: one ingested, one
+    declined, one rejected, three new files. The total used to leave the
+    declined file out and read "1 of 2".
+    """
+    _pair(str(tmp_path / "src"))
+    (tmp_path / "src" / "three").mkdir()
+    (tmp_path / "src" / "three" / "z.dcm").write_bytes(b"not a DICOM file")
+    session = DicomSession(persistence_file=str(tmp_path / "s.db"))
+    try:
+        capsys.readouterr()
+        summary = session.ingest(str(tmp_path / "src"))
+        out = capsys.readouterr().out
+        assert (summary.ingested, summary.declined, summary.failed) == \
+            (1, 1, 1), summary
+        assert "ingested 1 of 3 new files" in out, out
+    finally:
+        session.close()

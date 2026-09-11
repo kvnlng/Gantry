@@ -43,6 +43,7 @@ from pydicom.sequence import Sequence
 from pydicom.uid import generate_uid
 
 from isocenter.io_handlers import (LOSS_SCOPE_SIGNAL,
+                                   _FALLBACK_PHOTOMETRICS,
                                    _IMAGECODECS_FALLBACK_SYNTAXES,
                                    _decode_pixels)
 from isocenter.session import DicomSession
@@ -450,10 +451,14 @@ def test_a_multi_frame_excess_keeps_exactly_the_declared_frames(ingest):
 def test_a_decode_smaller_than_its_header_is_refused_with_both_sizes(ingest):
     """F11: a 4x4 codestream under a 4x8 header (brief §9 attack 1).
 
-    The dtype matches, so only the size guard stands between this and a
-    reshape. Without it the file is still refused -- numpy's `cannot
-    reshape` -- so what the guard buys is the reason: the counts a
-    reader can check against the header, in this library's words.
+    The geometry check has two halves, and this is the half where the
+    sample counts differ. Here the size guard buys only the reason:
+    without it the file is still refused, by numpy's `cannot reshape`,
+    so what it adds is the counts a reader can check against the
+    header, in this library's words. The other half is not like that.
+    A decode with the *right* count in the wrong shape reshapes without
+    complaint, so there the shape guard is what stops a different image
+    being stored at all (F12).
     """
     ds = _dataset(J2K_LOSSLESS, [RGB16["uint16"]])
     ds.Columns = 8
@@ -463,3 +468,164 @@ def test_a_decode_smaller_than_its_header_is_refused_with_both_sizes(ingest):
     assert reason.startswith("Decompression Failed:"), reason
     assert "decoded 48 samples" in reason, reason
     assert "1 frame(s) of 4x8x3 need 96" in reason, reason
+
+
+# ---------------------------------------------------------------------------
+# F12 -- the right number of samples in the wrong shape is another image
+# ---------------------------------------------------------------------------
+
+#: 8x4 frames, for a header declaring 4x8: the same number of samples.
+TALL_RGB16 = np.concatenate([RGB16["uint16"], RGB16_FRAME1])
+TALL_MONO16 = np.concatenate([MONO16, MONO16 + 1])
+
+
+@pytest.mark.parametrize("ts,frame,photometric", [
+    (J2K_LOSSLESS, TALL_RGB16, "RGB"),
+    (JPEGLS, TALL_MONO16, "MONOCHROME2"),
+    (LJPEG_SV1, TALL_MONO16, "MONOCHROME2"),
+], ids=["j2k-rgb16", "jpegls-mono16", "ljpeg-mono16"])
+def test_an_8x4_decode_under_a_4x8_header_is_refused(ingest, ts, frame,
+                                                     photometric):
+    """F12: same dtype, same sample count, transposed geometry.
+
+    A size check cannot see it. 8x4 and 4x8 hold the same number of
+    samples, so the decode was reshaped into the header's geometry and
+    stored as a different image. Each of these was refused on main,
+    where only pydicom decoded, and was ingested by the fallback until
+    the shape check. Found in review of #451, on both interpreters.
+    """
+    ds = _dataset(ts, [frame], photometric=photometric)
+    ds.Rows, ds.Columns = 4, 8
+    _session, summary, _db = ingest(ds)
+    assert summary.ingested == 0
+    assert len(summary.failures) == 1
+    reason = summary.failures[0][1]
+    assert reason.startswith("Decompression Failed:"), reason
+    assert f"decoded to shape {frame.shape}" in reason, reason
+    assert f"the header declares {(4, 8) + frame.shape[2:]}" in reason, \
+        reason
+
+
+def test_three_samples_under_a_one_sample_header_are_refused(ingest):
+    """F12, the colour case: 4x4 RGB JPEG-LS under a 4x12 MONOCHROME2 header.
+
+    That is 48 samples either way, so the size check passed and a colour
+    image was stored as a grey one of another width, under a label that
+    was never true of it.
+    """
+    ds = _dataset(JPEGLS, [RGB16["uint16"]], photometric="MONOCHROME2",
+                  planar=None)
+    ds.SamplesPerPixel = 1
+    ds.Columns = 12
+    _session, summary, _db = ingest(ds)
+    assert summary.ingested == 0
+    reason = summary.failures[0][1]
+    assert reason.startswith("Decompression Failed:"), reason
+    assert "decoded to shape (4, 4, 3)" in reason, reason
+    assert "the header declares (4, 12)" in reason, reason
+
+
+# ---------------------------------------------------------------------------
+# F13 -- which colour spaces are labelled is decided per syntax
+# ---------------------------------------------------------------------------
+
+#: A 4x12 greyscale frame: 48 samples, the count a 4x4 RGB header needs.
+WIDE_MONO16 = np.concatenate([MONO16, MONO16 + 1, MONO16 + 2], axis=1)
+#: 4x4 RGB, 8-bit.
+RGB8 = (np.arange(48, dtype=np.int64) * 5).astype(np.uint8).reshape(4, 4, 3)
+_GREY = {"MONOCHROME1", "MONOCHROME2", "PALETTE COLOR"}
+
+
+def _fallback_reason(summary):
+    """The fallback's own clause: pydicom's message may name the syntax."""
+    reason = summary.failures[0][1]
+    assert reason.startswith("Decompression Failed:"), reason
+    marker = "imagecodecs could not decode it either: "
+    assert marker in reason, reason
+    return reason.split(marker, 1)[1]
+
+
+def test_the_colour_spaces_the_fallback_labels_are_chosen_per_syntax():
+    """The table is the one place to widen, and every syntax has a row.
+
+    RGB is labelled where a colour decode has been measured exact:
+    JPEG 2000 (F1, F3, N4) and JPEG-LS (below). JPEG Lossless is
+    greyscale and palette only (F13); widening it belongs to #387.
+    """
+    assert set(_FALLBACK_PHOTOMETRICS) == _IMAGECODECS_FALLBACK_SYNTAXES
+    assert {ts: set(labels) for ts, labels in
+            _FALLBACK_PHOTOMETRICS.items()} == {
+        LJPEG: _GREY, LJPEG_SV1: _GREY,
+        JPEGLS: _GREY | {"RGB"}, JPEGLS_NEAR: _GREY | {"RGB"},
+        J2K_LOSSLESS: _GREY | {"RGB"}, J2K: _GREY | {"RGB"}}
+
+
+@pytest.mark.parametrize("ts", [LJPEG, LJPEG_SV1])
+def test_a_colour_jpeg_lossless_file_is_refused_naming_space_and_syntax(
+        ingest, ts):
+    """F13: RGB is not labelled under JPEG Lossless.
+
+    There is no colour JPEG Lossless stream here to measure a decode
+    against: `imagecodecs.ljpeg_encode` refuses three components. And
+    imagecodecs ignores PlanarConfiguration, so a planar/interleaved
+    swap would pass both the size and the shape checks. So the colour
+    space is refused before any decode. This fixture's stream is
+    greyscale with the right sample count; the shape check would refuse
+    it too, in other words, which is why the assertion is on the reason.
+    """
+    ds = _dataset(ts, [WIDE_MONO16], photometric="RGB")
+    ds.SamplesPerPixel, ds.Columns = 3, 4
+    ds.PlanarConfiguration = 0
+    _session, summary, _db = ingest(ds)
+    assert summary.ingested == 0
+    why = _fallback_reason(summary)
+    assert "'RGB'" in why, why
+    assert ts in why, why
+
+
+@pytest.mark.parametrize("ts", [JPEGLS, JPEGLS_NEAR])
+@pytest.mark.parametrize("want", [RGB8, RGB16["uint16"]],
+                         ids=["uint8", "uint16"])
+def test_a_colour_jpeg_ls_file_ingests_bit_exactly(ingest, ts, want):
+    """RGB stays open under JPEG-LS, where it is measured exact.
+
+    `jpegls_decode` returns the samples interleaved, `(rows, cols, 3)`,
+    matching PlanarConfiguration 0.
+    """
+    session, summary, _db = ingest(_dataset(ts, [want]))
+    assert (summary.ingested, summary.failures) == (1, [])
+    inst, got = _stored(session)
+    assert got.dtype == want.dtype
+    assert got.tolist() == want.tolist()
+    assert inst.attributes["0028,0004"] == "RGB"
+
+
+# ---------------------------------------------------------------------------
+# Signed JPEG Lossless and JPEG-LS stay refused at every depth (#446)
+# ---------------------------------------------------------------------------
+
+#: Signed 16-bit samples, CT's common case.
+SIGNED16 = np.array([[-1000, -500, 0, 1500]] * 4, dtype=np.int16)
+SIGNED8 = np.array([[-100, -50, 0, 100]] * 4, dtype=np.int8)
+
+
+@pytest.mark.parametrize("ts,signed", [
+    (LJPEG_SV1, SIGNED16), (JPEGLS, SIGNED16), (JPEGLS, SIGNED8),
+], ids=["ljpeg-16", "jpegls-16", "jpegls-8"])
+def test_a_signed_lossless_jpeg_file_stays_refused_at_every_depth(
+        ingest, ts, signed):
+    """Not only sub-16-bit (F4): 8 and 16 bits are refused too.
+
+    Both codecs return unsigned samples at every depth, which the dtype
+    check refuses. At 16 bits the bit pattern is right and only the
+    signedness is wrong, but admitting it is #446's work, which covers
+    16-bit as well. (8-bit JPEG Lossless does not decode at all.)
+    """
+    unsigned = signed.view(np.dtype(f"u{signed.itemsize}"))
+    _session, summary, _db = ingest(_dataset(
+        ts, [signed], photometric="MONOCHROME2", pixel_representation=1,
+        encode_as=[unsigned]))
+    assert summary.ingested == 0
+    why = _fallback_reason(summary)
+    assert f"decoded to uint{signed.itemsize * 8}" in why, why
+    assert "PixelRepresentation 1" in why, why

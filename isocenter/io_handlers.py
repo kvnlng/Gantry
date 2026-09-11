@@ -344,9 +344,9 @@ _CARRIABLE_TRANSFER_SYNTAXES = frozenset({
 #: | .80 / .81 JPEG-LS | none | yes |
 #: | .90 / .91 JPEG 2000 | `pillow`, 16-bit multi-sample refused | yes |
 #:
-#: So every JPEG Lossless and JPEG-LS file was refused at ingest with
-#: "all plugins are missing dependencies", and now ingests when its
-#: decode matches its header. RLE is out because pydicom's own RLE
+#: So every JPEG Lossless and JPEG-LS file was refused at ingest, and now
+#: ingests when its decode matches its header under a colour space
+#: `_FALLBACK_PHOTOMETRICS` labels for it. RLE is out because pydicom's RLE
 #: decoder needs no dependency, and the handler's RLE arm has never
 #: decoded anything (#447). JPEG Baseline and Extended are out because
 #: Pillow decodes them here, the handler's colour handling through this
@@ -362,20 +362,40 @@ _IMAGECODECS_FALLBACK_SYNTAXES = frozenset({
     "1.2.840.10008.1.2.4.91",   # JPEG 2000
 })
 
-#: The declared colour spaces the fallback will label its output with.
-#: pydicom's decoder *states* what colour space it returned (#372);
-#: `imagecodecs` does not, so the fallback can only repeat the declared
-#: label, and that is honest only where the decoder cannot have
-#: converted anything. Monochrome and palette indices come back as
-#: stored (measured: a PALETTE COLOR JPEG Lossless frame decodes to its
-#: index array, and pydicom's `as_array` applies no palette either), and
-#: RGB is RGB. The YBR family is out: openjpeg undoes a codestream's
+#: The declared colour spaces the fallback will label its output with,
+#: per transfer syntax. pydicom's decoder *states* what colour space it
+#: returned (#372). `imagecodecs` does not, and does not read
+#: PlanarConfiguration either, so the fallback can only repeat the
+#: declared label, and that is honest only where the decode cannot have
+#: converted or rearranged anything. Monochrome and palette indices come
+#: back as stored under every syntax here (measured: a PALETTE COLOR
+#: JPEG Lossless frame decodes to its index array, and pydicom's
+#: `as_array` applies no palette either).
+#:
+#: RGB is labelled only where a colour decode is measured exact and
+#: interleaved: JPEG 2000 and JPEG-LS, 8- and 16-bit, on imagecodecs
+#: 2026.8.16. **Not JPEG Lossless.** `ljpeg_encode` refuses three
+#: components, so there is no colour stream here to measure a decode
+#: against. And a planar/interleaved swap holds the same samples in the
+#: same shape, so no check after the decode would see one. Widening a
+#: row is #387's.
+#:
+#: The YBR family is out everywhere: openjpeg undoes a codestream's
 #: colour transform and returns RGB under a `YBR_RCT`/`YBR_ICT` label,
 #: which is #372's defect through a new door. What those should become
-#: is #448. This library's own exports are RGB, so the round trip #416
-#: is about does not need them.
-_FALLBACK_PHOTOMETRICS = frozenset({
-    "MONOCHROME1", "MONOCHROME2", "RGB", "PALETTE COLOR"})
+#: is #448. This library's own exports are RGB JPEG 2000, so the round
+#: trip #416 is about does not need them. Keyed on exactly
+#: `_IMAGECODECS_FALLBACK_SYNTAXES`; a syntax missing here labels
+#: nothing.
+_FALLBACK_GREY = frozenset({"MONOCHROME1", "MONOCHROME2", "PALETTE COLOR"})
+_FALLBACK_PHOTOMETRICS = {
+    "1.2.840.10008.1.2.4.57": _FALLBACK_GREY,
+    "1.2.840.10008.1.2.4.70": _FALLBACK_GREY,
+    "1.2.840.10008.1.2.4.80": _FALLBACK_GREY | {"RGB"},
+    "1.2.840.10008.1.2.4.81": _FALLBACK_GREY | {"RGB"},
+    "1.2.840.10008.1.2.4.90": _FALLBACK_GREY | {"RGB"},
+    "1.2.840.10008.1.2.4.91": _FALLBACK_GREY | {"RGB"},
+}
 
 
 #: The descriptors a nested payload is reshaped from, in a fixed order, with
@@ -1416,13 +1436,17 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
     JPEG Lossless frame comes back from `imagecodecs` as unsigned samples
     with no sign extension, -800 read as 3296 (`Instance.get_pixel_data()`
     returns the same wrong values; that is #446). So the decode is
-    accepted only when it is what the header says it is, and refused --
-    keeping pydicom's reason first, so the ingest row still reads
-    `Decompression Failed: <pydicom's words>` -- when:
+    accepted only when it passes every check below against the header,
+    and refused -- keeping pydicom's reason first, so the ingest row
+    still reads `Decompression Failed: <pydicom's words>` -- when:
 
-    - **the colour space is not one it can label.** `imagecodecs` does not
-      say what colour space it returned, so the declared label is all
-      there is; see `_FALLBACK_PHOTOMETRICS`.
+    - **the colour space is not one it labels under this syntax.**
+      `imagecodecs` does not say what colour space it returned, or how it
+      laid the samples out, so the declared label is all there is. It is
+      repeated only where a decode under that syntax has been measured to
+      match it; see `_FALLBACK_PHOTOMETRICS`. This is also what keeps out
+      the one mismatch the checks after the decode cannot see: a
+      planar/interleaved swap has the right dtype, size and shape.
     - **the offset table disagrees in a way the caller has not handled.**
       Fewer frames than declared is always refused. An excess is decoded
       to the declared frames only when the caller passed
@@ -1431,8 +1455,12 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
       return every frame, and an array holding more frames than its
       header declares is one nothing can read back.
     - **the output does not match the header**: its itemsize against
-      BitsAllocated, its signedness against PixelRepresentation, or its
-      size against Rows x Columns x SamplesPerPixel x frames.
+      BitsAllocated, its signedness against PixelRepresentation, its
+      size against Rows x Columns x SamplesPerPixel x frames, and, when
+      the size agrees, its shape. A same-size decode in another shape
+      (8x4 under a 4x8 header, three samples under a one-sample header)
+      is a different image, and a reshape would store it without
+      complaint.
 
     Returns:
         ``(array, photometric)`` in the shape `pixel_array` returns --
@@ -1443,13 +1471,17 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
         return RuntimeError(
             f"{pydicom_error}; imagecodecs could not decode it either: {why}")
 
+    ts = ds.file_meta.TransferSyntaxUID
     photometric = str(getattr(ds, "PhotometricInterpretation", "") or "")
-    if photometric not in _FALLBACK_PHOTOMETRICS:
+    if photometric not in _FALLBACK_PHOTOMETRICS.get(str(ts), ()):
+        name = getattr(ts, "name", "")
+        syntax = f"{name} ({ts})" if name and name != str(ts) else str(ts)
         raise refused(
             f"its declared colour space {photometric!r} is not one this "
-            f"fallback can label: imagecodecs does not say what colour "
-            f"space it decoded to, and for the YBR family it is not the "
-            f"declared one") from pydicom_error
+            f"fallback labels under {syntax}: imagecodecs does not say "
+            f"what colour space or sample layout it decoded to, so the "
+            f"declared label is repeated only where a decode under that "
+            f"syntax has been measured to match it") from pydicom_error
 
     counted = offset_table_frame_count(ds)
     if counted is not None and counted[0] != counted[1]:
@@ -1482,6 +1514,15 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
     shape = (rows, cols) + ((samples,) if samples > 1 else ())
     if frames > 1:
         shape = (frames,) + shape
+    # Before the size check, and only when the sizes agree: a same-size
+    # decode in another shape reshapes without complaint, so without
+    # this it is stored as a different image (8x4 under a 4x8 header, or
+    # a 4x4 RGB stream under a 4x12 MONOCHROME2 one). The size check
+    # below keeps the other case, where the counts differ, in its words.
+    if arr.shape != shape and arr.size == int(np.prod(shape)):
+        raise refused(
+            f"it decoded to shape {arr.shape}, where the header declares "
+            f"{shape}") from pydicom_error
     if arr.size != int(np.prod(shape)):
         raise refused(
             f"it decoded {arr.size} samples, where {frames} frame(s) of "
@@ -2168,12 +2209,16 @@ class DicomImporter:
                     # as workers finish them (#450).
                     holder = held.get(inst.sop_instance_uid)
                     if holder is not None:
-                        holder_path = (holder.source_path or holder.file_path
-                                       or "an instance with no source file")
+                        holder_path = holder.source_path or holder.file_path
+                        holder_words = (
+                            f"the instance ingested from {holder_path}"
+                            if holder_path else
+                            "an instance in this session that has no "
+                            "source file")
                         detail = " ".join((
                             f"Not importing {inst.file_path}: SOP Instance "
                             f"UID {inst.sop_instance_uid} is already held by "
-                            f"the instance ingested from {holder_path}. A "
+                            f"{holder_words}. A "
                             f"session holds one instance per SOP Instance "
                             f"UID; the first was kept and this file was not "
                             f"read into the store.").split()
@@ -2368,9 +2413,9 @@ class DicomImporter:
                         # it whole.
                         n_table = nested_tables.get((n_path, n_tag))
                         if n_table is not None:
-                            _t_vr, t_counted, _t_kind = n_table
+                            t_vr, t_counted, _t_kind = n_table
                             detail = (
-                                f"Standard tag {n_tag} at "
+                                f"Standard tag {n_tag} ({t_vr}) at "
                                 f"{_item_path_words(n_path)}: "
                                 f"{frame_count_mismatch_words(t_counted)}. "
                                 f"Kept the first {t_counted[1]} and "
@@ -3812,7 +3857,10 @@ class _J2kFrameRefusal(RuntimeError):
 #: (`_decode_pixels`), which reads those frames bit-exactly, so the cell
 #: meets the standard. Measured on imagecodecs 2026.8.16, on 3.12 and
 #: 3.14t, for `uint16` and `int16`, one and two frames, and pinned by
-#: `test_our_own_compressed_16_bit_colour_export_re_ingests`. **Before
+#: `test_our_own_compressed_16_bit_colour_export_re_ingests`. It holds at
+#: the install floor too: imagecodecs 2024.6.1, pydicom 3.0.2 and numpy
+#: 2.2.6, measured in review of #451 (85 passed across the suites that
+#: reach this cell). **Before
 #: narrowing `_IMAGECODECS_FALLBACK_SYNTAXES` to exclude JPEG 2000,
 #: remove this cell**, or the export writes a file ingest refuses again.
 #:

@@ -1602,9 +1602,11 @@ class DicomSession:
         print(f"  - {n_se} Series")
         print(f"  - {n_i} Instances")
         if summary.failed:
+            # Declined files are new files this call read, so they are
+            # in the total; leaving them out read "1 of 2" for three.
+            new_files = summary.ingested + summary.failed + summary.declined
             print(f"  - {summary.failed} file(s) REJECTED -- ingested "
-                  f"{summary.ingested} of "
-                  f"{summary.ingested + summary.failed} new files; see the "
+                  f"{summary.ingested} of {new_files} new files; see the "
                   f"returned IngestSummary.failures and the ERROR audit "
                   f"rows for the paths and reasons.")
         if summary.declined:

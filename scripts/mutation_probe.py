@@ -164,6 +164,7 @@ TARGETS = {
                                   "tests/test_data_loss_reporting.py",
                                   "tests/test_descriptor_edit_with_pixels_unloaded.py",
                                   "tests/test_dtype_only_replacement_survives_the_dedup.py",
+                                  "tests/test_duplicate_sop_uid_at_ingest.py",
                                   "tests/test_empty_sequence_roundtrip.py",
                                   "tests/test_export_atomic_write.py",
                                   "tests/test_export_contract.py",
