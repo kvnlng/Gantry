@@ -234,7 +234,7 @@ def _sampled_runs(tmp_path, monkeypatch, argv):
                         lambda p: pathlib.Path("/sentinel/none.pyc"))
     monkeypatch.setattr(mutation_probe, "assert_fresh", lambda p, c: None)
 
-    def fake_run(tests):
+    def fake_run(tests, timeout):
         counts[tests[0]] += 1
         return True
 
@@ -353,7 +353,7 @@ def test_a_single_module_run_does_not_print_the_ledger(tmp_path, monkeypatch, ca
     monkeypatch.setattr(mutation_probe, "subprocess_cache_path",
                         lambda p: pathlib.Path("/sentinel/none.pyc"))
     monkeypatch.setattr(mutation_probe, "assert_fresh", lambda p, c: None)
-    monkeypatch.setattr(mutation_probe, "run", lambda tests: True)
+    monkeypatch.setattr(mutation_probe, "run", lambda tests, timeout: True)
     monkeypatch.setattr(sys, "argv",
                         ["mutation_probe", "1", "victim.py", "t.py"])
     mutation_probe.main()

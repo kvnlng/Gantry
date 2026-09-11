@@ -26,16 +26,43 @@ name: Hang Probe
 # branch." Once it is there, `gh workflow run hang-probe.yml -r <branch>`
 # runs it against any ref.
 #
-# Reading the result: see the decision table in CHANGELOG's entry for
-# this file (the `[Unreleased]` entry naming #250).
+# **Reading the result.** Each iteration writes one row to the step
+# summary, and its outcome is one of these (#427):
+#
+#   clean         pytest exited 0.
+#   failed(rc=N)  pytest exited non-zero, and it was not LOCKED. The loop
+#                 goes on: a named failing test is a result, not a hang.
+#   LOCKED        non-zero, with occurrence 4/5's `database is locked`.
+#                 Blocking.
+#   HANG          no new test started for `stall_minutes`. Blocking.
+#   HANG(exit)    the run printed its summary and then did not exit for
+#                 `stall_minutes`. Blocking: a process that will not exit
+#                 is a hang to whoever ran it.
+#   SLOW          a test started at or after `per_iteration_minutes`:
+#                 still progressing, just slowly. No verdict: a warning,
+#                 the loop stops, and the job is green. A run that went
+#                 silent before the ceiling is never SLOW. It is judged by
+#                 `stall_minutes` alone, so an iteration lasts at most the
+#                 ceiling plus the stall.
+#   BUDGET        the loop's own budget could not fit another iteration.
+#                 No verdict, as for SLOW.
+#
+# A blocking row turns the job red (`::error::`) and stops the loop. A
+# no-verdict row warns (`::warning::`), stops the loop and leaves the job
+# green, so re-dispatch as the warning says. Every killed iteration (HANG,
+# HANG(exit), SLOW, BUDGET) gets the same USR1 dump before the KILL; a
+# SLOW run's dump says where the time went.
 #
 # **The cadence: before each release, `spawn` arm, ten iterations.**
 #
 #     gh workflow run hang-probe.yml -r main -f start_method=spawn \
 #       -f iterations=10
 #
-# Ten clean iterations is the pass; a `HANG` or `LOCKED` row blocks the
-# release and reopens #250. Whoever cuts the release dispatches it and
+# Ten `clean` rows is the pass. A `HANG`, `HANG(exit)` or `LOCKED` row
+# blocks the release and reopens #250. `SLOW` or `BUDGET` is no verdict:
+# re-dispatch. Ten iterations take about 140 minutes: healthy spawn
+# iterations took 721-836 s across runs 34113535260 to 34492496508.
+# Whoever cuts the release dispatches it and
 # reads the summary table before tagging. The operational step lives in
 # `.agent/workflows/release_process.md` (step 1a) -- which is
 # **gitignored**, so it is on the release-cutter's machine and not in
@@ -58,12 +85,11 @@ on:
     inputs:
       iterations:
         description: >
-          Full-suite runs per arm. Hard ceiling 22 at the default 15
-          minutes: 22 x 15 = 330 fits inside the loop step's 340-minute
-          cap, and the caps are literals rather than expressions (GHA
-          expressions have no arithmetic), so exceeding it is not
-          refused -- the step cap simply fires mid-loop. Each iteration
-          is ~6 minutes on a healthy runner.
+          Full-suite runs per arm. There is no ceiling to compute: the
+          loop carries its own 330-minute budget, inside the step's
+          340-minute cap, and stops with a BUDGET row rather than start
+          an iteration that cannot fit. At the measured 721-836 s per
+          iteration, about 23 fit.
         type: number
         required: false
         default: 10
@@ -92,12 +118,31 @@ on:
         default: tests
       per_iteration_minutes:
         description: >
-          Deadline after which one iteration is declared a HANG. Runner
-          suite time is 5m30-6m; the old 900s stall fits inside 15 as
-          well, and the current busy timeout ends a lock stall in 120s.
+          Wall-clock ceiling for an iteration that is still starting
+          tests: a test that starts at or after it makes the row SLOW,
+          which is no verdict, never HANG. A run that has gone silent is
+          judged by stall_minutes alone, so an iteration can last this
+          plus stall_minutes. A positive whole number. The default, 45,
+          is 3.2 times the slowest healthy iteration measured (836 s).
+          Its name was kept so that an existing
+          `-f per_iteration_minutes=N` still dispatches.
         type: number
         required: false
-        default: 15
+        default: 45
+      stall_minutes:
+        description: >
+          An iteration is a HANG when no new test has started for this
+          long, or HANG(exit) when that silence follows pytest's
+          summary. It counts the test ids pytest -v prints at column 0,
+          not the log's size, because the conftest watchdog keeps writing
+          through a real hang. 10 is above every internal dump
+          (faulthandler_timeout 300 s, the worker's 240 s, the watchdog's
+          120 s), so each has fired before the probe kills. Every
+          healthy gap between tests measured under 130 s. A positive
+          whole number.
+        type: number
+        required: false
+        default: 10
 
 permissions:
   contents: read
@@ -132,12 +177,13 @@ jobs:
     # workflow: (Line: 102, Col: 22): Unexpected symbol: '+'`. The
     # documented operator set is `( ) [ ] . ! < <= > >= == != && ||` --
     # no `+`, `-`, `*` or `/` -- so a cap cannot be derived from the
-    # inputs at all. These two numbers are therefore sized for the
-    # **input ceiling** (22 iterations x 15 minutes = 330), not for the
-    # inputs of any one run, which makes them a pure backstop: the
-    # script itself declares HANG at `per_iteration_minutes`, so one of
-    # these firing means the script is stuck, and that is the one thing
-    # it cannot classify. `test_the_hang_probe_never_runs_on_the_gate`
+    # inputs at all. These two numbers are therefore sized for the loop
+    # script's own **330-minute budget** (#427), not for the inputs of
+    # any one run, which makes them a pure backstop: the
+    # script ends every iteration itself (stall, ceiling or budget, #427),
+    # and its own budget sits inside the loop step's cap, so one of these
+    # firing means the script is stuck, and that is the one thing it
+    # cannot classify. `test_the_hang_probe_never_runs_on_the_gate`
     # checks the inequality on the two literals and, separately, that no
     # expression in this file contains arithmetic.
     timeout-minutes: 356
@@ -205,14 +251,16 @@ jobs:
     - name: Loop the suite until it hangs or the budget runs out
       id: loop
       shell: bash
-      # Enough for the whole loop at the input ceiling (22 x 15 = 330)
-      # plus the kill sequences, and no more: a hang is declared by the
-      # script at `per_iteration_minutes`, so this cap firing means the
-      # script itself is stuck, which is the only thing it cannot
-      # classify. A literal rather than a product of the inputs,
-      # because GHA expressions have no arithmetic operators and the
-      # computed form made the workflow unparseable -- see the job cap
-      # above for the 422.
+      # The script's own 330-minute budget plus the last kill sequence,
+      # and no more: the script ends every iteration itself (stall,
+      # ceiling or budget) and will not start one that cannot fit, for
+      # any inputs (#427). So this cap firing means the script itself is
+      # stuck, which is the only thing it cannot classify.
+      #
+      # A literal rather than a product of the inputs, because GHA
+      # expressions have no arithmetic operators and the computed form
+      # made the workflow unparseable -- see the job cap above for the
+      # 422.
       timeout-minutes: 340
       env:
         PYTHON_GIL: "1"
@@ -250,8 +298,42 @@ jobs:
         # `test_the_hang_probe_never_runs_on_the_gate` asserts this line
         # is present, because nothing else can see the shell's flags.
         set +e -u
+        # **The two minute inputs are positive whole numbers, or nothing
+        # runs.** GitHub's `type: number` accepts `12.5`, and
+        # `$(( 12.5 * 60 ))` is a bash syntax error that ends this script
+        # before its first row, with no `::error::`: an unexplained red.
+        # `0` would make every poll a HANG, and a leading `0` is octal
+        # inside `$(( ))`, so `08` is an error and `010` is eight.
+        for pair in "stall_minutes=${{ inputs.stall_minutes }}" \
+                    "per_iteration_minutes=${{ inputs.per_iteration_minutes }}"; do
+          case "${pair#*=}" in
+            ''|0*|*[!0-9]*)
+              echo "::error::${pair%%=*} must be a positive whole number of minutes, got '${pair#*=}'"
+              exit 1;;
+          esac
+        done
         mkdir -p probe-logs
-        deadline=$(( ${{ inputs.per_iteration_minutes }} * 60 ))
+        # Test-only knobs. All are unset in CI, so each takes the default
+        # after `:-`, which is the production value.
+        # tests/test_hang_probe_loop.py sets them to run the real script
+        # in seconds. tests/test_packaging_contract.py pins every default,
+        # and checks that no `env:` in this file sets them. Like
+        # ISOCENTER_HANG_PROBE_START_METHOD they are not package
+        # variables, and docs/environment.md's registry test scans the
+        # package, not workflows, so they have no row there.
+        unit=${PROBE_UNIT_S:-60}      # seconds per input "minute"
+        poll=${PROBE_POLL_S:-5}       # never inside $(( )): a test sets 0.2
+        grace=${PROBE_GRACE_S:-45}    # USR1 -> KILL: the parent's dump plus margin
+        margin=${PROBE_MARGIN_S:-10}  # slack left between an iteration and the budget
+        # The loop's own end: a literal, 10 minutes inside the step's 340.
+        # An iteration that cannot fit is never started (BUDGET), and a
+        # started one is limited to what is left, so no input can make
+        # the step cap fire mid-iteration (#243, #427).
+        budget=${PROBE_BUDGET_S:-$(( 330 * 60 ))}
+        stall=$(( ${{ inputs.stall_minutes }} * unit ))
+        ceiling=$(( ${{ inputs.per_iteration_minutes }} * unit ))
+        loop_start=$(date +%s)
+        longest=0
         # On the fork arm the two tests that pin spawn are red by
         # construction -- that is what the arm does -- and are not what
         # it measures, so they are deselected rather than reported.
@@ -262,6 +344,21 @@ jobs:
         printf '| iter | outcome | seconds | last item |\n|---|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
         for i in $(seq 1 ${{ inputs.iterations }}); do
           log="probe-logs/${{ matrix.start_method }}-iter-$i.log"
+          left=$(( budget - ($(date +%s) - loop_start) ))
+          # Not started unless the longest iteration so far still fits,
+          # and the kill sequence with it. `longest` is 0 before the
+          # first iteration, so the second test is what refuses a budget
+          # too small to start at all.
+          if [ "$left" -lt "$longest" ] || [ $(( left - grace - margin )) -le 0 ]; then
+            printf '| %s | BUDGET | 0 | not started: %ss of budget left, longest iteration %ss |\n' "$i" "$left" "$longest" >> "$GITHUB_STEP_SUMMARY"
+            echo "iteration $i: BUDGET, not started (${left}s left, longest ${longest}s)"
+            echo "::warning::BUDGET before iteration $i: ${left}s of the loop's budget left and the longest iteration took ${longest}s, so it was not started -- no verdict; re-dispatch with fewer iterations"
+            break
+          fi
+          # What the budget leaves this iteration, with the kill's grace
+          # and the margin reserved. This limit is hard: past it the
+          # step cap fires mid-iteration (#243), silent run or not.
+          hard=$(( left - grace - margin ))
           start=$(date +%s)
           # `-u -v`, redirected to a file, and never through a pipe: `-q`
           # buffers and a pipe adds a second buffer, so a killed run's
@@ -276,10 +373,50 @@ jobs:
           # the next iteration inherits them.
           setsid python -u -m pytest -v -p no:cacheprovider $PROBE_SELECTION $deselect > "$log" 2>&1 &
           pid=$!
-          outcome=""
+          seen=""; moved=$start; outcome=""
           while :; do
             if ! kill -0 "$pid" 2>/dev/null; then wait "$pid"; rc=$?; break; fi
-            if [ $(( $(date +%s) - start )) -ge "$deadline" ]; then
+            now=$(date +%s)
+            # **Progress is the count of tests started, anchored at
+            # column 0.** `-v` prints each test's node id at column 0 as
+            # it starts. The conftest stall watchdog keeps writing through
+            # a real hang, re-dumping every 120s and naming the stuck test
+            # *indented* (`  last test item : tests/...`), as do
+            # faulthandler's `File "..."` frames. So the log's size, its
+            # mtime, and an unanchored count all move during a hang, and a
+            # detector built on any of them never fires: run 34073209412's
+            # fork log grew for 850s with one test in flight. Keep the `^`.
+            #
+            # `grep -c` prints 0 and exits 1 on no match, which is safe
+            # only because `set +e` is on; see the top of this script.
+            n=$(grep -c '^tests/[^ ]*::' "$log" 2>/dev/null)
+            # **The summary line is progress too.** Run 34488760203 was
+            # killed as a HANG by the old wall-clock deadline 0.5s after
+            # pytest printed `1855 passed, 1 skipped in 899.50s`, inside
+            # interpreter teardown. With the summary in the token, silence
+            # after it is told apart as HANG(exit): still blocking, since
+            # a process that will not exit is a hang, but named for what
+            # it is.
+            if grep -Eq '^=+ .* in [0-9.]+s' "$log" 2>/dev/null; then fin=1; else fin=0; fi
+            if [ "$n:$fin" != "$seen" ]; then seen="$n:$fin"; moved=$now; fi
+            # **SLOW is keyed on `moved`, the last progress, not on
+            # `now`.** The ceiling is for a run still starting tests. On
+            # `now`, a stall that began less than `stall` before the
+            # ceiling met the ceiling first and read as SLOW: green, "not
+            # a hang". At the documented per_iteration_minutes=25, a
+            # teardown hang after run 34488760203's summary at 899.5 s
+            # would have been SLOW at 1500 s after 600 s of silence (the
+            # PR #480 review). On `moved`, a silent run falls through to
+            # the stall check, so an iteration ends by ceiling + stall.
+            # The budget stays keyed on `now`: it is the hard one.
+            if [ $(( now - moved )) -ge "$stall" ]; then
+              if [ "$fin" = 1 ]; then outcome="HANG(exit)"; else outcome="HANG"; fi
+            elif [ $(( now - start )) -ge "$hard" ]; then
+              outcome="BUDGET"
+            elif [ $(( moved - start )) -ge "$ceiling" ]; then
+              outcome="SLOW"
+            fi
+            if [ -n "$outcome" ]; then
               # USR1 to the parent only, not TERM: pytest's faulthandler
               # registers the fatal signals (SEGV, FPE, ABRT, BUS, ILL)
               # and nothing else, so a TERM produces no dump at all --
@@ -290,15 +427,17 @@ jobs:
               # no USR1 (their default disposition would kill them,
               # dumping nothing); a stuck child has had its own 240s
               # watchdog fire long before this point.
-              kill -USR1 "$pid" 2>/dev/null; sleep 45
-              # 45s is the parent's dump plus margin; then the whole
-              # group goes, so nothing survives into the next iteration.
+              kill -USR1 "$pid" 2>/dev/null; sleep "$grace"
+              # `grace` (45s) is the parent's dump plus margin; then the
+              # whole group goes, so nothing survives into the next
+              # iteration.
               kill -KILL -- "-$pid" 2>/dev/null; wait "$pid" 2>/dev/null
-              rc=124; outcome="HANG"; break
+              rc=124; break
             fi
-            sleep 5
+            sleep "$poll"
           done
           secs=$(( $(date +%s) - start ))
+          if [ "$secs" -gt "$longest" ]; then longest=$secs; fi
           last=$(grep -Eo 'tests/[^ ]+::[^ ]+' "$log" | tail -1)
           if [ -z "$outcome" ]; then
             if [ "$rc" -eq 0 ]; then outcome="clean"
@@ -311,14 +450,23 @@ jobs:
           fi
           printf '| %s | %s | %s | %s |\n' "$i" "$outcome" "$secs" "$last" >> "$GITHUB_STEP_SUMMARY"
           echo "iteration $i: $outcome in ${secs}s (last: $last)"
-          # HANG and LOCKED stop the loop: the logs are the deliverable
-          # and further iterations only bury them. LOCKED is the
-          # recorded occurrence signature and, after #260, should be
-          # impossible under spawn -- one under spawn falsifies the
-          # fork hypothesis on its own. A plain failure is recorded and
-          # the loop continues: a named failing test is a result, not a
-          # hang, and a repeat across iterations is its own issue.
-          case "$outcome" in HANG|LOCKED) echo "::error::$outcome on iteration $i"; exit 1;; esac
+          # HANG, HANG(exit) and LOCKED stop the loop red: the logs are
+          # the deliverable and further iterations only bury them. LOCKED
+          # is the recorded occurrence signature and, after #260, should
+          # be impossible under spawn -- one under spawn falsifies the
+          # fork hypothesis on its own. SLOW and BUDGET stop it green with
+          # a warning: neither is a finding, and the next iteration could
+          # not say more. A plain failure is recorded and the loop
+          # continues: a named failing test is a result, not a hang, and a
+          # repeat across iterations is its own issue.
+          case "$outcome" in
+            HANG|"HANG(exit)"|LOCKED)
+              echo "::error::$outcome on iteration $i"; exit 1;;
+            SLOW)
+              echo "::warning::SLOW on iteration $i: still starting tests at ${secs}s (last: $last) -- not a hang; no verdict, re-dispatch with a higher per_iteration_minutes"; break;;
+            BUDGET)
+              echo "::warning::BUDGET on iteration $i: the loop's budget ran out at ${secs}s while tests were still starting (last: $last) -- no verdict; re-dispatch with fewer iterations"; break;;
+          esac
         done
 
     - name: Upload every iteration's log

@@ -23,8 +23,9 @@ mutant surviving:
     `python -m scripts.mutation_probe 10`, the cheap pass       ~3.0 h
 
 `session.py` and `entities.py` each list over 120 test files, one full
-pass of ~300s and ~190s. A mutant that hangs costs a further 15 minutes,
-because `run()` times out at 900s and reports it as skipped. A real run
+pass of ~300s and ~190s. A mutant that hangs costs up to three times its
+module's control pass, 30s minimum (`mutant_timeout()`), and is reported
+as TIMEOUT and counted as detected (#442). A real run
 is much shorter, since most mutants die in seconds, but the survival
 rates any such estimate rests on were sampled too thinly to print here.
 The positional budget is the override for every module at once; nothing
@@ -77,7 +78,7 @@ matters belongs to the interpreter that runs the tests, not the one that
 launched the probe (#201).
 """
 
-import ast, importlib.util, os, struct, subprocess, sys, time
+import ast, importlib.util, os, signal, struct, subprocess, sys, time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -654,8 +655,9 @@ TARGETS = {
                                "tests/test_worker_start_is_serialised.py",
                                "tests/test_ybr_jpegls_read_doors.py"],
                               30),
-    # 61 sites; budget 60 is stride 1 with headroom, exhaustive because it
-    # is cheap, like parallel.py's 80.
+    # 79 sites; budget 60 is stride 1 (79 // 60), so every site is
+    # probed, exhaustive because it is cheap, like parallel.py's 80. It
+    # stays stride 1 until the module passes 119 sites.
     #
     # Six files, and it takes the widened `_importers` (#419) to see
     # them: several reach this module as `from isocenter import
@@ -666,17 +668,19 @@ TARGETS = {
     # lj92 pad have no witness at all.
     #
     # Measured at stride 1 on the #446/#447 branch (3.12.14): 54 of 61
-    # killed, and a seventh (line 312, the sign rule's `or` -> `and`) was
-    # then pinned by that file's S6 and killed by a real edit. The six
-    # survivors are all known, and all equivalent or dead:
+    # killed, and a seventh (the sign rule's `or` -> `and` in
+    # `_sign_extend_from_bits_stored`) was then pinned by that file's S6
+    # and killed by a real edit. Re-measured at stride 1 once #440 deleted
+    # two dead handler hooks (3.12.14): 58 of 60 killed. #478 and
+    # #464 then added 19 sites (`CONVERTS_TO`, `colour_conversion`,
+    # `convert_colour`, `_jpegls_precision`) and those are not yet
+    # re-measured here. The two survivors of the 60 are both known and
+    # both equivalent:
     #   - the decode-error print in `get_pixel_data` is equivalent: the
     #     exception it describes is re-raised carrying the same text;
     #   - the print in `is_available()` is equivalent now. It was the only
     #     place the import failure's cause reached anyone until #444 put
-    #     the cause in the raise itself;
-    #   - two mutants each in `needs_to_convert_to_RGB` and
-    #     `should_change_PhotometricInterpretation_to_RGB`, which return
-    #     False and have no caller: dead code, and deleting it is #440.
+    #     the cause in the raise itself.
     # The RLE arm, which no mutant could reach through a real decode, is
     # gone (#447).
     "isocenter/imagecodecs_handler.py": (["tests/test_codecs_strict.py",
@@ -701,9 +705,10 @@ TARGETS = {
 # sees what it does not measure: a default run prints it last, because the
 # tail of a multi-hour run is what gets read.
 #
-# The 24 deferred entries are #439. Two of their obstacles have issues of
+# The 24 deferred entries are #439. Two of their obstacles had issues of
 # their own: reach by class name or format string, which no import scan
-# sees (#441), and the flat 900s per-mutant timeout a hang costs (#442).
+# sees (#441), and the flat 900s per-mutant timeout a hang cost, which is
+# fixed -- a mutant's limit is now derived from its control (#442).
 #
 # A reason that starts "0 sites" is recomputed by that test and must stay
 # true. The other numbers are dated notes (measured at 4d34c64 on 3.12.14:
@@ -765,8 +770,10 @@ NOT_PROBED = {
         "survivors unclassified",
     "isocenter/discovery.py":
         "deferred: 77 sites, 4 importers, 0.3s per pass; over 20 survivors "
-        "unclassified, and flipping `visited = [False] * n` to True does "
-        "not terminate, which costs run()'s full 900s timeout (#442)",
+        "unclassified. Flipping the BFS's `visited[neighbor] = True` to "
+        "False never terminates; it is caught in 2s today only because -x "
+        "stops on test_merge_disjoint first, and would cost "
+        "mutant_timeout()'s 30s floor, not 900s, if the order changed (#442)",
     "isocenter/reversibility.py": "deferred: 18 sites, 2 importers, 0.8s per pass; not run",
     "isocenter/verification.py": "deferred: 23 sites, 4 importers, 0.5s per pass; not run",
     "isocenter/utils/ctp_parser.py":
@@ -987,7 +994,45 @@ def assert_fresh(path, cache):
         f"pytest would execute the previous mutant and the verdict would not "
         f"be about this mutation. See assert_fresh() and #174.")
 
-def run(tests):
+#: A mutant's limit is this many control passes (#442). The control is the
+#: same test list over the unmutated module, so 3x is room for a mutant that
+#: legitimately slows the suite, and for load: the controls behind the
+#: factor were measured while other pytest runs shared the machine. At 3x,
+#: session.py's ~310s control gets ~930s -- the flat 900s it replaced, to
+#: within 3% -- and every faster row gets its hang cost cut in proportion.
+MUTANT_TIMEOUT_FACTOR = 3
+
+#: The floor under that. Without it a 1s control (crypto.py, discovery.py)
+#: gives a 3s limit, and a loaded machine then times out healthy mutants
+#: and scores them as detected -- a kill nobody earned.
+MUTANT_TIMEOUT_FLOOR_S = 30
+
+#: The control's own limit, about 6x the slowest control measured
+#: (session.py, ~310s). Deliberately not derived: the control is what sets
+#: every mutant's limit, so it is the one run that must not time out
+#: because the machine was busy.
+CONTROL_TIMEOUT_S = 1800
+
+#: The clock `main()` times the control with. A module-level name so a test
+#: can replace this one binding, rather than the process-wide
+#: `time.monotonic` pytest reads too.
+_clock = time.monotonic
+
+
+def mutant_timeout(control_s):
+    """How long one mutant may run: `max(FLOOR, FACTOR * control_s)` (#442).
+
+    It was a flat 900s for every module, so a mutant that stopped the tests
+    terminating cost fifteen minutes even where the whole list passes in
+    one second.
+    """
+    return max(MUTANT_TIMEOUT_FLOOR_S, MUTANT_TIMEOUT_FACTOR * control_s)
+
+
+def run(tests, timeout):
+    # `timeout` has no default on purpose: a default is the flat 900s this
+    # replaced sneaking back in through a caller that forgot it (#442).
+    #
     # PYTHONDONTWRITEBYTECODE rather than `-B`: `run_parallel()` spawns
     # worker processes, and a grandchild that writes a `.pyc` plants the
     # same trap the parent avoided. The variable is inherited
@@ -996,9 +1041,23 @@ def run(tests):
     # script should rest on. `os.environ` is copied, not replaced -- a bare
     # `env=` dict loses PATH and the failure looks like a killed mutant.
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
-    r = subprocess.run(PYTEST + tests, cwd=REPO, capture_output=True, text=True,
-                       timeout=900, env=env)
-    return r.returncode == 0
+    # A session of its own, and the group KILL on a timeout (#476).
+    # `subprocess.run(timeout=)` kills the direct child only, and a mutant
+    # that spins inside a `run_parallel()` worker leaves that worker
+    # running after pytest is gone: reparented to init, at about 77% CPU
+    # in the PR #480 review, and inside every later mutant's timing. The
+    # workers inherit pytest's process group, and `start_new_session`
+    # makes that group pytest's alone, so the KILL reaches them and
+    # nothing else.
+    with subprocess.Popen(PYTEST + tests, cwd=REPO, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True, env=env,
+                          start_new_session=True) as proc:
+        try:
+            proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            raise
+    return proc.returncode == 0
 
 def main():
     argv = sys.argv[1:]
@@ -1019,12 +1078,24 @@ def main():
         # Control: unparsed-but-unmutated must still pass, or every
         # result below is an artefact of the harness rather than a finding.
         path.write_text(ast.unparse(ast.parse(original)))
+        timed_out = False
         try:
             assert_fresh(path, subprocess_cache_path(path))
-            ok = run(tests)
+            t0 = _clock()
+            ok = run(tests, CONTROL_TIMEOUT_S)
+            control_s = _clock() - t0
+        except subprocess.TimeoutExpired:
+            # One module's results are unusable; the run is not. Before
+            # #442 this escaped main() and ended a multi-hour run at the
+            # first slow control, printing nothing for the modules after it.
+            ok, timed_out = False, True
         finally:
             path.write_text(original)
         print(f"\n### {mod}  ({total} mutation sites, sampling {budget})")
+        if timed_out:
+            print(f"    control (unparsed, unmutated): TIMEOUT after "
+                  f"{CONTROL_TIMEOUT_S}s -- results unusable")
+            continue
         print(f"    control (unparsed, unmutated): {'PASS' if ok else 'FAIL -- results unusable'}")
         if not ok:
             continue
@@ -1038,7 +1109,8 @@ def main():
             continue
 
         step = max(1, total // budget)
-        survived, killed = [], 0
+        limit = mutant_timeout(control_s)
+        survived, killed, by_timeout = [], 0, 0
         for i in range(0, total, step):
             m = Mut(i); tree = m.visit(ast.parse(original))
             if m.desc is None: continue
@@ -1049,17 +1121,27 @@ def main():
                 # (`subprocess_cache_path`'s aborts ride the same exit.)
                 assert_fresh(path, subprocess_cache_path(path))
                 t0 = time.time()
-                if run(tests):
+                if run(tests, limit):
                     survived.append(m.desc)
                     print(f"    SURVIVED  {m.desc}  ({time.time()-t0:.0f}s)")
                 else:
                     killed += 1
+            # Before `except Exception`, which would call it `skipped` and
+            # leave it out of `n` -- how a hang was scored until #442. The
+            # tests did notice this mutant: they stopped finishing. So it
+            # is a kill (owner ruling, #442 Q3), counted separately so a
+            # row of timeouts is not read as a row of red tests.
+            except subprocess.TimeoutExpired:
+                killed += 1
+                by_timeout += 1
+                print(f"    TIMEOUT   {m.desc}  (limit {limit:.0f}s)")
             except Exception as e:
                 print(f"    skipped   {m.desc}: {type(e).__name__}")
             finally:
                 path.write_text(original)
         n = killed + len(survived)
-        print(f"    => killed {killed}/{n}, SURVIVED {len(survived)}/{n}")
+        timeouts = f" ({by_timeout} by timeout)" if by_timeout else ""
+        print(f"    => killed {killed}/{n}{timeouts}, SURVIVED {len(survived)}/{n}")
 
     # What the run did not measure, last, where the tail of a long run is
     # read. Not on a single-module CLI run, which says what it measured.

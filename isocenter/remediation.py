@@ -8,10 +8,10 @@ from .logger import get_logger
 
 #: Every action type `_apply_single_remediation` emits, spelled once for
 #: the report's evidence check: a session that anonymized must find at
-#: least one of these in its audit summary to grade PASS (#254). A new
-#: emitter spelling must be added here too -- omitting it fails safe,
-#: since a run whose only rows carry the unlisted spelling grades
-#: REVIEW_REQUIRED rather than PASS.
+#: least one of these in its audit summary to grade PASS (#254). A spelling
+#: missing here grades a clean run REVIEW_REQUIRED, so it is pinned (#429):
+#: tests/test_frozen_surface.py::
+#: test_the_anonymize_evidence_set_is_exactly_what_remediation_writes
 REMEDIATION_ACTION_TYPES = frozenset({
     "REMEDIATION_REPLACE",
     "REMEDIATION_SHIFT_DATE",
