@@ -708,6 +708,72 @@ def test_a_descriptor_edit_between_the_set_and_the_discard_is_reverted_too(
 
 
 # ---------------------------------------------------------------------------
+# Q6 -- a set that lands inside a publish stays unwritten (#434)
+# ---------------------------------------------------------------------------
+#
+# Each publish section reads the resident array, writes or matches it, and
+# then rebinds the loader and clears the unwritten flag. A
+# `set_pixel_data()` landing between the read and the clear holds newer
+# pixels the publish never saw; clearing the flag over them lets
+# `unload_pixel_data()` drop the only copy (#293's shape). The injection is
+# on the publishing thread, at the last call before the section's clears,
+# which is the interleaving a second thread produces.
+
+def test_a_set_inside_a_dedup_save_stays_unwritten(ingested):
+    """The dedup arm had no revision guard, so it cleared the flag anyway."""
+    session, inst, db = ingested
+    store = session.store_backend
+    inst.set_pixel_data(inst.get_pixel_data().view(np.int16))   # same bytes
+    newer = np.full((4, 4), 3, np.uint16)
+    real = store._create_pixel_loader
+    entered = []
+
+    def set_first(*args, **kwargs):
+        store._create_pixel_loader = real
+        entered.append(1)
+        inst.set_pixel_data(newer)
+        return real(*args, **kwargs)
+
+    store._create_pixel_loader = set_first
+    session.save(sync=True)
+    assert entered == [1], "the dedup arm did not run"
+
+    assert inst._pixel_array_unwritten
+    assert inst.unload_pixel_data() is False
+    assert np.array_equal(inst.pixel_array, newer)
+    session.save(sync=True)
+    reopened, _ = _reopened_read(db)
+    assert np.array_equal(reopened, newer)
+
+
+def test_a_set_inside_a_pixel_swap_stays_unwritten(ingested):
+    """`persist_pixel_data` cleared the flag whatever the array now was."""
+    session, inst, db = ingested
+    inst.set_pixel_data(np.full((4, 4), 5, np.uint16))
+    newer = np.full((4, 4), 3, np.uint16)
+    sidecar = session.store_backend.sidecar
+    real = sidecar.write_frame
+    entered = []
+
+    def set_first(*args, **kwargs):
+        sidecar.write_frame = real
+        entered.append(1)
+        inst.set_pixel_data(newer)
+        return real(*args, **kwargs)
+
+    sidecar.write_frame = set_first
+    session.store_backend.persist_pixel_data(inst)
+    assert entered == [1]
+
+    assert inst._pixel_array_unwritten
+    assert inst.unload_pixel_data() is False
+    assert np.array_equal(inst.pixel_array, newer)
+    session.save(sync=True)
+    reopened, _ = _reopened_read(db)
+    assert np.array_equal(reopened, newer)
+
+
+# ---------------------------------------------------------------------------
 # T -- the loader ingest builds carries the hash of its frame (#436)
 # ---------------------------------------------------------------------------
 #

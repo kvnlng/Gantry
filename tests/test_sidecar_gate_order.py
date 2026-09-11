@@ -10,6 +10,12 @@ is pinned here by recording wrappers rather than frozen in the API:
     pass-lock EX|NB (holding nothing)  ->  _sidecar_gate   (compact, first)
     _sidecar_gate  ->  _pixel_swap_lock          (compact's rewire; sites 5, 6)
     _sidecar_gate  ->  sqlite                    (every site's row commit)
+    _pixel_swap_lock  ->  PIXEL_STATE_LOCK       (publish sections; a leaf)
+
+`entities.PIXEL_STATE_LOCK` (#434, Q6) is taken by `set_pixel_data`,
+`discard_pixel_data` and `unload_pixel_data` holding nothing, and by the
+four publish sections under `_pixel_swap_lock`; nothing is taken while it
+is held. It is recorded by the same proxy, swapped in on the module.
 
 Reversing the second arm is the cycle the 2026-09-07 spec measured:
 `_persist_pixels` calls `write_frame` under `_pixel_swap_lock`, and
@@ -44,6 +50,7 @@ if its author gates it, and this is what makes forgetting loud.
 import ast
 import collections
 import fcntl
+import logging
 import os
 import pathlib
 import sys
@@ -55,9 +62,12 @@ from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
 from pydicom.sequence import Sequence
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
+from isocenter import entities as entities_module
 from isocenter import persistence as persistence_module
 from isocenter.entities import Equipment, Instance, Patient, Series, Study
+from isocenter.logger import get_logger
 from isocenter.persistence import SqliteStore
+from isocenter.services import RedactionOutcome
 from isocenter.session import DicomSession
 from isocenter.sidecar import SidecarManager
 from scripts.generate_waveform_test_data import write_fixture
@@ -108,6 +118,16 @@ class _Recorder:
         self._set_held(self.held() - {name})
 
 
+def _functions_on_stack():
+    """Every function name on the calling thread's stack."""
+    names = set()
+    frame = sys._getframe(1)
+    while frame is not None:
+        names.add(frame.f_code.co_name)
+        frame = frame.f_back
+    return frozenset(names)
+
+
 def _sites_on_stack():
     """Which of the six site functions are on the calling thread's stack."""
     names = set()
@@ -135,7 +155,8 @@ class _RecordingLock:
         ok = self._lock.acquire(blocking, timeout)
         if ok:
             self.recorder.record("acquire", lock=self.name,
-                                 sites=_sites_on_stack())
+                                 sites=_sites_on_stack(),
+                                 callers=_functions_on_stack())
             self.recorder.took(self.name)
         return ok
 
@@ -159,6 +180,11 @@ def _instrument(session, monkeypatch):
     store = session.store_backend
     store._sidecar_gate = _RecordingLock("gate", recorder)
     store._pixel_swap_lock = _RecordingLock("swap", recorder)
+    # The pixel-state leaf (#434, Q6). `raising=False` so that, without
+    # the lock, the leaf tests fail on what they measure rather than on
+    # this line.
+    monkeypatch.setattr(entities_module, "PIXEL_STATE_LOCK",
+                        _RecordingLock("leaf", recorder), raising=False)
 
     real_flock = fcntl.flock
 
@@ -267,6 +293,19 @@ def recorded(tmp_path, monkeypatch):
         session.save(sync=True)                                   # site 6
         first.set_pixel_data(np.full((8, 8), 9, dtype=np.uint8))
         session.store_backend.persist_pixel_data(first)           # site 5
+        first.discard_pixel_data()                                # leaf
+        # The dedup arm: the same bytes under a new dtype (leaf).
+        second.set_pixel_data(second.get_pixel_data().view(np.int8))
+        session.save(sync=True)
+        assert second.unload_pixel_data() is True                 # leaf
+        # The redaction rebind, onto the loader the instance already has.
+        DicomSession._apply_redaction_outcomes(
+            [RedactionOutcome(ok=True, sop_instance_uid=first.sop_instance_uid,
+                              mutation={"original_sop_uid": first.sop_instance_uid,
+                                        "pixel_loader": first._pixel_loader,
+                                        "pixel_hash": first._pixel_hash})],
+            {first.sop_instance_uid: first},
+            store_backend=session.store_backend)
         session.store_backend.persist_blob(
             second, 'waveform', np.arange(64, dtype=np.int16))    # site 4
         src = tmp_path / "src"
@@ -439,3 +478,169 @@ def test_there_are_exactly_six_write_frame_sites_and_they_are_these():
     to `_WRITE_FRAME_SITES`.
     """
     assert _write_frame_sites() == _WRITE_FRAME_SITES
+
+
+#: Everything that takes the pixel-state leaf, by function name (#434, Q6).
+_LEAF_TAKERS = {"set_pixel_data", "discard_pixel_data", "unload_pixel_data",
+                "_swap_pixels_under_gate", "_persist_pixels",
+                "_apply_redaction_outcomes"}
+
+
+def test_the_pixel_state_lock_is_a_leaf(recorded):
+    """`... -> _pixel_swap_lock -> PIXEL_STATE_LOCK`, and nothing under it.
+
+    The leaf is taken by the pixel mutators holding nothing and by the
+    publish sections under the gate and the swap lock. While it is held
+    no other lock is taken -- not the gate, not the swap lock, not a
+    flock (so no frame write) -- which is what keeps it out of every
+    cycle the rest of this file rules out.
+    """
+    leaf = [e for e in recorded.log
+            if e["event"] == "acquire" and e["lock"] == "leaf"]
+    assert leaf, "the pixel-state lock was never taken; nothing was measured"
+    takers = set().union(*(e["callers"] for e in leaf)) & _LEAF_TAKERS
+    assert takers == _LEAF_TAKERS, (
+        "these never took the pixel-state lock under this fixture: %s"
+        % sorted(_LEAF_TAKERS - takers))
+    under_leaf = [e for e in recorded.log
+                  if e["event"] in ("acquire", "flock", "write_frame",
+                                    "save_all_enter")
+                  and "leaf" in e["held"]
+                  and not (e["event"] == "acquire" and e["lock"] == "leaf")]
+    assert not under_leaf, (
+        "something was taken while the pixel-state lock was held: %s"
+        % [(e["event"], e.get("lock")) for e in under_leaf])
+    publishes = [e for e in leaf if e["callers"] & {
+        "_swap_pixels_under_gate", "_persist_pixels"}]
+    assert publishes and all("swap" in e["held"] for e in publishes), (
+        "a publish section took the pixel-state lock outside "
+        "_pixel_swap_lock")
+
+
+class _PausingLock:
+    """A lock that parks the first `_persist_pixels` holder until told."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.inside = threading.Event()
+        self.go = threading.Event()
+        self._paused = False
+
+    def acquire(self, blocking=True, timeout=-1):
+        ok = self._lock.acquire(blocking, timeout)
+        if ok and not self._paused and "_persist_pixels" in _functions_on_stack():
+            self._paused = True
+            self.inside.set()
+            self.go.wait(30)
+        return ok
+
+    def release(self):
+        self._lock.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+
+@pytest.mark.parametrize("kind", ["new bytes", "same bytes, new dtype"])
+def test_a_discard_waits_for_a_publish_holding_the_pixel_state_lock(
+        tmp_path, monkeypatch, kind):
+    """The window Q6 closes, with two real threads (#434).
+
+    Both publishing arms of `_persist_pixels`: new bytes append a frame
+    and publish after the revision guard; the same bytes under a new
+    dtype take the dedup arm, which rebuilds the loader in place. Each
+    takes the lock itself, so each is parked in turn.
+
+    The save is parked inside `_persist_pixels`' publish section, holding
+    the leaf; a discard on another thread must wait for it rather than
+    restore the pre-set descriptors over the frame being published. Once
+    the publish finishes the replacement is the stored frame, so the
+    discard has nothing to undo and the instance reads the replacement.
+    """
+    session = DicomSession(persistence_file=str(tmp_path / "leaf.db"))
+    pausing = _PausingLock()
+    try:
+        patient = Patient("P_LEAF", "Leaf Test")
+        study = Study("S_LEAF", "20230101")
+        series = Series("SE_LEAF", "CT", 1, Equipment("ACME", "SCAN", "SN_LEAF"))
+        patient.studies.append(study)
+        study.series.append(series)
+        session.store.patients.append(patient)
+        inst = _make_instance("1.2.3.LEAF")
+        series.instances.append(inst)
+        session.save(sync=True)
+        replacement = (np.full((4, 4), 9, dtype=np.uint16) if kind == "new bytes"
+                       else inst.get_pixel_data().view(np.int8))
+        inst.set_pixel_data(replacement)
+        after_set = dict(inst.attributes)
+
+        monkeypatch.setattr(entities_module, "PIXEL_STATE_LOCK", pausing,
+                            raising=False)
+        saver = threading.Thread(target=session.save, kwargs={"sync": True})
+        saver.start()
+        assert pausing.inside.wait(10), (
+            "the save never took the pixel-state lock in _persist_pixels")
+
+        discarded = []
+        discarder = threading.Thread(
+            target=lambda: discarded.append(inst.discard_pixel_data()))
+        discarder.start()
+        discarder.join(0.5)
+        assert discarder.is_alive(), (
+            "discard_pixel_data() ran while a publish held the "
+            "pixel-state lock")
+
+        pausing.go.set()
+        saver.join(30)
+        discarder.join(30)
+        assert not saver.is_alive() and not discarder.is_alive()
+        assert discarded == [True]
+        assert {t: inst.attributes[t] for t in ("0028,0010", "0028,0011", "0028,0100")} == {
+            t: after_set[t] for t in ("0028,0010", "0028,0011", "0028,0100")}
+        assert np.array_equal(inst.get_pixel_data(), replacement)
+    finally:
+        pausing.go.set()
+        session.close()
+
+
+class _LockProbe(logging.Handler):
+    """Records, per log line, whether the pixel-state lock was held."""
+
+    def __init__(self):
+        super().__init__(logging.DEBUG)
+        self.seen = []
+
+    def emit(self, record):
+        self.seen.append((record.getMessage(),
+                          entities_module.PIXEL_STATE_LOCK.locked()))
+
+
+def test_nothing_logs_while_the_pixel_state_lock_is_held():
+    """A logging handler takes its own lock, so the leaf defers its lines.
+
+    `set_pixel_data`'s correction notes and the discard refusal are the
+    lines emitted around the lock; each must be emitted after release.
+    Single-threaded, so `locked()` is this thread's own hold.
+    """
+    logger = get_logger()
+    probe = _LockProbe()
+    level = logger.level
+    logger.addHandler(probe)
+    logger.setLevel(logging.DEBUG)
+    try:
+        inst = Instance("1.2.3.LOG", CT_IMAGE, 1, file_path=None)
+        inst.set_attr("0028,0100", 16)
+        inst.set_pixel_data(np.zeros((4, 4), dtype=np.uint8))   # BitsAllocated 16 -> 8
+        assert inst.discard_pixel_data() is False              # memory only
+    finally:
+        logger.removeHandler(probe)
+        logger.setLevel(level)
+    corrected = [held for msg, held in probe.seen if "BitsAllocated" in msg]
+    refused = [held for msg, held in probe.seen if "held in memory only" in msg]
+    assert corrected and refused, probe.seen
+    assert not any(held for _msg, held in probe.seen), probe.seen

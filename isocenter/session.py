@@ -36,6 +36,7 @@ from .configuration import IsocenterConfiguration, FlowList
 from .entities import (PhiStatus, SOURCE_SOP_UID_ATTR, clone_sequences,
                        resolve_item_path, iter_item_tree)
 from .profiles import PRIVACY_PROFILES
+from . import entities
 from . import pixel_analysis
 from .automation import ConfigAutomator
 
@@ -3482,7 +3483,11 @@ class DicomSession:
                 lock = (store_backend._pixel_swap_lock
                         if store_backend is not None
                         else contextlib.nullcontext())
-                with lock:
+                # And the pixel-state leaf inside it (#434, Q6): the rebind,
+                # the record clear and the null below land wholly before or
+                # after a `set_pixel_data()` or `discard_pixel_data()` on
+                # another thread. Nothing under it logs or takes a lock.
+                with lock, entities.PIXEL_STATE_LOCK:
                     if loader:
                         instance._pixel_loader = loader
                         # The loader reads the worker's frame now, and the
