@@ -1517,9 +1517,10 @@ entity_path)</code>; <code>DiscoveryResult.filter(...)</code>, <code>.to_zones()
 that the finding names -- the same object whether the pass ran in
 threads or in processes -- or <code>None</code> when that object cannot be found
 in the graph; it is never a worker's copy (#412). The object is found
-by its UID, so findings on an SOP Instance UID that more than one
-instance in the graph carries all resolve to a single one of those
-instances (#431).</p>
+by its UID. <code>ingest()</code> does not admit a second instance with an SOP
+Instance UID the graph already holds (#431), so only a graph built or
+edited by hand can carry one UID on more than one instance, and findings
+on such a UID all resolve to a single one of those instances.</p>
 <p><strong>Entities, as reached from <code>session.store</code>.</strong> The graph is <code>Patient</code>
 → <code>Study</code> → <code>Series</code> → <code>Instance</code>. Fields, in dataclass order (which is
 the positional constructor order, except where marked <code>init=False</code>):
