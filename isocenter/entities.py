@@ -882,7 +882,8 @@ class Instance(DicomItem):
         arm takes it every time. When it *is* entered -- a resident
         writeable array a save has already written -- both callers
         (`redact_machine_instances` and `execute_redaction_task`)
-        persist the pixels and then call `discard_pixel_data()`
+        persist the pixels in their `try` (the serial arm's moved there
+        from its `finally` in #474) and then call `discard_pixel_data()`
         unconditionally in their `finally`, so nothing survives the pass
         for an unload to drop. With no `store_backend` the persist is
         skipped and that same discard loses the mutation immediately,

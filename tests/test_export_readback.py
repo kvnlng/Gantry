@@ -43,6 +43,7 @@ import pytest
 
 from isocenter.io_handlers import (DicomExporter, ExportContext, ExportError,
                                    _export_instance_worker)
+from isocenter.services import RedactionService
 from isocenter.session import DicomSession
 
 #: Taken at import, before any test traps `pydicom.dcmread`, so a test's
@@ -389,18 +390,19 @@ def test_a_redacted_export_passes_readback_and_holds_the_redacted_pixels(
         tmp_path, compression):
     """The comparison is with the pixels after the zones, not before (#449).
 
-    The worker redacts in place when it can, so the source array is made
-    non-writeable: the worker then copies before redacting, and a
-    capture taken before the zone block keeps the unredacted source --
-    which is the mutant this kills. Without the flag the in-place
-    redaction would change the captured reference too, and that mutant
-    would pass. `expected` is a copy taken before the worker runs.
+    Since #469 the worker always redacts a copy, so a capture taken
+    before the zone block holds the pristine source and readback fails
+    on it -- which is the mutant this kills. Before #469 the worker
+    redacted a writeable array in place, and this test had to make the
+    source read-only to keep that mutant visible: the in-place redaction
+    changed the captured reference too. `expected` is a copy taken before
+    the worker runs, and the instance's own array must come back as it
+    went in.
     """
     src = np.random.default_rng(5).integers(1, 65536, (64, 64),
                                             dtype=np.uint16)
-    inst = _image(src)
-    inst.pixel_array.flags.writeable = False
-    assert inst.pixel_array.flags.writeable is False
+    inst = _image(src.copy())
+    assert inst.pixel_array.flags.writeable
     expected = src.copy()
     expected[0:8, 0:8] = 0
 
@@ -411,6 +413,52 @@ def test_a_redacted_export_passes_readback_and_holds_the_redacted_pixels(
     assert outcome.ok, outcome.error
     np.testing.assert_array_equal(_stored_samples(outcome.output_path),
                                   expected)
+    np.testing.assert_array_equal(inst.pixel_array, src)
+
+
+def test_an_export_batch_under_threads_leaves_the_callers_array_alone(
+        tmp_path, monkeypatch):
+    """#469: the public in-process path, and the array it used to redact.
+
+    `DicomExporter.export_batch()` under threads -- 3.14t's default, or
+    `ISOCENTER_FORCE_THREADS` -- runs the worker on the caller's own
+    instance, and the worker zeroed the zones in that instance's array
+    whenever it was writeable. An unsaved array then carried the zeroed
+    zone into the next save; a saved one lost it at the next unload.
+    Under processes the child redacted a copy and nothing changed, so the
+    caller's array depended on the executor. Now it is the array the
+    caller handed in, and the file holds the redaction.
+
+    The recorder on `apply_redaction_to_array` is the guard that the
+    worker ran in this process: a spawned child would not see it, and
+    an export that silently went to processes would pass vacuously.
+    """
+    monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
+    real = RedactionService.apply_redaction_to_array
+    seen = []
+
+    def record(arr, rois, geometry):
+        seen.append(arr)
+        return real(arr, rois, geometry=geometry)
+
+    monkeypatch.setattr(RedactionService, "apply_redaction_to_array",
+                        staticmethod(record))
+    src = np.random.default_rng(7).integers(1, 65536, (64, 64),
+                                            dtype=np.uint16)
+    inst = _image(src.copy())
+    resident = inst.pixel_array
+    assert resident.flags.writeable, "the fixture guard: a writeable array"
+    ctx = _ctx_for(tmp_path, inst, redaction_zones=[(0, 8, 0, 8)])
+
+    DicomExporter.export_batch([ctx], show_progress=False, total=1)
+
+    assert len(seen) == 1, "the worker did not run in this process"
+    assert seen[0] is not resident, "the zones were applied to the live array"
+    assert inst.pixel_array is resident
+    np.testing.assert_array_equal(inst.pixel_array, src)
+    expected = src.copy()
+    expected[0:8, 0:8] = 0
+    np.testing.assert_array_equal(_stored_samples(ctx.output_path), expected)
 
 
 @pytest.mark.parametrize("dtype, keyword",

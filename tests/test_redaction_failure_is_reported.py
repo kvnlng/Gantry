@@ -16,15 +16,17 @@ successful instances still redacted, and the failed one left exactly as
 it was found -- on **both** gate interpreters, which used to disagree
 (#213).
 """
+import os
 import sqlite3
 
 import numpy as np
 import pydicom
 import pytest
-from pydicom.dataset import Dataset, FileMetaDataset
-from pydicom.uid import ExplicitVRLittleEndian
+from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
+from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
-from isocenter.entities import Equipment, Instance, Patient, Series, Study
+from isocenter.entities import (SOURCE_SOP_UID_ATTR, Equipment, Instance,
+                                Patient, PhiStatus, Series, Study)
 from isocenter.services import RedactionError, RedactionService
 from isocenter.session import DicomSession
 
@@ -943,3 +945,232 @@ def test_pixels_that_will_not_decode_are_a_redaction_failure_not_a_skip(
     assert len(rows) == 1, rows
     assert rows[0][0] == uid, rows
     assert "Planar Configuration" in rows[0][1], rows
+
+
+# --- 474 -------------------------------------------------------------------
+#
+# A failed pixel persist, on every arm. The zones were applied and the
+# attestation written -- `ImageType` DERIVED, `BurnedInAnnotation` NO, the
+# Derivation Code Sequence, a new SOP Instance UID and the configuration
+# hash -- before the persist, which then raised (a full disk, an EIO). The
+# serial arm caught that in its `finally`, logged it, and returned `None`:
+# no `RedactionError`, a pass row saying "Applied 1 of 1", and an instance
+# carrying every attestation over pixels the loader still read
+# unredacted. Export wrote that file, the report graded PASS, and the hash
+# made every later `redact()` skip it. The threads arm raised, but left the
+# same attestation on the live instance, so the retry the error promises
+# was skipped as already redacted. Only the processes arm was right.
+#
+# The instance is ingested from a file, saved and unloaded, so the read in
+# the pass comes from the sidecar and the persist is a real swap. The
+# frame is not constant, so a zone that was or was not zeroed shows.
+
+SN_474 = "SN474"
+FRAME_474 = (np.arange(256, dtype=np.uint16) + 1000).reshape(16, 16)
+ZONES_474 = [(0, 4, 0, 4)]
+
+
+def _write_474_source(folder):
+    meta = FileMetaDataset()
+    meta.MediaStorageSOPClassUID = SC_STORAGE
+    meta.MediaStorageSOPInstanceUID = generate_uid()
+    meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds = FileDataset(None, {}, file_meta=meta, preamble=b"\0" * 128)
+    ds.PatientID, ds.PatientName = "P474", "DOE^JOHN"
+    ds.StudyInstanceUID, ds.SeriesInstanceUID = generate_uid(), generate_uid()
+    ds.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
+    ds.SOPClassUID = SC_STORAGE
+    ds.Modality, ds.SeriesNumber, ds.InstanceNumber = "OT", 1, 1
+    ds.StudyDate = "20230101"
+    ds.Manufacturer, ds.ManufacturerModelName = "Acme", "Scanner"
+    ds.DeviceSerialNumber = SN_474
+    ds.SamplesPerPixel, ds.PhotometricInterpretation = 1, "MONOCHROME2"
+    ds.Rows, ds.Columns = FRAME_474.shape
+    ds.BitsAllocated = ds.BitsStored = 16
+    ds.HighBit, ds.PixelRepresentation = 15, 0
+    ds.PixelData = FRAME_474.tobytes()
+    ds.save_as(os.path.join(folder, "one.dcm"), enforce_file_format=True)
+
+
+@pytest.fixture
+def persisting(tmp_path):
+    """One ingested, saved, unloaded instance on `SN_474`, with its rule."""
+    src = tmp_path / "src474"
+    src.mkdir()
+    _write_474_source(str(src))
+    db = str(tmp_path / "persist474.db")
+    session = DicomSession(persistence_file=db)
+    try:
+        session.ingest(str(src))
+        session.save(sync=True)
+        (inst,) = _instances(session).values()
+        assert inst.unload_pixel_data() is True
+        session.configuration.rules = [
+            {"serial_number": SN_474,
+             "redaction_zones": [list(z) for z in ZONES_474]}]
+        yield session, inst, db
+    finally:
+        session.close()
+
+
+def _state(inst):
+    """Everything a withdrawn attestation must put back, compared whole.
+
+    Whole rather than tag by tag, so a stamp added to the attestation
+    later and not withdrawn turns these tests red without anyone having
+    to remember to list it here.
+    """
+    return (inst.sop_instance_uid, inst.file_path, dict(inst.attributes),
+            {tag: [dict(item.attributes) for item in seq.items]
+             for tag, seq in inst.sequences.items()},
+            inst._pixel_hash)  # pylint: disable=protected-access
+
+
+def _fail_the_next_frame_write(session):
+    """`write_frame` raises `OSError(EIO)` once, then is itself again."""
+    sidecar = session.store_backend.sidecar
+    real = sidecar.write_frame
+    fired = []
+
+    def fail_once(*_args, **_kwargs):
+        sidecar.write_frame = real
+        fired.append(1)
+        raise OSError(5, "EIO injected")
+
+    sidecar.write_frame = fail_once
+    return fired
+
+
+def _assert_left_as_found(session, inst, before, db, reason):
+    """As found, one ERROR row naming `reason`, the pass counting 0 of 1,
+    and an export that attests nothing under the original identity."""
+    assert _state(inst) == before, "the failed instance kept an attestation"
+    assert np.array_equal(inst.get_pixel_data(), FRAME_474)
+    session.store_backend.flush_audit_queue()
+    errors = _audit(db)
+    assert len(errors) == 1, errors
+    assert errors[0][0] == before[0] and reason in errors[0][1], errors
+    passes = _audit(db, "REDACTION")
+    assert len(passes) == 1 and "Applied 0 of 1" in passes[0][1], passes
+
+    session.save(sync=True)
+    out = os.path.join(os.path.dirname(db), "out474")
+    session.export(out, show_progress=False)
+    files = [os.path.join(folder, name) for folder, _, names in os.walk(out)
+             for name in names if name.endswith(".dcm")]
+    assert len(files) == 1, files
+    written = pydicom.dcmread(files[0])
+    assert written.SOPInstanceUID == before[0]
+    assert "BurnedInAnnotation" not in written
+
+
+def test_a_failed_persist_on_the_serial_arm_raises_and_leaves_the_instance_as_found(
+        persisting):
+    """474-1: `redact_machine_instances` raises and withdraws (#474)."""
+    session, inst, db = persisting
+    before = _state(inst)
+    fired = _fail_the_next_frame_write(session)
+    service = RedactionService(session.store, session.store_backend)
+
+    with pytest.raises(RedactionError) as excinfo:
+        service.redact_machine_instances(SN_474, ZONES_474, targets=[inst],
+                                         show_progress=False)
+
+    assert fired == [1], "the persist never reached its write"
+    assert [uid for uid, _ in excinfo.value.failures] == [before[0]]
+    assert "OSError: [Errno 5] EIO injected" in excinfo.value.failures[0][1]
+    _assert_left_as_found(session, inst, before, db, "EIO injected")
+
+
+def test_a_failed_persist_on_the_threads_arm_leaves_the_instance_as_found(
+        persisting, monkeypatch):
+    """474-2: under threads the worker's instance is the live one (#474).
+
+    `redact()` raised here already; what it left behind was the
+    attestation, stamped on the live instance before the persist.
+    """
+    monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
+    session, inst, db = persisting
+    before = _state(inst)
+    fired = _fail_the_next_frame_write(session)
+
+    with pytest.raises(RedactionError):
+        session.redact(show_progress=False)
+
+    assert fired == [1], "the persist never reached its write"
+    _assert_left_as_found(session, inst, before, db, "EIO injected")
+
+
+def test_a_failed_persist_on_the_processes_arm_leaves_the_instance_as_found(
+        persisting, monkeypatch):
+    """474-3: the arm that was already right, and must stay so.
+
+    A monkeypatch does not reach a spawned child, so the failure is a
+    read-only sidecar: `write_frame` opens the file per call, and the
+    child's append raises `PermissionError`.
+    """
+    monkeypatch.setenv("ISOCENTER_FORCE_PROCESSES", "1")
+    session, inst, db = persisting
+    before = _state(inst)
+    sidecar = session.store_backend.sidecar.filepath
+    os.chmod(sidecar, 0o444)
+    try:
+        with pytest.raises(RedactionError):
+            session.redact(show_progress=False)
+    finally:
+        os.chmod(sidecar, 0o644)
+    _assert_left_as_found(session, inst, before, db, "PermissionError")
+
+
+def test_a_corrected_environment_retries_the_failed_instance(persisting):
+    """474-4: the retry the error promises is not skipped as done.
+
+    The first pass withdrew the hash, so the second one redacts; and it
+    withdrew the recorded source UID, so the second one records the
+    original identity, not an empty one.
+    """
+    session, inst, _db = persisting
+    original_uid = inst.sop_instance_uid
+    fired = _fail_the_next_frame_write(session)
+    service = RedactionService(session.store, session.store_backend)
+    with pytest.raises(RedactionError):
+        service.redact_machine_instances(SN_474, ZONES_474, targets=[inst],
+                                         show_progress=False)
+    assert fired == [1]
+
+    service.redact_machine_instances(SN_474, ZONES_474, targets=[inst],
+                                     show_progress=False)
+
+    assert inst.attributes["0028,0301"] == "NO"
+    assert inst.sop_instance_uid != original_uid
+    assert inst.attributes[SOURCE_SOP_UID_ATTR] == original_uid
+    got = inst.get_pixel_data()
+    assert int(got[0:4, 0:4].max()) == 0
+    assert np.array_equal(got[4:, :], FRAME_474[4:, :])
+
+
+@pytest.mark.parametrize("arm", ["serial", "threads"])
+def test_a_withdrawn_attestation_keeps_the_carried_phi_status(
+        persisting, monkeypatch, arm):
+    """474-5: the #486 carry still runs after a withdrawal.
+
+    A withdrawn instance is as captured, so the status captured before
+    the pass is re-recorded, where the revision rule alone would read
+    UNSCANNED. Two carries are in play: the serial loop's, and
+    `_apply_redaction_rules`' in the parent after a failed outcome.
+    """
+    session, inst, _db = persisting
+    inst.record_phi_status(PhiStatus.CLEARED)
+    assert inst.phi_status is PhiStatus.CLEARED
+    fired = _fail_the_next_frame_write(session)
+    with pytest.raises(RedactionError):
+        if arm == "serial":
+            RedactionService(session.store, session.store_backend) \
+                .redact_machine_instances(SN_474, ZONES_474, targets=[inst],
+                                          show_progress=False)
+        else:
+            monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
+            session.redact(show_progress=False)
+    assert fired == [1]
+    assert "_ISOCENTER_REDACTION_HASH" not in inst.attributes
+    assert inst.phi_status is PhiStatus.CLEARED

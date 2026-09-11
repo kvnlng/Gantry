@@ -1399,15 +1399,16 @@ def test_a_failed_swap_in_a_threads_redaction_keeps_the_frame_readable(
 
 
 def test_a_failed_swap_in_a_serial_redaction_keeps_the_frame_readable(ingested):
-    """H2: `redact_machine_instances`, whose `finally` persist swaps."""
+    """H2: `redact_machine_instances`, whose persist swaps."""
     session, inst, db = ingested
     fired = _fail_the_next_write(session.store_backend.sidecar)
     service = RedactionService(session.store, session.store_backend)
 
-    # Suppressed rather than expected: this arm swallows the persist
-    # failure and raises nothing today, which is its own defect (#474).
-    # This test is about the hash, whichever way that goes.
-    with contextlib.suppress(RedactionError):
+    # Raised since #474: this arm used to swallow the persist failure.
+    # What the failed instance is left as is pinned in
+    # `tests/test_redaction_failure_is_reported.py`; this test is about
+    # the hash.
+    with pytest.raises(RedactionError):
         service.redact_machine_instances(
             "SN1", [(0, 2, 0, 2)], targets=[inst], show_progress=False)
     assert fired == [1], "the swap never reached its write"

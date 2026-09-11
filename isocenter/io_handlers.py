@@ -3845,9 +3845,22 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
                 # Local import to avoid circular dependency
                 from .services import RedactionService
 
-                # Check writeability
-                if not arr.flags.writeable:
-                    arr = arr.copy()
+                # Always a copy, whatever the array's writeability (#469).
+                # This copied only a read-only array, so a writeable one --
+                # the caller's own resident array whenever the worker runs
+                # in the caller's process: `export_batch()` under threads,
+                # 3.14t's default -- was zeroed in place, and the export
+                # redacted the live graph. A saved array then lost the
+                # zones at the next `unload_pixel_data()` and an unsaved
+                # one carried them into the next save, while under
+                # processes the child's array was a copy and nothing
+                # changed. Copied on every path, processes included (the
+                # owner's ruling): which executor ran must not decide what
+                # the caller's array holds afterwards. The cost is one
+                # frame-set, transient, and only for an instance with
+                # zones, beside the `tobytes()` copy the write already
+                # makes. Readback compares against this copy.
+                arr = arr.copy()
 
                 # Apply zones
                 RedactionService.apply_redaction_to_array(
@@ -3868,7 +3881,7 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
         # refused and buys a source order that still reads
         # resolve -> redact -> write. Nothing between the resolution and
         # here can change `geom`: the redaction block copies the array
-        # when it is not writeable, which does not change its shape.
+        # (always, since #469), which does not change its shape.
         if arr is not None and geom.evidence is GeometryEvidence.GUESSED:
             raise RuntimeError(
                 f"Refusing to write {ctx.output_path}: the pixel "
