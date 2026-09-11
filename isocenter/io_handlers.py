@@ -3132,6 +3132,28 @@ def _write_pixel_geometry(ds, geom, attributes, *, float_element: bool) -> None:
     # be back to writing `RGB` onto a float element.
     if photometric is None:
         photometric = attributes.get("0028,0004")
+    # `YBR_FULL_422` names a layout -- two chroma samples per two
+    # pixels, four bytes per pair -- that the array being written cannot
+    # hold: it is `(rows, cols, 3)`, three full-resolution samples per
+    # pixel, and `tobytes()` of that is a third longer than the label
+    # promises. pydicom refuses the native file outright (`a third
+    # larger than expected (192 vs 128 bytes)`) and decodes the JPEG 2000
+    # one beneath a label the codestream contradicts (#470). So the
+    # sampling half of the label is corrected, to `YBR_FULL`, which
+    # names exactly these bytes; the colour-space half, YBR, is the
+    # declaration's and is kept, because three samples are equally RGB
+    # or YBR and a relabel to RGB would be a label without its bytes
+    # (#372, #448, #482). Here and not in
+    # `resolve_photometric_interpretation`, for the reason
+    # `PlanarConfiguration` is written 0 here and not there: that
+    # function answers what the graph should carry and is shared with
+    # `set_pixel_data()`, which writes no file; this one describes the
+    # element just written. Only ever reached at three or more samples:
+    # at one the resolver has already answered MONOCHROME2, and two is a
+    # shape no interpretation names, written as declared.
+    if (geom.samples >= 3 and photometric
+            and str(photometric).strip().upper() == "YBR_FULL_422"):
+        photometric = "YBR_FULL"
     if photometric:
         ds.PhotometricInterpretation = photometric
 
@@ -3157,6 +3179,74 @@ def _write_pixel_geometry(ds, geom, attributes, *, float_element: bool) -> None:
     # still holds, because that path writes no file.
     if geom.samples >= 3:
         ds.PlanarConfiguration = 0
+
+
+def _stored_width(arr: np.ndarray, attributes) -> Tuple[int, int, Optional[str]]:
+    """BitsStored and HighBit for the integer pixel element written from `arr`.
+
+    Returns `(bits_stored, high_bit, why)`. `why` is None when the
+    declaration was kept, and otherwise says what about the declaration
+    the bytes could not honour, for the worker to log (#468).
+
+    The rule: **a declared width is written when every sample fits it,
+    and the array's own width is written otherwise.** Held against the
+    array because BitsStored is a claim about the samples beside it that
+    every conformant reader acts on -- a native sample is masked to
+    BitsStored on read, so -3024 under BitsStored 12 reads back as 1072,
+    and a JPEG 2000 codestream carries the value beneath a header that
+    says it cannot. Before this, the worker wrote 8 or 16 when nothing
+    was declared, so `int32` left under a 16-bit claim (27734 read back
+    where -1103401898 was written), and wrote a declaration as it stood.
+    `verify_readback=True` failed both after the fact (#449); the default
+    export wrote both in silence.
+
+    The width the values fit is `BitsAllocated`, `itemsize * 8`, and not
+    the narrowest width that would hold them: the narrowest is a
+    property of this frame's content and would put a different
+    BitsStored on each slice of a series. A declaration the values fit
+    is kept for the same reason -- 12 on a CT is the acquisition's claim,
+    and the bytes cannot say it is wrong. What that still allows, stated:
+    a series in which only some slices overflow their declaration comes
+    out with mixed BitsStored, the declared width on the slices that fit
+    and the array's on the ones that did not.
+
+    The range is the array's **own** signedness (`dtype.kind`), not
+    declared PixelRepresentation: the bytes are the array's, and a
+    declared representation that disagrees with them is a different
+    defect from this one. `bool` is written one byte per sample and
+    ranges as `uint8`.
+
+    Skipped when the declaration equals the array's width: nothing can
+    overflow it, and the min/max pass is the one cost here (measured
+    4 ms on a 52 MB int16 stack, beside 4 ms for the `tobytes()`).
+    A declaration above the width, or below 1, is caught before any
+    range is built: pydicom refuses to decode `BitsStored 17` over
+    16-bit bytes at all, and `1 << -1` raises.
+    """
+    allocated = arr.itemsize * 8
+    declared = attributes.get("0028,0101")
+    if declared in (None, ""):
+        return allocated, allocated - 1, None
+    declared = int(declared)
+    if not 1 <= declared <= allocated:
+        return allocated, allocated - 1, (
+            f"BitsStored {declared} is not a width {arr.dtype} samples "
+            f"can have (BitsAllocated {allocated})")
+    if declared == allocated:
+        return declared, int(attributes.get("0028,0102", declared - 1)), None
+    if arr.dtype.kind == "i":
+        lo, hi = -(1 << (declared - 1)), (1 << (declared - 1)) - 1
+        signed = "signed"
+    else:
+        lo, hi = 0, (1 << declared) - 1
+        signed = "unsigned"
+    seen_lo, seen_hi = int(arr.min()), int(arr.max())
+    if lo <= seen_lo and seen_hi <= hi:
+        return declared, int(attributes.get("0028,0102", declared - 1)), None
+    return allocated, allocated - 1, (
+        f"BitsStored {declared} cannot hold the pixel values: the array "
+        f"holds {seen_lo}..{seen_hi} where {signed} {declared}-bit samples "
+        f"span {lo}..{hi}")
 
 
 #: The descriptors the readback compares first, by pydicom keyword. The
@@ -4075,11 +4165,6 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
             _write_pixel_geometry(ds, geom, inst.attributes,
                                   float_element=False)
 
-            if arr.itemsize == 1:
-                default_bits = 8
-            else:
-                default_bits = 16
-
             # Derived from the array, never read from `attributes`, for the
             # same reason Rows and SamplesPerPixel now are -- and here the
             # reason is stronger, because `ds.PixelData = arr.tobytes()` is
@@ -4101,12 +4186,26 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
             # where the bytes are produced is the fix that does not put a
             # write back on the load path.
             #
-            # BitsStored, HighBit and PixelRepresentation stay declared:
-            # they do not constrain how many bytes `tobytes()` emits, and
-            # their coherence is out of scope (spec §8).
+            # BitsStored and HighBit are held against the array too,
+            # by `_stored_width` (#468): a declared width every sample
+            # fits is written as declared, and otherwise -- or when
+            # none was declared, where 8-or-16 stood here and put
+            # `int32` under a 16-bit claim -- the array's own width is.
+            # The log line is a rendering of a fact the file itself
+            # carries (#284), at INFO because the file is correct and
+            # the grade must not move; `ds` only, never `inst`, for the
+            # reason the float arm above gives. PixelRepresentation
+            # stays declared: it does not constrain how many bytes
+            # `tobytes()` emits, and its coherence is out of scope
+            # (spec §8).
             ds.BitsAllocated = arr.itemsize * 8
-            ds.BitsStored = inst.attributes.get("0028,0101", default_bits)
-            ds.HighBit = inst.attributes.get("0028,0102", default_bits - 1)
+            ds.BitsStored, ds.HighBit, widened = _stored_width(
+                arr, inst.attributes)
+            if widened is not None:
+                get_logger().info(
+                    "%s: %s; written with BitsStored %d and HighBit %d, "
+                    "the array's own width", uid, widened, ds.BitsStored,
+                    ds.HighBit)
             ds.PixelRepresentation = inst.attributes.get("0028,0103", 0)
 
         # Waveform samples never reach `attributes` -- populate_attrs

@@ -153,6 +153,35 @@ def _lossy_j2k(monkeypatch, only=None):
     monkeypatch.setattr(io_handlers, "jpeg2k_encode", _encode)
 
 
+def _hand_written(tmp_path, src, compression):
+    """A file holding `src` under BitsStored 12, written by pydicom, not
+    by the worker -- the worker no longer writes a width the values
+    exceed (#468), and this is the file the readback's masking claim is
+    about. Returns the path and the dataset, which the readback holds
+    the file's descriptors against."""
+    ds = pydicom.Dataset()
+    ds.file_meta = pydicom.dataset.FileMetaDataset()
+    ds.file_meta.MediaStorageSOPClassUID = CT_STORAGE
+    ds.file_meta.MediaStorageSOPInstanceUID = "1.2.826.0.1.449.9999"
+    ds.SOPClassUID = CT_STORAGE
+    ds.SOPInstanceUID = "1.2.826.0.1.449.9999"
+    ds.Rows, ds.Columns = src.shape
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    ds.BitsAllocated, ds.BitsStored, ds.HighBit = 16, 12, 11
+    ds.PixelRepresentation = 1
+    if compression is None:
+        ds.file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
+        ds.PixelData = src.tobytes()
+    else:
+        ds.file_meta.TransferSyntaxUID = pydicom.uid.JPEG2000Lossless
+        ds.PixelData = pydicom.encaps.encapsulate(
+            [io_handlers.jpeg2k_encode(src, level=0, codecformat="J2K")])
+    path = str(tmp_path / "hand.dcm")
+    ds.save_as(path, enforce_file_format=True)
+    return path, ds
+
+
 def _ctx(tmp_path, **kwargs):
     return ExportContext(
         instance=_instance(),
@@ -529,19 +558,22 @@ def test_values_outside_bits_stored_fail_an_uncompressed_readback(
     compare skipped for native syntaxes; a readback that warns here.
     """
     src = np.array([[-3024, 3000, -1, 0]] * 4, dtype=np.int16)
-
-    outcome = _export_instance_worker(
-        _ctx_for(tmp_path, _image(src, SIGNED + BITS_STORED_12),
-                 compression=compression, verify_readback=True))
+    # Written by hand, not by the worker: since #468 the worker holds
+    # BitsStored against the array and writes this instance at 16 bits,
+    # so the file under test -- values beside a width they exceed -- is
+    # one the worker no longer produces. The readback's own claim is
+    # unchanged and is what this pins.
+    path, ds = _hand_written(tmp_path, src, compression)
 
     if compression is None:
-        assert not outcome.ok
-        message = str(outcome.error)
+        with pytest.raises(RuntimeError) as raised:
+            io_handlers._verify_readback(path, ds, src)
+        message = str(raised.value)
         assert "8 of 16 differ" in message, message
         assert ("first at flat index 0 (1072 read back where -3024 was "
                 "written)") in message, message
     else:
-        assert outcome.ok, outcome.error
+        io_handlers._verify_readback(path, ds, src)
         assert [str(w.message) for w in recwarn] == []
 
 
