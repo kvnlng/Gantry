@@ -28,6 +28,7 @@ What these tests hold:
 - **Only an assurance is carried.** An instance that was never scanned
   stays UNSCANNED after redaction.
 """
+import json
 from datetime import date
 
 import numpy as np
@@ -35,7 +36,7 @@ import pytest
 
 from isocenter.entities import (DicomItem, DicomSequence, Equipment, Instance,
                                 Patient, PhiStatus, Series, Study)
-from isocenter.services import RedactionService
+from isocenter.services import RedactionError, RedactionOutcome, RedactionService
 from isocenter.session import DicomSession
 
 SC_SOP_CLASS = "1.2.840.10008.5.1.4.1.1.7"
@@ -195,3 +196,138 @@ def test_an_instance_never_scanned_stays_unscanned(tmp_path, threads):
         session.redact()
         assert _redacted(instance), instance.attributes
         assert instance.phi_status is PhiStatus.UNSCANNED
+
+
+# --- review round ------------------------------------------------------------
+
+UID_2 = "1.2.826.0.1.486.1.1"
+#: The default policy carries no tag list for a hand-built graph, so a
+#: tag on the instance itself is only found under an explicit one.
+REPLACE_REFERRING = {"0008,0090": {"name": "ReferringPhysicianName",
+                                   "action": "REPLACE"}}
+
+
+def _with_a_tag_on_the_instance(tmp_path):
+    session, instance = _session(tmp_path)
+    instance.set_attr("0008,0090", "Dr^Leak")
+    config = tmp_path / "tags.json"
+    config.write_text(json.dumps(REPLACE_REFERRING), encoding="utf-8")
+    return session, instance, str(config)
+
+
+def _redact_by(path, session, instance):
+    if path == "session":
+        session.redact()
+    else:
+        RedactionService(session.store, session.store_backend).redact_machine_instances(
+            SERIAL, [tuple(ZONE)], targets=[instance], show_progress=False)
+
+
+def _derivation_description_edit(inst):
+    inst.set_attr("0008,2111", "Redacted for John^Smith")
+
+
+def _image_type_edit(inst):
+    inst.set_attr("0008,0008", ["DERIVED", "John^Smith"])
+
+
+def _derivation_item_edit(inst):
+    item = DicomItem()
+    item.set_attr("0008,0104", "John^Smith, MRN 123")
+    inst.sequences["0008,9215"].items.append(item)
+
+
+@pytest.mark.parametrize("edit", [_derivation_description_edit, _image_type_edit,
+                                  _derivation_item_edit],
+                         ids=["derivation-description", "image-type", "derivation-item"])
+@pytest.mark.parametrize("path", ["session", "serial"])
+def test_a_foreign_value_in_a_tag_redaction_writes_is_not_carried(
+        tmp_path, threads, monkeypatch, edit, path):
+    """The tags redaction writes are compared to what it writes, not skipped.
+
+    Red before the review round: the fingerprint left `ImageType`,
+    `DerivationDescription` and the Derivation Code Sequence out, so a
+    caller's text in the description, a value appended to ImageType, or a
+    second item in the sequence during the pass was carried -- measured on
+    686bdea with the reviewer's `attack_opt2.py`, all three `cleared` and
+    `[True]`. Now each is accepted only as captured or at exactly the value
+    `_apply_redaction_flags` writes.
+
+    Kills: the flag comparison accepting any value.
+    """
+    session, instance = _session(tmp_path)
+    with session:
+        session.anonymize()
+        assert instance.phi_status in (PhiStatus.REMEDIATED, PhiStatus.CLEARED)
+        session.save(sync=True)
+        _edit_during_the_pass(monkeypatch, edit)
+        _redact_by(path, session, instance)
+        assert _redacted(instance), instance.attributes
+        assert instance.phi_status is PhiStatus.UNSCANNED
+
+
+def test_redact_carries_remediated(tmp_path, threads):
+    """REMEDIATED, not CLEARED: a configured tag on the instance itself.
+
+    Every other carry test starts CLEARED, so a carry that re-recorded
+    CLEARED whatever it captured passed them all.
+
+    Kills: the carry re-recording CLEARED regardless of the captured status.
+    """
+    session, instance, config = _with_a_tag_on_the_instance(tmp_path)
+    with session:
+        session.anonymize(session.audit(config).findings)
+        assert instance.phi_status is PhiStatus.REMEDIATED
+        session.redact()
+        assert _redacted(instance), instance.attributes
+        assert instance.phi_status is PhiStatus.REMEDIATED
+
+
+def test_redact_does_not_carry_identified(tmp_path, threads):
+    """IDENTIFIED is not an assurance, and is left to the revision rule.
+
+    Kills: IDENTIFIED added to the carried statuses.
+    """
+    session, instance, config = _with_a_tag_on_the_instance(tmp_path)
+    with session:
+        session.audit(config)
+        assert instance.phi_status is PhiStatus.IDENTIFIED
+        session.redact()
+        assert _redacted(instance), instance.attributes
+        assert instance.phi_status is PhiStatus.UNSCANNED
+
+
+def test_a_failed_instance_does_not_cost_the_others_their_status(
+        tmp_path, threads, monkeypatch):
+    """A pass with one failed instance still carries on the ones that landed.
+
+    The pattern is `test_the_rows_are_written_before_the_failure_raise`'s
+    (`test_redaction_audit_accounting.py`): a monkeypatched class
+    attribute, threads only, because a spawned child re-imports the class
+    unpatched. The carry is parent-side and executor-independent.
+
+    Kills: the carry skipped for every instance when any instance failed.
+    """
+    session, instance = _session(tmp_path)
+    other = Instance(UID_2, SC_SOP_CLASS, 2)
+    other.file_path = None
+    other.set_pixel_data(np.full((16, 16), 200, dtype=np.uint8))
+    session.store.patients[0].studies[0].series[0].instances.append(other)
+    real = RedactionService.execute_redaction_task
+
+    def one_fails(self, task):
+        if task["instance"].sop_instance_uid == UID_2:
+            return RedactionOutcome(ok=False, sop_instance_uid=UID_2,
+                                    error="synthetic failure for the pin")
+        return real(self, task)
+
+    with session:
+        session.anonymize()
+        before = instance.phi_status
+        assert before in (PhiStatus.REMEDIATED, PhiStatus.CLEARED)
+        session.save(sync=True)
+        monkeypatch.setattr(RedactionService, "execute_redaction_task", one_fails)
+        with pytest.raises(RedactionError):
+            session.redact()
+        assert _redacted(instance), instance.attributes
+        assert instance.phi_status is before

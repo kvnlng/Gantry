@@ -321,9 +321,14 @@ in a 1.x release with a CHANGELOG entry naming both spellings:
   `REMEDIATED` or `CLEARED` at its current revision (#486). Two things it
   is not. It is not "`anonymize()` ran": an input the scan found clean
   reads `true` after `audit()` alone. And it says nothing about burned-in
-  pixel text, which the tag scan does not read. `false` means nothing
-  established it -- a session that never scanned, or an entity edited
-  since its scan.
+  pixel text, which the tag scan does not read. And it does not see
+  inside sequences: `anonymize()` stamps the nested item it changed,
+  not the instance, so an instance whose only findings were inside a
+  sequence reads `false` until the next `audit()` records the instance
+  `CLEARED` (#494). `false` means the status does not establish it: a
+  session that never scanned, an entity edited since its scan, an
+  entity whose last pass declined a remediation on it, or that nested
+  case.
 - **The `.pass.lock` / `.lock` file names**, the sidecar's `_pixels.bin`
   suffix, the audit table's columns, the schema's table names.
 

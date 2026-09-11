@@ -342,3 +342,28 @@ def test_a_decline_is_not_a_phi_status_change(store):
     _declines(store, _finding(inst, "REMOVE_TAG", "0008,0080"))
 
     assert inst.phi_status is before
+
+
+def test_a_pass_that_only_declined_leaves_the_status_alone(store):
+    """Through `apply_remediation`, where the test above drives
+    `_apply_single_remediation` directly and so never reaches the pass end.
+
+    The pass-end demotion (#486, from the review of #491) re-records
+    IDENTIFIED on an entity that declined and still ended the pass
+    REMEDIATED. An entity that only declined ended it as it began and is
+    not touched: recording IDENTIFIED over UNSCANNED here would call a
+    never-scanned instance identified on the strength of a proposal that
+    did not run.
+
+    Kills: the demotion applied to every entity that declined, whatever
+    status it ended the pass with.
+    """
+    inst = Instance("1.2.3", INSTANCE_SOP_CLASS, 1)
+    before = inst.phi_status
+
+    RemediationService(store_backend=store).apply_remediation(
+        [_finding(inst, "REMOVE_TAG", "0008,0080")])
+    store.flush_audit_queue()
+
+    assert len(store.get_audit_declines()) == 1
+    assert inst.phi_status is before

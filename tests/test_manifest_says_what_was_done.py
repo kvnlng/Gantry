@@ -21,8 +21,12 @@ scanned by `audit()` alone reads `true`), and burned-in pixel text is not
 part of it.
 
 **Why this file imports what it does.** It reaches `ManifestItem` through
-`isocenter.manifest` and the session through `isocenter.session`, so it
-charges both modules' probe rows; see `test_mutation_probe_targets.py`.
+`isocenter.manifest`, the session through `isocenter.session` and the
+graph through `isocenter.entities`, so it is in those three probe rows;
+and it is a hand extra in `remediation.py`'s row (#441), because
+`test_a_declined_finding_on_the_same_instance_says_false` kills the
+pass-end demotion there without importing the module. See
+`test_mutation_probe_targets.py`.
 """
 import json
 import os
@@ -32,7 +36,7 @@ from datetime import date
 import pytest
 from pydicom.data import get_testdata_file
 
-from isocenter.entities import Equipment, Instance, Patient, Series, Study
+from isocenter.entities import Equipment, Instance, Patient, PhiStatus, Series, Study
 from isocenter.manifest import ManifestItem
 from isocenter.session import DicomSession
 
@@ -177,3 +181,92 @@ def test_a_manifest_item_nobody_described_is_not_anonymized():
     item = ManifestItem(patient_id="P", study_instance_uid="1.2",
                         series_instance_uid="1.2.3", sop_instance_uid="1.2.3.4")
     assert item.anonymized is False
+
+
+# --- review round: a decline beside a success on one instance ---------------
+
+#: One tag that remediates and one that declines, on the same instance:
+#: `0008,0023` under SHIFT with a value no date parser accepts.
+TAGS_WITH_A_DATE = {
+    "0008,0090": {"name": "ReferringPhysicianName", "action": "REPLACE"},
+    "0008,0023": {"name": "ContentDate", "action": "SHIFT"},
+}
+
+
+@pytest.fixture
+def strategy(request, monkeypatch):
+    """The threads-or-processes lever for the scan `audit()` runs.
+
+    `audit()` does not print the strategy it resolved, unlike `redact()`,
+    so this arm sets the lever and cannot assert it was honoured. The
+    remediation itself is serial either way; what the processes arm varies
+    is the scan whose findings are rehydrated against the live graph.
+    """
+    monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "2")
+    if request.param == "processes":
+        monkeypatch.delenv("ISOCENTER_FORCE_THREADS", raising=False)
+        monkeypatch.setenv("ISOCENTER_FORCE_PROCESSES", "1")
+    else:
+        monkeypatch.delenv("ISOCENTER_FORCE_PROCESSES", raising=False)
+        monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
+    return request.param
+
+
+@pytest.mark.parametrize("strategy", ["threads", "processes"], indirect=True)
+def test_a_declined_finding_on_the_same_instance_says_false(tmp_path, strategy):
+    """Two findings on one instance: one remediates, one declines.
+
+    Red before the review round: `apply_remediation` stamped REMEDIATED
+    per success and `_record_decline` recorded nothing, so the instance
+    left the pass REMEDIATED with `'notadate'` still in it -- the manifest
+    said `true` while the same session's report graded `REVIEW_REQUIRED`
+    and named the decline in section 3.3. Measured on 686bdea.
+
+    The rule now: an entity that declined during a pass does not leave it
+    REMEDIATED. Its status is re-recorded IDENTIFIED at the pass's end,
+    and the manifest reads that status, not the audit trail's declines:
+    one source for the answer.
+
+    Kills: the pass-end demotion in `apply_remediation` deleted.
+    `test_a_pass_that_only_declined_leaves_the_status_alone`
+    (`test_declined_remediation_is_recorded.py`) pins the other half:
+    an entity that only declined keeps the status it had.
+    """
+    session, instance = _built(tmp_path)
+    instance.set_attr("0008,0090", "Dr^Leak")
+    instance.set_attr("0008,0023", "notadate")
+    config = tmp_path / "tags.json"
+    config.write_text(json.dumps(TAGS_WITH_A_DATE), encoding="utf-8")
+    with session:
+        findings = session.audit(str(config)).findings
+        assert session.anonymize(findings) >= 1
+        assert instance.attributes["0008,0090"] != "Dr^Leak"
+        assert instance.attributes["0008,0023"] == "notadate"
+        session.store_backend.flush_audit_queue()
+        assert len(session.store_backend.get_audit_declines()) == 1
+        assert instance.phi_status is PhiStatus.IDENTIFIED
+        answers = _manifest(session, tmp_path)
+    assert answers == {instance.sop_instance_uid: False}, answers
+
+
+def test_a_patient_edit_after_anonymize_says_false(tmp_path):
+    """The patient term of the chain (the reviewer's scenario 7).
+
+    `test_an_edit_after_anonymize_says_false` edits the instance and
+    `test_a_declined_study_remediation_says_false` holds the study, so
+    a chain that dropped the patient passed both.
+
+    Kills: the patient dropped from the chain.
+    """
+    session, instance = _built(tmp_path)
+    with session:
+        session.anonymize()
+        assert _manifest(session, tmp_path, "before.json") == {
+            instance.sop_instance_uid: True}
+        patient = session.store.patients[0]
+        patient.patient_name = "Back^Again"
+        patient.mark_modified()
+        assert patient.phi_status is PhiStatus.UNSCANNED
+        assert instance.phi_status is not PhiStatus.UNSCANNED
+        answers = _manifest(session, tmp_path, "after.json")
+    assert answers == {instance.sop_instance_uid: False}, answers

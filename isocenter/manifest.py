@@ -25,7 +25,12 @@ class ManifestItem:
             current revision. Not "`anonymize()` ran": an input the scan
             found clean reads True after `audit()` alone. Not a statement
             about burned-in pixel text, which the tag scan does not read.
-            False when nothing established it (#486).
+            Not a view inside sequences: `anonymize()` stamps the nested
+            item it changed, not the instance, so an instance whose only
+            findings were inside a sequence reads False until the next
+            `audit()` (#494). False when the status does not establish
+            it: never scanned, edited since, a remediation declined on it
+            in its last pass, or that nested case (#486).
     """
     patient_id: str
     study_instance_uid: str

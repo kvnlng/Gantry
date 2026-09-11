@@ -117,6 +117,10 @@ def _section4_rows(text):
     return rows[1:]
 
 
+def _section2(text):
+    return text.split("## 2. Processing Audit", 1)[1].split("## 3.", 1)[0]
+
+
 def _section5(text):
     return text.split("## 5. Validation & Verification", 1)[1].split("---\n", 1)[0]
 
@@ -397,3 +401,30 @@ def test_a_discovery_failure_is_counted_and_not_called_a_pixel_scan(
     assert "1 row(s) in section 4" in _section5(text)
     assert "No `scan_pixel_content()` ran in this session" in _scan_line(text)
     _assert_section5_agrees_with_section4(text)
+
+
+def test_the_metadata_count_excludes_declines(tmp_path):
+    """`metadata_remediations` is the `REMEDIATION_*` rows, and a decline
+    is not one of them.
+
+    `REMEDIATION_DECLINED` is deliberately outside
+    `REMEDIATION_ACTION_TYPES`; counting it would call a value that stayed
+    in the data a remediation. Green before the review round: it is here to
+    pin the exact count against section 2's own rows, the other reader of
+    the same trail.
+
+    Kills: `REMEDIATION_DECLINED` added to the counted action types.
+    """
+    with _session(tmp_path, [_instance("1.2.481.1")]) as session:
+        # As a graph loaded from a damaged store would carry it: the
+        # SHIFT_DATE arm declines a value it cannot parse.
+        session.store.patients[0].studies[0].study_date = "notadate"
+        session.anonymize()
+        text = _report(session, tmp_path)
+    rows = dict(re.findall(r"^\| (REMEDIATION_\w+) \| (\d+) \|$", _section2(text), re.M))
+    assert rows.get("REMEDIATION_DECLINED") == "1", rows
+    expected = sum(int(n) for action, n in rows.items() if action != "REMEDIATION_DECLINED")
+    assert expected > 0, rows
+    counts = [int(n) for n in re.findall(
+        r"\*\*Metadata Remediation:\*\* (\d+) `REMEDIATION_\*` row", _section5(text))]
+    assert counts == [expected], (counts, rows)
