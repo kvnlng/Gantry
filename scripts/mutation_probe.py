@@ -509,7 +509,9 @@ TARGETS = {
     #     caller discards the result -- equivalent;
     #   - `unload_waveform_data()`'s `return True` for samples that are
     #     already absent, flipped to False. NOT classed equivalent: a caller
-    #     told False believes the samples could not be released. #443.
+    #     told False believes the samples could not be released. Pinned
+    #     since by `tests/test_waveform_ingest.py::
+    #     test_already_absent_samples_report_as_released` (#443).
     # At budget 3, deleting the DEBUG "Identity regenerated" log also
     # survives: no reader, no contract -- equivalent.
     #

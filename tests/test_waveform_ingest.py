@@ -455,3 +455,25 @@ def test_a_single_group_record_still_grades_pass(tmp_path):
     with open(report, "r") as f:
         content = f.read()
     assert "**PASS**" in content, content
+
+
+def test_already_absent_samples_report_as_released():
+    """W1: "True if unloaded (or already absent)" -- the second half (#443).
+
+    `release_memory()` computes `unload_waveform_data() and had_waveform`,
+    so a flipped return is invisible there, and the only other pins hold
+    samples. Nothing asserted the docstring's "already absent" case until
+    the mutation probe recorded `return True` -> `return False` surviving.
+    A caller told False believes the samples could not be released.
+    Asserted with and without a loader, because the early return sits
+    above the loader check and both routes reach it.
+    """
+    from isocenter.entities import Instance
+    inst = Instance("1.2.5", "1.2.840.10008.5.1.4.1.1.9.1.1", 1)
+    assert inst.waveform_array is None
+    assert inst._waveform_loader is None
+    assert inst.unload_waveform_data() is True
+
+    inst._waveform_loader = lambda: np.zeros((2, 2), np.int16)
+    assert inst.unload_waveform_data() is True
+    assert inst.waveform_array is None
