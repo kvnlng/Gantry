@@ -45,9 +45,10 @@ from pydicom.pixels import convert_color_space, get_decoder
 from pydicom.uid import generate_uid
 
 from isocenter import entities, imagecodecs_handler
-from isocenter.entities import Instance, Patient, Series, Study
+from isocenter.entities import Equipment, Instance, Patient, Series, Study
 from isocenter.io_handlers import (_FALLBACK_DECODER_CONVERTS,
                                    _FALLBACK_PHOTOMETRICS)
+from isocenter.services import RedactionService
 from isocenter.session import DicomSession
 
 EXPLICIT_LE = "1.2.840.10008.1.2.1"
@@ -357,14 +358,19 @@ def test_a_set_landing_during_the_pydicom_read_keeps_its_own_label(
 # E1 -- the exported file: its label matches its bytes
 # ---------------------------------------------------------------------------
 
-def _hand_built(session, sources):
+def _hand_built(session, sources, serial=None):
     """One patient, study and series holding an instance per source file,
     labelled and described as each file is, as a hand-built graph would be.
+
+    `serial` puts the series on a scanner with that serial number, which
+    is what a redaction rule matches on. Returns the instances.
     """
     first = sources[0][1]
     patient = Patient("PAT482", "DOE^JANE")
     study = Study(first.StudyInstanceUID, "20230101")
     series = Series(first.SeriesInstanceUID, "OT", 1)
+    if serial is not None:
+        series.equipment = Equipment("Acme", "Model", serial)
     for path, ds in sources:
         inst = Instance(ds.SOPInstanceUID, SOP_CLASS, int(ds.InstanceNumber),
                         file_path=path)
@@ -380,6 +386,7 @@ def _hand_built(session, sources):
     study.series.append(series)
     patient.studies.append(study)
     session.store.patients.append(patient)
+    return list(series.instances)
 
 
 def _exported(folder):
@@ -479,3 +486,166 @@ def test_a_hand_built_export_writes_rgb_bytes_under_an_rgb_label(
             # pydicom's own reading of the exported file: the source
             # colours, converted once, not twice.
             assert _same(ds.pixel_array, want), (uid, ds.pixel_array)
+
+
+# ---------------------------------------------------------------------------
+# R1 -- redact() then export(): the label comes back with the redacted frame
+# ---------------------------------------------------------------------------
+
+SERIAL = "SN482"
+#: Rows 0-1, columns 0-1: a corner, so the rest of each frame is left to
+#: compare with its source.
+ZONE = (0, 2, 0, 2)
+
+
+@pytest.fixture(params=["processes", "threads", "serial"])
+def redaction_arm(request, monkeypatch):
+    """Each place a redaction reads and replaces a frame from.
+
+    `processes` and `threads` are `Session.redact()`'s pool, forced either
+    way on either interpreter: `parallel._resolve_execution_choice` reads
+    both variables at call time. `serial` is
+    `RedactionService.redact_machine_instances`, which runs in the
+    caller's process on the live instance, so the variables do not reach
+    it.
+    """
+    monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "2")
+    monkeypatch.delenv("ISOCENTER_MAX_TASKS_PER_CHILD", raising=False)
+    if request.param == "processes":
+        monkeypatch.delenv("ISOCENTER_FORCE_THREADS", raising=False)
+        monkeypatch.setenv("ISOCENTER_FORCE_PROCESSES", "1")
+    else:
+        monkeypatch.delenv("ISOCENTER_FORCE_PROCESSES", raising=False)
+        monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
+    return request.param
+
+
+@pytest.mark.parametrize("use_compression", [False, True],
+                         ids=["native", "compressed"])
+def test_a_redacted_hand_built_graph_exports_rgb_bytes_under_an_rgb_label(
+        tmp_path, redaction_arm, use_compression):
+    """R1: `redact()` then `export()` writes the label of the frame it wrote.
+
+    The pipeline order, over a hand-built graph: a native 8-bit YBR_FULL
+    file (the pydicom arm) and a 16-bit J2K YBR_RCT file (the handler),
+    on one scanner, with a one-zone rule for it.
+
+    The redaction reads each file, and that read relabels the instance
+    that did the reading. Under threads, and on the serial path, that
+    instance is the caller's. Under processes it is the worker's copy,
+    and before this the result the worker sent back carried the flags,
+    the hash and the new identity but not the label. So the caller's
+    instance kept `YBR_FULL`/`YBR_RCT` over the worker's RGB frame, with
+    no file left to read again, and export wrote that label beside RGB
+    samples. #493's review measured it on 168fdd6, 3.12.14: the native
+    YBR_FULL export read back through pydicom up to 116 away from the
+    source, and `verify_readback` said nothing. Red on this branch before
+    the fix: the two `processes` cases, on 3.12.14 and 3.14.7t, at the
+    first assertion below. The `threads` and `serial` cases were green,
+    and stay here to hold the arms that were already right.
+
+    Asserted in order: the caller's graph says RGB after `redact()`,
+    which is the seam itself; the file says RGB; its stored samples are
+    the source's RGB outside the zone and zero inside it; and pydicom,
+    reading the file as any consumer would, gives the source colours
+    back, converted once. pydicom is not asked to read the compressed
+    16-bit file, for the reason E1 gives.
+    """
+    study, series = generate_uid(), generate_uid()
+    datasets = [
+        _dataset(EXPLICIT_LE, photometric="YBR_FULL", native=YBR8,
+                 study=study, series=series, number=1),
+        _j2k_dataset("YBR_RCT", RGB16, study=study, series=series, number=2),
+    ]
+    sources = [(_write(tmp_path, ds), ds) for ds in datasets]
+    colours = {1: YBR8_AS_RGB,
+               2: imagecodecs_handler.get_pixel_data(
+                   pydicom.dcmread(sources[1][0]))}
+
+    session = DicomSession(persistence_file=str(tmp_path / "redact.db"))
+    try:
+        instances = _hand_built(session, sources, serial=SERIAL)
+        if redaction_arm == "serial":
+            RedactionService(
+                session.store, session.store_backend).redact_machine_instances(
+                    SERIAL, [ZONE], targets=instances, show_progress=False)
+        else:
+            session.configuration.rules = [
+                {"serial_number": SERIAL, "redaction_zones": [list(ZONE)]}]
+            session.redact(show_progress=False)
+        # Redacted, so each took a new identity and left its file behind:
+        # there is nothing to read again that could correct the label.
+        assert [inst.file_path for inst in instances] == [None, None]
+        assert [inst.attributes["0028,0004"] for inst in instances] == [
+            "RGB", "RGB"]
+        summary = session.export(str(tmp_path / "out"),
+                                 use_compression=use_compression)
+        assert (summary.written, summary.failures) == (2, [])
+    finally:
+        session.close()
+
+    outside = np.ones((4, 4), dtype=bool)
+    outside[ZONE[0]:ZONE[1], ZONE[2]:ZONE[3]] = False
+    written = _exported(str(tmp_path / "out"))
+    assert sorted(int(ds.InstanceNumber) for _, _, ds in written.values()) == [
+        1, 2]
+    for label, stored, ds in written.values():
+        want = colours[int(ds.InstanceNumber)]
+        assert label == "RGB", (int(ds.InstanceNumber), label)
+        assert (stored.dtype, stored.shape) == (want.dtype, want.shape)
+        assert stored[outside].tolist() == want[outside].tolist()
+        assert not stored[~outside].any()
+        if want.dtype == np.uint8 or not use_compression:
+            back = ds.pixel_array
+            assert back[outside].tolist() == want[outside].tolist(), (
+                int(ds.InstanceNumber), back)
+
+
+# ---------------------------------------------------------------------------
+# J5 -- the handler relabels only what the codec converted
+# ---------------------------------------------------------------------------
+
+MONO8 = (np.arange(16, dtype=np.int64) * 13 + 3).astype(np.uint8).reshape(4, 4)
+MONO16 = (np.arange(16, dtype=np.int64) * 1000 + 7).astype(
+    np.uint16).reshape(4, 4)
+
+
+@pytest.mark.parametrize("ts", [J2K_LOSSLESS, J2K], ids=[".90", ".91"])
+@pytest.mark.parametrize("photometric,source", [
+    ("MONOCHROME2", MONO8), ("MONOCHROME2", MONO16),
+    ("RGB", RGB8), ("RGB", RGB16),
+], ids=["MONOCHROME2 8-bit", "MONOCHROME2 16-bit", "RGB 8-bit", "RGB 16-bit"])
+def test_a_j2k_stream_with_no_colour_transform_keeps_its_label(
+        tmp_path, ts, photometric, source):
+    """J5, P2's twin at the handler: no transform undone, no label written.
+
+    `DECODER_RELABELS` names the labels whose transform the codec undoes.
+    A J2K stream under any other label -- MONOCHROME2, or RGB written
+    without the multiple component transform -- decodes to exactly what
+    was encoded, so the handler has converted nothing and says nothing:
+    `ds` keeps its label. A lookup that defaulted to RGB for every J2K
+    syntax would relabel the MONOCHROME2 stream, a label no one-sample
+    array can carry.
+
+    The instance half: a labelled instance over each file keeps its label
+    and its revision. **It does not reach the handler for MONOCHROME2**:
+    pydicom's Pillow plugin decodes that at both depths, and only the
+    16-bit RGB file falls through to the handler (measured). So the direct
+    handler calls on MONOCHROME2 are the ones that pin the lookup; the
+    instance half pins the door around it.
+    """
+    frame = imagecodecs.jpeg2k_encode(source, level=0, codecformat="J2K",
+                                      mct=False, reversible=True)
+    ds = _dataset(ts, photometric=photometric,
+                  bits=source.dtype.itemsize * 8, frames=[frame])
+    if source.ndim == 2:
+        ds.SamplesPerPixel = 1
+        del ds.PlanarConfiguration
+    path = _write(tmp_path, ds)
+    handler_ds = pydicom.dcmread(path)
+    arr = imagecodecs_handler.get_pixel_data(handler_ds)
+    assert _same(arr, source), arr
+    assert str(handler_ds.PhotometricInterpretation) == photometric
+    arr, label, moved = _read_instance(path, photometric)
+    assert _same(arr, source), arr
+    assert (label, moved) == (photometric, 0)

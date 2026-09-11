@@ -683,6 +683,20 @@ class RedactionService:
                 "sop_uid": inst.sop_instance_uid,
                 "pixel_loader": inst._pixel_loader,
                 "pixel_hash": getattr(inst, "_pixel_hash", None),
+                # The label of the frame `pixel_loader` reads (#482). The
+                # read this worker made in order to redact relabelled *its*
+                # copy wherever the decode converted -- a YBR file that
+                # pydicom or the handler returns as RGB -- and under
+                # processes that copy is discarded. Without this the
+                # parent kept the YBR label over the worker's RGB frame,
+                # with `file_path` cleared and no file left to read again,
+                # and export wrote the two together. Assigned in the parent
+                # beside the loader rebind (`_apply_redaction_outcomes`),
+                # the seam #228 used for the identity. Its own key rather
+                # than a row in `attributes` below, which the parent
+                # applies whether or not a new frame came with it. None
+                # when the instance carries no label: nothing to write.
+                "photometric_interpretation": inst.attributes.get("0028,0004"),
                 "attributes": {
                     "0008,0008": inst.attributes.get("0008,0008"),
                     "0028,0301": inst.attributes.get("0028,0301"),

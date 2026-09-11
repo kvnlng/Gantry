@@ -599,8 +599,12 @@ def _decode_with_pydicom(ds):
     by accident here.
 
     Returns:
-        ``(array, photometric)``; `photometric` is None when pydicom was
-        not asked for one.
+        ``(array, photometric)``, `photometric` being the decoder meta's
+        `photometric_interpretation`. The `ds.pixel_array` branch has no
+        meta and puts None beside its array in form only: every case that
+        reaches it raises (measured: no Transfer Syntax UID raises
+        `AttributeError`, and one no decoder implements raises
+        `NotImplementedError`).
     """
     tsyntax = (getattr(ds, "file_meta", None) or {}).get("TransferSyntaxUID")
     try:
@@ -1446,8 +1450,13 @@ class Instance(DicomItem):
         ingest's does. Otherwise the door returns RGB bytes under a YBR
         label, which is #372's defect, and export writes the two together.
         It bumps the revision, because a new label is a change the store
-        should hold. **Both arms relabel through here and nowhere else**,
-        so both get the lock discipline below.
+        should hold. **Both read arms relabel through here and nowhere
+        else**, so both get the lock discipline below. The one other write
+        of this label beside a new frame is not a read:
+        `Session._apply_redaction_outcomes` copies a process worker's
+        redaction result across, the worker's label with its loader, under
+        the same lock and without this helper, which would take that lock
+        a second time (#482).
 
         **Only when the instance already carries a label.** A bare
         `Instance(file_path=...)` holds no descriptors, so nothing on it
