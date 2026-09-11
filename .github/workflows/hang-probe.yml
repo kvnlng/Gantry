@@ -38,8 +38,12 @@ name: Hang Probe
 #   HANG(exit)    the run printed its summary and then did not exit for
 #                 `stall_minutes`. Blocking: a process that will not exit
 #                 is a hang to whoever ran it.
-#   SLOW          still starting tests at `per_iteration_minutes`. No
-#                 verdict: a warning, the loop stops, and the job is green.
+#   SLOW          a test started at or after `per_iteration_minutes`:
+#                 still progressing, just slowly. No verdict: a warning,
+#                 the loop stops, and the job is green. A run that went
+#                 silent before the ceiling is never SLOW. It is judged by
+#                 `stall_minutes` alone, so an iteration lasts at most the
+#                 ceiling plus the stall.
 #   BUDGET        the loop's own budget could not fit another iteration.
 #                 No verdict, as for SLOW.
 #
@@ -115,8 +119,10 @@ on:
       per_iteration_minutes:
         description: >
           Wall-clock ceiling for an iteration that is still starting
-          tests. Reaching it is SLOW, which is no verdict, never HANG: a
-          hang is called on silence, by stall_minutes. The default, 45,
+          tests: a test that starts at or after it makes the row SLOW,
+          which is no verdict, never HANG. A run that has gone silent is
+          judged by stall_minutes alone, so an iteration can last this
+          plus stall_minutes. A positive whole number. The default, 45,
           is 3.2 times the slowest healthy iteration measured (836 s).
           Its name was kept so that an existing
           `-f per_iteration_minutes=N` still dispatches.
@@ -132,7 +138,8 @@ on:
           through a real hang. 10 is above every internal dump
           (faulthandler_timeout 300 s, the worker's 240 s, the watchdog's
           120 s), so each has fired before the probe kills. Every
-          healthy gap between tests measured under 130 s.
+          healthy gap between tests measured under 130 s. A positive
+          whole number.
         type: number
         required: false
         default: 10
@@ -248,10 +255,12 @@ jobs:
       # and no more: the script ends every iteration itself (stall,
       # ceiling or budget) and will not start one that cannot fit, for
       # any inputs (#427). So this cap firing means the script itself is
-      # stuck, which is the only thing it cannot classify. A literal rather than a product of the inputs,
-      # because GHA expressions have no arithmetic operators and the
-      # computed form made the workflow unparseable -- see the job cap
-      # above for the 422.
+      # stuck, which is the only thing it cannot classify.
+      #
+      # A literal rather than a product of the inputs, because GHA
+      # expressions have no arithmetic operators and the computed form
+      # made the workflow unparseable -- see the job cap above for the
+      # 422.
       timeout-minutes: 340
       env:
         PYTHON_GIL: "1"
@@ -289,6 +298,20 @@ jobs:
         # `test_the_hang_probe_never_runs_on_the_gate` asserts this line
         # is present, because nothing else can see the shell's flags.
         set +e -u
+        # **The two minute inputs are positive whole numbers, or nothing
+        # runs.** GitHub's `type: number` accepts `12.5`, and
+        # `$(( 12.5 * 60 ))` is a bash syntax error that ends this script
+        # before its first row, with no `::error::`: an unexplained red.
+        # `0` would make every poll a HANG, and a leading `0` is octal
+        # inside `$(( ))`, so `08` is an error and `010` is eight.
+        for pair in "stall_minutes=${{ inputs.stall_minutes }}" \
+                    "per_iteration_minutes=${{ inputs.per_iteration_minutes }}"; do
+          case "${pair#*=}" in
+            ''|0*|*[!0-9]*)
+              echo "::error::${pair%%=*} must be a positive whole number of minutes, got '${pair#*=}'"
+              exit 1;;
+          esac
+        done
         mkdir -p probe-logs
         # Test-only knobs. All are unset in CI, so each takes the default
         # after `:-`, which is the production value.
@@ -332,13 +355,10 @@ jobs:
             echo "::warning::BUDGET before iteration $i: ${left}s of the loop's budget left and the longest iteration took ${longest}s, so it was not started -- no verdict; re-dispatch with fewer iterations"
             break
           fi
-          # The wall clock for this iteration: the ceiling, or what the
-          # budget leaves if that is nearer. Which one it was decides
-          # whether reaching it is SLOW or BUDGET.
-          limit=$ceiling; bound=ceiling
-          if [ $(( left - grace - margin )) -lt "$limit" ]; then
-            limit=$(( left - grace - margin )); bound=budget
-          fi
+          # What the budget leaves this iteration, with the kill's grace
+          # and the margin reserved. This limit is hard: past it the
+          # step cap fires mid-iteration (#243), silent run or not.
+          hard=$(( left - grace - margin ))
           start=$(date +%s)
           # `-u -v`, redirected to a file, and never through a pipe: `-q`
           # buffers and a pipe adds a second buffer, so a killed run's
@@ -379,10 +399,22 @@ jobs:
             # it is.
             if grep -Eq '^=+ .* in [0-9.]+s' "$log" 2>/dev/null; then fin=1; else fin=0; fi
             if [ "$n:$fin" != "$seen" ]; then seen="$n:$fin"; moved=$now; fi
+            # **SLOW is keyed on `moved`, the last progress, not on
+            # `now`.** The ceiling is for a run still starting tests. On
+            # `now`, a stall that began less than `stall` before the
+            # ceiling met the ceiling first and read as SLOW: green, "not
+            # a hang". At the documented per_iteration_minutes=25, a
+            # teardown hang after run 34488760203's summary at 899.5 s
+            # would have been SLOW at 1500 s after 600 s of silence (the
+            # PR #480 review). On `moved`, a silent run falls through to
+            # the stall check, so an iteration ends by ceiling + stall.
+            # The budget stays keyed on `now`: it is the hard one.
             if [ $(( now - moved )) -ge "$stall" ]; then
               if [ "$fin" = 1 ]; then outcome="HANG(exit)"; else outcome="HANG"; fi
-            elif [ $(( now - start )) -ge "$limit" ]; then
-              if [ "$bound" = budget ]; then outcome="BUDGET"; else outcome="SLOW"; fi
+            elif [ $(( now - start )) -ge "$hard" ]; then
+              outcome="BUDGET"
+            elif [ $(( moved - start )) -ge "$ceiling" ]; then
+              outcome="SLOW"
             fi
             if [ -n "$outcome" ]; then
               # USR1 to the parent only, not TERM: pytest's faulthandler

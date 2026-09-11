@@ -78,7 +78,7 @@ matters belongs to the interpreter that runs the tests, not the one that
 launched the probe (#201).
 """
 
-import ast, importlib.util, os, struct, subprocess, sys, time
+import ast, importlib.util, os, signal, struct, subprocess, sys, time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -655,8 +655,9 @@ TARGETS = {
                                "tests/test_worker_start_is_serialised.py",
                                "tests/test_ybr_jpegls_read_doors.py"],
                               30),
-    # 60 sites; budget 60 is stride 1, exhaustive because it is cheap,
-    # like parallel.py's 80.
+    # 79 sites; budget 60 is stride 1 (79 // 60), so every site is
+    # probed, exhaustive because it is cheap, like parallel.py's 80. It
+    # stays stride 1 until the module passes 119 sites.
     #
     # Six files, and it takes the widened `_importers` (#419) to see
     # them: several reach this module as `from isocenter import
@@ -670,8 +671,11 @@ TARGETS = {
     # killed, and a seventh (the sign rule's `or` -> `and` in
     # `_sign_extend_from_bits_stored`) was then pinned by that file's S6
     # and killed by a real edit. Re-measured at stride 1 once #440 deleted
-    # two dead handler hooks (3.12.14): 58 of 60 killed. The
-    # two survivors are both known and both equivalent:
+    # two dead handler hooks (3.12.14): 58 of 60 killed. #478 and
+    # #464 then added 19 sites (`CONVERTS_TO`, `colour_conversion`,
+    # `convert_colour`, `_jpegls_precision`) and those are not yet
+    # re-measured here. The two survivors of the 60 are both known and
+    # both equivalent:
     #   - the decode-error print in `get_pixel_data` is equivalent: the
     #     exception it describes is re-raised carrying the same text;
     #   - the print in `is_available()` is equivalent now. It was the only
@@ -1037,9 +1041,23 @@ def run(tests, timeout):
     # script should rest on. `os.environ` is copied, not replaced -- a bare
     # `env=` dict loses PATH and the failure looks like a killed mutant.
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
-    r = subprocess.run(PYTEST + tests, cwd=REPO, capture_output=True, text=True,
-                       timeout=timeout, env=env)
-    return r.returncode == 0
+    # A session of its own, and the group KILL on a timeout (#476).
+    # `subprocess.run(timeout=)` kills the direct child only, and a mutant
+    # that spins inside a `run_parallel()` worker leaves that worker
+    # running after pytest is gone: reparented to init, at about 77% CPU
+    # in the PR #480 review, and inside every later mutant's timing. The
+    # workers inherit pytest's process group, and `start_new_session`
+    # makes that group pytest's alone, so the KILL reaches them and
+    # nothing else.
+    with subprocess.Popen(PYTEST + tests, cwd=REPO, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True, env=env,
+                          start_new_session=True) as proc:
+        try:
+            proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            raise
+    return proc.returncode == 0
 
 def main():
     argv = sys.argv[1:]

@@ -29,7 +29,6 @@ import pathlib
 import py_compile
 import struct
 import sys
-import types
 
 import pytest
 
@@ -205,11 +204,24 @@ def test_run_disables_bytecode_writing_without_clearing_the_environment(monkeypa
     """
     seen = {}
 
-    def fake_run(cmd, **kwargs):
-        seen.update(kwargs)
-        return types.SimpleNamespace(returncode=0)
+    class FakePopen:
+        # `run()` is a Popen since #476, so it can KILL pytest's process
+        # group on a timeout; the limit reaches `communicate()`.
+        def __init__(self, cmd, **kwargs):
+            seen.update(kwargs)
+            self.returncode = 0
 
-    monkeypatch.setattr(mutation_probe.subprocess, "run", fake_run)
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def communicate(self, timeout=None):
+            seen["timeout"] = timeout
+            return "", ""
+
+    monkeypatch.setattr(mutation_probe.subprocess, "Popen", FakePopen)
     assert mutation_probe.run(["tests/never_actually_runs.py"], 7) is True
     assert seen["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
     # The limit is the caller's, not a constant inside `run()` (#442): a

@@ -27,8 +27,9 @@ spellings such as `sleep 5`, and after a rename it would silently test
 nothing. `test_packaging_contract.py` pins the defaults, and checks that
 nothing in the workflow sets the knobs.
 
-**What each scenario costs.** The whole file took 26.9 s on 3.12.14 and
-27.1 s on 3.14.7t (macOS), all of it on the PR gate's Run Tests step. The script's clock is `date +%s`, which
+**What each scenario costs.** The whole file took 45.5-48.3 s on 3.12.14 and
+46.4-48.7 s on 3.14.7t (macOS, ten runs each), all of it on the PR gate's Run Tests step.
+The script's clock is `date +%s`, which
 has one-second resolution, so no scenario may depend on a sub-second
 limit; every margin below is at least a whole second.
 
@@ -75,6 +76,10 @@ def usr1(signum, frame):
 
 
 signal.signal(signal.SIGUSR1, usr1)
+# pytest's real first line. It is a column-0 run of `=` too, so a summary
+# regex loosened to "a line of `=`" sees a finished run from the start.
+print("============================= test session starts "
+      "==============================", flush=True)
 
 
 def started(i):
@@ -137,10 +142,24 @@ if scenario == "late_summary":
     # summary, then a teardown that is also under it, then exit 0.
     for i in range(3):
         started(i)
-    time.sleep(1.8)
+    time.sleep(3.3)
     summary("3 passed")
-    time.sleep(1.8)
+    time.sleep(3.3)
     sys.exit(0)
+if scenario == "late_hang":
+    # Starts a test every 0.3 s for PROGRESS_S, optionally prints the
+    # summary, then goes silent for good: a hang that begins late in the
+    # iteration, or in teardown after the summary.
+    t_end = time.time() + float(os.environ["PROGRESS_S"])
+    i = 0
+    while time.time() < t_end:
+        started(i)
+        i += 1
+        time.sleep(0.3)
+    if os.environ.get("WITH_SUMMARY"):
+        summary()
+    while True:
+        time.sleep(1)
 if scenario == "sleep_then_clean":
     started(0)
     time.sleep(float(os.environ["FAKE_SECONDS"]))
@@ -186,12 +205,16 @@ def _substituted(inputs):
 
 
 class _Run:
-    def __init__(self, proc, tmp, summary):
+    def __init__(self, proc, tmp, summary, header=True):
         self.rc = proc.returncode
         self.out = proc.stdout + proc.stderr
         self.tmp = tmp
         self.summary = summary
         rows = [line for line in summary.splitlines() if line.startswith("| ")]
+        if not header:
+            assert not rows, f"rows were written:\n{summary}"
+            self.rows, self.outcomes = [], []
+            return
         assert rows and rows[0].startswith("| iter | outcome |"), (
             f"no summary header row was written:\n{summary}")
         self.rows = [[c.strip() for c in r.strip("|").split("|")]
@@ -208,7 +231,8 @@ class _Run:
 
 
 def _run_loop(tmp_path, scenario, *, iterations=1, per_iteration_minutes=30,
-              stall_minutes=2, budget_s=None, extra_env=None, timeout=90):
+              stall_minutes=2, budget_s=None, extra_env=None, timeout=90,
+              header=True):
     """Run the real loop script against the fake, in `tmp_path`."""
     fake = tmp_path / "fake"
     fakebin = tmp_path / "bin"
@@ -250,7 +274,7 @@ def _run_loop(tmp_path, scenario, *, iterations=1, per_iteration_minutes=30,
     proc = subprocess.run([bash, *_GITHUB_BASH, str(script)], cwd=tmp_path,
                           env=env, capture_output=True, text=True,
                           timeout=timeout)
-    return _Run(proc, tmp_path, summary.read_text(encoding="utf-8"))
+    return _Run(proc, tmp_path, summary.read_text(encoding="utf-8"), header)
 
 
 @pytest.fixture(autouse=True)
@@ -346,12 +370,13 @@ def test_the_silence_clock_restarts_at_the_summary(tmp_path):
     The summary line is part of the progress token, so the silence clock
     restarts when it is printed. Without it, the clock runs from the last
     test id, through the summary, and a teardown far shorter than the
-    stall deadline is killed as `HANG(exit)`: 1.8 s of last test plus
-    1.8 s of teardown reaches the 3 s deadline, though neither gap does.
-    The gaps are 1.8 s so the script's one-second `date` cannot decide it
-    either way.
+    stall deadline is killed as `HANG(exit)`: 3.3 s of last test plus
+    3.3 s of teardown reaches the 5 s deadline, though neither gap does.
+    Each gap reads as at most 4 s on the script's whole-second `date`
+    plus a 0.2 s poll, a whole second under 5; the pair reads as at
+    least 6. (At 1.8 s gaps and a 3 s deadline the margin was 0.2 s.)
     """
-    run = _run_loop(tmp_path, "late_summary", stall_minutes=3)
+    run = _run_loop(tmp_path, "late_summary", stall_minutes=5)
     assert run.outcomes == ["clean"], (run.summary, run.out)
     assert run.rc == 0, run.out
 
@@ -361,8 +386,9 @@ def test_a_run_still_progressing_at_the_ceiling_is_slow_not_a_hang(tmp_path):
 
     `SLOW` is no verdict. It warns, stops the loop and exits 0, so a
     re-dispatch with a higher ceiling is the answer, not a blocked
-    release. The fake starts a test every 0.3 s forever. The stall
-    deadline is a minute, so only the 3 s ceiling can end it.
+    release. The fake starts a test every 0.3 s forever, so a test starts
+    after the 3 s ceiling, which is what `SLOW` requires. The stall
+    deadline is a minute, so only the ceiling can end it.
     """
     run = _run_loop(tmp_path, "slow", iterations=3, per_iteration_minutes=3,
                     stall_minutes=60)
@@ -372,6 +398,67 @@ def test_a_run_still_progressing_at_the_ceiling_is_slow_not_a_hang(tmp_path):
     assert run.rc == 0, run.out
     assert run.starts == 1, run.out
     assert "FAKE-USR1-DUMP" in run.log(1), "a SLOW run's dump says where the time went"
+
+
+@pytest.mark.parametrize("with_summary, outcome", [
+    (False, "HANG"),
+    (True, "HANG(exit)"),
+])
+def test_a_hang_that_starts_near_the_ceiling_is_still_a_hang(
+        tmp_path, with_summary, outcome):
+    """Silence that begins less than `stall_minutes` before the ceiling is a hang.
+
+    The PR #480 review's case, on the documented dispatch at
+    `per_iteration_minutes=25`: run 34488760203's summary printed at
+    899.5 s, and a teardown that then hung would have met the 1500 s
+    ceiling after 600 s of silence and been called `SLOW` -- a warning,
+    a green job, "not a hang". The ceiling fired on elapsed time even
+    though nothing had started for most of it.
+
+    `SLOW` now needs a test that **started** at or after the ceiling. A
+    run that went silent before it falls through to the stall deadline,
+    so an iteration ends by ceiling + stall at the latest. The review's
+    scenario was a 12 s ceiling, a 4 s stall and 10 s of progress. This
+    is the same shape at 5, 3 and 3.5 s: at the ceiling the fake has been
+    silent at most 1.7 s real, which the whole-second clock reads as at
+    most 2 s, under the 3 s stall, so the old script said `SLOW` every
+    time. The last test starts at most 4 s (read) after the start, under
+    the ceiling, so the new one never can.
+    """
+    extra = {"PROGRESS_S": "3.5"}
+    if with_summary:
+        extra["WITH_SUMMARY"] = "1"
+    run = _run_loop(tmp_path, "late_hang", iterations=2, per_iteration_minutes=5,
+                    stall_minutes=3, extra_env=extra)
+    assert run.outcomes == [outcome], (run.summary, run.out)
+    assert f"::error::{outcome} on iteration 1" in run.out, run.out
+    assert "::warning::" not in run.out, run.out
+    assert run.rc == 1, run.out
+    # The bound the fall-through keeps: the ceiling plus the stall, plus
+    # the kill's grace, to within the clock's second.
+    assert int(run.rows[0][2]) <= 5 + 3 + 1 + 1, run.summary
+
+
+@pytest.mark.parametrize("name, value", [
+    ("per_iteration_minutes", "12.5"),  # `$(( 12.5 * 60 ))` kills bash mid-script
+    ("stall_minutes", "0"),             # every poll would be a HANG
+    ("stall_minutes", "08"),            # a leading 0 is octal in `$(( ))`
+])
+def test_a_minutes_input_that_is_not_a_positive_whole_number_is_refused(
+        tmp_path, name, value):
+    """The two minute inputs are checked before anything runs, with a message.
+
+    GitHub's `type: number` accepts `12.5`. Before this check the script
+    died on its first `$(( ))` with bash's own error, no `::error::` and
+    no row, so the run read as an unexplained red.
+    """
+    inputs = {"per_iteration_minutes": 30, "stall_minutes": 2}
+    inputs[name] = value
+    run = _run_loop(tmp_path, "clean", header=False, **inputs)
+    assert run.rc == 1, run.out
+    assert f"::error::{name} must be a positive whole number of minutes" in run.out, run.out
+    assert f"'{value}'" in run.out, run.out
+    assert run.starts == 0, run.out
 
 
 def test_an_iteration_that_cannot_fit_the_budget_is_not_started(tmp_path):
@@ -398,22 +485,29 @@ def test_an_iteration_that_cannot_fit_the_budget_is_not_started(tmp_path):
 def test_the_budget_ends_an_iteration_that_would_outrun_it(tmp_path):
     """Inside an iteration the limit is the budget's, when that is nearer.
 
-    This is reviewer item 3's arithmetic. A 4 s budget against a 1 s grace
-    caps the iteration at 3 s, well before its 30 s ceiling, so a run
-    still starting tests is killed as `BUDGET`, not `SLOW`. And a budget
-    that leaves no room for even the kill sequence starts nothing: the
-    limit would be zero or negative, and `longest` is 0 before the first
-    iteration, so that check alone would let it through.
+    This is reviewer item 3's arithmetic. A 6 s budget against a 3 s grace
+    caps the iteration at 3 s, well before its 30 s ceiling. The fake is
+    silent for 30 s under a minute's stall deadline, so only the budget
+    can end it, and it does although no test is starting: the
+    budget-bound limit is hard, where the ceiling waits for the stall.
+    And a budget that leaves no room for even the kill sequence starts
+    nothing: the limit would be zero or negative, and `longest` is 0
+    before the first iteration, so that check alone would let it through.
     """
-    run = _run_loop(tmp_path, "slow", iterations=2, budget_s=4, stall_minutes=60)
+    run = _run_loop(tmp_path, "sleep_then_clean", iterations=2, budget_s=6,
+                    stall_minutes=60,
+                    extra_env={"FAKE_SECONDS": "30", "PROBE_GRACE_S": "3"})
     assert run.outcomes == ["BUDGET"], run.summary
     assert run.starts == 1, run.out
     assert "::warning::BUDGET on iteration 1" in run.out, run.out
     assert run.rc == 0, run.out
-    # The label alone does not show the limit was applied: with the
-    # ceiling left in place the row still says BUDGET, 30 s later. Within
-    # a second of the budget is the whole-second clock's resolution.
-    assert int(run.rows[0][2]) <= 4 + 1, run.summary
+    # The row's seconds include the kill's grace, and the whole
+    # iteration, grace and all, has to fit the budget: 3 s of limit plus
+    # 3 s of grace, within the clock's second. A limit that did not
+    # reserve the grace would be 6 s and the row 9 s. The label alone
+    # shows neither: with the ceiling left in place it still says BUDGET,
+    # 30 s later.
+    assert int(run.rows[0][2]) <= 6 + 1, run.summary
 
     (tmp_path / "second").mkdir()
     run = _run_loop(tmp_path / "second", "clean", iterations=2, budget_s=1)

@@ -1505,7 +1505,8 @@ def test_the_hang_probe_never_runs_on_the_gate():
     assert {"iterations", "start_method", "selection",
             "per_iteration_minutes", "stall_minutes"} <= set(inputs), (
         f"the probe's dispatch inputs are {sorted(inputs)}; the loop "
-        "script and the decision table in CHANGELOG assume all five")
+        "script and the outcome table in the workflow's header assume "
+        "all five")
 
     job = workflow["jobs"]["probe"]
     steps = job["steps"]
@@ -1597,10 +1598,14 @@ def test_the_hang_probe_stall_deadline_outlasts_every_internal_timeout():
     test before faulthandler reports it.
 
     **And the ceiling must exceed the stall deadline.**
-    `per_iteration_minutes` is the wall clock for a run that is still
-    progressing. If it were at or below `stall_minutes`, every stall would
-    reach the ceiling first and be called `SLOW`, which is no verdict, so
-    a real hang would never block a release.
+    `per_iteration_minutes` is the ceiling for a run that is still
+    starting tests. Since the review of PR #480 a stall is judged by
+    `stall_minutes` whatever the ceiling, so this inequality no longer
+    stops a hang from being called `SLOW`; the late-hang test in
+    `test_hang_probe_loop.py` pins that. It stays as a floor: the slowest
+    healthy iteration measured is about 14 minutes, above the 10-minute
+    stall, so a ceiling at or below the stall would call every healthy run
+    `SLOW`, which is no verdict.
     """
     import configparser
 
@@ -1623,8 +1628,9 @@ def test_the_hang_probe_stall_deadline_outlasts_every_internal_timeout():
         f"watchdog's first report ({watchdog_s:g}s) (#427)")
     assert ceiling_s > stall_s, (
         f"per_iteration_minutes ({ceiling_s / 60:g}) does not exceed "
-        f"stall_minutes ({stall_s / 60:g}): every stall reaches the ceiling "
-        "first and reads as SLOW, which blocks nothing (#427)")
+        f"stall_minutes ({stall_s / 60:g}): the ceiling would sit under the "
+        "slowest healthy iteration (about 14 minutes) and every healthy run "
+        "would read as SLOW, which is no verdict (#427)")
 
 
 #: The loop script's test-only knobs and their production defaults. Each

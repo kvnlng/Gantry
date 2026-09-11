@@ -15,13 +15,25 @@ mutant's limit and must not be the thing that times out on a loaded
 machine. If it does time out anyway, the run says so and moves on to the
 next module, where the exception used to escape `main()` and end the run.
 
+A timeout also has to take the whole pytest with it (#476).
+`subprocess.run(timeout=)` kills the direct child only, and a mutant that
+spins inside a `run_parallel()` worker left that worker running, at
+about 77% CPU in the PR #480 review, reparented to init, into every
+later mutant's measurement. `run()` now starts pytest in a session of
+its own and KILLs the process group on a timeout.
+
 This imports the probe script only, never a package module, so it needs
 no `TARGETS` row.
 """
 import ast
+import inspect
+import os
 import pathlib
+import signal
 import subprocess
 import sys
+import textwrap
+import time
 
 import pytest
 
@@ -171,3 +183,82 @@ def test_a_control_that_times_out_is_reported_and_the_run_goes_on(
             f"{mutation_probe.CONTROL_TIMEOUT_S}s -- results unusable") in out, out
     assert "=> killed 5/5, SURVIVED 0/5" in out, out
     assert (tmp_path / "first.py").read_text(encoding="utf-8") == _FIVE_SITE_SRC
+
+
+def test_run_takes_its_timeout_from_every_caller():
+    """`run()`'s `timeout` has no default, so no caller can forget it.
+
+    A default is the flat 900 s coming back through the one call site
+    that omits the argument (#442). Every other test here passes it, so
+    a default would pass all of them.
+    """
+    param = inspect.signature(mutation_probe.run).parameters["timeout"]
+    assert param.default is inspect.Parameter.empty, param
+
+
+def _gone(pid, within=5.0):
+    """True once `pid` no longer exists, or is a zombie awaiting its reaper."""
+    deadline = time.monotonic() + within
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                               capture_output=True, text=True).stdout.strip()
+        if state.startswith("Z"):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_a_timed_out_run_takes_its_whole_process_group_with_it(tmp_path, monkeypatch):
+    """A mutant's timeout kills pytest's workers too, not pytest alone (#476).
+
+    The stand-in for pytest starts a child, as `run_parallel()` starts its
+    pool workers, and both then sleep past the timeout. A plain child is
+    enough: a spawn pool worker is in pytest's process group for the same
+    reason this one is, by inheritance, and costs a second to start. The
+    PR #480 review measured the real shape: after
+    `subprocess.run(timeout=)`, busy spawn workers still ran at about 77%
+    CPU, reparented to init.
+
+    The stand-in sleeps 30 s and its worker 120 s, and `run()` must raise
+    within seconds of its 2 s limit. Without that bound, a `run()` that
+    kills nothing passes: `Popen`'s `with` waits for the child, and if
+    both slept equally long they would exit together, before `_gone`
+    looked.
+    """
+    pidfile = tmp_path / "grandchild.pid"
+    child = tmp_path / "fake_pytest.py"
+    child.write_text(textwrap.dedent(f"""\
+        import subprocess, sys, time
+        worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        with open({str(pidfile)!r}, "w") as f:
+            f.write(str(worker.pid))
+        time.sleep(30)
+        """), encoding="utf-8")
+    monkeypatch.setattr(mutation_probe, "PYTEST", [sys.executable, str(child)])
+    monkeypatch.setattr(mutation_probe, "REPO", tmp_path)
+    grandchild = None
+    try:
+        started = time.monotonic()
+        with pytest.raises(subprocess.TimeoutExpired):
+            mutation_probe.run([], 2)
+        assert time.monotonic() - started < 2 + 8, (
+            "run() waited for the timed-out pytest to exit by itself: "
+            "nothing was killed")
+        assert pidfile.exists(), "the stand-in never started its worker"
+        grandchild = int(pidfile.read_text())
+        assert _gone(grandchild), (
+            "the timed-out pytest's worker outlived it: the timeout killed "
+            "the direct child only, not its process group")
+    finally:
+        if grandchild is None and pidfile.exists():
+            grandchild = int(pidfile.read_text())
+        if grandchild is not None:
+            try:
+                os.kill(grandchild, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
