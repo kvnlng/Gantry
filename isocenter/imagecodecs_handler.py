@@ -14,6 +14,13 @@ ingest's fallback, which decodes exactly the frames its caller asks for
 because that caller has already counted the table and decided (#418's
 truncation, which a refusal here would turn into a rejected file).
 
+**Signed samples (#446).** `ljpeg_decode` and `jpegls_decode` return the
+masked unsigned pattern of every sample; `_decode_frame` sign-extends it
+from BitsStored for JPEG Lossless and JPEG-LS when PixelRepresentation is
+1, so both decoders return the signed values the file stores. JPEG 2000
+is not corrected: `jpeg2k_decode` already returns signed samples. See
+`_sign_extend_from_bits_stored`.
+
 **Its limit, stated.** An *empty* Basic Offset Table with no Extended
 Offset Table is legal (PS3.5 A.4) and names no frames, and the fragments
 alone do not say where one frame ends and the next begins -- one frame
@@ -389,10 +396,14 @@ def get_pixel_data(ds):
         ds (pydicom.Dataset): The dataset containing PixelData.
 
     Returns:
-        np.ndarray: The decoded pixel array.
+        np.ndarray: The decoded pixel array. A signed (PixelRepresentation
+        1) JPEG Lossless or JPEG-LS frame comes back signed, sign-extended
+        from BitsStored (#446), where it used to come back as its unsigned
+        bit pattern.
 
     Raises:
-        RuntimeError: If imagecodecs is missing or decoding fails, or if
+        RuntimeError: If imagecodecs is missing (naming the import
+            failure, #444) or decoding fails, or if
             the offset table names a different number of frames from
             NumberOfFrames (#418) -- "<table> names N frames;
             NumberOfFrames declares M".

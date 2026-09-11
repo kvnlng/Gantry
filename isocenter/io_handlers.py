@@ -1458,21 +1458,24 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
                              pydicom_error) -> Tuple[np.ndarray, str]:
     """`_decode_pixels`' fallback: decode, then refuse what does not fit.
 
-    A generic fallback would store wrong values, measured: a signed 12-bit
-    JPEG Lossless frame comes back from `imagecodecs` as unsigned samples
-    with no sign extension, -800 read as 3296 (`Instance.get_pixel_data()`
-    returns the same wrong values; that is #446). So the decode is
-    accepted only when it passes every check below against the header,
-    and refused -- keeping pydicom's reason first, so the ingest row
-    still reads `Decompression Failed: <pydicom's words>` -- when:
+    A generic fallback would store whatever the codec returned, and a
+    codec's output can disagree with the header. The signed JPEG Lossless
+    and JPEG-LS case #416 measured -- -800 read as 3296 -- is now decoded
+    correctly by the handler, which sign-extends from BitsStored (#446);
+    the dtype check below stays for what it still refuses, a JPEG 2000
+    codestream whose signedness contradicts PixelRepresentation. So the
+    decode is accepted only when it passes every check below against the
+    header, and refused -- keeping pydicom's reason first, so the ingest
+    row still reads `Decompression Failed: <pydicom's words>` -- when:
 
     - **the colour space is not one it labels under this syntax.**
       `imagecodecs` does not say what colour space it returned, or how it
-      laid the samples out, so the declared label is all there is. It is
-      repeated only where a decode under that syntax has been measured to
-      match it; see `_FALLBACK_PHOTOMETRICS`. This is also what keeps out
-      the one mismatch the checks after the decode cannot see: a
-      planar/interleaved swap has the right dtype, size and shape.
+      laid the samples out, so the stored label is what a decode under
+      that syntax has been measured to return for the declared one; see
+      `_FALLBACK_PHOTOMETRICS`. A declaration with no entry is refused.
+      This is also what keeps out the one mismatch the checks after the
+      decode cannot see: a planar/interleaved swap has the right dtype,
+      size and shape.
     - **the offset table disagrees in a way the caller has not handled.**
       Fewer frames than declared is always refused. An excess is decoded
       to the declared frames only when the caller passed
@@ -1491,7 +1494,10 @@ def _decode_with_imagecodecs(ds, allow_excess_frames,
     Returns:
         ``(array, photometric)`` in the shape `pixel_array` returns --
         ``(rows, cols[, samples])`` for one frame, ``(frames, ...)`` for
-        more -- and the declared Photometric Interpretation.
+        more -- and the Photometric Interpretation the array is in, from
+        `_FALLBACK_PHOTOMETRICS`: the declared one, or `RGB` where the
+        decode converted it (#448). Both callers relabel from it, as
+        they do from pydicom's meta (#372).
     """
     def refused(why):
         return RuntimeError(
