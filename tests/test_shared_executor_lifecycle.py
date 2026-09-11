@@ -39,9 +39,10 @@ class TestSharedExecutorLifecycle(unittest.TestCase):
     def test_export_uses_fresh_recycled_pool_not_shared_executor(self, mock_save, mock_run_parallel):
         """Verify that export builds its own recycling pool instead of reusing the shared executor.
 
-        ProcessPoolExecutor (the shared self._executor used by ingest) doesn't support
-        worker recycling, so long export batches would leak memory across workers if they
-        reused it. Export must always pass its own maxtasksperchild-bounded pool to
+        The shared self._executor used by ingest is built without worker recycling --
+        and on 3.12, the floor, ProcessPoolExecutor's max_tasks_per_child deadlocks map at
+        the first replacement, so it cannot be given any (#501) -- so long export batches
+        would leak memory across workers if they reused it. Export must always pass its own maxtasksperchild-bounded pool to
         run_parallel rather than the shared executor.
         """
         mock_run_parallel.return_value = []

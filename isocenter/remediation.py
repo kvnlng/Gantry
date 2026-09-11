@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from tqdm import tqdm
 from .entities import PhiStatus
 from .privacy import PhiFinding, PhiRemediation
-from .logger import get_logger
+from .logger import describe_exception, get_logger
 
 #: Every action type `_apply_single_remediation` emits, spelled once for
 #: the report's evidence check: a session that anonymized must find at
@@ -176,7 +176,7 @@ class RemediationService:
                 self.logger.error(
                     f"Failed to apply remediation for {
                         finding.entity_uid} ({
-                        finding.field_name}): {e}")
+                        finding.field_name}): {describe_exception(e)}")
 
         if folded_keys:
             self.logger.info(

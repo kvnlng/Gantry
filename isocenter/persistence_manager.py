@@ -8,7 +8,7 @@ import weakref
 from typing import List
 from .entities import Patient
 from .persistence import SqliteStore
-from .logger import get_logger
+from .logger import describe_exception, get_logger
 
 #: How long `flush()` waits before saying what it is waiting for.
 #:
@@ -250,7 +250,7 @@ def _persistence_worker_loop(manager_ref, work_queue):
                 except Exception as exc:  # pylint: disable=broad-except
                     get_logger().error(
                         "PersistenceManager worker could not write the "
-                        f"saves queued behind its sentinel: {exc} (#319).")
+                        f"saves queued behind its sentinel: {describe_exception(exc)} (#319).")
                 break
 
             # Perform the save
@@ -265,7 +265,7 @@ def _persistence_worker_loop(manager_ref, work_queue):
                 manager.store_backend.save_all(
                     patients, prune_absent_patients=prune_absent_patients)
             except Exception as e:  # pylint: disable=broad-except
-                get_logger().error(f"Background save failed: {e}")
+                get_logger().error(f"Background save failed: {describe_exception(e)}")
             finally:
                 # Cleared *before* `task_done()`, and the ordering is
                 # load-bearing in two ways. Reversed, a flush woken by
@@ -292,7 +292,7 @@ def _persistence_worker_loop(manager_ref, work_queue):
                 work_queue.task_done()
 
         except Exception as e:  # pylint: disable=broad-except
-            get_logger().error(f"Worker crashed: {e}")
+            get_logger().error(f"Worker crashed: {describe_exception(e)}")
         finally:
             # The one-second wait above is reached with no strong
             # reference held. See the docstring.
@@ -842,7 +842,7 @@ class PersistenceManager:
                 except ValueError as exc:
                     get_logger().error(
                         "PersistenceManager counted off more tasks than the "
-                        f"queue is holding: {exc} (#314).")
+                        f"queue is holding: {describe_exception(exc)} (#314).")
 
     def _report_unreconciled(self, message):
         """Say -- on both channels -- that a save did not reach the store.
@@ -871,4 +871,4 @@ class PersistenceManager:
         except Exception as exc:  # pylint: disable=broad-except
             get_logger().error(
                 f"PersistenceManager could not record the unreconciled "
-                f"save in the audit log: {exc}")
+                f"save in the audit log: {describe_exception(exc)}")

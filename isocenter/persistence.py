@@ -31,7 +31,7 @@ from .entities import (Patient, Study, Series, Instance, Equipment,
 from . import entities
 from .blob_kind import parse_blob_kind, serialize_blob_kind
 from .sidecar import SidecarManager
-from .logger import get_logger
+from .logger import describe_exception, get_logger
 from .privacy import PhiFinding, PhiRemediation
 from .io_handlers import (NestedPixelRef, SidecarPixelLoader,
                           nested_item_geometry)
@@ -516,7 +516,7 @@ def _audit_worker_loop(store_ref, stop_event, wakeup, audit_queue):
             store._drain_and_write()
         except Exception as e:  # pylint: disable=broad-except
             # Don't crash thread
-            store.logger.error(f"Audit Worker Error: {e}")
+            store.logger.error(f"Audit Worker Error: {describe_exception(e)}")
         finally:
             del store
 
@@ -1754,7 +1754,7 @@ class SqliteStore:
                 self._audit_rows_dropped += len(entries)
             self.logger.error(
                 f"Failed to batch log audit; {len(entries)} row(s) "
-                f"dropped: {e}")
+                f"dropped: {describe_exception(e)}")
 
     def load_all(self) -> List[Patient]:
         """
@@ -1890,7 +1890,7 @@ class SqliteStore:
                         except (json.JSONDecodeError, TypeError) as exc:
                             self.logger.error(
                                 "Could not decode stored attributes for "
-                                "instance %s: %s", r['sop_instance_uid'], exc)
+                                "instance %s: %s", r['sop_instance_uid'], describe_exception(exc))
 
                     self._apply_vertical_attributes(
                         inst, vertical.get(r['sop_instance_uid'], {}),
@@ -1945,7 +1945,7 @@ class SqliteStore:
 
         except sqlite3.Error as e:
             # print(f"DEBUG: Failed to load from DB: {e}")
-            self.logger.error(f"Failed to load PDF from DB: {e}")
+            self.logger.error(f"Failed to load PDF from DB: {describe_exception(e)}")
             traceback.print_exc()
             return []
 
@@ -2064,7 +2064,7 @@ class SqliteStore:
                                     self.logger.error(
                                         "Could not decode stored attributes "
                                         "for instance %s: %s",
-                                        r['sop_instance_uid'], exc)
+                                        r['sop_instance_uid'], describe_exception(exc))
 
                             # Wire up Sidecar. Duplicates load_all's loader
                             # construction below; the two have drifted apart
@@ -2111,7 +2111,7 @@ class SqliteStore:
                 p.mark_subtree_persisted()
                 return p
         except sqlite3.Error as e:
-            self.logger.error(f"Failed to load patient: {e}")
+            self.logger.error(f"Failed to load patient: {describe_exception(e)}")
             return None
 
     def _serialize_item(self, item: Instance) -> Dict[str, Any]:
@@ -2308,7 +2308,7 @@ class SqliteStore:
             # raise reaches `save_all`, which rolls back and leaves the
             # instances dirty (see
             # `test_a_failed_save_reports_the_error_that_caused_it`).
-            self.logger.error(f"Failed to save vertical attributes for {instance_uid}: {e}")
+            self.logger.error(f"Failed to save vertical attributes for {instance_uid}: {describe_exception(e)}")
             raise
 
     def load_vertical_attributes(self, instance_uid: str) -> Dict[Tuple[str, str], Any]:
@@ -2809,7 +2809,7 @@ class SqliteStore:
             with self._hold_sidecar_gate():
                 self._swap_pixels_under_gate(instance)
         except Exception as e:
-            self.logger.error(f"Failed to persist pixel swap for {instance.sop_instance_uid}: {e}")
+            self.logger.error(f"Failed to persist pixel swap for {instance.sop_instance_uid}: {describe_exception(e)}")
             raise
 
     def _swap_pixels_under_gate(self, instance: Instance):
@@ -3727,7 +3727,7 @@ class SqliteStore:
                 row = cur.execute("SELECT COUNT(*) FROM instances").fetchone()
                 return row[0] if row else 0
         except sqlite3.Error as e:
-            self.logger.error(f"Failed to count instances: {e}")
+            self.logger.error(f"Failed to count instances: {describe_exception(e)}")
             return 0
 
     def get_flattened_instances(self,
@@ -3938,7 +3938,7 @@ class SqliteStore:
                 self.logger.info("Update complete.")
 
         except sqlite3.Error as e:
-            self.logger.error(f"Failed to update attributes: {e}")
+            self.logger.error(f"Failed to update attributes: {describe_exception(e)}")
 
     def save_findings(self, findings: List[PhiFinding]):
         """
@@ -3990,7 +3990,7 @@ class SqliteStore:
                 self.logger.info("Findings saved.")
 
         except sqlite3.Error as e:
-            self.logger.error(f"Failed to save findings: {e}")
+            self.logger.error(f"Failed to save findings: {describe_exception(e)}")
 
     def load_findings(self) -> List[PhiFinding]:
         """
@@ -4034,7 +4034,7 @@ class SqliteStore:
                     findings.append(f)
 
         except sqlite3.Error as e:
-            self.logger.error(f"Failed to load findings: {e}")
+            self.logger.error(f"Failed to load findings: {describe_exception(e)}")
 
         return findings
 
@@ -4111,7 +4111,7 @@ class SqliteStore:
             return uid_map
 
         except Exception as exc:
-            self.logger.error(f"Compaction Failed: {exc}")
+            self.logger.error(f"Compaction Failed: {describe_exception(exc)}")
             self._discard_compaction_artefacts(temp_path, backup_path)
             raise
 
@@ -4166,7 +4166,7 @@ class SqliteStore:
                 ]
             return live_rows, orphan_ids
         except sqlite3.Error as exc:
-            self.logger.error(f"Compaction Failed (Query): {exc}")
+            self.logger.error(f"Compaction Failed (Query): {describe_exception(exc)}")
             raise
 
     def _rewrite_live_frames(self, rows, temp_path):
@@ -4271,7 +4271,7 @@ class SqliteStore:
                 os.remove(temp_path)
             except OSError as exc:
                 self.logger.warning(
-                    "Could not remove temporary sidecar %s: %s", temp_path, exc)
+                    "Could not remove temporary sidecar %s: %s", temp_path, describe_exception(exc))
 
         # Only ever discard the backup once the real sidecar is back in
         # place -- otherwise it is the last copy of the data.
@@ -4281,7 +4281,7 @@ class SqliteStore:
             except OSError as exc:
                 self.logger.warning(
                     "Could not remove stale sidecar backup %s: %s",
-                    backup_path, exc)
+                    backup_path, describe_exception(exc))
 
     def _log_compaction_result(self, start_time, original_size, written_bytes):
         """Reports how much space the rewrite reclaimed."""

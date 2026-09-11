@@ -287,6 +287,136 @@ def test_the_shared_session_executor_pins_spawn(tmp_path, monkeypatch):
             "#250)")
 
 
+def _record_session_pools(monkeypatch):
+    """Records the keyword arguments of every `ProcessPoolExecutor(...)` built."""
+    import concurrent.futures
+
+    calls = []
+    real = concurrent.futures.ProcessPoolExecutor
+
+    class Recording(real):
+        def __init__(self, *args, **kwargs):
+            calls.append(kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", Recording)
+    return calls
+
+
+def test_the_shared_session_executor_is_sized_by_isocenter_max_workers(
+        tmp_path, monkeypatch):
+    """`ISOCENTER_MAX_WORKERS` sizes the pool `ingest()` runs on (#501).
+
+    `Session.__init__` built `ProcessPoolExecutor(max_workers=None)`, so
+    the stdlib chose the width, one per CPU. The variable every
+    worker-count doc points at was read by `run_parallel` and by
+    `redact()`, and never by the pool that `ingest()` is handed. Measured
+    on 49e135a with 14 CPUs: 14 workers with the variable at `2`, on
+    3.12.14 and on 3.14.7t alike. The shared pool is processes on both
+    builds; only `run_parallel`'s own pool takes threads on 3.14t.
+
+    Asserted on the constructor argument, as the spawn test above is.
+    Reading `_max_workers` afterwards would see the stdlib's default
+    under the mutant, and the test would only be right on a machine
+    whose CPU count happened to match. Killing mutation: the
+    constructor's `max_workers` reverted to `None`.
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "2")
+    calls = _record_session_pools(monkeypatch)
+
+    with DicomSession(str(tmp_path / "s.db")):
+        pass
+
+    assert calls, "Session() built no ProcessPoolExecutor at all"
+    assert calls[0].get("max_workers") == 2, (
+        f"the session's shared pool was built with {calls[0]!r} under "
+        "ISOCENTER_MAX_WORKERS=2. ingest() runs on that pool, so the "
+        "documented way to narrow a run did not narrow ingest")
+
+
+def test_the_shared_session_executor_defaults_to_one_worker_per_cpu(
+        tmp_path, monkeypatch):
+    """Unset, the shared pool gets `run_parallel`'s default (#501).
+
+    The CPU count is pinned to 3, which is neither this box's count nor
+    a runner's, so the number cannot be right by coincidence. Killing
+    mutations: the kwarg reverted to `None` (it is then `None`, not 3);
+    the default computed as the `CPU * 1.5` the stale comment at the
+    constructor claimed (4, not 3).
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.delenv("ISOCENTER_MAX_WORKERS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 3)
+    calls = _record_session_pools(monkeypatch)
+
+    with DicomSession(str(tmp_path / "s.db")):
+        pass
+
+    assert calls and calls[0].get("max_workers") == 3, (
+        f"with ISOCENTER_MAX_WORKERS unset and 3 CPUs the shared pool was "
+        f"built with {calls[0] if calls else None!r}; run_parallel's "
+        "default is one worker per CPU")
+
+
+def test_a_restarted_shared_executor_is_sized_the_same_way(
+        tmp_path, monkeypatch):
+    """`_restart_executor()` resolves the width construction does; an argument wins.
+
+    The OOM-recovery path rebuilds with `max_workers=None` by default, so
+    even after construction honoured the variable, a restart would have
+    undone it. An explicit argument, the "fewer workers" its docstring
+    promises, still wins. Killing mutations: `_restart_executor`'s
+    default passed through as `None`; the explicit argument ignored in
+    favour of the resolver.
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "2")
+    calls = _record_session_pools(monkeypatch)
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        session._restart_executor()
+        session._restart_executor(max_workers=1)
+
+    assert [kwargs.get("max_workers") for kwargs in calls] == [2, 2, 1], (
+        f"pool widths across construction, a bare restart and a "
+        f"restart(max_workers=1): {[k.get('max_workers') for k in calls]}")
+
+
+def test_a_zero_worker_count_is_reported_when_the_session_opens(
+        tmp_path, monkeypatch, caplog):
+    """`0` warns at `Session()`, and the shared pool gets the default (#501).
+
+    Now that construction reads the variable, it has to read it through
+    the same floor `_resolve_strategy` does (#335, #341). Otherwise `0`
+    reaches `ProcessPoolExecutor`, which raises `ValueError: max_workers
+    must be greater than 0` without naming any variable, and the session
+    does not open. Killing mutation: the helper reading the variable
+    with `minimum=None`.
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "0")
+    monkeypatch.setattr(os, "cpu_count", lambda: 3)
+    calls = _record_session_pools(monkeypatch)
+
+    with caplog.at_level(logging.WARNING):
+        with DicomSession(str(tmp_path / "s.db")):
+            pass
+
+    assert calls and calls[0].get("max_workers") == 3, (
+        f"a rejected worker count must fall back to the default, got "
+        f"{calls[0] if calls else None!r}")
+    assert any("ISOCENTER_MAX_WORKERS" in record.getMessage()
+               and "0" in record.getMessage()
+               for record in caplog.records), (
+        "0 was discarded at Session() without a warning naming the "
+        "variable and the value")
+
+
 def test_the_shared_executor_gets_no_initializer_without_a_lever(
         tmp_path, monkeypatch):
     """`Session.__init__` calls `resolve_worker_initializer()` bare (#365).
@@ -617,8 +747,10 @@ def test_a_lever_set_both_ways_runs_in_threads(monkeypatch):
     escape hatch for an environment where processes do not work, and an
     escape hatch that a second variable can veto is not one.
 
-    Worker recycling beats both, whichever way they are set: only
-    `multiprocessing.Pool` implements `maxtasksperchild`. That is why
+    Worker recycling beats both, whichever way they are set: on 3.12,
+    the floor, only `multiprocessing.Pool` recycles workers
+    (`ProcessPoolExecutor(max_tasks_per_child=)` deadlocks `map` there at
+    the first replacement). That is why
     `session.export()`, which passes `maxtasksperchild=25`, ignores both
     force variables entirely (#185).
 
@@ -637,7 +769,7 @@ def test_a_lever_set_both_ways_runs_in_threads(monkeypatch):
         "docs/environment.md says the reverse")
     assert _threads_chosen(False, 25, "the maxtasksperchild argument") is False, (
         "worker recycling was asked for and threads were chosen anyway; "
-        "only multiprocessing.Pool implements maxtasksperchild")
+        "on 3.12 only multiprocessing.Pool recycles workers")
 
 
 def test_only_the_literal_one_switches_a_flag_on(monkeypatch):
@@ -807,8 +939,9 @@ def test_an_explicit_zero_worker_count_is_not_an_environment_typo(monkeypatch):
 # --------------------------------------------------------------------
 #
 # `session.export()` passes `maxtasksperchild=25`, and worker recycling
-# rules threads out however the rest of the environment is set -- only
-# `multiprocessing.Pool` implements it. So the export path runs in
+# rules threads out however the rest of the environment is set -- on
+# 3.12, the floor, only `multiprocessing.Pool` recycles workers without
+# deadlocking. So the export path runs in
 # processes on every interpreter, including a free-threaded build, and
 # `ISOCENTER_FORCE_THREADS` cannot change that. That is a decision (the
 # recycling reclaims memory leaked by the imaging C libraries, and a

@@ -34,7 +34,8 @@ from .persistence import SqliteStore
 from .crypto import KeyManager
 from .reversibility import ReversibilityService
 from .persistence_manager import PersistenceManager
-from .parallel import run_parallel, _env_int, _resolve_strategy, resolve_worker_initializer
+from .parallel import (run_parallel, _env_int, _resolve_strategy,
+                       resolve_max_workers, resolve_worker_initializer)
 from .configuration import IsocenterConfiguration, FlowList
 from .entities import (PhiStatus, SOURCE_SOP_UID_ATTR, clone_sequences,
                        resolve_item_path, iter_item_tree)
@@ -336,7 +337,7 @@ def _load_redaction_knowledge_base() -> List[Dict[str, Any]]:
             return json.load(f).get("machines", [])
     except (OSError, json.JSONDecodeError) as exc:
         get_logger().warning(
-            "Could not read the redaction knowledge base at %s: %s", path, exc)
+            "Could not read the redaction knowledge base at %s: %s", path, describe_exception(exc))
         return []
 
 
@@ -359,7 +360,7 @@ def _load_ctp_rules() -> List[Dict[str, Any]]:
             data = yaml.safe_load(f) if path.endswith('.yaml') else json.load(f)
         return (data or {}).get("rules", [])
     except (OSError, ValueError, yaml.YAMLError) as exc:
-        get_logger().warning("Failed to load CTP rules: %s", exc)
+        get_logger().warning("Failed to load CTP rules: %s", describe_exception(exc))
         return []
 
 
@@ -881,7 +882,14 @@ class DicomSession:
         # spawn, which is why nothing local ever saw the difference
         # (#220, #250).
         self._executor = concurrent.futures.ProcessPoolExecutor(
-            max_workers=None,  # Default: CPU * 1.5
+            # Sized by the resolver `run_parallel` uses, so
+            # `ISOCENTER_MAX_WORKERS` narrows `ingest()` as it narrows
+            # every other parallel step. Until #501 this was `None`: the
+            # stdlib gave one worker per CPU whatever the variable said,
+            # under a comment claiming CPU * 1.5. Read once, here. A
+            # value set after `Session()` reaches the next restart, not
+            # this pool.
+            max_workers=resolve_max_workers(),
             mp_context=multiprocessing.get_context("spawn"),
             # The same env-gated worker setup as run_parallel's pools
             # (GC off, child-side faulthandler watchdog); resolved by
@@ -937,7 +945,7 @@ class DicomSession:
             try:
                 step()
             except Exception as exc:  # pylint: disable=broad-except
-                get_logger().error(f"Error during session close(): {exc}", exc_info=True)
+                get_logger().error(f"Error during session close(): {describe_exception(exc)}", exc_info=True)
                 if first_exception is None:
                     first_exception = exc
 
@@ -1098,7 +1106,16 @@ class DicomSession:
         """
         Restarts the internal process pool executor, potentially with fewer workers.
         Useful for recovering from BrokenProcessPool errors (OOM).
+
+        With no argument the width is resolved as construction resolves
+        it: `ISOCENTER_MAX_WORKERS`, else one per CPU, re-read now.
         """
+        if max_workers is None:
+            # Not the stdlib's `None`, which is one per CPU. An OOM restart
+            # that widened the pool back past `ISOCENTER_MAX_WORKERS`
+            # would undo the setting at exactly the moment memory is short
+            # (#501).
+            max_workers = resolve_max_workers()
         get_logger().warning(f"Restarting ProcessPoolExecutor (max_workers={max_workers})...")
         if self._executor:
             try:
@@ -1108,7 +1125,7 @@ class DicomSession:
                 # The executor is being replaced regardless; a failure to
                 # shut the old one down is worth a line in the log, not a
                 # crash.
-                get_logger().debug("Could not shut down prior executor: %s", exc)
+                get_logger().debug("Could not shut down prior executor: %s", describe_exception(exc))
 
         # Re-init, with the same spawn pin as construction: an OOM
         # recovery must not quietly downgrade the pool to fork (#220),
@@ -1889,7 +1906,7 @@ class DicomSession:
                 output_path, len(machine_rules))
             print(f"Scaffolded Unified Config to {output_path}")
         except OSError as exc:
-            get_logger().error("Failed to write scaffold: %s", exc)
+            get_logger().error("Failed to write scaffold: %s", describe_exception(exc))
 
     def _scaffold_machine_rules(self) -> List[Dict[str, Any]]:
         """Builds a redaction rule for every machine not already configured.
@@ -3362,8 +3379,9 @@ class DicomSession:
                 so there is nothing to undo (#368).
             RuntimeError: On a `":memory:"` store when the environment
                 asks for worker recycling -- `ISOCENTER_MAX_TASKS_PER_CHILD`
-                -- because only `multiprocessing.Pool` implements it and
-                a spawned worker cannot reach an in-memory database, so
+                -- because on 3.12, the floor, only
+                `multiprocessing.Pool` recycles workers, and a spawned
+                worker cannot reach an in-memory database, so
                 every task would fail with `no such table:
                 instance_blobs`. The message names the store, the
                 variable, why processes cannot work here, and two
@@ -4550,12 +4568,14 @@ class DicomSession:
 
         Uses `export_batch`'s own pool rather than `self._executor`: workers
         are recycled every 25 tasks so memory leaked by the imaging C
-        libraries is reclaimed, which `ProcessPoolExecutor` cannot do.
+        libraries is reclaimed, which `ProcessPoolExecutor` cannot do on
+        3.12 (its `max_tasks_per_child` deadlocks `map` at the first
+        replacement there; #501).
 
         **Processes here are a decision, not an accident (#185).** Asking
         for `maxtasksperchild` rules threads out in
         `_resolve_execution_choice` --
-        only `multiprocessing.Pool` implements recycling -- so this, the
+        on 3.12 only `multiprocessing.Pool` recycles workers -- so this, the
         heaviest path in the library and the one that pickles the most,
         runs in processes on **every** interpreter, including a
         free-threaded build where every other `run_parallel` call site
@@ -4594,7 +4614,7 @@ class DicomSession:
                 disable_gc=True,
                 store_backend=store_backend)
         except Exception as exc:
-            get_logger().error("Export Failed! Error: %s", exc)
+            get_logger().error("Export Failed! Error: %s", describe_exception(exc))
             raise
         finally:
             gc.collect()
@@ -4683,7 +4703,7 @@ class DicomSession:
                     "Please install a Parquet engine to write .parquet: "
                     "pip install pyarrow") from e
             except Exception as e:
-                get_logger().error(f"Failed to export parquet: {e}")
+                get_logger().error(f"Failed to export parquet: {describe_exception(e)}")
                 raise
         else:
             df.to_csv(output_path, index=False)

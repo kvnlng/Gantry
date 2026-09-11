@@ -806,7 +806,7 @@ class RedactionService:
             # `original_uid`, not the live attribute: this line names the
             # identity the parent's failure row carries, and a sibling
             # worker may have moved `inst.sop_instance_uid` by now (#257).
-            self.logger.error(f"  Failed {original_uid}: {e}")
+            self.logger.error(f"  Failed {original_uid}: {describe_exception(e)}")
             return RedactionOutcome(ok=False, sop_instance_uid=original_uid,
                                     error=describe_exception(e))
         finally:
@@ -1100,7 +1100,7 @@ class RedactionService:
                     (original_uid,
                      f"Redaction failed for {original_uid}: "
                      f"{describe_exception(e)}"))
-                self.logger.error(f"  Failed {inst.sop_instance_uid}: {e}")
+                self.logger.error(f"  Failed {inst.sop_instance_uid}: {describe_exception(e)}")
             finally:
                 # Memory cleanup only; the persist is in the `try` (#474).
                 #
@@ -1254,7 +1254,7 @@ class RedactionService:
                 # ERROR row and raise `RedactionError` after the pass (#213).
                 get_logger().error(
                     "Redaction zone %s could not be applied to an array of "
-                    "shape %s: %s", tuple(roi), arr.shape, exc)
+                    "shape %s: %s", tuple(roi), arr.shape, describe_exception(exc))
                 raise
 
         return modified

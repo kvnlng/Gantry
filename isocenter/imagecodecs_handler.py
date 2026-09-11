@@ -54,6 +54,8 @@ import numpy as np
 from pydicom.uid import UID
 from pydicom.encaps import generate_frames, parse_basic_offsets
 from pydicom.pixels import convert_color_space
+
+from .logger import describe_exception
 IMPORT_ERROR = None
 try:
     import imagecodecs
@@ -71,8 +73,22 @@ def is_available():
     """
     if imagecodecs is None:
         # Log to stderr so it appears in logs even if pydicom swallows the handler check
+        #
+        # `describe_exception`, not `{IMPORT_ERROR}` (#500). A broken
+        # `imagecodecs` install whose `__init__` ends in a bare `raise
+        # ImportError` renders as `str()` of nothing, so this line said
+        # "NOT AVAILABLE. Import Error: " and named neither the type nor
+        # a reason. The `if` is not defensive about a missing global: a
+        # test may set `imagecodecs` to None on its own to exercise the
+        # unavailable path (`tests/test_imagecodecs_edge_cases.py::
+        # test_is_available_import_error`), leaving `IMPORT_ERROR` at its
+        # import-time None, and `describe_exception(None)` has no type to
+        # name. `_unavailable()` below guards the same case for the same
+        # reason.
+        reason = (describe_exception(IMPORT_ERROR)
+                  if IMPORT_ERROR is not None else "none recorded")
         print(
-            f"[isocenter_imagecodecs_handler] NOT AVAILABLE. Import Error: {IMPORT_ERROR}",
+            f"[isocenter_imagecodecs_handler] NOT AVAILABLE. Import Error: {reason}",
             file=sys.stderr)
         return False
     return True
@@ -872,7 +888,7 @@ def get_pixel_data(ds):
 
     except Exception as e:
         print(
-            f"[isocenter_imagecodecs_handler] Decode error for {transfer_syntax}: {e}",
+            f"[isocenter_imagecodecs_handler] Decode error for {transfer_syntax}: {describe_exception(e)}",
             file=sys.stderr)
         raise RuntimeError(f"imagecodecs failed to decode {transfer_syntax}: {e}") from e
 

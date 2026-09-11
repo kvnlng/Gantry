@@ -281,6 +281,29 @@ def _env_is(name: str, values) -> bool:
     return os.environ.get(name, "").lower() in values
 
 
+def resolve_max_workers() -> int:
+    """The default worker count: `ISOCENTER_MAX_WORKERS`, else one per CPU.
+
+    The one place that expression is computed (#333). `_resolve_strategy`
+    calls it when no `max_workers` argument is given, and `Session` calls
+    it to size its shared pool and every restart of that pool (#501).
+    Until #501 the shared pool was built with `max_workers=None` and the
+    stdlib chose its width, so the variable narrowed every `run_parallel`
+    call and `redact()`, but never the pool `ingest()` runs on. It is a
+    helper rather than a `_resolve_strategy` call because the session
+    needs this one number, and resolving a whole strategy at `Session()`
+    would read five other variables and emit their warnings when the
+    session opens.
+
+    One worker per CPU, not the 1.5x an earlier version used:
+    predictable beats marginally faster when a run is hours long. A value
+    below 1 is reported by `_env_int` and dropped, so this never returns
+    less than 1 (#335, #341).
+    """
+    configured = _env_int("ISOCENTER_MAX_WORKERS", minimum=1)
+    return configured if configured is not None else (os.cpu_count() or 1)
+
+
 def _resolve_strategy(max_workers, chunksize, maxtasksperchild, disable_gc,
                       force_threads, show_progress, desc, total) -> _Strategy:
     """Settles every knob before any work starts.
@@ -295,23 +318,20 @@ def _resolve_strategy(max_workers, chunksize, maxtasksperchild, disable_gc,
     # exist, which is the opposite of the point.
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     # The three integer variables below share one floor, stated at each
-    # read: `_env_int(..., minimum=1)` reports `0` and every negative and
+    # read (the worker count's is in `resolve_max_workers`, which the
+    # session's shared pool reads as well, #501):
+    # `_env_int(..., minimum=1)` reports `0` and every negative and
     # returns `None`, so the `is not None` fallbacks here see a rejected
     # value exactly as they see an unset or malformed one (#335, #185,
     # #341 -- the docstring on `_env_int` has the history, and why the
     # spelling is never `_env_int(...) or default`).
     if max_workers is None:
-        configured = _env_int("ISOCENTER_MAX_WORKERS", minimum=1)
-        # One worker per CPU, not the 1.5x an earlier version used:
-        # predictable beats marginally faster when a run is hours long.
-        #
         # Deliberately inside `if max_workers is None`, so an explicit
         # `max_workers=0` argument still reaches the pool and still
         # raises. That is a programming error in a line the caller can
         # see, not a misconfigured deployment; rewriting it to the CPU
         # count would hide their bug on a log line nobody is reading.
-        max_workers = (configured if configured is not None
-                       else (os.cpu_count() or 1))
+        max_workers = resolve_max_workers()
 
     if chunksize == 1:
         # Only consulted at the default. An explicit `chunksize=1` is
@@ -364,9 +384,11 @@ def _resolve_execution_choice(
         recycling_lever: Optional[str]) -> _Choice:
     """Whether to run in threads rather than processes, and who asked.
 
-    Worker recycling has the last word: only `multiprocessing.Pool`
-    implements `maxtasksperchild`, so asking for it rules threads out
-    however the rest of the environment is set. This is the whole of the
+    Worker recycling has the last word: on 3.12, the floor, only
+    `multiprocessing.Pool` recycles workers (`ProcessPoolExecutor`'s
+    `max_tasks_per_child`, new in 3.11, deadlocks `map` on 3.12 at the
+    first replacement -- measured in the review of #504), so asking for
+    it rules threads out however the rest of the environment is set. This is the whole of the
     precedence, and the whole of it lives here: any second reading of
     these variables anywhere else would be a second copy of the order,
     which is the defect class #384 and #400 are both instances of.
@@ -512,9 +534,13 @@ def _run_on_recycling_pool(func, items, strategy, ordered=False):
     """Runs in a pool whose workers are replaced every N tasks.
 
     This exists for the imaging paths, where the C libraries behind
-    decoding and compression leak steadily. `ProcessPoolExecutor` cannot
-    recycle workers, so the older `multiprocessing.Pool` is the only way
-    to get memory back during a long run rather than at the end of it.
+    decoding and compression leak steadily. `ProcessPoolExecutor` has had
+    `max_tasks_per_child` since 3.11, but on 3.12 -- the floor -- its `map`
+    deadlocks the first time a worker is replaced (3.12.14, spawn; 3.14
+    and 3.14t are fine). So the older `multiprocessing.Pool` is the only
+    way to get memory back during a long run on every supported
+    interpreter. Do not "modernise" this to the executor kwarg while 3.12
+    is supported (#501).
 
     Spawn, not fork: a forked worker inherits the parent's open SQLite
     handles and its sidecar file position.

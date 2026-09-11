@@ -4378,7 +4378,7 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
     except Exception as e:
         # Do not raise, as it aborts the entire parallel batch.
         # Report the failure back for the parent to count and raise on.
-        print(f"ERROR: Export failed for {ctx.output_path}: {e}", file=sys.stderr)
+        print(f"ERROR: Export failed for {ctx.output_path}: {describe_exception(e)}", file=sys.stderr)
         return ExportOutcome(ok=False, output_path=ctx.output_path,
                              sop_instance_uid=uid, losses=losses,
                              corrections=corrections, error=e)
