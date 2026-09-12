@@ -265,7 +265,10 @@ def test_when_the_owners_own_finding_declines_the_instance_applies_its_own(tmp_p
         assert study.phi_status is PhiStatus.IDENTIFIED
         for inst in _instances(session):
             assert inst.attributes["0008,0020"] != "20240101"
-            assert inst.date_shifted
+            # The record the instance's own shift left, in place of
+            # `Instance.date_shifted`, which was cut in 0.9.6 (#510).
+            assert inst.date_shift_vouches_for(
+                "0008,0020", inst.attributes["0008,0020"])
     declines = _audit_rows(tmp_path / "m.db", "REMEDIATION_DECLINED")
     assert len(declines) == 1 and "study_date" in declines[0], declines
 
@@ -470,7 +473,10 @@ def test_a_fold_is_keyed_on_the_copy_not_on_the_tag(tmp_path, order):
         (folded,) = shifted.series[0].instances
         assert declined.study_date == "NOT-A-DATE"
         assert own.attributes["0008,0020"] != "20240101"
-        assert own.date_shifted
+        # The instance's own shift left a record for the value it wrote;
+        # `Instance.date_shifted`, which this asserted until 0.9.6, is
+        # gone (#510).
+        assert own.date_shift_vouches_for("0008,0020", own.attributes["0008,0020"])
         assert folded.attributes["0008,0020"] == format_study_date(shifted.study_date)
     declines = _audit_rows(tmp_path / "m.db", "REMEDIATION_DECLINED")
     assert len(declines) == 1 and "study_date" in declines[0], declines

@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Any, Optional, Dict, Tuple
 import hashlib
+import re
 from .entities import Patient, Study, Instance, iter_item_tree
 from .logger import get_logger
 
@@ -18,6 +19,113 @@ def _is_replacement_name(value) -> bool:
 
 def _is_replacement_id(value) -> bool:
     return str(value).startswith("ANON_")
+
+
+#: The hex run inside an `ANON_` replacement. Used to refuse a value that
+#: merely starts with the prefix (`ANON_xyz`, a user's own id) before
+#: `jitter_digest` reads eight characters out of it as a digest.
+_IS_HEX = re.compile(r"[0-9a-f]+")
+
+#: How many hex characters of the PatientID digest the replacement
+#: carries, and how many the date jitter seeds on. The first is a prefix
+#: of the second, which is the whole reason `jitter_digest` can read the
+#: seed back out of a replacement; shorten `_REPLACEMENT_DIGEST_CHARS`
+#: below `_JITTER_DIGEST_CHARS` and the coupling breaks silently, which
+#: is why `tests/test_the_jitter_seed_survives_anonymize.py` pins it.
+_REPLACEMENT_DIGEST_CHARS = 12
+_JITTER_DIGEST_CHARS = 8
+
+
+def _replacement_id_for(patient_id) -> str:
+    """The PatientID replacement `scan_patient` proposes.
+
+    Spelled once, beside the test that recognises it, because the date
+    jitter reads its digest back out (`jitter_digest`): two spellings of
+    the constructor would let the prefix, the digest length or the hash
+    move on one side only.
+    """
+    digest = hashlib.sha256(str(patient_id).encode()).hexdigest()
+    return f"ANON_{digest[:_REPLACEMENT_DIGEST_CHARS]}"
+
+
+def jitter_digest(patient_id) -> str:
+    """The digest that seeds the date jitter, from either spelling of an
+    identity (#517).
+
+    `_get_date_shift` used to hash whatever PatientID the scan saw, and
+    `anonymize()` replaces PatientID in its first pass -- so every later
+    pass hashed `ANON_<digest>` instead of the original and landed on a
+    different offset (measured: `P1` gives -286 days, the replacement it
+    produces gives -47). A date first shifted in a later pass therefore
+    fell off the offset its siblings got, and "jitter is deterministic
+    per patient so intervals survive" held only within one pass.
+
+    A replacement already **carries** the original's digest -- it is
+    `ANON_` plus its first 12 hex characters, and the jitter reads the
+    first 8 -- so the canonical key is read back out of it rather than
+    recomputed. That is what makes this fix carry no legacy question:
+    for an id that has *not* been replaced the arithmetic is unchanged,
+    bit for bit, so every offset this version computes is the offset
+    0.9.5 computed and a store's dates stay consistent across the
+    upgrade.
+
+    The coupling between the two spellings is load-bearing: it holds only
+    while `_replacement_id_for` carries at least
+    `_JITTER_DIGEST_CHARS` characters of the *same* hash this function
+    would compute. `tests/test_the_jitter_seed_survives_anonymize.py`
+    pins it in both directions.
+
+    Known, pre-existing edge, not widened here: a real PatientID
+    whose eight characters after `ANON_` are all lowercase hex is read as
+    a replacement and seeded from its own text. `_is_replacement_id`
+    already treats such an id as anonymized, so this is consistent with
+    what the scan does; it is stable, merely arbitrary. Note which eight
+    characters: eight *read*, not eight *long*, so
+    `ANON_deadbeefcafe` -- the 12-hex shape `_replacement_id_for` itself
+    writes -- is one of these ids, and only an id carrying fewer than
+    eight characters after the prefix, or something other than lowercase
+    hex among the eight, is hashed like any other value.
+    """
+    text = str(patient_id)
+    if _is_replacement_id(text):
+        carried = text[5:5 + _JITTER_DIGEST_CHARS]
+        if len(carried) == _JITTER_DIGEST_CHARS and _IS_HEX.fullmatch(carried):
+            return carried
+    return hashlib.sha256(text.encode()).hexdigest()[:_JITTER_DIGEST_CHARS]
+
+
+def _study_date_is_this_pipelines(study) -> bool:
+    """Whether `study.study_date` is a value this pipeline's shift
+    produced -- as far as the store can tell (#518).
+
+    Spelled once because two places ask it: `_scan_study`, which raises
+    a study date the pipeline did not produce, and
+    `_holds_owners_replacement`, which skips an instance's top-level
+    copy of a study date only when the owner's value is one this
+    pipeline produced (#496). It was `bool(study.date_shifted)` in both,
+    and that flag records *that* a shift happened, never *what it
+    produced* -- so a fresh original assigned to `study_date` was never
+    raised again, and an instance's copy of that fresh original skipped
+    as "the owner's replacement". Leaving either on the flag keeps half
+    of #518 alive.
+
+    A study shifted before 0.9.6 reads `date_shifted` with no record,
+    and what its shift produced is unknowable. That counts as "this
+    pipeline's", which keeps the pre-0.9.6 behaviour for such a store
+    exactly as the instance half does -- the owner's ruling is that
+    nothing in an existing store changes under the user. The load says
+    so once, as a WARNING audit row.
+
+    `getattr` throughout because the arm and the scan both fire for any
+    object carrying these names, test doubles included.
+    """
+    if study is None:
+        return False
+    vouches = getattr(study, "date_shift_vouches_for", None)
+    if callable(vouches) and vouches(getattr(study, "study_date", None)):
+        return True
+    return (bool(getattr(study, "date_shifted", False))
+            and getattr(study, "_shifted_study_date", None) is None)
 
 
 @dataclass(slots=True)
@@ -306,7 +414,10 @@ class PhiInspector:
             # Simple deterministic anonymization proposal for now (can be refined in Service)
             # The Service will handle the hash calculation if 'new_value' is a
             # placeholder or if logic dictates
-            hashed_id = f"ANON_{hashlib.sha256(patient.patient_id.encode()).hexdigest()[:12]}"
+            # Through the constructor, not spelled here: the date jitter
+            # reads this value's digest back out as its seed (#517), so
+            # the prefix and the digest length have one home.
+            hashed_id = _replacement_id_for(patient.patient_id)
             proposal = PhiRemediation(
                 action_type="REPLACE_TAG",
                 target_attr="patient_id",
@@ -530,25 +641,72 @@ class PhiInspector:
                     remediation_action = "REPLACE_TAG"
                     new_val = ""
             elif action_code in ["SHIFT", "JITTER"]:
-                # Date Shifting
-                # If instance or its parent study is already shifted, this is not a finding
-                is_shifted = False
-                if hasattr(instance, "date_shifted") and instance.date_shifted:
-                    is_shifted = True
-                elif study and hasattr(study, "date_shifted") and study.date_shifted:
-                    is_shifted = True
-
-                # `is_shifted` is the entity's flag, not this value's
-                # (#498): it says a shift landed somewhere on the instance
-                # or its study, and a value the arm declined in the same
-                # pass sits beside it unshifted. Skip only a value the
-                # shift could apply to -- it has moved once, and raising
-                # it again would move it twice. One the arm cannot parse
-                # is raised again, so its decline recurs and the pass-end
-                # demotion keeps the instance IDENTIFIED; skipping it let
-                # a second anonymize() record CLEARED over it. The import
-                # is local because remediation imports this module.
-                if is_shifted:
+                # Date shifting, decided **per value** (#510, #513).
+                #
+                # This used to read `instance.date_shifted` and, failing
+                # that, `study.date_shifted`. Neither flag speaks for a
+                # value: each says a shift landed somewhere on an entity,
+                # so the shortcut over-suppressed a valid date the
+                # pipeline never touched (a rule first named in pass 2,
+                # or a value left out of `anonymize(findings=[...])`, was
+                # skipped forever while the instance read CLEARED --
+                # #510) and under-suppressed a date inside a sequence (no
+                # flag exists on a `DicomItem`, so a nested date was
+                # re-shifted on every pass with a
+                # `REMEDIATION_SHIFT_DATE` row each time -- #513).
+                # Neither flag is read here any more; a second reading of
+                # them beside the record would be a second answer, and
+                # the legacy branch below already carries the only
+                # persisted evidence that a shift ever ran.
+                if item.date_shift_vouches_for(tag, val):
+                    # This item shifted this tag to this value, and the
+                    # tag still holds it. Shifting again would move it
+                    # twice.
+                    needs_remediation = False
+                elif not str(val).strip():
+                    # A blank value is not a `SHIFT`/`JITTER` finding at
+                    # all. `val` cannot be `None` here -- the walk above
+                    # skips a tag the item does not hold -- so this tests
+                    # blank, not absent. `EMPTY` already tests `val != ""` and
+                    # `REPLACE` tests `val != "ANONYMIZED" and val !=
+                    # ""`, so three of the four value-writing actions
+                    # skip blank; and the arm's own reasoning is that an
+                    # empty value is not retained PHI -- there is nothing
+                    # to shift and nothing left behind, which is why it
+                    # is the one non-success path that writes no decline
+                    # row. Spelled as the arm spells it
+                    # (`str(...).strip()`), so a multi-valued element is
+                    # not mistaken for a blank one. Before the record
+                    # this asymmetry was invisible, because the flag
+                    # suppressed every pass after the first; with a
+                    # per-value record every pass looks like pass 1, so a
+                    # blank would otherwise raise a finding the arm
+                    # declines to act on for ever and #491's pass-end
+                    # demotion would leave a clean instance IDENTIFIED.
+                    # This branch is *above* the legacy one, so
+                    # `_date_shift_declines`' own blank guard is no
+                    # longer reachable from here; it is kept because the
+                    # predicate is also read directly and must answer
+                    # the same way alone as it does in place.
+                    needs_remediation = False
+                elif getattr(instance, "_legacy_shift_provenance", False):
+                    # A pre-0.9.6 store has no per-value records for the
+                    # dates it already holds, so this instance keeps the
+                    # entity-level rule for them, permanently: reading
+                    # "no record" as "not shifted" here would shift every
+                    # already-shifted date in the archive a second time.
+                    # The load says so once, as a WARNING audit row.
+                    #
+                    # "The entity-level rule" is #498's version of it,
+                    # not the older one: a value the arm could not parse
+                    # is raised again so its decline recurs and the
+                    # pass-end demotion keeps the instance IDENTIFIED,
+                    # while a value the shift could apply to is skipped
+                    # because it has moved once already. The import is
+                    # local because remediation imports this module.
+                    #
+                    # This whole branch dies when no pre-0.9.6 store
+                    # remains.
                     from .remediation import (  # pylint: disable=import-outside-toplevel
                         _date_shift_declines)
                     needs_remediation = _date_shift_declines(val)
@@ -597,9 +755,15 @@ class PhiInspector:
         copy equals its owner's *original*, and that is PHI. The owner's
         value has to be a replacement by the scan's own test --
         `_is_replacement_name` / `_is_replacement_id`, the ones
-        `scan_patient` stops raising on -- or, for the date, the shifted
-        date of a study `SHIFT_DATE` has marked `date_shifted`. No owner,
-        no skip.
+        `scan_patient` stops raising on -- or, for the date, a study date
+        this pipeline's shift produced (`_study_date_is_this_pipelines`).
+        No owner, no skip.
+
+        The date arm read `study.date_shifted` until 0.9.6, and that flag
+        cannot tell the shift's own output from a fresh original assigned
+        over it -- so an instance's copy of a hand-replaced study date
+        skipped here as "the owner's replacement", which is #518 reached
+        through #496's door.
         """
         if tag == "0008,0020":
             if study is None:
@@ -608,7 +772,7 @@ class PhiInspector:
             # spelling of "a Study's date as a DA string" (#189) -- the
             # spelling the owner's write put on the copy.
             from .io_handlers import format_study_date
-            return (bool(getattr(study, "date_shifted", False))
+            return (_study_date_is_this_pipelines(study)
                     and value == format_study_date(study.study_date))
         if patient is None:
             return False
@@ -633,8 +797,18 @@ class PhiInspector:
         findings = []
         uid = study.study_instance_uid
 
-        # If successfully remediated (shifted), do not flag as PHI again
-        if hasattr(study, "date_shifted") and study.date_shifted:
+        # A date this pipeline's own shift produced is not raised again;
+        # anything else under `study_date` is (#518).
+        #
+        # This read `study.date_shifted` and returned no findings at all
+        # while it was set. The flag records *that* a shift happened,
+        # never *what it produced*, so it could not tell its own output
+        # from a new input: shift a study's date, assign a fresh
+        # original to `study.study_date`, re-audit, and the real date was
+        # never raised again and was exported. Measured on `927cb2b`:
+        # `2023-01-01` -> `2022-03-21`, then `study.study_date =
+        # date(2024, 7, 4)`, then `raised=0` with `date_shifted=True`.
+        if _study_date_is_this_pipelines(study):
             return findings
 
         if study.study_date:

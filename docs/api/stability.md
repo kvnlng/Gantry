@@ -150,9 +150,11 @@ the positional constructor order, except where marked `init=False`):
 `Series`: `series_instance_uid, modality, series_number, equipment,
 instances`. `Instance`: `attributes, sequences, attribute_vrs` (inherited
 from `DicomItem`, `init=False`), then `sop_instance_uid, sop_class_uid,
-instance_number, file_path, source_path`, then `date_shifted`
-(`init=False`; `pixel_array` and `waveform_array` sit between and are
-tier 2). `Equipment`: `manufacturer, model_name, device_serial_number`.
+instance_number, file_path, source_path` (`pixel_array` and
+`waveform_array` follow and are tier 2). `Instance` carried a
+`date_shifted` field until 0.9.6; it is gone (#510) — reading it raises
+`AttributeError`. `Study.date_shifted` is unchanged.
+`Equipment`: `manufacturer, model_name, device_serial_number`.
 `attributes` is keyed by lowercase `"gggg,eeee"` strings; on `Instance`: `get_pixel_data()`,
 `set_pixel_data()`, `unload_pixel_data()`, `discard_pixel_data()`,
 `get_waveform_data()`, and the two-names-two-behaviours rule between

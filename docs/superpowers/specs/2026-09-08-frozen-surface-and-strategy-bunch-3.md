@@ -17,6 +17,14 @@ clauses are marked in place.
 quote under Step 1 also changed: the test now asserts that warning as
 well. The two sentences are struck in place, and both test passages
 carry a note.
+**Superseded in part:** #510 (v0.9.6). `Instance.date_shifted` is no
+longer a frozen field, because it is no longer a field: it was cut, and
+reading it now raises `AttributeError`. The clause in §5.3's entity
+sentence that lists it inside `Instance(...)`, and §11 item 9's
+restatement of the same list (including "the nine frozen `Instance`
+fields"), no longer hold -- there are eight. `Study.date_shifted` is
+unchanged. Both clauses are marked in place.
+
 **Status:** Determinations MADE, with evidence. §1–§5 are the
 recommendations; §0.2 lists the calls that are the owner's, each as
 options with the recommendation first. No production code was changed
@@ -947,7 +955,9 @@ study_date, study_time, date_shifted, series)` →
 `Series(series_instance_uid, modality, series_number, equipment,
 instances)` → `Instance(sop_instance_uid, sop_class_uid,
 instance_number, file_path, source_path, attributes, sequences,
-attribute_vrs, date_shifted)`; `attributes` keyed by lowercase
+attribute_vrs, ~~date_shifted~~)` — **superseded in part by #510
+(v0.9.6): `Instance.date_shifted` was cut, so eight fields are frozen
+here, not nine; `Study.date_shifted` is unchanged**; `attributes` keyed by lowercase
 `"gggg,eeee"` strings; `Equipment(manufacturer, model_name,
 device_serial_number)`; on `Instance`: `get_pixel_data()`,
 `set_pixel_data()`, `unload_pixel_data()`, `discard_pixel_data()`,
@@ -1819,8 +1829,12 @@ edited; each item names the clause it corrects.
    false.** `Study(study_instance_uid, study_date, study_time,
    date_shifted, series)` is not the dataclass order (`study_instance_uid,
    study_date, series, date_shifted, study_time`), and `attributes`,
-   `sequences`, `attribute_vrs`, `date_shifted` on `Instance` are
+   `sequences`, `attribute_vrs`, ~~`date_shifted`~~ on `Instance` are
    `init=False`, not constructor arguments. The page lists fields in
    `dataclasses.fields` order with the `init=False` ones marked; T-F1
-   pins which of the nine frozen `Instance` fields `__init__` accepts,
-   and T-F4 pins the page's lists against `dataclasses.fields`.
+   pins which of the ~~nine~~ frozen `Instance` fields `__init__`
+   accepts, and T-F4 pins the page's lists against `dataclasses.fields`.
+   **Superseded in part by #510 (v0.9.6):** `Instance.date_shifted` was
+   cut, so there are eight frozen `Instance` fields and it is not among
+   the `init=False` ones. T-F1 now also pins the field as *absent*, in
+   both directions.

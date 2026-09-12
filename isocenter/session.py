@@ -5032,6 +5032,12 @@ class DicomSession:
             )
             if hasattr(s, "date_shifted"):
                 s_new.date_shifted = s.date_shifted
+            # The study's own date record travels too (#518).
+            # `_scan_study` runs inside `scan_patient`, which the worker
+            # calls on this clone, so without this line every worker
+            # sees a study that looks pre-0.9.6 and raises nothing --
+            # the whole fix invisible on both parallel paths at once.
+            s_new._shifted_study_date = s._shifted_study_date
 
             p_new.studies.append(s_new)
 
@@ -5071,8 +5077,22 @@ class DicomSession:
                     # annotations, anything below the first level.
                     i_new.sequences = clone_sequences(i)
 
-                    if hasattr(i, "date_shifted"):
-                        i_new.date_shifted = i.date_shifted
+                    # `date_shifted` is not carried because `Instance` no
+                    # longer has one (#510): the scan reads the per-value
+                    # records below instead, and the study's flag rides
+                    # `s_new.date_shifted` above.
+                    #
+                    # The per-value date records and the store's own
+                    # provenance travel too (#510, #513). `audit()`
+                    # scans this clone unconditionally, threads and
+                    # processes alike, so without these two lines every
+                    # worker sees an instance with no record against any
+                    # of its dates, raises them all, and the arm shifts
+                    # each a second time -- the defect, with the fix in
+                    # place. The nested half is `clone_sequences`, above.
+                    if i._shifted_dates:
+                        i_new._shifted_dates = dict(i._shifted_dates)
+                    i_new._legacy_shift_provenance = i._legacy_shift_provenance
 
                     se_new.instances.append(i_new)
 

@@ -1,7 +1,8 @@
 """A date the shift declined is raised again by the next audit (#498).
 
 `PhiInspector._scan_instance` treats a SHIFT/JITTER tag as done once the
-instance or its study is `date_shifted`. That flag says the *entity* was
+instance or its study was `date_shifted`. That flag said the *entity*
+was
 shifted, not that every value on it was, so a value the shift declined in
 pass 1 -- one `SHIFT_DATE` cannot parse -- raised nothing in pass 2. A
 second blind `anonymize()` then recorded CLEARED over it, and the manifest
@@ -163,10 +164,19 @@ def test_the_reviewers_shape_ends_identified_with_the_manifest_false(tmp_path):
         assert _manifest(session, tmp_path) == [False]
 
 
-def test_the_instances_own_shift_flag_does_not_hide_its_declined_sibling(tmp_path):
+def test_a_shifted_sibling_does_not_hide_a_declined_date(tmp_path):
     """The shortcut's other half. The study date is unparseable, so the
-    study is never shifted; the instance's valid AcquisitionDate shifts and
-    sets `instance.date_shifted`, which hid its declined ContentDate."""
+    study is never shifted; the instance's valid AcquisitionDate shifts,
+    and that shift used to set `instance.date_shifted`, which hid its
+    declined ContentDate on the same instance.
+
+    Renamed with #510: `Instance.date_shifted` is gone, and what the
+    AcquisitionDate's shift now leaves behind is a record for *that
+    tag's* value. The claim is the one the old name made -- a sibling
+    date shifting must not hide a declined one -- and it is now the
+    mechanism's own consequence rather than a special case, so this
+    asserts the record rather than the flag.
+    """
     session, instance = _built(
         tmp_path, {ACQUISITION_DATE: "20230515", CONTENT_DATE: "notadate"},
         study_date="notadate")
@@ -175,9 +185,10 @@ def test_the_instances_own_shift_flag_does_not_hide_its_declined_sibling(tmp_pat
         session.audit()
         session.anonymize()
         assert not session.store.patients[0].studies[0].date_shifted
-        assert instance.date_shifted
         shifted = instance.attributes[ACQUISITION_DATE]
         assert shifted != "20230515"
+        assert instance.date_shift_vouches_for(ACQUISITION_DATE, shifted)
+        assert not instance.date_shift_vouches_for(CONTENT_DATE, "notadate")
 
         assert [f.tag for f in session.audit() if f.entity_type == "Instance"] == [CONTENT_DATE]
         session.anonymize()
@@ -235,7 +246,7 @@ def test_date_shift_declines_is_the_arms_own_answer(value, declines):
     assert _date_shift_declines(value) is declines
 
 
-@pytest.mark.parametrize("tag,value", UNSHIFTABLE + SHIFTABLE + BLANK)
+@pytest.mark.parametrize("tag,value", UNSHIFTABLE + SHIFTABLE)
 def test_the_arm_declines_exactly_what_the_predicate_says_it_will(tmp_path, tag, value):
     """The two halves cannot silently disagree -- run the arm, compare.
 
@@ -274,3 +285,42 @@ def test_the_arm_declines_exactly_what_the_predicate_says_it_will(tmp_path, tag,
     # Read after close, so the audit-log writer thread has flushed.
     declined = [d for d in _declines(tmp_path / "m.db") if tag in d]
     assert bool(declined) is _date_shift_declines(value), declined
+
+
+@pytest.mark.parametrize("tag,value", BLANK)
+def test_the_arm_declines_nothing_for_a_blank_the_scan_no_longer_raises(
+        tmp_path, tag, value):
+    """The blank half of the pairing above, driven through the arm itself.
+
+    The pairing was parametrized over `BLANK` too until #510/#513, when
+    shifted-ness became a per-value record: with a record every pass
+    looks like pass 1, so a blank raised every pass a finding the arm
+    declines to act on for ever, and #491's demotion left a clean
+    instance IDENTIFIED. The scan therefore stopped raising a blank
+    `SHIFT`/`JITTER` value at all -- which makes the scan-driven pairing
+    *vacuous* for a blank rather than false, the non-vacuity assertion
+    above being exactly what says so.
+
+    So the blank case is handed the proposal the scan used to hand it.
+    The claim it makes is unchanged and is still #498's: the arm writes
+    no decline row for a blank, the predicate says it declines nothing,
+    and neither half may move without the other.
+    """
+    from isocenter.privacy import PhiFinding, PhiRemediation
+    from isocenter.remediation import RemediationService, _date_shift_declines
+
+    session, instance = _built(tmp_path, {tag: value})
+    with session:
+        proposal = PhiRemediation(action_type="SHIFT_DATE", target_attr=tag,
+                                  original_value=value,
+                                  metadata={"patient_id": "P498"})
+        finding = PhiFinding(
+            entity_uid=instance.sop_instance_uid, entity_type="Instance",
+            field_name=tag, value=value, reason="PHI", tag=tag,
+            entity=instance, remediation_proposal=proposal)
+        service = RemediationService(store_backend=session.store_backend)
+        assert service.apply_remediation([finding]) == 0
+        assert instance.attributes[tag] == value
+    declined = [d for d in _declines(tmp_path / "m.db") if tag in d]
+    assert declined == [], declined
+    assert _date_shift_declines(value) is False

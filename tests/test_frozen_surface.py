@@ -90,9 +90,14 @@ FROZEN_DICOM_EXPORT_OPTIONS = (
 
 #: The `Instance` fields that are frozen (`pixel_array` and
 #: `waveform_array` are public fields too, and tier 2).
+#:
+#: `date_shifted` was on this list until 0.9.6 and was cut with the field
+#: (#510). It is pinned as *absent* below, in both directions, because
+#: the `<=` check that guards this list would be green for a field that
+#: came back.
 FROZEN_INSTANCE_FIELDS = [
     "sop_instance_uid", "sop_class_uid", "instance_number", "file_path",
-    "source_path", "attributes", "sequences", "attribute_vrs", "date_shifted"]
+    "source_path", "attributes", "sequences", "attribute_vrs"]
 
 FROZEN_ALL = ["Session", "Builder", "Equipment", "RedactionError", "ExportError"]
 
@@ -731,15 +736,23 @@ def test_the_frozen_shapes_have_these_fields(tmp_path):
     # A superset, not equality: `pixel_array` and `waveform_array` are
     # public fields of `Instance` and tier 2 (stability.md).
     assert set(FROZEN_INSTANCE_FIELDS) <= set(_public_fields(Instance))
+    # `Instance.date_shifted` was cut in 0.9.6 (#510) and must not come
+    # back: it was a transient boolean standing for an unbounded set of
+    # values, and the superset check above is green for a field that
+    # reappears. Asserted in both directions -- gone from `Instance`,
+    # still on `Study`, where it answers the entity-level question
+    # honestly and `exporters/wfdb.py` reads it.
+    assert "date_shifted" not in _public_fields(Instance)
+    assert "date_shifted" in _public_fields(Study)
     # Which of them a constructor call can set is part of the shape: the
     # page used to write `Instance(..., attributes, sequences,
-    # attribute_vrs, date_shifted)`, and none of those four is an
-    # argument of `__init__`.
+    # attribute_vrs, date_shifted)`, and none of those was an argument of
+    # `__init__` -- nor is `date_shifted` a field at all since 0.9.6.
     init = {f.name: f.init for f in dataclasses.fields(Instance)}
     assert [n for n in FROZEN_INSTANCE_FIELDS if init[n]] == [
         "sop_instance_uid", "sop_class_uid", "instance_number", "file_path", "source_path"]
     assert [n for n in FROZEN_INSTANCE_FIELDS if not init[n]] == [
-        "attributes", "sequences", "attribute_vrs", "date_shifted"]
+        "attributes", "sequences", "attribute_vrs"]
     for method in ("get_pixel_data", "set_pixel_data", "unload_pixel_data",
                    "discard_pixel_data", "get_waveform_data"):
         assert callable(getattr(Instance, method))
@@ -808,10 +821,16 @@ def test_the_stability_page_names_every_tier_one_session_method():
             f"{_public_fields(cls)}")
     ordered = _frozen_instance_fields_in_dataclass_order()
     assert ordered == ["attributes", "sequences", "attribute_vrs", "sop_instance_uid",
-                       "sop_class_uid", "instance_number", "file_path", "source_path",
-                       "date_shifted"], ordered
-    for group in (ordered[:3], ordered[3:8], ordered[8:]):
+                       "sop_class_uid", "instance_number", "file_path",
+                       "source_path"], ordered
+    for group in (ordered[:3], ordered[3:]):
         assert f"`{', '.join(group)}`" in flat, f"stability.md does not list {group} together"
+    # The page has to *say* the field is gone, not merely stop listing
+    # it: a reader who programmed against `instance.date_shifted` needs
+    # to be told, and a page that simply omitted it would read as an
+    # oversight. The other half of mutant M23 (#510).
+    assert "`Instance` carried a `date_shifted` field until 0.9.6" in flat, (
+        "stability.md does not say that Instance.date_shifted is gone")
     # The report's shape as the page spells it, so the page and the class
     # cannot drift apart (#423 added `failures` to both).
     assert "`PhiReport(findings, failures)`" in flat, (
