@@ -987,6 +987,218 @@ def test_unload_checks_and_drops_under_one_hold(ingested, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# S -- a set that lands during a read is kept (#465)
+# ---------------------------------------------------------------------------
+#
+# `get_pixel_data()` loads with no lock held -- a decode can take seconds,
+# and the pixel-state lock is a leaf held for microseconds -- and then
+# publishes. It used to publish unconditionally: a `set_pixel_data()`
+# landing during the load was overwritten by the stale stored frame, and
+# the flag clear marked the lost pixels written, so `unload_pixel_data()`
+# dropped the only copy and the next save dedup'd against the stored
+# frame. S1-S3 inject the set on the reading thread, inside the load: the
+# interleaving a second thread produces, made deterministic (the issue's
+# `SetDuringRead`). S5 is a real second thread.
+
+class _SetDuringLoad:
+    """A loader that runs a set on the reading thread, inside the load.
+
+    No `describes`, so the read makes no #417 rebuild around it."""
+
+    def __init__(self, inst, real, newer):
+        self.inst, self.real, self.newer = inst, real, newer
+        self.fired = False
+
+    def __call__(self):
+        if not self.fired:
+            self.fired = True
+            self.inst.set_pixel_data(self.newer)
+        return self.real()
+
+
+#: What lands during the load: the stored geometry with new samples, and
+#: a geometry and depth the stored frame cannot be read under -- the
+#: case the review of #466 measured leaving a 4x4 `uint16` array resident
+#: under Rows 8 / BitsAllocated 8, and a store that then refused itself.
+SET_DURING_READ = {
+    "same geometry": np.full((4, 4), 3, np.uint16),
+    "8x8 uint8": np.full((8, 8), 7, np.uint8),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(SET_DURING_READ))
+def test_a_set_landing_during_a_loader_read_is_kept(ingested, kind):
+    """S1: the sidecar loader arm, through a save and a reopen."""
+    session, inst, db = ingested
+    newer = SET_DURING_READ[kind]
+    real = inst._pixel_loader
+    load = _SetDuringLoad(inst, real, newer)
+    inst._pixel_loader = load
+    try:
+        got = inst.get_pixel_data()
+    finally:
+        inst._pixel_loader = real
+    assert load.fired, "the set never ran inside the load"
+    assert got is inst.pixel_array
+    assert got.dtype == newer.dtype and np.array_equal(got, newer)
+    assert inst._pixel_array_unwritten, "the set's pixels were marked written"
+    assert inst.attributes[ROWS] == newer.shape[0]
+    assert inst.unload_pixel_data() is False, "unload would drop the only copy"
+
+    session.save(sync=True)
+    assert not inst._pixel_array_unwritten
+    reopened, again = _reopened_read(db)
+    assert reopened.dtype == newer.dtype and np.array_equal(reopened, newer)
+    assert again.attributes[BITS] == newer.itemsize * 8
+
+
+def _file_backed(tmp_path):
+    """A hand-built instance over `_write_src`'s file: no loader, so a
+    read takes the file arm."""
+    src = tmp_path / "file_arm"
+    src.mkdir()
+    _write_src(str(src))
+    path = str(src / "one.dcm")
+    ds = pydicom.dcmread(path)
+    inst = entities_module.Instance(ds.SOPInstanceUID, ds.SOPClassUID, 1,
+                                    file_path=path)
+    for tag, value in ((ROWS, 4), (COLS, 4), ("0028,0002", 1),
+                       ("0028,0004", "MONOCHROME2"), (BITS, 16), (PR, 0)):
+        inst.set_attr(tag, value)
+    assert inst._pixel_loader is None
+    return inst
+
+
+def test_a_set_landing_during_a_file_read_is_kept(tmp_path, monkeypatch):
+    """S2: the file arm, the set injected inside pydicom's decode."""
+    inst = _file_backed(tmp_path)
+    newer = SET_DURING_READ["8x8 uint8"]
+    real = entities_module._decode_with_pydicom
+    fired = []
+
+    def set_during_decode(ds):
+        fired.append(1)
+        inst.set_pixel_data(newer)
+        return real(ds)
+
+    monkeypatch.setattr(entities_module, "_decode_with_pydicom",
+                        set_during_decode)
+    got = inst.get_pixel_data()
+    assert fired == [1], "the set never ran inside the decode"
+    assert got is inst.pixel_array
+    assert got.dtype == newer.dtype and np.array_equal(got, newer)
+    assert inst._pixel_array_unwritten, "the set's pixels were marked written"
+    assert (inst.attributes[ROWS], inst.attributes[BITS]) == (8, 8)
+    assert inst.unload_pixel_data() is False, "unload would drop the only copy"
+
+
+def test_a_relabelling_read_still_relabels_when_it_publishes(tmp_path,
+                                                             monkeypatch):
+    """S3: #482's relabel is made on the publishing branch, not dropped.
+
+    The relabel moved into the publish when #465 folded it there; this is
+    the read that publishes, so it must still say what the decode
+    converted to.
+    """
+    inst = _file_backed(tmp_path)
+    inst.set_attr("0028,0004", "YBR_FULL")
+    real = entities_module._decode_with_pydicom
+    monkeypatch.setattr(entities_module, "_decode_with_pydicom",
+                        lambda ds: (real(ds)[0], "RGB"))
+    before = inst._revision
+    got = inst.get_pixel_data()
+    assert got is inst.pixel_array and np.array_equal(got, ORIGINAL)
+    assert inst.attributes["0028,0004"] == "RGB"
+    assert inst._revision > before
+    assert not inst._pixel_array_unwritten
+
+
+def test_the_read_checks_the_slot_under_the_lock(ingested, monkeypatch):
+    """S4: the check is made holding the leaf, not before taking it.
+
+    The set runs the moment the publish asks for the lock, so only a
+    check made once the lock is held sees it. A check made first and
+    acted on inside -- `empty = self.pixel_array is None`, then `with
+    PIXEL_STATE_LOCK: if empty:` -- publishes the stale frame over it.
+    """
+    _session, inst, _db = ingested
+    newer = SET_DURING_READ["same geometry"]
+    proxy = _ActOnAcquire(lambda: inst.set_pixel_data(newer),
+                          "_publish_loaded_frame", "arr")
+    monkeypatch.setattr(entities_module, "PIXEL_STATE_LOCK", proxy)
+    got = inst.get_pixel_data()
+    assert proxy.fired, "the read never asked for the pixel-state lock"
+    monkeypatch.undo()
+    assert got is inst.pixel_array and np.array_equal(got, newer)
+    assert inst._pixel_array_unwritten
+
+
+class _ParkInLoad:
+    """A loader that parks inside the load until told to go on."""
+
+    def __init__(self, real):
+        self.real = real
+        self.inside, self.go = threading.Event(), threading.Event()
+
+    def __call__(self):
+        self.inside.set()
+        if not self.go.wait(30):
+            raise AssertionError("the loader was never released")
+        return self.real()
+
+
+def test_a_set_on_another_thread_during_a_parked_load_is_kept(ingested):
+    """S5: a real second thread; events, no timing."""
+    _session, inst, _db = ingested
+    newer = SET_DURING_READ["same geometry"]
+    real = inst._pixel_loader
+    park = _ParkInLoad(real)
+    inst._pixel_loader = park
+    got, errors = [], []
+
+    def read():
+        try:
+            got.append(inst.get_pixel_data())
+        except Exception as exc:  # pylint: disable=broad-except
+            errors.append(exc)
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        assert park.inside.wait(30), "the reader never reached the load"
+        inst.set_pixel_data(newer)
+    finally:
+        park.go.set()
+        reader.join(30)
+        inst._pixel_loader = real
+    assert not reader.is_alive(), "the reader never finished"
+    assert not errors, errors
+    assert got[0] is inst.pixel_array and np.array_equal(got[0], newer)
+    assert inst._pixel_array_unwritten
+    assert inst.unload_pixel_data() is False
+
+
+def test_a_read_after_a_discard_publishes_under_a_set_flag(ingested):
+    """S6: the predicate is the slot, not the flag.
+
+    The unwritten flag stays set after a `discard_pixel_data()`, and the
+    read that follows must publish the stored frame and clear it. A
+    publish gated on the flag would refuse to cache here, and every read
+    would go back to the store (A10 is the same question with a
+    descriptor edit between).
+    """
+    _session, inst, _db = ingested
+    inst.set_pixel_data(SET_DURING_READ["same geometry"])
+    assert inst.discard_pixel_data() is True
+    assert inst.pixel_array is None
+    assert inst._pixel_array_unwritten, "the fixture guard: still set"
+    got = inst.get_pixel_data()
+    assert got is inst.pixel_array and np.array_equal(got, ORIGINAL)
+    assert not inst._pixel_array_unwritten
+    assert inst.unload_pixel_data() is True
+
+
+# ---------------------------------------------------------------------------
 # T -- the loader ingest builds carries the hash of its frame (#436)
 # ---------------------------------------------------------------------------
 #
@@ -1187,15 +1399,16 @@ def test_a_failed_swap_in_a_threads_redaction_keeps_the_frame_readable(
 
 
 def test_a_failed_swap_in_a_serial_redaction_keeps_the_frame_readable(ingested):
-    """H2: `redact_machine_instances`, whose `finally` persist swaps."""
+    """H2: `redact_machine_instances`, whose persist swaps."""
     session, inst, db = ingested
     fired = _fail_the_next_write(session.store_backend.sidecar)
     service = RedactionService(session.store, session.store_backend)
 
-    # Suppressed rather than expected: this arm swallows the persist
-    # failure and raises nothing today, which is its own defect (#474).
-    # This test is about the hash, whichever way that goes.
-    with contextlib.suppress(RedactionError):
+    # Raised since #474: this arm used to swallow the persist failure.
+    # What the failed instance is left as is pinned in
+    # `tests/test_redaction_failure_is_reported.py`; this test is about
+    # the hash.
+    with pytest.raises(RedactionError):
         service.redact_machine_instances(
             "SN1", [(0, 2, 0, 2)], targets=[inst], show_progress=False)
     assert fired == [1], "the swap never reached its write"

@@ -330,13 +330,15 @@ def test_a_set_landing_during_the_pydicom_read_keeps_its_own_label(
     corrects the label to MONOCHROME2 and SamplesPerPixel to 1. A relabel
     made outside `Instance._relabel_to_decoded_colour` -- straight
     through `set_attr` -- would then write RGB beside a SamplesPerPixel of
-    1, a label no array can carry. #465, where such a set loses its
-    pixels, is unchanged and still open.
+    1, a label no array can carry. And since #465 the set keeps its
+    pixels too: the read publishes only into an empty slot, and returns
+    the set's array here.
     """
     path = _write(tmp_path, _dataset(
         EXPLICIT_LE, photometric="YBR_FULL", native=YBR8))
     inst = _instance(path, "YBR_FULL")
     real = entities.get_decoder
+    grey = np.zeros((4, 4), dtype=np.uint8)
 
     class SetDuringRead:
         def __init__(self, decoder):
@@ -344,14 +346,17 @@ def test_a_set_landing_during_the_pydicom_read_keeps_its_own_label(
 
         def as_array(self, *args, **kwargs):
             got = self._decoder.as_array(*args, **kwargs)
-            inst.set_pixel_data(np.zeros((4, 4), dtype=np.uint8))
+            inst.set_pixel_data(grey)
             return got
 
     monkeypatch.setattr(entities, "get_decoder",
                         lambda ts: SetDuringRead(real(ts)))
-    inst.get_pixel_data()
+    got = inst.get_pixel_data()
     assert inst.attributes["0028,0004"] == "MONOCHROME2"
     assert int(inst.attributes["0028,0002"]) == 1
+    assert got is inst.pixel_array
+    assert got.shape == grey.shape and np.array_equal(got, grey)
+    assert inst._pixel_array_unwritten  # pylint: disable=protected-access
 
 
 # ---------------------------------------------------------------------------

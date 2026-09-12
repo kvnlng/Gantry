@@ -13,9 +13,10 @@ is pinned here by recording wrappers rather than frozen in the API:
     _pixel_swap_lock  ->  PIXEL_STATE_LOCK       (publish sections; a leaf)
 
 `entities.PIXEL_STATE_LOCK` (#434, Q6) is taken by `set_pixel_data`,
-`discard_pixel_data` and `unload_pixel_data` holding nothing, and by the
-four publish sections under `_pixel_swap_lock`; nothing is taken while it
-is held. It is recorded by the same proxy, swapped in on the module.
+`discard_pixel_data`, `unload_pixel_data` and the read publish
+`_publish_loaded_frame` (#465) holding nothing, and by the four publish
+sections under `_pixel_swap_lock`; nothing is taken while it is held. It
+is recorded by the same proxy, swapped in on the module.
 
 Reversing the second arm is the cycle the 2026-09-07 spec measured:
 `_persist_pixels` calls `write_frame` under `_pixel_swap_lock`, and
@@ -59,6 +60,7 @@ import threading
 import numpy as np
 import pytest
 from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
+from pydicom.pixels import convert_color_space
 from pydicom.sequence import Sequence
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
@@ -250,6 +252,53 @@ def _write_ct_with_icon(folder):
     return path
 
 
+def _write_native_ybr(folder):
+    """A native 8-bit YBR_FULL file, which pydicom's read door converts.
+
+    `ds.pixel_array` returns RGB for an 8-bit YBR source and says so only
+    in its decoder's meta, so `get_pixel_data()`'s pydicom arm publishes
+    *with* a relabel (#482). That is the one branch of
+    `_publish_loaded_frame` that calls `_relabel_to_decoded_colour`
+    inside the hold, and no sidecar read reaches it: the loader converts
+    nothing, so every other load here publishes with `relabel=None`.
+    """
+    rgb = (np.arange(48, dtype=np.int64) * 5).astype(np.uint8).reshape(4, 4, 3)
+    meta = FileMetaDataset()
+    meta.MediaStorageSOPClassUID = CT_IMAGE
+    meta.MediaStorageSOPInstanceUID = generate_uid()
+    meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds = FileDataset(None, {}, file_meta=meta, preamble=b"\0" * 128)
+    ds.PatientID, ds.PatientName = "PAT_GATE", "DOE^GATE"
+    ds.StudyInstanceUID, ds.SeriesInstanceUID = generate_uid(), generate_uid()
+    ds.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
+    ds.SOPClassUID = CT_IMAGE
+    ds.Modality, ds.SeriesNumber, ds.InstanceNumber = "OT", 1, 1
+    ds.StudyDate = "20230101"
+    ds.Rows = ds.Columns = 4
+    ds.BitsAllocated = ds.BitsStored = 8
+    ds.HighBit = 7
+    ds.SamplesPerPixel, ds.PlanarConfiguration = 3, 0
+    ds.PhotometricInterpretation = "YBR_FULL"
+    ds.PixelRepresentation = 0
+    ds.PixelData = convert_color_space(rgb, "RGB", "YBR_FULL").tobytes()
+    path = os.path.join(folder, "native_ybr.dcm")
+    ds.save_as(path, enforce_file_format=True)
+    return path
+
+
+def _relabelling_instance(folder):
+    """A hand-built instance over that file, carrying the file's label.
+
+    `_relabel_to_decoded_colour` writes only when the instance already
+    carries a PhotometricInterpretation -- a bare instance holds no
+    descriptors, so nothing on it is false -- so the label is set here.
+    """
+    inst = Instance(generate_uid(), CT_IMAGE, 1,
+                    file_path=_write_native_ybr(folder))
+    inst.attributes["0028,0004"] = "YBR_FULL"
+    return inst
+
+
 def _inode_or_none(path):
     try:
         return os.stat(path).st_ino
@@ -294,6 +343,19 @@ def recorded(tmp_path, monkeypatch):
         first.set_pixel_data(np.full((8, 8), 9, dtype=np.uint8))
         session.store_backend.persist_pixel_data(first)           # site 5
         first.discard_pixel_data()                                # leaf
+        # A load into the emptied slot: the read publish (#465, leaf).
+        # Nothing else here reads an unloaded instance, so without this
+        # line `_publish_loaded_frame` never takes the lock.
+        first.get_pixel_data()
+        # ... and one that *relabels* while it publishes, so
+        # `_relabel_to_decoded_colour` runs inside the same hold. The
+        # line above takes the sidecar loader, which converts nothing and
+        # so publishes with `relabel=None`: without this one the relabel
+        # branch of the publish is never measured, and a lock or a log
+        # added inside it would be invisible here (the review of #514).
+        relabelling = _relabelling_instance(str(tmp_path))
+        assert relabelling.get_pixel_data().shape == (4, 4, 3)
+        assert relabelling.attributes["0028,0004"] == "RGB"
         # The dedup arm: the same bytes under a new dtype (leaf).
         second.set_pixel_data(second.get_pixel_data().view(np.int8))
         session.save(sync=True)
@@ -482,6 +544,7 @@ def test_there_are_exactly_six_write_frame_sites_and_they_are_these():
 
 #: Everything that takes the pixel-state leaf, by function name (#434, Q6).
 _LEAF_TAKERS = {"set_pixel_data", "discard_pixel_data", "unload_pixel_data",
+                "_publish_loaded_frame",
                 "_swap_pixels_under_gate", "_persist_pixels",
                 "_apply_redaction_outcomes"}
 
@@ -537,10 +600,10 @@ _CALLER_HOLDS = {"_replace_pixel_array", "_drop_resident_array",
 _PIXEL_STATE_WRITES = {
     ("isocenter/entities.py", "_replace_pixel_array"): (2, "caller holds"),
     ("isocenter/entities.py", "_restore_replaced_descriptors"): (1, "caller holds"),
-    # The three read arms -- loader, file, imagecodecs fallback -- fill the
-    # array and clear the flag without the lock, so a set landing during a
-    # load is overwritten and marked written (#465, open).
-    ("isocenter/entities.py", "get_pixel_data"): (3, "unlocked: #465"),
+    # The three read arms -- loader, file, imagecodecs fallback -- publish
+    # through this one helper, under the leaf, only while the slot is
+    # still empty (#465).
+    ("isocenter/entities.py", "_publish_loaded_frame"): (1, "leaf"),
     ("isocenter/persistence.py", "_swap_pixels_under_gate"): (2, "leaf"),
     ("isocenter/persistence.py", "_persist_pixels"): (4, "leaf"),
     ("isocenter/session.py", "_apply_redaction_outcomes"): (1, "leaf"),
@@ -567,31 +630,105 @@ def _scope_of(node, parents):
     return (scope.name if scope is not None else "<module>"), in_leaf
 
 
+def _attribute_targets(node):
+    """Every attribute name a statement binds or deletes (#477).
+
+    Tuple and list targets are unpacked, nested ones too, and a starred
+    target is read through: `a.x, (b.y, *c.z) = ...` writes all three.
+
+    Assignment is not the only place Python binds a name, and the other
+    three bind an attribute in exactly the same way: a `for`/`async for`
+    target, a `with`/`async with` `as` clause, and a comprehension's own
+    `for` target. The review of #514 measured all three passing the
+    detector, and they are read here rather than excluded because each
+    is a *literal* name a reader finds by searching for the field --
+    which is the line this detector draws (see `_writes_pixel_state`).
+    """
+    if isinstance(node, (ast.Assign, ast.Delete)):
+        pending = list(node.targets)
+    elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.For,
+                           ast.AsyncFor, ast.comprehension)):
+        pending = [node.target]
+    elif isinstance(node, ast.withitem):
+        pending = [] if node.optional_vars is None else [node.optional_vars]
+    else:
+        return []
+    names = []
+    while pending:
+        target = pending.pop()
+        if isinstance(target, (ast.Tuple, ast.List)):
+            pending.extend(target.elts)
+        elif isinstance(target, ast.Starred):
+            pending.append(target.value)
+        elif isinstance(target, ast.Attribute):
+            names.append(target.attr)
+    return names
+
+
+def _writes_pixel_state(node):
+    """Does this node write or delete a field of the pixel state? (#477)
+
+    Plain, tuple/list (nested, starred), augmented and annotated
+    assignment; a `for`/`async for` target, a `with`/`async with` `as`
+    clause and a comprehension's `for` target; `del`; and
+    `setattr`/`delattr` whose name is a string literal.
+
+    **Not covered, deliberately:** a name computed at runtime
+    (`setattr(self, name, ...)`), `object.__setattr__`, and
+    `vars(self)[...]` -- `Instance` is a slots dataclass with no
+    `__dict__` for that to reach. A computed name is not a site a reader
+    can find by searching for the field either; matching every
+    `setattr` would put every dynamic write in the package on the list.
+    That is the whole of the exclusion: every form that names the field
+    outright is matched. The list said less than that until the review
+    of #514 measured `for self._x in ...`, `with ... as self._x` and a
+    comprehension target each reported as no write at all.
+    """
+    if any(name in _PIXEL_STATE_FIELDS for name in _attribute_targets(node)):
+        return True
+    return (isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in ("setattr", "delattr")
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in _PIXEL_STATE_FIELDS)
+
+
+def _pixel_state_sites_in(source, rel):
+    """Writes of the pixel state, and calls of `_CALLER_HOLDS`, in one module.
+
+    Takes source text rather than a path so the per-form tests below can
+    feed it a snippet without editing the package (#477).
+    """
+    writes = collections.defaultdict(list)
+    calls = collections.defaultdict(list)
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree)
+               for child in ast.iter_child_nodes(node)}
+    for node in ast.walk(tree):
+        if _writes_pixel_state(node):
+            scope, in_leaf = _scope_of(node, parents)
+            writes[(rel, scope)].append(in_leaf)
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _CALLER_HOLDS):
+            scope, in_leaf = _scope_of(node, parents)
+            calls[node.func.attr].append((rel, scope, in_leaf))
+    return writes, calls
+
+
 def _pixel_state_sites():
     """Writes of the pixel state, and calls of `_CALLER_HOLDS`, by site."""
     writes = collections.defaultdict(list)
     calls = collections.defaultdict(list)
     for path in sorted((REPO / "isocenter").rglob("*.py")):
         rel = path.relative_to(REPO).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        parents = {child: node for node in ast.walk(tree)
-                   for child in ast.iter_child_nodes(node)}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                targets = node.targets
-            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
-                targets = [node.target]
-            else:
-                targets = []
-            if any(isinstance(t, ast.Attribute) and t.attr in _PIXEL_STATE_FIELDS
-                   for t in targets):
-                scope, in_leaf = _scope_of(node, parents)
-                writes[(rel, scope)].append(in_leaf)
-            if (isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr in _CALLER_HOLDS):
-                scope, in_leaf = _scope_of(node, parents)
-                calls[node.func.attr].append((rel, scope, in_leaf))
+        module_writes, module_calls = _pixel_state_sites_in(
+            path.read_text(encoding="utf-8"), rel)
+        for site, in_leaf in module_writes.items():
+            writes[site].extend(in_leaf)
+        for helper, sites in module_calls.items():
+            calls[helper].extend(sites)
     return writes, calls
 
 
@@ -625,6 +762,88 @@ def test_every_write_of_the_pixel_state_is_under_the_leaf_or_listed():
         assert not outside, (
             f"{helper} writes the pixel state for a caller holding "
             f"PIXEL_STATE_LOCK, and is called without it from {outside}")
+
+
+def _snippet_sites(snippet):
+    writes, _calls = _pixel_state_sites_in(snippet, "<snippet>")
+    return {site: len(in_leaf) for site, in_leaf in writes.items()}
+
+
+@pytest.mark.parametrize("snippet", [
+    "self._pixel_array_unwritten = False",
+    "self._pixel_array_unwritten, other.x = False, None",
+    "[other.x, (self._pixel_descriptors_replaced, other.y)] = 1, (2, 3)",
+    "(other.x, (*self._pixel_descriptors_replaced, other.y)) = 1, (2, 3)",
+    "*self._pixel_descriptors_replaced, x = 1, 2",
+    "self._pixel_array_unwritten |= True",
+    "self._pixel_array_unwritten: bool = False",
+    "del self._pixel_descriptors_replaced",
+    "del other.x, self._pixel_array_unwritten",
+    "setattr(self, '_pixel_array_unwritten', False)",
+    "delattr(self, '_pixel_descriptors_replaced')",
+    "for self._pixel_array_unwritten in (True, False):\n        pass",
+    "with other as self._pixel_descriptors_replaced:\n        pass",
+    "x = [other for self._pixel_array_unwritten in (True,)]",
+], ids=["plain", "tuple", "nested list", "starred in a nested tuple",
+        "starred", "augassign", "annassign", "del", "del of two",
+        "setattr", "delattr", "for target", "with as", "comprehension"])
+def test_the_detector_sees_every_form_of_write(snippet):
+    """One write of the pixel state, in each form Python spells one (#477).
+
+    The detector matched `self.<field> = ...` and augmented and annotated
+    assignment only, so a tuple target, `del`, and `setattr`/`delattr`
+    with a literal name wrote the state past it (the #466 re-review's
+    D2-D4). Each form is fed to the detector as a one-statement function,
+    and must be reported as exactly one write in it. `augassign` and
+    `annassign` were already seen; they are here so a simplification of
+    the detector cannot drop them unnoticed. The last three are the
+    review of #514's: a `for` target, a `with ... as` clause and a
+    comprehension's target each reported no write at all.
+    """
+    source = "def f(self, other):\n    %s\n" % snippet
+    assert _snippet_sites(source) == {("<snippet>", "f"): 1}
+
+
+@pytest.mark.parametrize("snippet", [
+    "async for self._pixel_array_unwritten in other:\n        pass",
+    "async with other as self._pixel_descriptors_replaced:\n        pass",
+    "x = [y async for self._pixel_array_unwritten in other]",
+], ids=["async for", "async with as", "async comprehension"])
+def test_the_detector_sees_the_async_binding_forms(snippet):
+    """The `async` spellings of the three forms above (#477).
+
+    Separate only because they need an `async def` around them. `ast`
+    gives `AsyncFor` its own node type, while `async with` and an
+    `async for` inside a comprehension reuse `withitem` and
+    `comprehension`, so this is one new arm and two already covered --
+    which is exactly the kind of asymmetry a test should hold rather
+    than a reader infer.
+    """
+    source = "async def f(self, other):\n    %s\n" % snippet
+    assert _snippet_sites(source) == {("<snippet>", "f"): 1}
+
+
+def test_the_detector_ignores_other_attributes_and_computed_names():
+    """The negative half: not every `setattr` is a site (#477).
+
+    A computed name cannot be read from the source by the detector or by
+    a reader, and is deliberately out of scope; matching every `setattr`
+    would put every dynamic write in the package on the allow-list.
+    """
+    assert _snippet_sites(
+        "def f(self, name):\n"
+        "    self.other = 1\n"
+        "    setattr(self, name, 2)\n"
+        "    setattr(self, 'other', 3)\n"
+        "    del self.other\n"
+        "    other_unwritten = self._pixel_array_unwritten\n"
+        "    for self.other in (1, 2):\n"
+        "        pass\n"
+        "    with self as self.other:\n"
+        "        pass\n"
+        "    x = [y for self.other in (1,)]\n"
+        "    with self:\n"
+        "        pass\n") == {}
 
 
 class _PausingLock:
@@ -730,12 +949,24 @@ class _LockProbe(logging.Handler):
                           entities_module.PIXEL_STATE_LOCK.locked()))
 
 
-def test_nothing_logs_while_the_pixel_state_lock_is_held():
+def test_nothing_logs_while_the_pixel_state_lock_is_held(tmp_path):
     """A logging handler takes its own lock, so the leaf defers its lines.
 
     `set_pixel_data`'s correction notes and the discard refusal are the
     lines emitted around the lock; each must be emitted after release.
     Single-threaded, so `locked()` is this thread's own hold.
+
+    **Every taker goes through this, the read publish included.** This
+    probe drove `set_pixel_data` and `discard_pixel_data` on a
+    memory-only instance and nothing else, so it performed no *load* and
+    `_publish_loaded_frame` -- the fifth taker (#465) -- was invisible to
+    it: the review of #514 put a `get_logger().info(...)` inside that
+    hold and all 22 tests in this file stayed green, with the line
+    observed executing under `PIXEL_STATE_LOCK.locked()`. So both
+    publishing branches are driven here, the sidecar-shaped one with
+    `relabel=None` and the pydicom one that relabels, parallel to the
+    two loads the `recorded` fixture adds for the lock half of the same
+    invariant. A log call added inside the publish is now red here.
     """
     logger = get_logger()
     probe = _LockProbe()
@@ -747,6 +978,17 @@ def test_nothing_logs_while_the_pixel_state_lock_is_held():
         inst.set_attr("0028,0100", 16)
         inst.set_pixel_data(np.zeros((4, 4), dtype=np.uint8))   # BitsAllocated 16 -> 8
         assert inst.discard_pixel_data() is False              # memory only
+        # The read publish, both branches. Asserted to have published --
+        # the loader's own array back, and the relabel written -- so a
+        # refactor that stops loading cannot leave this probe passing
+        # vacuously.
+        loaded = np.arange(16, dtype=np.uint8).reshape(4, 4)
+        lazy = Instance("1.2.3.LOG.LOAD", CT_IMAGE, 1, file_path=None)
+        lazy._pixel_loader = lambda: loaded                    # relabel None
+        assert lazy.get_pixel_data() is loaded
+        relabelling = _relabelling_instance(str(tmp_path))     # relabel RGB
+        assert relabelling.get_pixel_data().shape == (4, 4, 3)
+        assert relabelling.attributes["0028,0004"] == "RGB"
     finally:
         logger.removeHandler(probe)
         logger.setLevel(level)

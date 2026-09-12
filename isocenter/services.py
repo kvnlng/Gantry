@@ -334,6 +334,75 @@ def carry_phi_status_across_redaction(inst: Instance, captured) -> bool:
     return True
 
 
+#: What a redaction's attestation writes before its pixels are persisted,
+#: built from the spellings above rather than listed a second time: the
+#: flags `_apply_redaction_flags` writes, and redaction's own bookkeeping
+#: minus the descriptors `set_pixel_data()` writes, which the discard in
+#: each arm's `finally` puts back (#434) -- that leaves the SOP Instance
+#: UID and the UID it replaced, from `regenerate_uid()`, and the hash.
+_ATTESTATION_ATTRS = _REDACTION_FLAG_TAGS + tuple(sorted(
+    _REDACTION_OWN_ATTRS - frozenset(_SET_PIXEL_DATA_TAGS)))
+_ATTESTATION_SEQUENCES = tuple(sorted(_REDACTION_OWN_SEQUENCES))
+_ABSENT = object()
+
+
+def _capture_attestation(inst: Instance) -> tuple:
+    """The instance as it stands before the attestation is written (#474).
+
+    References, not copies: `_apply_redaction_flags` replaces each value
+    and the Derivation Code Sequence whole, and `regenerate_uid()`
+    rebinds the identity, so nothing held here is mutated in place.
+    """
+    return (inst.sop_instance_uid, inst.file_path,
+            {tag: inst.attributes.get(tag, _ABSENT)
+             for tag in _ATTESTATION_ATTRS},
+            {tag: inst.sequences.get(tag, _ABSENT)
+             for tag in _ATTESTATION_SEQUENCES})
+
+
+def _withdraw_attestation(inst: Instance, attested_from: tuple) -> None:
+    """Put back what `_capture_attestation` saw: the persist failed (#474).
+
+    Both redaction arms write the attestation -- `ImageType` DERIVED,
+    `BurnedInAnnotation` NO, the derivation description and code
+    sequence, a new SOP Instance UID and the configuration hash -- and
+    then persist the redacted pixels. When that persist raised, the
+    instance kept the attestation over pixels the loader still read
+    unredacted: the serial arm returned normally, and the threads arm,
+    whose instance is the live one, raised but left the hash that made
+    the retry skip it as already redacted. Withdrawn here, the instance
+    is as it was found, which is what `Session.redact()` promises for a
+    failed instance.
+
+    **Withdrawn after a failure rather than withheld until a success.**
+    `_swap_pixels_under_gate` records the new frame's blob row under the
+    UID the instance carries when it persists. Persisting before
+    `regenerate_uid()` would write the redacted frame's row under the
+    old UID, over the ingest frame's row, while the unsaved `instances`
+    row still names the ingest frame: a store that disagrees with itself
+    until the next save, across any crash or `compact()` in between.
+    Withdrawing leaves the successful path exactly as it was.
+
+    Direct writes, as `Instance._restore_replaced_descriptors` makes
+    them: two of these keys are uppercase, `set_attr` lowercases, and
+    there is no remove-attribute method.
+    """
+    uid, file_path, attrs, sequences = attested_from
+    inst.sop_instance_uid = uid
+    inst.file_path = file_path
+    for tag, value in attrs.items():
+        if value is _ABSENT:
+            inst.attributes.pop(tag, None)
+        else:
+            inst.attributes[tag] = value
+    for tag, value in sequences.items():
+        if value is _ABSENT:
+            inst.sequences.pop(tag, None)
+        else:
+            inst.sequences[tag] = value
+    inst.mark_modified()
+
+
 class RedactionService:
     """
     Applies pixel redaction to DICOM instances based on configuration rules.
@@ -622,6 +691,7 @@ class RedactionService:
                 # reported it as updated (#235).
                 return RedactionOutcome(ok=True, sop_instance_uid=original_uid)
 
+            attested_from = _capture_attestation(inst)
             self._apply_redaction_flags(inst)
             inst.regenerate_uid()
             # Mark as redacted with this hash
@@ -646,10 +716,21 @@ class RedactionService:
             # answers to where the redacted frame lives, until the next
             # save's dedup re-emitted it. Deleted in #368;
             # `tests/test_services.py` counts the calls. The serial arm
-            # (`redact_machine_instances`) keeps its `finally` persist,
-            # which is that path's only one.
+            # (`redact_machine_instances`) persists in its `try` too, since
+            # #474.
             if self.store_backend and hasattr(self.store_backend, 'persist_pixel_data'):
-                self.store_backend.persist_pixel_data(inst)
+                try:
+                    self.store_backend.persist_pixel_data(inst)
+                except Exception:
+                    # The attestation above is over pixels that never
+                    # reached the store: withdraw it, then fail the task
+                    # like any other failure (#474). Under threads `inst`
+                    # is the live instance, and without this it kept
+                    # `BurnedInAnnotation NO`, the new UID and the hash,
+                    # so the retry `redact()`'s error promises was skipped
+                    # as already redacted.
+                    _withdraw_attestation(inst, attested_from)
+                    raise
             else:
                 # Fallback or Warning? If we don't persist, pixel data is memory-only and won't export correctly?
                 # Actually, export might handle in-memory data if it's dirty?
@@ -926,11 +1007,10 @@ class RedactionService:
             original_uid = inst.sop_instance_uid  # Capture before mutation
             # Before the pass touches it, as `_apply_redaction_rules`
             # does for the parallel path (#486; confirmed by the owner).
+            # `captured` is that status; the attestation's own snapshot
+            # below is `attested_from`, so the carry after the `finally`
+            # is never handed the wrong one (#474).
             captured = capture_phi_status_for_redaction(inst)
-            failed = False
-            # Bound before the `try`: every `continue` below and the
-            # exception path reach the `finally`, which reads it.
-            modified = False
             try:
                 # Optimized: Skip if already redacted with same config.
                 # `force` suppresses this and nothing else -- see
@@ -977,12 +1057,38 @@ class RedactionService:
                 modified = self._redact_instance_pixels(inst, arr, rois)
 
                 if modified:
+                    attested_from = _capture_attestation(inst)
                     self._apply_redaction_flags(inst)
                     inst.regenerate_uid()
                     # Mark as redacted with this hash
                     inst.attributes["_ISOCENTER_REDACTION_HASH"] = config_hash
                     # Force Dirty to persist metadata update
                     inst.mark_modified()
+                    # The persist: in the `try` since #474, after the hash
+                    # and before the count. It sat in the `finally`, where
+                    # a raise (a full disk, an EIO) was logged and dropped:
+                    # no failure recorded, "Applied 1 of 1" in the pass row,
+                    # and an instance attesting a redaction over pixels the
+                    # loader still read unredacted. Here a raise withdraws
+                    # the attestation and takes the `except` below like any
+                    # other failure.
+                    #
+                    # Only when a zone landed: `persist_pixel_data` does
+                    # not deduplicate, and measured on `84113ab` an
+                    # off-image rule grew the sidecar 17 -> 34 bytes with a
+                    # copy nothing pointed at (#235). Never after a zone
+                    # that failed, which raises before reaching here: the
+                    # zones before it are already zeroed, and persisting
+                    # them made a partial redaction durable (#213; the
+                    # whole argument is in `execute_redaction_task`'s
+                    # `finally`).
+                    if (self.store_backend
+                            and hasattr(self.store_backend, 'persist_pixel_data')):
+                        try:
+                            self.store_backend.persist_pixel_data(inst)
+                        except Exception:
+                            _withdraw_attestation(inst, attested_from)
+                            raise
                     applied += 1
                     self.logger.debug(f"  Modified {inst.sop_instance_uid}")
 
@@ -990,39 +1096,14 @@ class RedactionService:
                 # Broad on purpose, and a missing-argument `TypeError` is
                 # audited here like any other failure -- see the note in
                 # `execute_redaction_task` (#217).
-                failed = True
                 failures.append(
                     (original_uid,
                      f"Redaction failed for {original_uid}: "
                      f"{describe_exception(e)}"))
                 self.logger.error(f"  Failed {inst.sop_instance_uid}: {e}")
             finally:
-                # OPTIMIZATION: Release memory immediately after processing
-                # If modified, we MUST persist pixels to sidecar, otherwise discard_pixel_data returns False (unsafe)
-                # We check for store_backend availability.
+                # Memory cleanup only; the persist is in the `try` (#474).
                 #
-                # Not on a failure: zones before the one that raised are
-                # already zeroed, and persisting them makes a partial
-                # redaction durable. See `execute_redaction_task`'s `finally`
-                # for the whole argument (#213).
-                #
-                # Not when nothing was modified either, and this path had
-                # the defect just as the parallel one did: measured on
-                # `84113ab`, an off-image rule grew the sidecar 17 -> 34
-                # bytes and left `instance_blobs` pointing at the second
-                # copy, orphaning the first. `persist_pixel_data` does not
-                # deduplicate (#235).
-                if (modified and not failed and self.store_backend
-                        and hasattr(self.store_backend, 'persist_pixel_data')):
-                    # We only strictly NEED to persist if we hold dirty pixels in memory.
-                    # But persist_pixel_data handles checks (returns if no pixels).
-                    try:
-                        self.store_backend.persist_pixel_data(inst)
-                    except Exception as pe:
-                        self.logger.error(
-                            f"Failed to persist swap for {
-                                inst.sop_instance_uid}: {pe}")
-
                 # `discard_pixel_data`, not `unload_pixel_data`: dropping the
                 # resident array is the INTENT here, not an optimisation. On a
                 # failed redaction it is a partially-zeroed array that must go
