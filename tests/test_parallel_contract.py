@@ -536,6 +536,17 @@ def _head_waits_for_the_rest(item):
     only make that likely, and a respawn under `maxtasksperchild=1` can
     take longer than any sleep short enough to keep in the suite. The
     60-second bound turns a broken barrier into a failure, not a hang.
+
+    **Finishing last is not arriving last (#505).** Items 1..3 write
+    their marker *before* they return, so item 0 leaves the barrier
+    while item 3 is still inside its worker, and item 0's result can
+    reach the parent while item 3's is still being pickled back through
+    the pool's result queue. Only item 3 can lose that race: under
+    `max_workers=2, maxtasksperchild=1` item 0 holds one slot and items
+    1..3 run one after another on the other, so 1 and 2 have delivered
+    long before 3 starts. Anything asserted here about *arrival* order
+    must therefore be about item 0 not being first, never about it being
+    last.
     """
     import time  # pylint: disable=import-outside-toplevel
     index, folder = item
@@ -563,9 +574,28 @@ def test_an_ordered_recycling_run_yields_in_submission_order(tmp_path):
     keeps the same duplicate every time.
 
     The unordered run is here as the precondition: item 0 is made to
-    finish last, and if the default did *not* then yield it last the
-    fixture would not be able to tell `imap` from `imap_unordered`, and
-    the ordered assertion would pass for the wrong reason.
+    finish after items 1 and 2, and if the default did *not* then yield
+    it after them the fixture would not be able to tell `imap` from
+    `imap_unordered`, and the ordered assertion would pass for the wrong
+    reason.
+
+    **The precondition is item 0 not arriving first, not item 0 arriving
+    last (#505).** Those establish the same thing -- under `imap` item 0
+    is always first -- and only the first of them is race-free. Item 0
+    cannot overtake items 1 and 2, which have delivered before item 3
+    even starts; it can and does overtake item 3, whose marker it is
+    waiting on. `unordered[-1] == 0` therefore lost the race once in a
+    2313-test run on 3.14t, failing `got [1, 2, 0, 3]` (#505). See
+    `_head_waits_for_the_rest` for why arrival order is not completion
+    order.
+
+    Both runs need the strategy's chunksize to be 1, `run_parallel`'s
+    default, and the autouse `clean_env` fixture is what guarantees it:
+    under a chunksize of 2 items 0 and 1 share a chunk, so item 0 waits
+    60 s on a marker its own chunk-mate cannot write until item 0
+    returns. That fixture's reach over `ISOCENTER_CHUNKSIZE` is
+    load-bearing here, and the failure if it ever stops reaching is a
+    loud `TimeoutError`, not a quiet pass.
     """
     def items(tag):
         folder = tmp_path / tag
@@ -576,8 +606,9 @@ def test_an_ordered_recycling_run_yields_in_submission_order(tmp_path):
         _head_waits_for_the_rest, items("unordered"), show_progress=False,
         max_workers=2, maxtasksperchild=1)
     assert sorted(unordered) == [0, 1, 2, 3]
-    assert unordered[-1] == 0, (
-        f"precondition: item 0 must arrive last by default; got "
+    assert unordered[0] != 0, (
+        f"precondition: item 0 must not arrive first by default, or the "
+        f"ordered run below cannot tell imap from imap_unordered; got "
         f"{unordered}")
 
     ordered = parallel.run_parallel(
