@@ -3544,6 +3544,16 @@ def _stored_width(arr: np.ndarray, attributes) -> Tuple[int, Optional[str]]:
 #: width #170/#216 showed being silently rewritten from the tag side.
 #: This is the descriptor half; the pixels are decoded and compared
 #: after it (#449), so a descriptor failure keeps its own message.
+#:
+#: **`PhotometricInterpretation` is deliberately not a sixth row, and
+#: never was one (#507).** Every keyword here is compared against the
+#: dataset the *worker serialized*, and the worker writes that label
+#: onto that dataset itself -- so both sides would come from the same
+#: assignment and agree by construction, whatever the writer got wrong.
+#: A row here would be coverage that cannot fail, which reads in a diff
+#: like a check and is worse than none. The label is judged instead
+#: against the transfer syntax the file carries, which is not on `ds` at
+#: all: see `_readback_label_mismatch`.
 _READBACK_DESCRIPTORS = ("Rows", "Columns", "SamplesPerPixel",
                          "NumberOfFrames", "BitsAllocated")
 
@@ -3608,6 +3618,64 @@ def _readback_pixel_mismatch(decoded: np.ndarray, written: np.ndarray,
             f"{first} ({got!r} read back where {want!r} was written)")
 
 
+def _readback_label_mismatch(readback) -> Optional[str]:
+    """Why the delivered label is not one its syntax admits, or None (#507).
+
+    Read entirely off `readback` -- the label from the dataset, the
+    syntax from `file_meta` -- because the subject of this check is the
+    *file*. Neither side can come from `ds` or from `ctx`: the syntax is
+    not on `ds` at all, and under JPEG 2000 the label on `ds` is not the
+    label in the file, since `_compress_j2k` relabels an `RGB` source
+    `YBR_RCT` after the geometry was written (#516 case 1). This
+    function is the only reader that sees a compressed file's final
+    label.
+
+    Three ways it declines to judge, each deliberate:
+
+    - **No `PhotometricInterpretation`** -- an SR, a waveform-only
+      instance, a float16 array whose arm writes no pixel element. There
+      is no claim, and "absent" is not "inadmissible".
+    - **A syntax with no row** in `_ADMISSIBLE_PHOTOMETRICS`. This
+      library decodes eight transfer syntaxes it cannot write (#526), and
+      the table holds measured rows only -- the same discipline
+      `_FALLBACK_PHOTOMETRICS` keeps. A default of "admit nothing" would
+      refuse hand-built files on a table nobody measured, and a default
+      of `_PHOTOMETRIC_ANY_SYNTAX` would quietly assert that every
+      unlisted syntax carries the uncompressed set.
+    - **An admitted label**, normalized by `_written_photometric`,
+      because `' rgb '` is what a conformant reader takes as `RGB`.
+
+    What it is *not*: a colour-space check. Whether three samples are
+    really YBR rather than RGB has no answer from bytes, and #372/#448/
+    #482 is the standing ruling that this library does not make a claim
+    the bytes cannot prove -- so `RGB` over YBR samples passes here, by
+    design and not by omission. The check is structural: could a
+    conformant reader take this label under this syntax at all.
+    """
+    if "PhotometricInterpretation" not in readback:
+        return None
+    label = readback.PhotometricInterpretation
+    # Arity before normalization, because `_written_photometric` of a
+    # `MultiValue` is the `str` of a list -- inadmissible under every
+    # syntax, so the file would fail anyway, with a reason naming a
+    # label no element carries.
+    if isinstance(label, (list, tuple, MultiValue)) and len(label) > 1:
+        return (f"PhotometricInterpretation (0028,0004) is a single value; "
+                f"the written file reads back as {len(label)} "
+                f"({', '.join(repr(str(v)) for v in label)}), which this "
+                f"library cannot re-ingest")
+    syntax = str(getattr(readback.file_meta, "TransferSyntaxUID", "") or "")
+    admitted = _ADMISSIBLE_PHOTOMETRICS.get(syntax)
+    normalized = _written_photometric(label)
+    if admitted is None or normalized is None or normalized in admitted:
+        return None
+    clause, remedy = _PHOTOMETRIC_INADMISSIBLE.get(
+        normalized, _PHOTOMETRIC_INADMISSIBLE[None])
+    return (f"PhotometricInterpretation reads back as '{normalized}', "
+            f"which the transfer syntax the file was written under does "
+            f"not admit ({syntax}): {clause} {remedy}")
+
+
 def _readback_waveform_mismatch(readback, written: bytes) -> Optional[str]:
     """Why the file's `WaveformData` is not `written`, or None if it is.
 
@@ -3643,7 +3711,7 @@ def _verify_readback(path: str, ds, written_pixels=None,
     that decodes to what we meant", and the compliance report presents
     the stronger one (#209). This is the opt-in check behind
     `export(verify_readback=True)`, and since #449 it checks the stronger
-    claim itself. One `dcmread`, then three comparisons, in this order:
+    claim itself. One `dcmread`, then four comparisons, in this order:
 
     1. **Descriptors** (`_READBACK_DESCRIPTORS`), against the dataset the
        worker serialized -- deliberately *not* against `inst.attributes`.
@@ -3654,7 +3722,13 @@ def _verify_readback(path: str, ds, written_pixels=None,
        with a correctly written file. The claim being verified is "the
        file says what the export meant", which is the claim `ok=True`
        makes to the report.
-    2. **Pixels**, when `written_pixels` is given: the array the pixel
+    2. **The Photometric Interpretation the file carries**, against the
+       transfer syntax the file was written under
+       (`_readback_label_mismatch`, #507). Before the decode, because a
+       label the syntax does not admit has to be named as such rather
+       than as whatever the decoder raises about the bytes underneath
+       it.
+    3. **Pixels**, when `written_pixels` is given: the array the pixel
        element was written from, after redaction and after geometry. The
        file is decoded through `_decode_pixels`, the door `ingest()`
        reads through -- pydicom, then the imagecodecs fallback -- so the
@@ -3668,7 +3742,7 @@ def _verify_readback(path: str, ds, written_pixels=None,
        the declared BitsStored therefore fails: every conformant reader
        masks it, so the file does not hold what was meant (-3024 at
        BitsStored 12 reads back as 1072).
-    3. **Waveform bytes**, when `written_waveform` is given: the file's
+    4. **Waveform bytes**, when `written_waveform` is given: the file's
        `WaveformData` against the bytes written, allowing exactly the
        one pad byte `save_as` adds to an odd-length value
        (`_readback_waveform_mismatch`).
@@ -3693,6 +3767,36 @@ def _verify_readback(path: str, ds, written_pixels=None,
     row reading "could not be decoded ()" (#435's class). Spelled by
     `logger.describe_exception`, the one spelling every recorded reason
     uses (#435).
+
+    **`verify_readback=True` is the strict contract, and step 2 is the
+    first descriptor on which it refuses something the export worker
+    wrote on purpose (#507).** Everything this check refused before was
+    a file the worker meant to be correct. Since #502 the default write
+    path *deliberately* writes a Photometric Interpretation the syntax
+    does not admit -- as declared, with a `WARNING` row -- because there
+    are formats this library can read and cannot write, and a
+    de-identified copy the caller can fix beats no copy. A caller who
+    passes `verify_readback=True` has asked for the stronger claim, and
+    for them that same file is a failure: `ok=False`, an `ERROR` row, a
+    `REVIEW_REQUIRED` grade and **nothing delivered**, because the raise
+    fires against the temporary file before the rename (#199). What the
+    flag now buys that it did not before is a demand for conformant
+    output. There is no third setting and no new parameter for it: #26
+    freezes the public surface, and two contracts -- best effort by
+    default, conformance on request -- are the two that were asked for.
+
+    **The limit, which is documented rather than fixed (#507).** Step 2
+    is *structural*: it asks whether a conformant reader could take this
+    label under this syntax, not whether the samples are really in the
+    colour space it names. Three samples are equally `RGB` and
+    `YBR_FULL`, so the second question has no answer from the bytes, and
+    #372/#448/#482 is the standing ruling that this library does not
+    make -- or check -- a claim the bytes cannot prove. `RGB` over YBR
+    samples therefore passes, and so does a file under a syntax with no
+    row in `_ADMISSIBLE_PHOTOMETRICS`. Note also what step 2 is *not*:
+    `PhotometricInterpretation` is not in `_READBACK_DESCRIPTORS` and
+    was never in it, and adding it there would be a comparison that
+    cannot fail -- see the comment beside that tuple.
     """
     try:
         readback = pydicom.dcmread(path)
@@ -3709,6 +3813,15 @@ def _verify_readback(path: str, ds, written_pixels=None,
     if mismatches:
         raise RuntimeError(
             "Readback verification failed: " + "; ".join(mismatches))
+
+    # Before the decode, not after: a label the syntax does not admit
+    # has to be named as such. `YBR_PARTIAL_422` over full-sample bytes
+    # makes pydicom raise about byte counts and an undefined label makes
+    # it raise `ValueError`, and either reason sends the reader looking
+    # at the pixels for a fault that is in one element of the header.
+    reason = _readback_label_mismatch(readback)
+    if reason is not None:
+        raise RuntimeError(f"Readback verification failed: {reason}")
 
     if written_pixels is not None:
         try:
