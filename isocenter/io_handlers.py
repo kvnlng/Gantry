@@ -465,6 +465,16 @@ _NESTED_GEOMETRY_TAGS = (
 )
 
 
+#: PixelRepresentation (0028,0103) in the words PS3.5 6.2 uses, for the
+#: one place that has to name a declared value in prose (#499). A value
+#: outside the two the standard defines is named as such rather than
+#: guessed at: `declared_int` will have read it as an integer, and a
+#: correction note saying "PixelRepresentation 2 (unsigned)" would be a
+#: second wrong claim about the same element.
+_SIGNEDNESS = {0: "unsigned", 1: "signed"}
+_UNDEFINED_SIGNEDNESS = "neither 0 nor 1, the only values defined"
+
+
 #: The numpy dtype an integer frame decodes to, keyed on BitsAllocated
 #: and indexed by PixelRepresentation: `(unsigned, signed)`.
 #:
@@ -4243,9 +4253,27 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
             # worker whose `isocenter` logger has no handler, and the
             # parent logs it (`_report_export_corrections`). `ds` only,
             # never `inst`, for the reason the float arm above gives.
-            # PixelRepresentation stays declared: it does not constrain
-            # how many bytes `tobytes()` emits, and its coherence with
-            # the array is #499.
+            #
+            # PixelRepresentation is the array's own signedness too
+            # (#499). It does not constrain how many bytes `tobytes()`
+            # emits, which is why it stood outside this rule until now --
+            # but it decides what every reader makes of those bytes, so a
+            # declaration that disagrees with them is not a descriptor
+            # nit: measured, `int16 [-1, -2, -3]` declared 0 read back
+            # 65535, 65534, 65533 uncompressed and 32767, 32766, 32765
+            # under JPEG 2000, and `uint16 65535` declared 1 read back
+            # -1. `set_pixel_data()` already writes this tag from
+            # `dtype.kind` on the graph side (#386) and names this line
+            # as the defect it could not reach; `_readback_pixel_mismatch`
+            # already treats the array as the truth and this element as
+            # the thing that is wrong about it (#449), which is why
+            # `verify_readback=True` failed all four disagreements while
+            # the default export wrote them in silence.
+            #
+            # `kind == 'i'` and not `kind != 'u'`: `bool` arrives here as
+            # `'b'` -- the `view(np.uint8)` that widens a mask for the
+            # encoder is inside `_compress_j2k`, below this -- and a mask
+            # is unsigned.
             ds.BitsAllocated = arr.itemsize * 8
             ds.BitsStored, widened = _stored_width(arr, inst.attributes)
             ds.HighBit = ds.BitsStored - 1
@@ -4253,7 +4281,28 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
                 corrections.append(
                     f"{widened}; written with BitsStored {ds.BitsStored} "
                     f"and HighBit {ds.HighBit}, the array's own width")
-            ds.PixelRepresentation = inst.attributes.get("0028,0103", 0)
+            ds.PixelRepresentation = 1 if arr.dtype.kind == "i" else 0
+            declared_representation = declared_int(inst.attributes,
+                                                   "0028,0103")
+            if (declared_representation is not None
+                    and declared_representation != ds.PixelRepresentation):
+                # Read by `declared_int`, the one lenient-free reading of
+                # a declared descriptor (#506): `[1]` is *not* unwrapped,
+                # where the `.get()` this replaced handed pydicom a
+                # one-element list that it unwraps for a US element. A
+                # second, more lenient reading of one descriptor is how
+                # two answers start to disagree.
+                #
+                # Nothing declared is not a correction of anything
+                # (#468's rule), so the note is guarded on the
+                # declaration and not on the value alone.
+                corrections.append(
+                    f"PixelRepresentation {declared_representation} "
+                    f"({_SIGNEDNESS.get(declared_representation, _UNDEFINED_SIGNEDNESS)})"
+                    f" is not the signedness of {arr.dtype} samples; written "
+                    f"with PixelRepresentation {ds.PixelRepresentation} "
+                    f"({_SIGNEDNESS[ds.PixelRepresentation]}), the array's "
+                    f"own")
 
         # Waveform samples never reach `attributes` -- populate_attrs
         # routes (5400,1010) to the sidecar at every depth, whatever

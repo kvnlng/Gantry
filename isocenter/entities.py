@@ -1944,7 +1944,13 @@ class Instance(DicomItem):
         # it (#386). The export writes `arr.tobytes()`, so a
         # PixelRepresentation disagreeing with the array cannot be
         # honoured; "the attributes win" is not one of the options here
-        # either.
+        # either. **That exporter line is gone since #499**: the writer
+        # now derives the element from `arr.dtype.kind` exactly as this
+        # does, and hands a disagreeing declaration back on
+        # `ExportOutcome.corrections`. This block is still not
+        # redundant -- it is what keeps the *graph* and the sidecar
+        # coherent, which is what decides the dtype a reload returns --
+        # but the two answers can no longer differ.
         #
         # **Floats are deliberately excluded**, and left alone rather
         # than popped. PS3.5 Section 8.2 says Bits Stored, High Bit and

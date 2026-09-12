@@ -159,12 +159,18 @@ def _lossy_j2k(monkeypatch, only=None):
     monkeypatch.setattr(io_handlers, "jpeg2k_encode", _encode)
 
 
-def _hand_written(tmp_path, src, compression):
-    """A file holding `src` under BitsStored 12, written by pydicom, not
-    by the worker -- the worker no longer writes a width the values
-    exceed (#468), and this is the file the readback's masking claim is
-    about. Returns the path and the dataset, which the readback holds
-    the file's descriptors against."""
+def _hand_written(tmp_path, src, compression, *, bits_stored=12,
+                  representation=1, name="hand.dcm"):
+    """A file holding `src` under descriptors the worker will not write.
+
+    Written by pydicom, not by the worker, and there are now two reasons
+    for that: the worker holds BitsStored against the array (#468), so a
+    width the values exceed is not something it produces, and since #499
+    it derives PixelRepresentation from the array's dtype, so a signed
+    array declared unsigned is not either. Both are still claims the
+    readback makes about a *file*, so both are pinned against files built
+    here. Returns the path and the dataset, which the readback holds the
+    file's descriptors against."""
     ds = pydicom.Dataset()
     ds.file_meta = pydicom.dataset.FileMetaDataset()
     ds.file_meta.MediaStorageSOPClassUID = CT_STORAGE
@@ -174,8 +180,9 @@ def _hand_written(tmp_path, src, compression):
     ds.Rows, ds.Columns = src.shape
     ds.SamplesPerPixel = 1
     ds.PhotometricInterpretation = "MONOCHROME2"
-    ds.BitsAllocated, ds.BitsStored, ds.HighBit = 16, 12, 11
-    ds.PixelRepresentation = 1
+    ds.BitsAllocated = 16
+    ds.BitsStored, ds.HighBit = bits_stored, bits_stored - 1
+    ds.PixelRepresentation = representation
     if compression is None:
         ds.file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
         ds.PixelData = src.tobytes()
@@ -183,7 +190,7 @@ def _hand_written(tmp_path, src, compression):
         ds.file_meta.TransferSyntaxUID = pydicom.uid.JPEG2000Lossless
         ds.PixelData = pydicom.encaps.encapsulate(
             [io_handlers.jpeg2k_encode(src, level=0, codecformat="J2K")])
-    path = str(tmp_path / "hand.dcm")
+    path = str(tmp_path / name)
     ds.save_as(path, enforce_file_format=True)
     return path, ds
 
@@ -637,40 +644,38 @@ def test_signed_samples_declared_unsigned_fail_readback(tmp_path,
 
     Every sample's bits reach the file intact, so a bitwise compare alone
     passes this file. But the file declares unsigned samples, so a reader
-    gets uint16 [65535, 65534, 65533]: the export without the check shows
-    it. The dtype comparison is what catches it, and the reason names
-    PixelRepresentation, because that is the element a reader needs to
-    look at. Killing mutations:
+    gets uint16 [65535, 65534, 65533]. The dtype comparison is what
+    catches it, and the reason names PixelRepresentation, because that is
+    the element a reader needs to look at.
+
+    Built by hand, not by the worker: since #499 the worker derives
+    PixelRepresentation from the array's dtype, so this file -- signed
+    samples under an unsigned declaration -- is one it no longer
+    produces, exactly as #468 did for the BitsStored case above. The
+    readback's own claim is unchanged and is what this pins, and it is
+    now the first descriptor on which the readback refuses something
+    that is not merely a hand-built file but *was* worker output until
+    this release. Killing mutations:
     - the dtype comparison dropped (the review's R1);
     - the PixelRepresentation clause dropped from the reason.
     """
     src = np.array([[-1, -2, -3, 4]] * 4, dtype=np.int16)
+    path, ds = _hand_written(tmp_path, src, compression, bits_stored=16,
+                             representation=0, name="unsigned.dcm")
 
-    def declared_unsigned():
-        # After the pixels, not before: `set_pixel_data()` rewrites
-        # PixelRepresentation from the array's dtype, so a value set
-        # first is replaced with 1 and the file comes out correct.
-        inst = _image(src)
-        inst.set_attr("0028,0103", 0)
-        return inst
-
-    unchecked = _export_instance_worker(
-        _ctx_for(tmp_path, declared_unsigned(), compression=compression))
-    assert unchecked.ok, unchecked.error
-    read = _stored_samples(unchecked.output_path)
-    assert read.dtype == np.uint16
+    # What a reader makes of it, which is the defect the check is about.
+    assert _stored_samples(path).dtype == np.uint16
     if compression is None:
-        assert read.reshape(-1)[:4].tolist() == [65535, 65534, 65533, 4]
-    # Under JPEG 2000 a reader gets uint16 as well, but shifted: measured
-    # [32767, 32766, 32765, 32772]. That is pydicom's J2K path and not
-    # something to pin; that the reader gets unsigned samples is enough.
+        assert _stored_samples(path).reshape(-1)[:4].tolist() == [
+            65535, 65534, 65533, 4]
+    # Under JPEG 2000 a reader gets unsigned samples as well, but
+    # shifted: measured [32767, 32766, 32765, 32772]. That is pydicom's
+    # J2K path and not something to pin.
 
-    outcome = _export_instance_worker(
-        _ctx_for(tmp_path, declared_unsigned(), compression=compression,
-                 verify_readback=True))
+    with pytest.raises(RuntimeError) as raised:
+        io_handlers._verify_readback(path, ds, src)
 
-    assert not outcome.ok
-    message = str(outcome.error)
+    message = str(raised.value)
     assert "decodes as uint16 x 16 where int16 x 16 was written" in message, \
         message
     assert ("the file declares PixelRepresentation 0 (unsigned) where "
