@@ -3,6 +3,7 @@ import os
 import re
 import json
 import contextlib
+import threading
 import datetime
 import multiprocessing
 import concurrent.futures
@@ -881,15 +882,44 @@ class DicomSession:
         # mid-write at any fork. Linux 3.12 defaults to fork; macOS to
         # spawn, which is why nothing local ever saw the difference
         # (#220, #250).
+        # How wide the pool below was built, and how many `ingest()`
+        # calls are running on it right now (#511). The width is recorded
+        # rather than read back from the executor's private
+        # `_max_workers`, and it moves with **every** assignment of
+        # `self._executor` -- here, `_restart_executor()` and
+        # `_ingest_executor()` -- because a stale number makes the next
+        # ingest either skip a rebuild it needed or rebuild for nothing.
+        # The counter exists so a resize never touches a pool a peer
+        # ingest is mid-flight on; `_ingest_executor()` is the only
+        # reader of both.
+        #
+        # `_ingest_lock` guards exactly those two fields and the swap.
+        # It is **never held while any other lock is taken** -- not the
+        # sidecar pass-lock, not the gate, not sqlite, and not a logging
+        # handler's own lock, which the `PIXEL_STATE_LOCK` convention
+        # counts as one (#434) -- so it is not part of the documented
+        # lock order in CLAUDE.md and must not be made part of it: it is
+        # taken and released at the top of `ingest()` with nothing held,
+        # and again in that call's `finally` after the pass-lock has been
+        # released. `_ingest_executor()` keeps that true by capturing its
+        # decision as data and logging it, and retiring the pool it
+        # swapped out, only after the lock is released. The one thing
+        # under it that takes any lock at all is the replacement pool's
+        # constructor, which takes the stdlib's own internal locks.
+        self._executor_width = resolve_max_workers()
+        self._ingest_lock = threading.Lock()
+        self._ingests_in_flight = 0
+
         self._executor = concurrent.futures.ProcessPoolExecutor(
             # Sized by the resolver `run_parallel` uses, so
             # `ISOCENTER_MAX_WORKERS` narrows `ingest()` as it narrows
             # every other parallel step. Until #501 this was `None`: the
             # stdlib gave one worker per CPU whatever the variable said,
-            # under a comment claiming CPU * 1.5. Read once, here. A
-            # value set after `Session()` reaches the next restart, not
-            # this pool.
-            max_workers=resolve_max_workers(),
+            # under a comment claiming CPU * 1.5. Since #511 each
+            # `ingest()` re-resolves this and rebuilds the pool when the
+            # width has changed, so the variable is honoured whenever it
+            # is set rather than only here.
+            max_workers=self._executor_width,
             mp_context=multiprocessing.get_context("spawn"),
             # The same env-gated worker setup as run_parallel's pools
             # (GC off, child-side faulthandler watchdog); resolved by
@@ -1109,6 +1139,13 @@ class DicomSession:
 
         With no argument the width is resolved as construction resolves
         it: `ISOCENTER_MAX_WORKERS`, else one per CPU, re-read now.
+
+        This is the **broken-pool** path, and its `cancel_futures=True`
+        below is part of that contract: the pool it is replacing is
+        assumed unusable, so whatever is still queued on it is lost
+        either way. A healthy resize must not come through here -- see
+        `_ingest_executor()`, which is the #511 path and never cancels
+        anything.
         """
         if max_workers is None:
             # Not the stdlib's `None`, which is one per CPU. An OOM restart
@@ -1134,6 +1171,185 @@ class DicomSession:
             max_workers=max_workers,
             mp_context=multiprocessing.get_context("spawn"),
             initializer=resolve_worker_initializer())
+        # The recorded width follows every swap (#511). A restart that
+        # narrowed the pool for an OOM recovery and left this at the old
+        # number would make the next `ingest()` either rebuild for
+        # nothing or -- with the variable narrowed to match -- skip the
+        # rebuild it needed and run at the recovery width in silence.
+        self._executor_width = max_workers
+
+    @contextlib.contextmanager
+    def _ingest_executor(self):
+        """The shared pool for one `ingest()`, at the width asked for now (#511).
+
+        `ISOCENTER_MAX_WORKERS` is re-resolved on entry and the pool is
+        rebuilt when the width has changed, so the documented lever
+        narrows `ingest()` whenever it is set rather than only at
+        `Session()`. Every other reader is per call already:
+        `run_parallel` resolves it on each call, and `redact()` reads it
+        in `_redaction_worker_count` on each pass. #504 made the argument
+        this closes: a construction-time read is ignored in silence when
+        the variable is set later.
+
+        **A peer ingest is never disturbed.** Two `ingest()` calls on two
+        threads of one session can overlap -- the sidecar pass-lock is
+        taken shared for an ingest, so the lock design admits it. This
+        pool is the only thing they share. When one is already in flight
+        and the width has changed, this call logs a `WARNING` naming the
+        variable, the pool's width and the requested one, and runs on the
+        pool as it stands; the next `ingest()` that starts with no peer
+        gets the new width. The alternative was rejected: the pool's
+        futures are all submitted in one `executor.map` inside
+        `_run_on_shared_executor`, so cancelling them (which is what
+        `_restart_executor()` does, correctly, for a *broken* pool) would
+        drop the files the peer has not started yet with nothing raised
+        at the caller -- #232's shape. Blocking on `shutdown(wait=True)`
+        instead would make a public method wait out the peer's whole
+        ingest, and running a second pool beside the first *for the
+        length of the peer's ingest* doubles the process count on the box
+        of an operator who is narrowing workers because memory is short.
+        That is about two pools with work on them, not about the moment
+        below where the replacement object exists before the old one is
+        shut down: an unsubmitted-to pool has no workers at all.
+
+        The check, the swap and the snapshot are one critical section,
+        and the dispatch uses the snapshot rather than re-reading
+        `self._executor`. Split, there is a window: a peer reads the old
+        pool, this call shuts it down, and the peer's `map()` raises
+        `cannot schedule new futures after shutdown`.
+
+        Resizing costs nothing when the width is unchanged, which is
+        every call unless the variable moved.
+
+        **The replacement is built before the old pool is retired, and
+        the counter moves after the swap.** Both orderings matter, and
+        the reason is a rebuild that *fails*: `ProcessPoolExecutor(...)`
+        raises `OSError` when the box is out of file descriptors or
+        memory for the queue pipes -- EMFILE, ENOMEM -- which is the
+        failure mode of exactly the memory-short machine an operator is
+        narrowing workers for. Built first, nothing has been mutated when
+        it raises: the session keeps the live pool it had, at the width
+        still recorded, and the exception propagates, so a failed resize
+        costs the caller its `ingest()` and nothing more. Retired first
+        instead, `self._executor` would point at a pool already shut
+        down and every later `ingest()` would raise `cannot schedule new
+        futures after shutdown` -- permanently, because the width left
+        stale means the next call sees nothing to rebuild. The counter is
+        incremented after the swap for the same reason: this is a
+        `@contextmanager`, so an exception raised before the `yield`
+        escapes `__enter__` and the `finally` below never runs, and a
+        counter left at 1 is a phantom peer that makes every later
+        `ingest()` skip the resize for a call that is not there.
+
+        Building first does **not** double the process count, which is
+        the objection to standing up a second pool at all: a
+        `ProcessPoolExecutor` spawns no worker until the first task is
+        submitted (measured, `len(pool._processes) == 0` after
+        construction and 1 after one submit, on 3.12.14 and 3.14.7t), and
+        the retirement completes before this call dispatches anything. So
+        there are two pool *objects* for the length of a teardown and one
+        set of workers throughout, and an `ingest()` that rebuilds and
+        then finds nothing new to read pays only that teardown.
+
+        Neither the log lines nor the teardown run under
+        `_ingest_lock`. The lock covers the check, the swap and the
+        snapshot; the decision is captured as data and acted on after it
+        is released. `shutdown(wait=True)` under the lock would block
+        every later `ingest()` behind a worker wedged in a C library, and
+        a logging handler takes its own lock, which the comment at
+        `_ingest_lock`'s definition promises this one is never held
+        across (the `PIXEL_STATE_LOCK` convention, #434). The resizing
+        call does still wait out its own retirement -- the same
+        `shutdown(wait=True)` `close()` performs, not a new class of
+        wait -- but it waits holding nothing.
+
+        **The `try` therefore begins the instant the lock is released**,
+        so nothing between the increment and the decrement sits outside
+        it -- the log call and the teardown included. A generator's
+        `finally` does run when its body raises before the `yield`, so
+        anything that fails out here decrements on the way out; what the
+        counter cannot survive is a raise *before* it is incremented
+        being followed by a decrement, which is why the increment sits
+        after the rebuild -- with only the snapshot, which cannot raise,
+        between it and the release. The case is not hypothetical: the
+        one thing out here that can block is the retirement waiting on
+        that wedged worker, and `Ctrl-C` during it raises
+        `KeyboardInterrupt`, which `_retire_shared_executor` does not
+        catch. A retirement that fails leaves the swap in place -- the
+        new pool is live and recorded -- so that too costs the caller its
+        `ingest()` and not the session.
+        """
+        requested = resolve_max_workers()
+        retired = None
+        resized = None
+        skipped = None
+        with self._ingest_lock:
+            # Not `- 1` after an increment: the increment is below, after
+            # the fallible rebuild.
+            peers = self._ingests_in_flight
+            if requested != self._executor_width:
+                if peers:
+                    skipped = (requested, self._executor_width, peers)
+                else:
+                    replacement = concurrent.futures.ProcessPoolExecutor(
+                        max_workers=requested,
+                        mp_context=multiprocessing.get_context("spawn"),
+                        initializer=resolve_worker_initializer())
+                    resized = (self._executor_width, requested)
+                    retired, self._executor = self._executor, replacement
+                    self._executor_width = requested
+            self._ingests_in_flight += 1
+            executor = self._executor
+
+        try:
+            if skipped:
+                get_logger().warning(
+                    "ISOCENTER_MAX_WORKERS asks for %s worker(s) and "
+                    "this session's shared process pool has %s, but "
+                    "%s other ingest() is already running on that "
+                    "pool in this session, so this ingest() ran at "
+                    "%s. Resizing the pool now would cancel the "
+                    "files the other ingest() has not started yet. "
+                    "The next ingest() that starts with no other "
+                    "ingest() in flight is built at %s.",
+                    skipped[0], skipped[1], skipped[2], skipped[1],
+                    skipped[0])
+            elif resized:
+                get_logger().info(
+                    "Resizing the session's shared process pool from "
+                    "%s to %s worker(s): ISOCENTER_MAX_WORKERS has "
+                    "changed since the pool was built.",
+                    resized[0], resized[1])
+                self._retire_shared_executor(retired)
+            yield executor
+        finally:
+            with self._ingest_lock:
+                self._ingests_in_flight -= 1
+
+    def _retire_shared_executor(self, executor):
+        """Shuts a swapped-out shared pool down, cancelling nothing (#511).
+
+        `wait=True` and no `cancel_futures`: the caller has established
+        that no `ingest()` is running on it, so this returns as soon as
+        the workers exit. The opposite of `_restart_executor()`'s
+        teardown, deliberately -- that one is replacing a pool assumed
+        broken.
+
+        It takes the pool to retire rather than reading
+        `self._executor`, because by the time it is called that
+        attribute is the replacement: `_ingest_executor()` swaps first
+        and retires afterwards, outside `_ingest_lock`, so that a wedged
+        worker cannot block the session's next `ingest()`.
+        """
+        if not executor:
+            return
+        try:
+            executor.shutdown(wait=True)
+        except (RuntimeError, OSError) as exc:
+            # The pool has been replaced regardless; a failure to shut
+            # the old one down is worth a line in the log, not a crash.
+            get_logger().debug("Could not shut down the prior shared "
+                               "executor: %s", describe_exception(exc))
 
     def release_memory(self):
         """
@@ -1694,6 +1910,17 @@ class DicomSession:
         read logs one `WARNING` naming whichever is set (#393, #471);
         with both set, #185's line is that one.
 
+        `ISOCENTER_MAX_WORKERS` **does** reach this call. It is
+        re-resolved here and the pool is rebuilt when the width has
+        changed since it was built, so the lever narrows an ingest
+        whenever it is set and not only at `Session()` (#511). An
+        unchanged width rebuilds nothing. While another `ingest()` is
+        running on that pool in this session -- two threads can overlap,
+        since the pass-lock is taken shared -- a changed width is
+        reported in one `WARNING` and this call runs at the pool's
+        current width, because shutting the pool down would cancel the
+        peer's queued files; see `_ingest_executor`.
+
         Args:
             directory (str): The path to the directory containing DICOM files.
 
@@ -1731,14 +1958,22 @@ class DicomSession:
         # ingested frames as orphans. While this is held `compact()`
         # refuses; behind a running compaction this waits (bounded)
         # before the first worker is dispatched.
-        with self.store_backend._hold_pass_lock():
-            # Pass Sidecar Manager for eager pixel writing
-            summary = DicomImporter.import_files(
-                [directory],
-                self.store,
-                executor=self._executor,
-                sidecar_manager=self.store_backend.sidecar,
-                store_backend=self.store_backend)
+        # Outside the pass-lock, and entered before it: this re-resolves
+        # `ISOCENTER_MAX_WORKERS` and rebuilds the shared pool when the
+        # width has changed (#511), and its own lock is never held while
+        # the pass-lock is taken. The pool it yields is used as given --
+        # `self._executor` is deliberately not read again below, so a
+        # peer ingest that resizes between here and the dispatch cannot
+        # pull this call's pool out from under it.
+        with self._ingest_executor() as executor:
+            with self.store_backend._hold_pass_lock():
+                # Pass Sidecar Manager for eager pixel writing
+                summary = DicomImporter.import_files(
+                    [directory],
+                    self.store,
+                    executor=executor,
+                    sidecar_manager=self.store_backend.sidecar,
+                    store_backend=self.store_backend)
 
         self.save(sync=True)
 

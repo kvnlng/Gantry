@@ -846,6 +846,7 @@ TARGETS = {
                                "tests/test_offset_table_frame_count.py",
                                "tests/test_one_value_per_owned_tag.py",
                                "tests/test_optimization.py",
+                               "tests/test_parallel_contract.py",
                                "tests/test_parallel_export.py",
                                "tests/test_patient_level_remediation_reaches_instances.py",
                                "tests/test_persistence.py",
