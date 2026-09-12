@@ -933,7 +933,7 @@ class RemediationService:
 
 
 def _date_shift_declines(value) -> bool:
-    """True when the SHIFT_DATE arm would record a decline for `value` (#498).
+    """True when the `SHIFT_DATE` arm's parser would leave `value` unshifted (#498).
 
     The inspector asks this of a SHIFT/JITTER value on an entity already
     `date_shifted`. That flag is the entity's, not the value's: it says a
@@ -949,6 +949,20 @@ def _date_shift_declines(value) -> bool:
     as `'notadate'`. Blank is False because the arm skips a blank value
     without a decline -- nothing is left behind -- and re-raising it would
     take a clean instance to IDENTIFIED on every re-audit.
+
+    The parser is the *one* decline this models, and the arm has a second:
+    an unresolvable PatientID. The sentence above says "the parser" rather
+    than "the arm" on purpose, because widening it would invite a caller
+    to trust this for a decline it does not see -- and the reason it can
+    stop at the parser is that the other decline cannot be reached from
+    here. One PatientID, off the patient being walked, seeds every date
+    proposal in a pass (`_scan_study` and `_scan_instance` are both handed
+    `patient.patient_id`). So an unresolvable one declines the study's own
+    date and every sibling date beside it, nothing is shifted, no
+    `date_shifted` flag is set, `is_shifted` is False, and the scan
+    re-raises the value without asking this at all. Modelling that arm
+    would mean threading an entity through a predicate that takes a value,
+    to answer a question no caller can ask.
     """
     if value is None or not str(value).strip():
         return False
