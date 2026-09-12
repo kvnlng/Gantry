@@ -327,6 +327,7 @@ TARGETS = {
                               "tests/test_floor_policy.py",
                               "tests/test_multiprocessing.py",
                               "tests/test_mutation_gaps.py", "tests/test_ocr_formal.py",
+                              "tests/test_one_value_per_owned_tag.py",
                               "tests/test_patient_level_remediation_reaches_instances.py",
                               "tests/test_persistence.py", "tests/test_privacy.py",
                               "tests/test_private_sequence_implicit_vr.py",
@@ -358,7 +359,8 @@ TARGETS = {
                                   # is the one test that kills the pass-end
                                   # demotion deleted (measured, review of
                                   # #491); nothing the scan demands does.
-                                  "tests/test_manifest_says_what_was_done.py"], 30),
+                                  "tests/test_manifest_says_what_was_done.py",
+                                  "tests/test_one_value_per_owned_tag.py"], 30),
     "isocenter/io_handlers.py": (["tests/test_api_coherence.py",
                                   "tests/test_audit_read_barrier.py",
                                   "tests/test_binary_retention_threshold.py",
@@ -404,6 +406,7 @@ TARGETS = {
                                   "tests/test_nested_phi_audit.py",
                                   "tests/test_nested_pixel_carriage.py",
                                   "tests/test_offset_table_frame_count.py",
+                                  "tests/test_one_value_per_owned_tag.py",
                                   "tests/test_patient_level_remediation_reaches_instances.py",
                                   "tests/test_pixel_dtype_roundtrip.py",
                                   "tests/test_pixel_geometry_pipeline.py",
@@ -635,6 +638,7 @@ TARGETS = {
                               "tests/test_ocr_unavailable_refuses.py",
                               "tests/test_ocr_workers_use_the_callers_tesseract.py",
                               "tests/test_offset_table_frame_count.py",
+                              "tests/test_one_value_per_owned_tag.py",
                               "tests/test_optimization.py",
                               "tests/test_packaging_contract.py",
                               "tests/test_parallel_contract.py",
@@ -832,6 +836,7 @@ TARGETS = {
                                "tests/test_ocr_unavailable_refuses.py",
                                "tests/test_ocr_workers_use_the_callers_tesseract.py",
                                "tests/test_offset_table_frame_count.py",
+                               "tests/test_one_value_per_owned_tag.py",
                                "tests/test_optimization.py",
                                "tests/test_parallel_export.py",
                                "tests/test_patient_level_remediation_reaches_instances.py",

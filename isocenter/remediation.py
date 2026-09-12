@@ -1,5 +1,5 @@
 import hashlib
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from datetime import datetime, timedelta
 from tqdm import tqdm
 from .entities import PhiStatus
@@ -34,6 +34,22 @@ REMEDIATION_ACTION_TYPES = frozenset({
 REMEDIATION_DECLINED = "REMEDIATION_DECLINED"
 
 
+def _count(number: int, singular: str, plural: str = None) -> str:
+    """A number and its noun, agreeing: `"1 instance copy"`, `"2 instance
+    copies"`.
+
+    One spelling for the three places #492 and #496 added a count to a
+    `REMEDIATION_*` row or to the log. Written inline, each of the three
+    said `"1 instance copies"` and `"1 instance-level findings"` -- a row
+    an operator reads, and the one place the fold is explained at all, so
+    the plural is not a cosmetic slip but a row that misdescribes itself.
+    `plural` is optional because most of these nouns take `s`; `copy`
+    does not, which is why the parameter exists rather than a bare
+    `+ "s"` at the call sites.
+    """
+    return f"{number} {singular if number == 1 else (plural or singular + 's')}"
+
+
 class RemediationService:
     """
     Applies remediation proposals found by the PhiInspector.
@@ -55,6 +71,12 @@ class RemediationService:
         # Entities `_record_decline` named during the current pass;
         # reset by `apply_remediation` and read at its end.
         self._declined_entities: list = []
+        # The instance copies an entity-level write reached during the
+        # current pass, as `(id(instance), tag)`, and the foldable instance
+        # findings waiting on each copy. Reset by `apply_remediation`; read
+        # by `_folds_into_owner` and `_write_to_instances` (#496).
+        self._owner_copies: set = set()
+        self._pending_folds: dict = {}
         self.jitter_config = date_jitter_config or {"min_days": -365, "max_days": -1}
 
     def apply_remediation(self, findings: List[PhiFinding]):
@@ -74,6 +96,18 @@ class RemediationService:
         processed_entities = set()  # To avoid double-processing if multiple findings point to same entity/attr
         audit_buffer = []
         self._declined_entities = []
+        self._owner_copies = set()
+        # Entity-level findings first, everything else after in its own
+        # relative order (#496). The owner's write has to land before the
+        # instance findings on the same copies are judged, or which value
+        # an instance keeps depends on the order the caller handed the
+        # findings in. Stable, so #167's deepest-first order for
+        # private-sequence removals survives.
+        findings = self._entity_findings_first(findings)
+        self._pending_folds = self._foldable_instance_findings(findings)
+        # Keys of the instance findings folded into an owner's write, so
+        # a duplicate folds once (#496).
+        folded_keys = set()
         failures = 0
         # How many proposals actually reached
         # `_apply_single_remediation`, which is what the failure warning
@@ -106,7 +140,21 @@ class RemediationService:
             # which is what "already handled" should mean.
             key = (finding.entity_uid, finding.entity_path,
                    finding.remediation_proposal.target_attr)
-            if key in processed_entities:
+            if key in processed_entities or key in folded_keys:
+                continue
+
+            # Folded, not applied: an owner's write in this pass already
+            # put its value on this copy, and running the instance's own
+            # proposal would put a second one there (#496). Stamped
+            # REMEDIATED as its own success would have been, and inside
+            # the loop -- so #491's pass-end demotion below still takes an
+            # instance that declined something else back to IDENTIFIED.
+            # Not in `processed_entities`: that set is the applied count
+            # `anonymize()` returns, and this finding applied nothing of
+            # its own. The owner's audit row says it was folded.
+            if self._folds_into_owner(finding):
+                folded_keys.add(key)
+                finding.entity.record_phi_status(PhiStatus.REMEDIATED)
                 continue
 
             try:
@@ -129,6 +177,12 @@ class RemediationService:
                     f"Failed to apply remediation for {
                         finding.entity_uid} ({
                         finding.field_name}): {e}")
+
+        if folded_keys:
+            self.logger.info(
+                f"{_count(len(folded_keys), 'instance-level finding')} folded "
+                "into a patient's or study's remediation: the owner's value "
+                "is already on the copies it reached (#496).")
 
         # An entity that declined during this pass does not leave it
         # REMEDIATED. The success block stamps REMEDIATED per proposal
@@ -357,11 +411,20 @@ class RemediationService:
             # pins by number, and this block sits below all of them.
             # Before the REMEDIATED stamp below, which is only about
             # `entity`; the instances keep their own status.
-            written = self._write_to_instances(entity, proposal.target_attr)
-            if written is not None:
+            wrote = self._write_to_instances(entity, proposal.target_attr)
+            if wrote is not None:
+                written, folds = wrote
                 verb = ("removed from" if action_type == "REMEDIATION_REMOVE"
                         else "written to")
-                details += f"; {verb} {written} instance copies"
+                details += f"; {verb} {_count(written, 'instance copy', 'instance copies')}"
+                # Said on this row because the folded findings get no rows
+                # of their own (#496). Counted from the pass's pending set
+                # before they run, so the row is complete when it is
+                # appended: Pin A in `tests/test_frozen_surface.py`
+                # refuses any rewrite of a row already in `audit_buffer`.
+                if folds:
+                    details += (f"; {_count(folds, 'instance-level finding')} on this "
+                                f"tag folded into it")
             # Recorded after the change, never before: remediation modifies
             # the entity, so a status stamped first would name a revision
             # the entity immediately leaves behind and would read as
@@ -482,14 +545,19 @@ class RemediationService:
         "study_time": "0008,0030",
     }
 
-    def _write_to_instances(self, entity, field: str) -> Optional[int]:
+    def _write_to_instances(self, entity, field: str) -> Optional[Tuple[int, int]]:
         """Write the value a Patient/Study field now holds onto each
         instance beneath it that carries the field's tag (#492).
 
-        Returns how many instances were written, or None when the write
-        does not apply: `entity` has `set_attr` (it is an item, and the
-        arm wrote its tag directly), or `field` is not one the exporter
-        stamps.
+        Each copy written is recorded in `_owner_copies`, so an instance
+        finding on it later in the pass folds into this write (#496; see
+        `_folds_into_owner`).
+
+        Returns `(written, folds)` -- how many instance copies were
+        written, and how many instance findings in this pass are waiting
+        to fold into them -- or None when the write does not apply:
+        `entity` has `set_attr` (it is an item, and the arm wrote its tag
+        directly), or `field` is not one the exporter stamps.
 
         The value is read back off the entity, after the arm wrote it,
         rather than passed in from the arm: that is the one source the
@@ -544,7 +612,7 @@ class RemediationService:
         studies = getattr(entity, "studies", None)
         if studies is None:
             studies = [entity]
-        written = 0
+        written = folds = 0
         for study in studies:
             for series in getattr(study, "series", []):
                 for instance in getattr(series, "instances", []):
@@ -558,8 +626,91 @@ class RemediationService:
                         instance.set_attr(tag, value)
                     if status is not PhiStatus.UNSCANNED:
                         instance.record_phi_status(status)
+                    # This copy now holds the owner's value; an
+                    # instance finding on it later in the pass folds
+                    # into this write rather than running (#496).
+                    self._owner_copies.add((id(instance), tag))
+                    folds += self._pending_folds.get((id(instance), tag), 0)
                     written += 1
-        return written
+        return written, folds
+
+    @staticmethod
+    def _entity_findings_first(findings) -> list:
+        """The findings with every entity-level one first (#496).
+
+        Entity-level means the finding's entity has no `set_attr`: a
+        `Patient` or a `Study`, whose write reaches the instances' copies
+        through `_write_to_instances`. Stable, so each half keeps the
+        caller's relative order -- #167's deepest-first private-sequence
+        removals included. A finding with no entity sorts with the
+        entity-level half; it only declines, so where it sits changes
+        nothing.
+        """
+        return sorted(findings, key=lambda f: hasattr(f.entity, "set_attr"))
+
+    def _folds_into_owner(self, finding: PhiFinding) -> bool:
+        """Whether an instance finding folds into an owner's write (#496).
+
+        True when an entity-level write earlier in this pass reached
+        exactly this copy: the finding's own instance, at the top level,
+        on the tag the owner wrote. A folded finding does not run.
+
+        Three things never fold, each measured before this was written:
+
+        - **REMOVE.** It writes no second value, it is the policy's
+          explicit request, and it was already order-independent: it runs
+          after the owner's write, and the copy ends absent either way.
+        - **A nested copy.** The owner's write and the exporter's stamp
+          reach the dataset root only; a copy inside a sequence is the
+          instance scan's to judge. There is no `entity_path` check for
+          it, and none is needed: a nested finding's entity is its
+          sequence item, and `_owner_copies` holds only the instances the
+          owner wrote, so the lookup cannot find one. A check was written
+          first and measured dead (#496 mutant N4).
+        - **A copy the owner's write did not reach** -- the owner's own
+          finding declined, or was not handed in. Folding it anyway would
+          leave the original value in the instance dict, which is what
+          `export_dataframe(expand_metadata=True)` and
+          `get_flattened_instances()` read (#492). The owner's DECLINED
+          row already grades such a run REVIEW_REQUIRED.
+        """
+        proposal = finding.remediation_proposal
+        if proposal.action_type == "REMOVE_TAG":
+            return False
+        # No "is this an instance?" check either, for the same reason as
+        # the nested case: a Patient, a Study or a None entity is never in
+        # `_owner_copies`, which holds only the instances the owner wrote
+        # -- so the lookup alone decides.
+        return (id(finding.entity), proposal.target_attr) in self._owner_copies
+
+    @staticmethod
+    def _foldable_instance_findings(findings: list) -> dict:
+        """The instance findings that fold if an owner's write reaches
+        their copy, counted per `(id(instance), tag)` (#496).
+
+        Counted before the pass so an owner's audit row can name its folds
+        when it is appended: the row is complete from the start, and no
+        row is rewritten after the fact, which Pin A in
+        `tests/test_frozen_surface.py` refuses. Distinct dedup keys only,
+        because a duplicate is skipped, not folded twice. REMOVE never
+        folds (see `_folds_into_owner`), so it is never counted. Only a
+        copy an owner's write reaches is ever asked for its count, so a
+        finding counted here whose copy no owner reaches costs nothing.
+        """
+        pending = {}
+        seen = set()
+        for finding in findings:
+            proposal = finding.remediation_proposal
+            if (not proposal or proposal.action_type == "REMOVE_TAG"
+                    or not hasattr(finding.entity, "set_attr")):
+                continue
+            key = (finding.entity_uid, finding.entity_path, proposal.target_attr)
+            if key in seen:
+                continue
+            seen.add(key)
+            copy = (id(finding.entity), proposal.target_attr)
+            pending[copy] = pending.get(copy, 0) + 1
+        return pending
 
     def _resolve_patient_id(self, entity, proposal: PhiRemediation = None) -> Optional[str]:
         """
