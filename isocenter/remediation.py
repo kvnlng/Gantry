@@ -771,7 +771,8 @@ class RemediationService:
         offset = (val % span) + min_days
         return offset
 
-    def _shift_date_string(self, date_val, days: int) -> Optional[str]:
+    @staticmethod
+    def _shift_date_string(date_val, days: int) -> Optional[str]:
         """
         Shifts a date by `days`.
 
@@ -929,3 +930,52 @@ class RemediationService:
             seq.items.append(item)
 
         entity.sequences["0012,0064"] = seq
+
+
+def _date_shift_declines(value) -> bool:
+    """True when the `SHIFT_DATE` arm's parser would leave `value` unshifted (#498).
+
+    The inspector asks this of a SHIFT/JITTER value on an entity already
+    `date_shifted`. That flag is the entity's, not the value's: it says a
+    shift landed somewhere on the instance or its study, and a value the
+    arm could not parse in the same pass sits beside it unshifted. The
+    scan may skip a value the shift could apply to (moving it again would
+    shift it twice), but not one it cannot, or a second `anonymize()`
+    records CLEARED over a value the pipeline never touched.
+
+    The answer is the arm's own parser rather than a second one, so the
+    scan re-raises exactly what the arm declines: a DA range, a
+    multi-valued DA, and a DT with a UTC offset are declined here the same
+    as `'notadate'`. Blank is False because the arm skips a blank value
+    without a decline -- nothing is left behind -- and re-raising it would
+    take a clean instance to IDENTIFIED on every re-audit.
+
+    The parser is the *one* decline this models, and the arm has a second:
+    an unresolvable PatientID. The sentence above says "the parser" rather
+    than "the arm" on purpose, because widening it would invite a caller
+    to trust this for a decline it does not see. Within one pass that
+    other decline cannot be reached from here at all: one PatientID, off
+    the patient being walked, seeds every date proposal in a pass
+    (`_scan_study` and `_scan_instance` are both handed
+    `patient.patient_id`, and a proposal's `metadata` carries it from the
+    scan), so an unresolvable one declines the study's own date and every
+    sibling date beside it, nothing is shifted, no `date_shifted` flag is
+    set, `is_shifted` is False, and the scan re-raises the value without
+    asking this at all.
+
+    Across passes it is reachable, and the answer is still right: the flag
+    persists, so a pass whose PatientID the pipeline has since emptied can
+    ask this about a value shifted under the old one. Then a True says
+    re-raise, the arm declines on the PatientID instead of the parser, and
+    the value still ends raised, declined and IDENTIFIED -- the same
+    outcome by the other arm, which is why modelling that arm buys nothing
+    and would mean threading an entity through a predicate that takes a
+    value. (A *valid* date left unshifted in such a pass is skipped, but
+    that is #510's gap -- a value the shift never touched -- not this
+    one's.)
+    """
+    if value is None or not str(value).strip():
+        return False
+    # The class's own module; the parser is private to it, not to the class.
+    return RemediationService._shift_date_string(  # pylint: disable=protected-access
+        value, 0) is None

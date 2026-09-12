@@ -538,10 +538,23 @@ class PhiInspector:
                 elif study and hasattr(study, "date_shifted") and study.date_shifted:
                     is_shifted = True
 
+                # `is_shifted` is the entity's flag, not this value's
+                # (#498): it says a shift landed somewhere on the instance
+                # or its study, and a value the arm declined in the same
+                # pass sits beside it unshifted. Skip only a value the
+                # shift could apply to -- it has moved once, and raising
+                # it again would move it twice. One the arm cannot parse
+                # is raised again, so its decline recurs and the pass-end
+                # demotion keeps the instance IDENTIFIED; skipping it let
+                # a second anonymize() record CLEARED over it. The import
+                # is local because remediation imports this module.
                 if is_shifted:
-                    needs_remediation = False
+                    from .remediation import (  # pylint: disable=import-outside-toplevel
+                        _date_shift_declines)
+                    needs_remediation = _date_shift_declines(val)
                 else:
                     needs_remediation = True
+                if needs_remediation:
                     remediation_action = "SHIFT_DATE"
             elif action_code == "KEEP":
                 needs_remediation = False
