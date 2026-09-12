@@ -194,10 +194,16 @@ def test_an_undefined_label_is_named_before_the_decoder_sees_it(tmp_path):
     a fault that is in one element of the header.
 
     Killing mutation: the label check moved below the `written_pixels`
-    block. This is the only test in the suite that sees that move: the
-    four labels this issue is about decode cleanly through the
-    imagecodecs fallback, so for them the order does not change the
-    outcome.
+    block, measured as **4 failures** -- this test plus all three
+    parametrizations of
+    `test_an_oddly_spelled_inadmissible_label_gets_its_own_remedy`,
+    because pydicom refuses a non-upper-case CS at the decode for the
+    same reason it refuses `NONSENSE`. What that mutant does *not*
+    reach is the four labels this issue is about: measured,
+    `pixel_array` returns `uint8 (8, 8, 3)` for `YBR_ICT`, `YBR_RCT`
+    and both `YBR_PARTIAL_*` at this shape -- pydicom special-cases the
+    byte count only for `YBR_FULL_422` -- so for them the order changes
+    nothing at all.
     """
     outcome = _export(tmp_path, _image("NONSENSE"), verify_readback=True)
 
@@ -322,9 +328,20 @@ def test_a_compressed_colour_export_passes_whatever_516_labelled_it(
 def test_a_multi_valued_label_in_the_file_fails_the_readback(tmp_path):
     """Two values of a VM 1 attribute is not a file that was meant (#507).
 
-    The writer refuses this before it reaches disk since #502, so this
-    file is built by hand -- and the check stays here rather than being
-    left to the writer, because the readback's subject is the *file*.
+    The writer refuses this before it reaches disk on the pixel arms
+    since #502, so a file with pixels is built by hand here -- and the
+    check stays in the readback rather than being left to the writer,
+    because the readback's subject is the *file* and it is reachable
+    from an arm the writer's check is not (see the pixel-less test
+    below).
+
+    **The reason names the arity, not re-ingestibility, and that is a
+    measurement.** "A file this library cannot re-ingest" is true of a
+    file with pixel data -- `ingest()` refuses the `MultiValue` while
+    decompressing -- and **false** of a pixel-less one, which re-ingests
+    as `IngestSummary(ingested=1, failures=[])` with the graph carrying
+    both values. VM 1 is the fault on either.
+
     Killing mutation: the arity clause dropped, after which the
     normalized label is the `str` of a `MultiValue`
     (`"['YBR_ICT', 'RGB']"`), which is in no syntax's row, so the file
@@ -339,8 +356,9 @@ def test_a_multi_valued_label_in_the_file_fails_the_readback(tmp_path):
 
     message = str(raised.value)
     assert "Readback verification failed" in message, message
-    assert "is a single value" in message, message
-    assert "reads back as 2" in message, message
+    assert "is VM 1" in message, message
+    assert "reads back as 2 values" in message, message
+    assert "cannot re-ingest" not in message, message
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +386,50 @@ def test_a_file_with_no_photometric_interpretation_is_not_judged(tmp_path):
     path, ds = _hand_built(tmp_path, None, pixels=False)
 
     io_handlers._verify_readback(path, ds)
+
+
+@pytest.mark.parametrize("label, expected", [
+    ("YBR_ICT", "no pixel element at all"),
+    (["YBR_ICT", "RGB"], "is VM 1")],
+    ids=["inadmissible", "multi-valued"])
+def test_a_pixel_less_file_is_judged_and_offered_a_remedy_that_applies(
+        tmp_path, label, expected):
+    """The third arm, and the reason strings it made false (#507 review).
+
+    `_write_pixel_geometry` runs only on the two pixel-writing worker
+    arms, so an instance with **no pixel element** carries whatever
+    `0028,0004` the graph declared straight to disk: measured on this
+    branch, an SR-shaped instance declaring `YBR_ICT` exports `ok=True`
+    with `warnings == []` (#502's defect, one branch over) and one
+    declaring `['YBR_ICT', 'RGB']` exports `ok=True` with the file
+    reading back `MultiValue` of length 2. That gap is **filed for
+    v0.9.7 and deliberately not closed here** -- routing that arm
+    through the writer's check is new behaviour, and the reachability is
+    a malformed source or a hand-built graph.
+
+    What *is* fixed here is what this check says when it meets such a
+    file, because it does meet them -- it reads the delivered file and
+    does not care which arm wrote it, and both reason strings were
+    false of this arm. The inadmissible label was told to `Export with
+    use_compression=True`, which cannot help an instance with nothing
+    to compress; the multi-valued one was told the file was one "this
+    library cannot re-ingest", when in fact
+    `IngestSummary(ingested=1, failures=[])`.
+
+    Killing mutations: the `_PIXEL_ELEMENTS` guard dropped from the
+    remedy (the compression advice comes back for a file with no
+    pixels); "cannot re-ingest" restored to the arity reason.
+    """
+    path, ds = _hand_built(tmp_path, label, pixels=False)
+
+    with pytest.raises(RuntimeError, match="Readback verification failed") \
+            as raised:
+        io_handlers._verify_readback(path, ds)
+
+    message = str(raised.value)
+    assert expected in message, message
+    assert "use_compression=True" not in message, message
+    assert "cannot re-ingest" not in message, message
 
 
 @pytest.mark.parametrize("syntax", [JPEG_LS, ExplicitVRLittleEndian])

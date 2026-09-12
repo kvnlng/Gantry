@@ -480,9 +480,17 @@ class _PhotometricRefusal(RuntimeError):
     output; a multi-valued label is the exception, because there is no
     best output -- no single value can be chosen without inventing one,
     and a file carrying two values of a VM 1 attribute cannot be read
-    back by this library at all (ingest refuses it before any label is
-    examined). "What this library can read back" is the standard
-    `_J2K_ENCODABLE_FRAMES` already refuses on.
+    back by this library at all: `ingest()` hashes the label while
+    decompressing, before anything examines it. "What this library can
+    read back" is the standard `_J2K_ENCODABLE_FRAMES` already refuses
+    on.
+
+    That measurement is of a file **with pixel data**, which is the only
+    kind this exception is raised for -- `_write_pixel_geometry` runs
+    only on the two pixel-writing arms. A pixel-less file with two
+    labels has no decompression step to trip over and re-ingests
+    cleanly; it is `_readback_label_mismatch` that refuses that one, on
+    the arity alone.
 
     **Raised on what the file would carry, not on what was declared.**
     At one sample the geometry resolver has already answered
@@ -577,6 +585,27 @@ _PHOTOMETRIC_INADMISSIBLE = {
 _PHOTOMETRIC_INADMISSIBLE["YBR_RCT"] = _PHOTOMETRIC_INADMISSIBLE["YBR_ICT"]
 _PHOTOMETRIC_INADMISSIBLE["YBR_PARTIAL_420"] = \
     _PHOTOMETRIC_INADMISSIBLE["YBR_PARTIAL_422"]
+
+
+#: The three elements a Photometric Interpretation can describe: the
+#: integer one and the two float ones (PS3.3 C.7.6.24, C.7.6.25). Named
+#: because the readback's reason has to say something different when the
+#: file carries none of them -- the remedies in
+#: `_PHOTOMETRIC_INADMISSIBLE` all talk about the pixels, and "export
+#: with use_compression=True" is no help to an instance with nothing to
+#: compress (#507 review).
+_PIXEL_ELEMENTS = ("PixelData", "FloatPixelData", "DoubleFloatPixelData")
+
+#: The remedy for a label on an instance that has no pixel element at
+#: all. Its own sentence rather than a fourth row in
+#: `_PHOTOMETRIC_INADMISSIBLE`, because that table is keyed on the label
+#: and this is a property of the file.
+_PHOTOMETRIC_NO_PIXELS = (
+    "This file carries no pixel element at all -- no (7fe0,0010), "
+    "(7fe0,0008) or (7fe0,0009) -- so the label describes nothing and no "
+    "remedy involving the pixels applies. An instance with no pixels "
+    "should carry no (0028,0004); the value reaching the file is the one "
+    "the graph declared.")
 
 
 def _written_photometric(value) -> Optional[str]:
@@ -3385,9 +3414,29 @@ def _write_pixel_geometry(ds, geom, attributes, *, float_element: bool,
         ds.PhotometricInterpretation = photometric
 
     # **The label is held against the syntax being written (#502), and
-    # this is the only place a label reaches a file** -- both worker
-    # arms come through here, so a check placed here cannot be bypassed
-    # by the float path the way a check in the integer arm would be.
+    # this is the only place a label reaches a file *that has a pixel
+    # element*** -- both pixel-writing worker arms, integer and float,
+    # come through here, so neither can bypass a check placed here the
+    # way a check inside the integer arm would be bypassed by the float
+    # path.
+    #
+    # **There is a third arm, and it does not come through here (#507
+    # review; filed for v0.9.7).** An instance with no pixel element
+    # never calls this function, and `_merge` has already put whatever
+    # `0028,0004` the graph declared onto `ds`, so the file carries it
+    # unexamined. Measured on this branch, over an SR-shaped instance
+    # with no pixels: a declared `YBR_ICT` exports `ok=True` with
+    # `warnings == []` -- #502's defect, intact, one branch over -- and
+    # a declared `['YBR_ICT', 'RGB']` exports `ok=True` on the default
+    # path with the file reading back `MultiValue(['YBR_ICT', 'RGB'])`.
+    # `verify_readback=True` does catch both, because
+    # `_readback_label_mismatch` reads the delivered file and does not
+    # care which arm wrote it. Deliberately not closed here: routing the
+    # pixel-less arm through this check is new behaviour needing its own
+    # tests, the reachability is a malformed source or a hand-built
+    # graph (a pixel descriptor on an instance with no pixels), and this
+    # is the last PR of the milestone. Do not read the paragraphs below
+    # as covering that arm.
     #
     # It runs *after* the corrections above rather than on
     # `attributes`, so it judges what the file will carry: a declared
@@ -3666,6 +3715,15 @@ def _readback_label_mismatch(readback) -> Optional[str]:
     the bytes cannot prove -- so `RGB` over YBR samples passes here, by
     design and not by omission. The check is structural: could a
     conformant reader take this label under this syntax at all.
+
+    **It reaches a file the writer's own check does not.**
+    `_write_pixel_geometry` runs only on the two pixel-writing arms, so
+    an instance with no pixel element carries whatever `0028,0004` the
+    graph declared onto disk unexamined and unwarned (measured; filed
+    for v0.9.7). This function reads the delivered file and does not
+    care which arm wrote it, so it catches that one too -- which is why
+    the reason has to check for a pixel element before offering a remedy
+    about the pixels.
     """
     if "PhotometricInterpretation" not in readback:
         return None
@@ -3675,10 +3733,15 @@ def _readback_label_mismatch(readback) -> Optional[str]:
     # syntax, so the file would fail anyway, with a reason naming a
     # label no element carries.
     if isinstance(label, (list, tuple, MultiValue)) and len(label) > 1:
-        return (f"PhotometricInterpretation (0028,0004) is a single value; "
-                f"the written file reads back as {len(label)} "
-                f"({', '.join(repr(str(v)) for v in label)}), which this "
-                f"library cannot re-ingest")
+        # Not "this library cannot re-ingest it": measured, that is true
+        # only of a file with pixel data, where `ingest()` refuses the
+        # `MultiValue` while decompressing. A *pixel-less* file with two
+        # labels re-ingests cleanly (`IngestSummary(ingested=1,
+        # failures=[])`) and the graph comes back carrying both -- so the
+        # fault named here is the arity itself, which is true of either.
+        return (f"PhotometricInterpretation (0028,0004) is VM 1; the "
+                f"written file reads back as {len(label)} values "
+                f"({', '.join(repr(str(v)) for v in label)})")
     syntax = str(getattr(readback.file_meta, "TransferSyntaxUID", "") or "")
     admitted = _ADMISSIBLE_PHOTOMETRICS.get(syntax)
     normalized = _written_photometric(label)
@@ -3686,6 +3749,8 @@ def _readback_label_mismatch(readback) -> Optional[str]:
         return None
     clause, remedy = _PHOTOMETRIC_INADMISSIBLE.get(
         normalized, _PHOTOMETRIC_INADMISSIBLE[None])
+    if not any(kw in readback for kw in _PIXEL_ELEMENTS):
+        remedy = _PHOTOMETRIC_NO_PIXELS
     return (f"PhotometricInterpretation reads back as '{normalized}', "
             f"which the transfer syntax the file was written under does "
             f"not admit ({syntax}): {clause} {remedy}")
@@ -3830,10 +3895,19 @@ def _verify_readback(path: str, ds, written_pixels=None,
             "Readback verification failed: " + "; ".join(mismatches))
 
     # Before the decode, not after: a label the syntax does not admit
-    # has to be named as such. `YBR_PARTIAL_422` over full-sample bytes
-    # makes pydicom raise about byte counts and an undefined label makes
-    # it raise `ValueError`, and either reason sends the reader looking
-    # at the pixels for a fault that is in one element of the header.
+    # has to be named as such. An **undefined** label is what makes the
+    # order observable -- pydicom raises `Unknown (0028,0004)
+    # 'Photometric Interpretation' value 'NONSENSE'` from the decoder,
+    # which sends the reader of a compliance report to the pixels for a
+    # fault that is in one element of the header. The same is true of
+    # any label pydicom does not recognise, a non-upper-case spelling
+    # included. Measured, and worth knowing before this is "simplified":
+    # the four labels #502 is about decode *cleanly* at
+    # (rows, cols, 3) -- `pixel_array` returns `uint8 (8, 8, 3)` for
+    # every one of `YBR_ICT`, `YBR_RCT` and both `YBR_PARTIAL_*`, since
+    # pydicom special-cases the byte count only for `YBR_FULL_422`. So
+    # for them the order changes nothing, and the undefined label is
+    # the whole of the reason this check goes first.
     reason = _readback_label_mismatch(readback)
     if reason is not None:
         raise RuntimeError(f"Readback verification failed: {reason}")
@@ -4139,10 +4213,20 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
     uid = getattr(ctx.instance, "sop_instance_uid", None)
     # The syntax the file will be written under, decided here so the
     # label check judges what is actually being written (#502) rather
-    # than re-deriving it beside each call. `_finalize_dataset` writes
-    # the same two UIDs; `_create_ds` starts every file at Implicit VR
-    # Little Endian and only the compressed path moves it.
-    written_syntax = (str(JPEG2000Lossless) if ctx.compression
+    # than re-deriving it beside each call. `_create_ds` starts every
+    # file at Implicit VR Little Endian and only the compressed path
+    # moves it.
+    #
+    # **`== "j2k"`, not truthiness, and that is the same predicate
+    # `_finalize_dataset` keys on** -- it runs `_compress_j2k` for
+    # `compression == 'j2k'` and for nothing else. Read as truthiness
+    # here, any other truthy string (`compression="rle"`) would have the
+    # label judged against the JPEG 2000 row while the file was written
+    # natively, so an inadmissible label went out unwarned. `compression`
+    # is not a documented open enum, so that was latitude rather than a
+    # live defect; two spellings of one predicate is the thing this
+    # repo's "one spelling per behaviour" convention is about.
+    written_syntax = (str(JPEG2000Lossless) if ctx.compression == "j2k"
                       else str(ImplicitVRLittleEndian))
 
     try:

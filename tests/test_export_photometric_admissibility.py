@@ -35,8 +35,20 @@ reasoning is in the PR body, and these are the numbers):
 
 The one refusal is the multi-valued label, and it is the ruling's own
 exception: no single value can be chosen without inventing one, and such
-a file cannot be read back by this library at all, so no output here
-would be honest.
+a file -- carrying pixel data -- cannot be read back by this library at
+all, so no output here would be honest.
+
+**Scope, and it is narrower than "every export": the two arms that write
+a pixel element.** Everything here goes through `_write_pixel_geometry`,
+which both the integer and the float pixel arms call. An instance with
+**no pixel element** never reaches that function and carries its declared
+`0028,0004` to disk unexamined -- measured, an SR-shaped instance
+declaring `YBR_ICT` still exports `ok=True` with no warning, and one
+declaring `['YBR_ICT', 'RGB']` still exports a two-valued file.
+`export(verify_readback=True)` catches both, because #507's check reads
+the delivered file; see
+`tests/test_readback_label_admissibility.py::test_a_pixel_less_file_is_judged_and_offered_a_remedy_that_applies`.
+That third arm is filed for v0.9.7 and deliberately not closed here.
 """
 import itertools
 import logging
@@ -252,6 +264,34 @@ def test_ict_and_rct_under_jpeg_2000_warn_about_nothing(tmp_path, label):
     assert ds.file_meta.TransferSyntaxUID == J2K_LOSSLESS
     assert ds.PhotometricInterpretation == label
     assert outcome.warnings == [], outcome.warnings
+
+
+def test_the_label_is_judged_against_the_syntax_the_file_actually_carries(
+        tmp_path):
+    """One predicate for "is this file compressed", not two (#502 review).
+
+    `_finalize_dataset` runs `_compress_j2k` for `compression == 'j2k'`
+    and for nothing else, so any *other* truthy value writes a native
+    Implicit VR Little Endian file. The worker's `written_syntax` has to
+    key on the same comparison: read as truthiness it judged the label
+    against the JPEG 2000 row while the file went out native, and
+    `YBR_ICT` was written with no warning at all -- measured with
+    `compression="rle"`.
+
+    The assertion is on the *file's own* transfer syntax rather than on
+    `"rle"` meaning anything, because it does not: `compression` is not
+    a documented open enum and this test promises nothing about that
+    value. What it pins is the invariant -- the label is judged against
+    the syntax the file ends up carrying. Killing mutation:
+    `written_syntax` back to `if ctx.compression`.
+    """
+    outcome = _export(tmp_path, _image("YBR_ICT"), compression="rle")
+
+    assert outcome.ok, outcome.error
+    written = pydicom.dcmread(outcome.output_path)
+    assert written.file_meta.TransferSyntaxUID == IMPLICIT_VR_LE
+    assert len(outcome.warnings) == 1, outcome.warnings
+    assert IMPLICIT_VR_LE in outcome.warnings[0], outcome.warnings
 
 
 def test_a_compressed_rgb_export_is_relabelled_and_warns_about_nothing(
