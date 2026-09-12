@@ -74,7 +74,7 @@ privacy_profile: "basic"
 
 * **`basic`**: A reduced *DICOM PS3.15 Annex E Basic Profile* (`BASIC_PROFILE` in `isocenter/profiles.py`, 35 tags). Retains some descriptors but removes direct identifiers.
 * **`none`**: No base. The file's `phi_tags` are the whole policy.
-* **External File**: You can provide a path to another YAML file (e.g., `./profiles/my_hospital_standard.yaml`) to inherit its rules.
+* **External File**: You can provide a path to another YAML file (e.g., `./profiles/my_hospital_standard.yaml`) to inherit its rules. That file must carry them under a `phi_tags:` mapping — a config-shaped file works, a bare tag map at its root raises `ValueError`, because the root used to be read as the tags and a profile written like a config then loaded `privacy_profile` itself as a "tag".
 
 Any other value is refused: `load_config()` raises `ValueError` naming it. (These docs once offered a `comprehensive` profile, which never existed; loading it warned and applied no base.)
 
