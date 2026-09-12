@@ -953,16 +953,26 @@ def _date_shift_declines(value) -> bool:
     The parser is the *one* decline this models, and the arm has a second:
     an unresolvable PatientID. The sentence above says "the parser" rather
     than "the arm" on purpose, because widening it would invite a caller
-    to trust this for a decline it does not see -- and the reason it can
-    stop at the parser is that the other decline cannot be reached from
-    here. One PatientID, off the patient being walked, seeds every date
-    proposal in a pass (`_scan_study` and `_scan_instance` are both handed
-    `patient.patient_id`). So an unresolvable one declines the study's own
-    date and every sibling date beside it, nothing is shifted, no
-    `date_shifted` flag is set, `is_shifted` is False, and the scan
-    re-raises the value without asking this at all. Modelling that arm
-    would mean threading an entity through a predicate that takes a value,
-    to answer a question no caller can ask.
+    to trust this for a decline it does not see. Within one pass that
+    other decline cannot be reached from here at all: one PatientID, off
+    the patient being walked, seeds every date proposal in a pass
+    (`_scan_study` and `_scan_instance` are both handed
+    `patient.patient_id`, and a proposal's `metadata` carries it from the
+    scan), so an unresolvable one declines the study's own date and every
+    sibling date beside it, nothing is shifted, no `date_shifted` flag is
+    set, `is_shifted` is False, and the scan re-raises the value without
+    asking this at all.
+
+    Across passes it is reachable, and the answer is still right: the flag
+    persists, so a pass whose PatientID the pipeline has since emptied can
+    ask this about a value shifted under the old one. Then a True says
+    re-raise, the arm declines on the PatientID instead of the parser, and
+    the value still ends raised, declined and IDENTIFIED -- the same
+    outcome by the other arm, which is why modelling that arm buys nothing
+    and would mean threading an entity through a predicate that takes a
+    value. (A *valid* date left unshifted in such a pass is skipped, but
+    that is #510's gap -- a value the shift never touched -- not this
+    one's.)
     """
     if value is None or not str(value).strip():
         return False

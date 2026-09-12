@@ -227,8 +227,10 @@ def test_date_shift_declines_is_the_arms_own_answer(value, declines):
     """The predicate the scan asks is the SHIFT_DATE arm's own parser: True
     exactly when that parser would leave the value unshifted, which is the
     decline the scan has to re-raise. Only that decline -- the arm's other
-    one, an unresolvable PatientID, is not modelled and cannot be reached
-    from the scan; the predicate's docstring carries the argument."""
+    one, an unresolvable PatientID, is not modelled, and it needs none:
+    within a pass it cannot be reached from the scan, and across passes it
+    reaches the same outcome the parser's answer already asks for. The
+    predicate's docstring carries the argument."""
     from isocenter.remediation import _date_shift_declines
     assert _date_shift_declines(value) is declines
 
