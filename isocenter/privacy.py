@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Any, Optional, Dict, Tuple
 import hashlib
+import re
 from .entities import Patient, Study, Instance, iter_item_tree
 from .logger import get_logger
 
@@ -18,6 +19,75 @@ def _is_replacement_name(value) -> bool:
 
 def _is_replacement_id(value) -> bool:
     return str(value).startswith("ANON_")
+
+
+#: The hex run inside an `ANON_` replacement. Used to refuse a value that
+#: merely starts with the prefix (`ANON_xyz`, a user's own id) before
+#: `jitter_digest` reads eight characters out of it as a digest.
+_IS_HEX = re.compile(r"[0-9a-f]+")
+
+#: How many hex characters of the PatientID digest the replacement
+#: carries, and how many the date jitter seeds on. The first is a prefix
+#: of the second, which is the whole reason `jitter_digest` can read the
+#: seed back out of a replacement; shorten `_REPLACEMENT_DIGEST_CHARS`
+#: below `_JITTER_DIGEST_CHARS` and the coupling breaks silently, which
+#: is why `tests/test_the_jitter_seed_survives_anonymize.py` pins it.
+_REPLACEMENT_DIGEST_CHARS = 12
+_JITTER_DIGEST_CHARS = 8
+
+
+def _replacement_id_for(patient_id) -> str:
+    """The PatientID replacement `scan_patient` proposes.
+
+    Spelled once, beside the test that recognises it, because the date
+    jitter reads its digest back out (`jitter_digest`): two spellings of
+    the constructor would let the prefix, the digest length or the hash
+    move on one side only.
+    """
+    digest = hashlib.sha256(str(patient_id).encode()).hexdigest()
+    return f"ANON_{digest[:_REPLACEMENT_DIGEST_CHARS]}"
+
+
+def jitter_digest(patient_id) -> str:
+    """The digest that seeds the date jitter, from either spelling of an
+    identity (#517).
+
+    `_get_date_shift` used to hash whatever PatientID the scan saw, and
+    `anonymize()` replaces PatientID in its first pass -- so every later
+    pass hashed `ANON_<digest>` instead of the original and landed on a
+    different offset (measured: `P1` gives -286 days, the replacement it
+    produces gives -47). A date first shifted in a later pass therefore
+    fell off the offset its siblings got, and "jitter is deterministic
+    per patient so intervals survive" held only within one pass.
+
+    A replacement already **carries** the original's digest -- it is
+    `ANON_` plus its first 12 hex characters, and the jitter reads the
+    first 8 -- so the canonical key is read back out of it rather than
+    recomputed. That is what makes this fix carry no legacy question:
+    for an id that has *not* been replaced the arithmetic is unchanged,
+    bit for bit, so every offset this version computes is the offset
+    0.9.5 computed and a store's dates stay consistent across the
+    upgrade.
+
+    The coupling between the two spellings is load-bearing: it holds only
+    while `_replacement_id_for` carries at least
+    `_JITTER_DIGEST_CHARS` characters of the *same* hash this function
+    would compute. `tests/test_the_jitter_seed_survives_anonymize.py`
+    pins it in both directions.
+
+    Known, pre-existing edge, not widened here: a real PatientID that
+    literally begins `ANON_` followed by 8 hex characters is read as a
+    replacement and seeded from its own text. `_is_replacement_id`
+    already treats such an id as anonymized, so this is consistent with
+    what the scan does; it is stable, merely arbitrary. An id that starts
+    `ANON_` and is *not* 8 hex characters is hashed like any other value.
+    """
+    text = str(patient_id)
+    if _is_replacement_id(text):
+        carried = text[5:5 + _JITTER_DIGEST_CHARS]
+        if len(carried) == _JITTER_DIGEST_CHARS and _IS_HEX.fullmatch(carried):
+            return carried
+    return hashlib.sha256(text.encode()).hexdigest()[:_JITTER_DIGEST_CHARS]
 
 
 @dataclass(slots=True)
@@ -306,7 +376,10 @@ class PhiInspector:
             # Simple deterministic anonymization proposal for now (can be refined in Service)
             # The Service will handle the hash calculation if 'new_value' is a
             # placeholder or if logic dictates
-            hashed_id = f"ANON_{hashlib.sha256(patient.patient_id.encode()).hexdigest()[:12]}"
+            # Through the constructor, not spelled here: the date jitter
+            # reads this value's digest back out as its seed (#517), so
+            # the prefix and the digest length have one home.
+            hashed_id = _replacement_id_for(patient.patient_id)
             proposal = PhiRemediation(
                 action_type="REPLACE_TAG",
                 target_attr="patient_id",

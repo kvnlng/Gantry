@@ -1,9 +1,8 @@
-import hashlib
 from typing import List, Optional, Tuple
 from datetime import datetime, timedelta
 from tqdm import tqdm
 from .entities import PhiStatus
-from .privacy import PhiFinding, PhiRemediation
+from .privacy import PhiFinding, PhiRemediation, jitter_digest
 from .logger import describe_exception, get_logger
 
 #: Every action type `_apply_single_remediation` emits, spelled once for
@@ -742,19 +741,28 @@ class RemediationService:
         """
         Generates a deterministic shift between min_days and max_days based on PatientID.
 
-        Uses SHA-256 hash of PatientID to seed the offset calculation, ensuring
-        consistent shifting for the same patient across sessions.
+        Seeded on the patient's **canonical key** (`privacy.jitter_digest`)
+        rather than on the PatientID text, so the offset survives
+        `anonymize()` replacing that id (#517). Both spellings of one
+        identity -- the original and the `ANON_<digest>` the first pass
+        wrote over it -- give one offset, so a date first shifted in a
+        later pass lands where its siblings did, and a re-ingested
+        anonymized export keeps its patient's offset instead of getting
+        a second one.
+
+        The arithmetic below is untouched, which is the point: the
+        canonical key of an un-replaced id *is* `sha256(id)[:8]`, so
+        every offset this version computes for such an id is the offset
+        0.9.5 computed and no store's dates become inconsistent with
+        dates shifted before the upgrade.
 
         Args:
-            patient_id (str): The seed (PatientID).
+            patient_id (str): The seed (PatientID), in either spelling.
 
         Returns:
             int: The number of days to shift (positive or negative).
         """
-        # Create a hash of the PatientID
-        hash_obj = hashlib.sha256(patient_id.encode())
-        # Convert first 8 bytes to int
-        val = int(hash_obj.hexdigest()[:8], 16)
+        val = int(jitter_digest(patient_id), 16)
 
         min_days = self.jitter_config.get("min_days", -365)
         max_days = self.jitter_config.get("max_days", -1)
