@@ -5976,8 +5976,8 @@ class DicomExporter:
         are: the worker is usually a spawned process, with no store
         handle and an `isocenter` logger that has no handler (#126).
 
-        **`WARNING`, and not a sixth action_type.** #411 froze the five
-        strings, and `WARNING` is the one that means "recorded, not
+        **`WARNING`, and not a new action_type.** The audit vocabulary
+        is frozen (13 words), and `WARNING` is the one that means "recorded, not
         fatal": `get_audit_errors()` selects `ERROR` and `WARNING`, the
         report renders both under "Exceptions & Errors", and a row there
         costs the run its `PASS` (#479). That grade movement is the

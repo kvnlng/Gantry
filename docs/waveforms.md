@@ -38,6 +38,15 @@ out/<patient>/<study>/<series>/
 └─ <record>.annotations.json  cart findings, when present
 ```
 
+`export(format="wfdb")` returns the list of record paths it wrote. Unlike
+a DICOM export it does **not** raise when records fail, even when it wrote
+nothing: each failure is logged, written to the audit log as an `ERROR`
+row naming the instance, and counted in that export's `EXPORT` row, so the
+compliance report lists it and grades the run `REVIEW_REQUIRED`. Compare
+the returned list with the waveform instances you expected, or generate
+the report, to learn that records are missing
+([#541](https://github.com/kvnlng/Isocenter/issues/541)).
+
 ## What is exported
 
 | WFDB field | DICOM source |
@@ -70,7 +79,7 @@ how identifying the text inside it is. Separately, odd-group private
 tags are removed whenever `remove_private_tags` is `True` (the
 default) -- that check is unconditional and is not gated by
 `phi_tags` at all. Setting it `False` does not retain everything,
-though: private tags with a binary VR never reach the graph -- see
+though: private binary values over 65534 bytes never reach the graph -- see
 [Private Tags](configuration.md#private-tags). Cart vendors park
 `OB`/`OW` blobs there routinely, so this is a live case for waveform
 data rather than a footnote.
@@ -187,7 +196,7 @@ running isocenter version plus Manufacturer `(0008,0070)`, e.g.
 **Record timing** in the `.hea` file combines two independently
 sourced parts. The *date* comes from `study.study_date`, which *is*
 shifted by `anonymize()` (the same per-patient date shift applied to
-the rest of the DICOM metadata). The *time-of-day* comes from the
+every date tag under a `SHIFT` or `JITTER` rule). The *time-of-day* comes from the
 instance's own timestamp tags -- Acquisition DateTime `(0008,002A)`
 when present, else Study Time `(0008,0030)` -- and the date shift
 never touches it, whether or not `anonymize()` ran: `SHIFT_DATE` is a

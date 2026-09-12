@@ -13,8 +13,8 @@ session.generate_report("compliance_report.md")
 
 The report includes:
 
-1. **Validation Status**: Uses Isocenter's internal audit logic to grade the session (PASS / REVIEW_REQUIRED).
-2. **Audit Trail**: Aggregated counts of actions taken (e.g., number of patients anonymized, pixels redacted, export runs completed).
+1. **Executive Summary**: the grade (`PASS` / `REVIEW_REQUIRED`), how many patients and instances the session holds, how many instances were written of those requested when an export ran, the privacy profile and de-identification method, and the pre-export boundary note described below.
+2. **Processing Audit**: aggregated counts of actions taken (e.g., tags remediated, pixels redacted, export runs completed).
 3. **Data Loss & Unscanned Content**: 3.1 lists every element that was
    present in the source and is not in the exported data, named with its
    VR. 3.2 lists content the PHI scan could not open -- a private value
@@ -34,8 +34,16 @@ The report includes:
    object graph and reached the exported files, so one row grades the
    session `REVIEW_REQUIRED` on the same argument 3.2 makes. Unlike 3.1
    and 3.2, 3.3 is omitted entirely from a run that declined nothing.
-4. **Exceptions**: A detailed list of any warnings or errors encountered (e.g., "Corrupt pixel data in File X", "Burned-In Annotation found").
-5. **Manifest**: A summary of the processed cohort (Top studies by size).
+4. **Exceptions & Errors**: every `ERROR` and `WARNING` audit row, plus report-time checks (`COMPLIANCE_CHECK`, `AUDIT_DROP`). Any row here grades the run `REVIEW_REQUIRED`. An `ERROR` means something requested did not happen -- a file refused at ingest, an instance not written. A `WARNING` means it happened but something about the *source data* could not be honoured or read: a file declined because its SOP Instance UID is already held, an instance OCR could not read, a store de-identified before 0.9.6 (see [Migration Tools](migration.md)), or a Photometric Interpretation the written transfer syntax does not admit, written as declared because correcting it would invent a claim.
+5. **Validation & Verification**: the **Grade Basis** -- every reason this run is not `PASS`, one line each, or a statement that nothing costs it its `PASS` -- then how many `REMEDIATION_*` rows the audit trail holds, what each `scan_pixel_content()` call in this session read and could not read, and the configured method. When the grade surprises you, read the Grade Basis first: it names the section that holds the row.
+
+A per-instance manifest is not part of the report; it is a separate document written by `generate_manifest()`.
+
+!!! note "A `WARNING` row is about your data; a correction is not reported"
+
+    What you will **not** find in section 4 is Isocenter correcting a descriptor of its own making -- PixelRepresentation or BitsStored rewritten to match the pixels actually written. Those corrections are exact, lose nothing, and say nothing about your data, so they are logged at `INFO` and are neither recorded in the audit log nor graded. The default console handler shows `WARNING` and above, so they do not appear on screen either. A `WARNING` row, by contrast, always says something about the source dataset and needs a person to read it.
+
+    Two grade reasons have no row anywhere else, so the Grade Basis is the only place they appear: **an empty audit trail** (a clean ingest followed by `audit()` alone writes no row, and grades `REVIEW_REQUIRED` because nothing the run did is attested), and **a verb with no evidence** (`anonymize()` or `redact()` did work and none of the rows it writes reached the audit log).
 
 !!! warning "Which losses move the Validation Status"
 
@@ -44,17 +52,20 @@ The report includes:
     was set specifically to keep, and nobody outside the vendor can size
     or identify what went missing.
 
-    A dropped **standard** element -- Overlay Data `(60xx,3000)`, the
-    palette color LUTs `(0028,120x)` -- does not. Those come off ordinary
-    images by the thousand, so a grade that moved on them would read
-    `REVIEW_REQUIRED` for most cohorts and stop carrying information.
+    A dropped **standard** element -- a large Overlay Data plane
+    `(60xx,3000)`, say, or a nested icon image removed by a redacting
+    export -- does not. Those come off ordinary images by the thousand,
+    so a grade that moved on them would read `REVIEW_REQUIRED` for most
+    cohorts and stop carrying information.
 
     Read the Data Loss section on its own terms either way: its **Scope**
-    column says which rows were graded, and `unrecorded` means a row
-    written by a version that predated the distinction. One case sits on
-    the line: a discarded waveform multiplex group is standard-group and
-    so does not move the grade -- see
-    [#150](https://github.com/kvnlng/Isocenter/issues/150).
+    column says which rows were graded -- `PRIVATE` and `SIGNAL` rows are,
+    `STANDARD` rows are not -- and `unrecorded` means a row written by a
+    version that predated the distinction. `SIGNAL` is the one
+    standard-group loss that grades: a discarded waveform multiplex group
+    is acquired signal that was in the source and is not in the export
+    ([#150](https://github.com/kvnlng/Isocenter/issues/150); see
+    [Waveforms](waveforms.md)).
 
 !!! warning "Generate the report after `export()`"
 
@@ -69,8 +80,10 @@ The report includes:
     ([#153](https://github.com/kvnlng/Isocenter/issues/153)): when the
     audit trail holds no `EXPORT` row, the Executive Summary carries a
     boundary note under the grade and a warning is logged. The note
-    states the boundary without moving the grade -- a session that only
-    audits and never exports is not penalized for it.
+    states the boundary without moving the grade. (An audit-only session
+    grades `REVIEW_REQUIRED` anyway, for a different reason: `audit()`
+    writes no audit row, and an empty trail attests nothing -- see
+    section 5's Grade Basis.)
 
 !!! tip "Format Options"
     Currently, Isocenter supports Markdown (`.md`) reports. PDF support is planned for future releases via Pandoc integration.

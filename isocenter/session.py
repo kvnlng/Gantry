@@ -3582,10 +3582,10 @@ class DicomSession:
 
         Returns:
             int: How many instances had at least one configured zone
-                applied to their pixels. Two boundaries, both deliberate:
-                an instance a rule *matched* but whose every zone fell
-                outside the image is **not** counted, and a zone that is
-                in bounds but selects zero pixels **is**. Zero means
+                applied to their pixels. An instance a rule *matched* but
+                whose every zone fell outside the image is **not** counted;
+                a zone with no area fails its instance and the pass raises
+                `RedactionError` (#244), so it is never counted. Zero means
                 nothing was redacted -- no rules loaded, no image matched
                 one, every match was already redacted under this
                 configuration, or no zone landed.
