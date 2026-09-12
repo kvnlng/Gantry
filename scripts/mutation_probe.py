@@ -321,6 +321,7 @@ TARGETS = {
                                 "tests/test_report_export_boundary.py",
                                 "tests/test_export_delivery_counters.py"], 30),
     "isocenter/privacy.py": (["tests/test_analysis.py", "tests/test_analysis_persistence.py",
+                              "tests/test_a_pre_096_store_is_not_reshifted.py",
                               "tests/test_an_unshifted_date_is_raised.py",
                               "tests/test_audit_suppression.py", "tests/test_automation.py",
                               "tests/test_config_tags_shapes.py",
@@ -480,6 +481,7 @@ TARGETS = {
     # persistence_manager). #383 named eight; all eight are here and so
     # are 34 others, each of which the guard demands.
     "isocenter/persistence.py": (["tests/test_api_coherence.py",
+                                  "tests/test_a_pre_096_store_is_not_reshifted.py",
                                   "tests/test_an_unshifted_date_is_raised.py",
                                   "tests/test_async_persistence.py",
                                   "tests/test_audit_drop_accounting.py",
@@ -586,6 +588,7 @@ TARGETS = {
     # time is the kind of thing someone later "fixes" by cutting the
     # budget.
     "isocenter/session.py": (["tests/test_analysis.py",
+                              "tests/test_a_pre_096_store_is_not_reshifted.py",
                               "tests/test_an_unshifted_date_is_raised.py",
                               "tests/test_analysis_persistence.py",
                               "tests/test_api_coherence.py",
@@ -791,6 +794,7 @@ TARGETS = {
     #
     # Cost: ~1.8 h of a default run as an upper bound.
     "isocenter/entities.py": (["tests/test_analysis.py",
+                               "tests/test_a_pre_096_store_is_not_reshifted.py",
                                "tests/test_an_unshifted_date_is_raised.py",
                                "tests/test_api_coherence.py",
                                "tests/test_async_persistence.py",

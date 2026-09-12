@@ -53,8 +53,8 @@ _UPSERT_INSTANCE_SQL = """
     INSERT INTO instances (series_id_fk, sop_instance_uid, sop_class_uid, instance_number, file_path,
                            source_path,
                            pixel_offset, pixel_length, pixel_hash, compress_alg, attributes_json,
-                           phi_status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           phi_status, shift_provenance)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(sop_instance_uid) DO UPDATE SET
         series_id_fk=excluded.series_id_fk,
         sop_class_uid=excluded.sop_class_uid,
@@ -63,6 +63,13 @@ _UPSERT_INSTANCE_SQL = """
         source_path=COALESCE(excluded.source_path, instances.source_path),
         attributes_json=excluded.attributes_json,
         phi_status=excluded.phi_status,
+        -- Plain assignment, deliberately NOT COALESCE-guarded like the
+        -- four below (#510). A legacy instance has to be able to write
+        -- its NULL: guarded, the first save after the upgrade would
+        -- stamp 'recorded' over it and the instance would lose the
+        -- protection its unrecorded dates depend on -- one re-save and
+        -- every one of them gets shifted a second time.
+        shift_provenance=excluded.shift_provenance,
         pixel_offset=COALESCE(excluded.pixel_offset, instances.pixel_offset),
         pixel_length=COALESCE(excluded.pixel_length, instances.pixel_length),
         pixel_hash=COALESCE(excluded.pixel_hash, instances.pixel_hash),
@@ -605,6 +612,7 @@ class SqliteStore:
         compress_alg TEXT,
         attributes_json TEXT, -- Core attributes (Horizontal)
         phi_status TEXT,      -- What the last scan concluded, if still valid
+        shift_provenance TEXT, -- 'recorded' since 0.9.6; NULL means pre-0.9.6
         FOREIGN KEY(series_id_fk) REFERENCES series(id),
         UNIQUE(sop_instance_uid)
     );
@@ -1082,6 +1090,30 @@ class SqliteStore:
             "PRAGMA table_info(studies)").fetchall()}
         if "date_shifted" not in study_columns:
             conn.execute("ALTER TABLE studies ADD COLUMN date_shifted INTEGER")
+
+        # `shift_provenance` on instances (#510). The scan decides
+        # per value whether a date has already been shifted, reading the
+        # record `SHIFT_DATE` writes; an instance written before those
+        # records existed carries none, and reading "no record" as "not
+        # shifted" would make the first audit() after upgrading raise
+        # every already-shifted date in the store and anonymize() shift
+        # each one a second time.
+        #
+        # So NULL is **not** "not shifted" here, and this is the one
+        # migration in this file where the absent column is the *unsafe*
+        # reading. NULL means "this row predates per-value records", and
+        # such an instance keeps the pre-0.9.6 entity-level rule for the
+        # values it already holds. 'recorded' means the row was written
+        # by 0.9.6 or later, so its records are the whole truth.
+        #
+        # No back-fill, for the same reason `value_count` has none: a
+        # legacy row cannot know which of its dates were shifted, and
+        # an `UPDATE ... SET shift_provenance = 'recorded'` sweep would
+        # answer for exactly the rows that have no answer -- which is
+        # the fabrication this column exists to prevent.
+        if "shift_provenance" not in instance_columns:
+            conn.execute(
+                "ALTER TABLE instances ADD COLUMN shift_provenance TEXT")
 
         # `value_count` on instance_attributes (#328). The tier is one
         # row per value atom and recorded no arity, so a one-element
@@ -1852,6 +1884,11 @@ class SqliteStore:
                     conn=conn, vrs=vertical_vrs)
 
                 se_map = {}
+                # Which study each series belongs to, so the instance loop
+                # below can read its parent's `date_shifted` (#510). The
+                # loop is flat here, unlike `load_patient`'s, so the link
+                # has to be kept rather than being in scope.
+                se_study = {}
                 for r in se_rows:
                     se = Series(r['series_instance_uid'], r['modality'], r['series_number'])
                     # Same rule as ingest and `load_patient`, by
@@ -1863,7 +1900,9 @@ class SqliteStore:
                     se_map[r['id']] = se
                     if r['study_id_fk'] in st_map:
                         st_map[r['study_id_fk']].series.append(se)
+                        se_study[r['id']] = st_map[r['study_id_fk']]
 
+                legacy_instances = 0
                 for r in i_rows:
                     inst = Instance(
                         r['sop_instance_uid'],
@@ -1871,6 +1910,25 @@ class SqliteStore:
                         r['instance_number'],
                         file_path=r['file_path']
                     )
+                    # Legacy date provenance, read off the row (#510).
+                    # NULL alone only says the row predates per-value
+                    # records; the **study's** flag is the only persisted
+                    # evidence anywhere that a shift ever ran, because
+                    # `Instance.date_shifted` never had a column. An
+                    # old-store instance under an unshifted study has
+                    # nothing to protect -- measured: such a date is
+                    # already re-shifted by today's code -- and marking
+                    # it legacy would hide a rule added in a later pass
+                    # once its study is shifted under 0.9.6, which is
+                    # #510 persisting for an instance with no real
+                    # legacy. Studies are hydrated above, so the flag is
+                    # set before this reads it; `load_patient` does the
+                    # same from its nested loop.
+                    parent = se_study.get(r['series_id_fk'])
+                    if (r['shift_provenance'] is None
+                            and parent is not None and parent.date_shifted):
+                        inst._legacy_shift_provenance = True
+                        legacy_instances += 1
                     # After construction, so a stored value wins over the
                     # `file_path` derivation in `__post_init__`. For a
                     # redacted instance `file_path` is NULL and this is
@@ -1930,6 +1988,7 @@ class SqliteStore:
                     stored_statuses.append((inst, r['phi_status']))
 
             self.logger.info(f"Loaded {len(patients)} patients from {self.db_path}")
+            self._report_legacy_shift_provenance(legacy_instances)
 
             # The row that was loaded is the row the status was written for,
             # so the stored conclusion applies to this revision. Recorded
@@ -1981,6 +2040,7 @@ class SqliteStore:
                 # filters by UID -- one patient's instances, not the whole
                 # store's rows.
                 hydrated_instances = []
+                legacy_instances = 0
 
                 # Same one-query pre-fetch as load_all; see the note there.
                 wave_refs = {
@@ -2045,6 +2105,16 @@ class SqliteStore:
                                 r['instance_number'],
                                 file_path=r['file_path']
                             )
+                            # Same rule as load_all's: NULL provenance
+                            # plus a shifted study means this row's
+                            # already-shifted dates cannot be named, so
+                            # it keeps the pre-0.9.6 rule for them
+                            # (#510). `st` is in scope here, so no map
+                            # is needed.
+                            if (r['shift_provenance'] is None
+                                    and st.date_shifted):
+                                inst._legacy_shift_provenance = True
+                                legacy_instances += 1
                             # See load_all: after construction, so the
                             # stored origin wins, and it is the only
                             # thing that restores it for a redacted
@@ -2108,11 +2178,53 @@ class SqliteStore:
                 for entity, stored in stored_statuses:
                     entity.record_phi_status(_phi_status_from_stored(stored))
 
+                self._report_legacy_shift_provenance(legacy_instances)
                 p.mark_subtree_persisted()
                 return p
         except sqlite3.Error as e:
             self.logger.error(f"Failed to load patient: {describe_exception(e)}")
             return None
+
+    #: What a load says once when it finds rows written before
+    #: per-value date records existed (#510). One `WARNING` audit row and
+    #: one log line per load, not per instance: a 100k-instance store
+    #: would otherwise flood both channels, and the fact is about the
+    #: store, not about any one row.
+    #:
+    #: A `WARNING` row is the right channel because `generate_report`
+    #: grades a run with section-4 rows `REVIEW_REQUIRED` (#479), which
+    #: is the honest grade for a session that cannot answer the question
+    #: for part of its graph -- and it means the limitation reaches the
+    #: compliance report rather than only a console the operator
+    #: scrolled past.
+    #:
+    #: Three things the wording does deliberately: it names *which*
+    #: guarantee is missing (#510's, not #513's), it names the failure
+    #: direction (a real date may survive; a double shift can never
+    #: happen), and it names the remedy.
+    _LEGACY_SHIFT_NOTICE = (
+        "{count} in this store were written before per-value date "
+        "records existed (0.9.6). For those Isocenter cannot tell a date "
+        "it already shifted from one it never touched, so it keeps the "
+        "pre-0.9.6 rule for them: once the study's date is shifted, "
+        "their SHIFT/JITTER values are not re-examined. The guarantee "
+        "that does not apply to them is the new one -- \"a date under a "
+        "SHIFT rule that this pipeline never shifted is raised and "
+        "shifted\" (#510). They are never shifted twice (#513). "
+        "Re-ingesting those files from source gives them the full "
+        "guarantee."
+    )
+
+    def _report_legacy_shift_provenance(self, instances: int):
+        """Say once that part of this graph keeps the pre-0.9.6 rule."""
+        if not instances:
+            return
+        noun = "instance" if instances == 1 else "instances"
+        detail = self._LEGACY_SHIFT_NOTICE.format(
+            count=f"{instances} {noun}")
+        self.logger.warning(detail)
+        self.log_audit(action_type="WARNING", entity_uid=self.db_path,
+                       details=detail)
 
     def _serialize_item(self, item: Instance) -> Dict[str, Any]:
         """
@@ -3381,7 +3493,11 @@ class SqliteStore:
                 # The property, not the stored field: an entity edited since
                 # the scan reports UNSCANNED, and that is what belongs in the
                 # row, whose attributes are the edited ones.
-                inst.phi_status.value))
+                inst.phi_status.value,
+                # NULL keeps a legacy instance legacy for its life in the
+                # store; anything this version created or ingested says
+                # so (#510).
+                None if inst._legacy_shift_provenance else 'recorded'))
 
             # instance_blobs is what compaction reads, so it must never lag
             # behind `instances`. If it did, compaction would copy the STALE
