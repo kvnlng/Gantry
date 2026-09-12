@@ -5071,9 +5071,11 @@ class DicomSession:
                     # annotations, anything below the first level.
                     i_new.sequences = clone_sequences(i)
 
-                    if hasattr(i, "date_shifted"):
-                        i_new.date_shifted = i.date_shifted
-
+                    # `date_shifted` is not carried because `Instance` no
+                    # longer has one (#510): the scan reads the per-value
+                    # records below instead, and the study's flag rides
+                    # `s_new.date_shifted` above.
+                    #
                     # The per-value date records and the store's own
                     # provenance travel too (#510, #513). `audit()`
                     # scans this clone unconditionally, threads and

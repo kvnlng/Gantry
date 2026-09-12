@@ -20,10 +20,10 @@ top-level shift hid every nested date it had).
 **The rule these tests hold.** The scan asks the value, never the
 entity: a value this pipeline shifted is skipped while its tag still
 holds what the shift wrote, and everything else under a `SHIFT` rule is
-raised, at any depth and however many passes have run. Neither
-`Instance.date_shifted` nor `Study.date_shifted` is consulted in the
-instance arm any more -- a second reading of them beside the record
-would be a second answer to one question.
+raised, at any depth and however many passes have run. `Study.date_shifted`
+is not consulted in the instance arm any more -- a second reading of it
+beside the record would be a second answer to one question -- and
+`Instance.date_shifted` is gone entirely.
 
 The assertions are intervals, not "the value changed": #517 landed first
 so a date first shifted in a later pass lands on the same offset as its
@@ -195,10 +195,11 @@ def test_the_manifest_stops_claiming_a_value_it_never_handled(tmp_path):
         assert [i["anonymized"] for i in items] == [False]
 
 
-def test_the_instance_arm_reads_neither_date_shifted_flag(tmp_path):
+def test_the_instance_arm_does_not_read_the_studys_date_shifted_flag(tmp_path):
     """Stated directly, because the fix is exactly the deletion of those
-    two reads. Both flags are set by hand with no record anywhere, and
-    the value must still be raised."""
+    two reads. The study's flag is set by hand with no record anywhere,
+    and the value must still be raised; the instance's own flag, the
+    other half of the old condition, no longer exists to set."""
     session = _session(tmp_path, study_date=date(2023, 1, 1),
                        attrs={CONTENT_DATE: "20230515"}, tags=SHIFT_CONTENT)
     study = session.store.patients[0].studies[0]

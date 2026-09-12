@@ -10,12 +10,13 @@ def test_audit_suppresses_a_value_it_shifted():
     the pipeline already shifted -- and that what makes it stop is the
     per-value record, not an entity-level flag (#510, #513).
 
-    The flag half is asserted in both directions on purpose. The
-    suppression used to be `if instance.date_shifted or
-    study.date_shifted`, and that is the defect: a flag set by one date
+    The suppression used to be `if instance.date_shifted or
+    study.date_shifted`, and that was the defect: a flag set by one date
     said nothing about the next one, so a valid date the pipeline never
     touched was skipped for ever (#510) while a date inside a sequence,
-    where no flag exists at all, was re-shifted every pass (#513).
+    where no flag existed at all, was re-shifted every pass (#513).
+    `Instance.date_shifted` is gone, which this asserts, because a field
+    that came back would be read by nothing and believed by a reader.
     """
     # 1. Setup Instance with a Date that requires shifting
     inst = Instance("I1", "SOP1", 1)
@@ -34,10 +35,10 @@ def test_audit_suppresses_a_value_it_shifted():
     assert findings[0].tag == "0008,0020"
     assert findings[0].remediation_proposal.action_type == "SHIFT_DATE"
 
-    # 4. The entity-level flag alone suppresses nothing: it claims a
-    # shift landed somewhere on the instance, never that it landed on
-    # this value.
-    inst.date_shifted = True
+    # 4. There is no entity-level flag to suppress with any more: it
+    # claimed a shift landed somewhere on the instance, never that it
+    # landed on this value, so it was cut (#510).
+    assert not hasattr(inst, "date_shifted")
     assert len(inspector._scan_instance(inst, "P1")) == 1
 
     # 5. The record for the value the tag actually holds suppresses it.
@@ -48,9 +49,16 @@ def test_audit_suppresses_a_value_it_shifted():
     inst.set_attr("0008,0020", "20240704")
     assert len(inspector._scan_instance(inst, "P1")) == 1
 
-def test_remediation_service_sets_flag():
+def test_remediation_service_records_the_value_it_wrote():
     """
-    Verifies that RemediationService actually sets the date_shifted flag.
+    Verifies that RemediationService records the shifted value against
+    the tag it wrote it to.
+
+    It asserted `inst.date_shifted is True` until 0.9.6, when that field
+    was cut (#510): it was a transient boolean standing for every date on
+    the instance and for every date nested in its sequences, and the scan
+    reads the per-value record instead. `Study.date_shifted` is
+    unchanged; `tests/test_date_shifted_roundtrip.py` is its pin.
     """
     # 1. Setup Entity
     inst = Instance("I1", "SOP1", 1)
@@ -76,8 +84,7 @@ def test_remediation_service_sets_flag():
 
     service.apply_remediation([finding])
 
-    # 4. Verify Flag
-    assert inst.date_shifted is True
+    # 4. Verify the record and the value
     assert inst.attributes["0008,0020"] == "20230111" # Shifted by 10 days
-    # ...and the per-value record, which is what the scan reads (#510).
     assert inst.date_shift_vouches_for("0008,0020", "20230111")
+    assert not hasattr(inst, "date_shifted")

@@ -850,8 +850,19 @@ class Instance(DicomItem):
     _nested_pixel_refs: Dict[tuple, Any] = field(
         default_factory=dict, repr=False)
 
-    # Transient: Track if dates have been shifted in memory
-    date_shifted: bool = field(default=False, init=False)
+    # There is deliberately **no `date_shifted` here.** It was a
+    # transient boolean that went True when any one date on the instance
+    # shifted and said nothing about which, so it over-suppressed a
+    # valid date the pipeline never touched (#510) and could not speak
+    # for a date inside a sequence at all (#513). It was never persisted
+    # either -- the `instances` table has no column for it, unlike
+    # `studies.date_shifted` (#182) -- so a loaded instance reported
+    # False however many of its dates had been shifted. `_shifted_dates`
+    # on `DicomItem` answers "was *this value* shifted"; `date_shifted`
+    # survives on `Study`, where it answers the entity-level question
+    # honestly ("did a de-identifying shift run on this study") and has
+    # a reader that asks exactly that (`exporters/wfdb.py`). Removed
+    # rather than left unread, per the pre-1.0 convention (#510).
 
     # Whether this instance came out of a store written before per-value
     # date records existed (#510). `False` for a freshly constructed or

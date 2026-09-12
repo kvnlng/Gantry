@@ -1,6 +1,6 @@
 """A date the pipeline shifted is not shifted again, at any depth (#513).
 
-`date_shifted` is a field on `Instance` and on `Study` and on nothing
+`date_shifted` was a field on `Instance` and on `Study` and on nothing
 else -- `DicomItem` is a slots dataclass without it -- so the scan's
 "already shifted" shortcut could not see a date living inside a sequence.
 Measured on `927cb2b` on 3.12.14 (threads and processes) and 3.14.7t: a
@@ -272,9 +272,10 @@ def test_a_value_shifted_before_the_patients_id_changed_is_still_vouched_for(
 
 
 def test_the_records_survive_a_save_and_a_reload(tmp_path):
-    """`Instance.date_shifted` has no column, so before this a reloaded
-    instance reported `False` however many of its dates had been shifted
-    and the next `audit()` re-shifted every one of them. Measured on
+    """`Instance.date_shifted` never had a column -- which is one of the
+    reasons it is now gone -- so before this a reloaded instance
+    reported `False` however many of its dates had been shifted and the
+    next `audit()` re-shifted every one of them. Measured on
     `927cb2b`: `20230601` -> `20220819` in the first session, then
     `20220703` after a reopen.
 

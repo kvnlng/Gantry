@@ -1,7 +1,8 @@
 """A date the shift declined is raised again by the next audit (#498).
 
 `PhiInspector._scan_instance` treats a SHIFT/JITTER tag as done once the
-instance or its study is `date_shifted`. That flag says the *entity* was
+instance or its study was `date_shifted`. That flag said the *entity*
+was
 shifted, not that every value on it was, so a value the shift declined in
 pass 1 -- one `SHIFT_DATE` cannot parse -- raised nothing in pass 2. A
 second blind `anonymize()` then recorded CLEARED over it, and the manifest
@@ -163,10 +164,19 @@ def test_the_reviewers_shape_ends_identified_with_the_manifest_false(tmp_path):
         assert _manifest(session, tmp_path) == [False]
 
 
-def test_the_instances_own_shift_flag_does_not_hide_its_declined_sibling(tmp_path):
+def test_a_shifted_sibling_does_not_hide_a_declined_date(tmp_path):
     """The shortcut's other half. The study date is unparseable, so the
-    study is never shifted; the instance's valid AcquisitionDate shifts and
-    sets `instance.date_shifted`, which hid its declined ContentDate."""
+    study is never shifted; the instance's valid AcquisitionDate shifts,
+    and that shift used to set `instance.date_shifted`, which hid its
+    declined ContentDate on the same instance.
+
+    Renamed with #510: `Instance.date_shifted` is gone, and what the
+    AcquisitionDate's shift now leaves behind is a record for *that
+    tag's* value. The claim is the one the old name made -- a sibling
+    date shifting must not hide a declined one -- and it is now the
+    mechanism's own consequence rather than a special case, so this
+    asserts the record rather than the flag.
+    """
     session, instance = _built(
         tmp_path, {ACQUISITION_DATE: "20230515", CONTENT_DATE: "notadate"},
         study_date="notadate")
@@ -175,9 +185,10 @@ def test_the_instances_own_shift_flag_does_not_hide_its_declined_sibling(tmp_pat
         session.audit()
         session.anonymize()
         assert not session.store.patients[0].studies[0].date_shifted
-        assert instance.date_shifted
         shifted = instance.attributes[ACQUISITION_DATE]
         assert shifted != "20230515"
+        assert instance.date_shift_vouches_for(ACQUISITION_DATE, shifted)
+        assert not instance.date_shift_vouches_for(CONTENT_DATE, "notadate")
 
         assert [f.tag for f in session.audit() if f.entity_type == "Instance"] == [CONTENT_DATE]
         session.anonymize()
