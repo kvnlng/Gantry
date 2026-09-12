@@ -1554,7 +1554,12 @@ three fields. The rest of the fluent chain is tier 2.</p>
 <p><strong><code>IsocenterConfiguration</code></strong> as <code>session.configuration</code>: <code>save()</code>,
 <code>add_rule()</code>, <code>update_rule()</code>, <code>delete_rule()</code>, <code>set_phi_tag()</code>,
 <code>get_rule()</code>, and the fields <code>rules</code>, <code>phi_tags</code>, <code>date_jitter</code>,
-<code>remove_private_tags</code>, <code>privacy_profile</code>.</p>
+<code>remove_private_tags</code>, <code>privacy_profile</code>. On a session that has loaded
+no configuration, <code>phi_tags</code> is a copy of the floor policy,
+<code>profiles.FLOOR_POLICY</code>, and <code>audit()</code>/<code>anonymize()</code> apply it; a config
+with no <code>privacy_profile</code> line extends it, and one with
+<code>privacy_profile: none</code> opts out of it (#495). <code>set_phi_tag()</code>
+stores lowercase keys, as every other key in the policy is.</p>
 <p><strong>Exceptions.</strong> <code>RedactionError(failures, attempted)</code>, a <code>RuntimeError</code>,
 with <code>.failures</code> (a list of <code>(entity_uid, details)</code>) and <code>.attempted</code>,
 raised after the whole pass; <code>ExportError(failures, attempted,
@@ -1573,7 +1578,14 @@ raise <code>RuntimeError</code> after the pass when at least one instance failed
 and none could be read (#423); a scan that read some instances returns
 its report with the others in <code>failures</code>, and discovery counts only the
 instances it read in <code>n_sources</code>. <code>ValueError</code> from
-<code>generate_report</code> on an unknown format.</p>
+<code>generate_report</code> on an unknown format. <code>load_config(config_file)</code> and
+<code>audit(config_path=)</code> raise <code>ValueError</code> when the file fails validation
+(not <code>.yaml</code>/<code>.yml</code>, YAML syntax, a root that is not a mapping, an
+unknown <code>privacy_profile</code>, an unknown <code>action</code>, a <code>phi_tags</code>,
+<code>date_jitter</code> or <code>machines</code> of the wrong shape, a rule
+<code>_validate_rule</code> rejects) and <code>FileNotFoundError</code> when it does not
+exist; after either, the configuration is exactly what it was before
+the call (#456).</p>
 <p><strong>Environment.</strong> Every <code>ISOCENTER_*</code> name in
 <a href="../../environment/">Environment Variables</a>, its default and its
 documented semantics — including the order the three

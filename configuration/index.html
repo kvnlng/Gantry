@@ -1712,7 +1712,7 @@
 <tbody>
 <tr>
 <td style="text-align: left;"><strong><a href="#privacy-profile">privacy_profile</a></strong></td>
-<td style="text-align: left;">Base set of rules (e.g., "basic", "comprehensive").</td>
+<td style="text-align: left;">Base set of rules: "basic", "none", or a path to a YAML profile.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong><a href="#date-jitter">date_jitter</a></strong></td>
@@ -1724,7 +1724,7 @@
 </tr>
 <tr>
 <td style="text-align: left;"><strong><a href="#phi-tags">phi_tags</a></strong></td>
-<td style="text-align: left;">Overrides or adds specific tag rules (e.g., <code>PatientName</code>).</td>
+<td style="text-align: left;">Overrides or adds specific tag rules, keyed by quoted <code>"gggg,eeee"</code> hex (e.g., <code>"0010,0010"</code> for Patient's Name).</td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong><a href="#pixel-redaction-machines">machines</a></strong></td>
@@ -1736,7 +1736,7 @@
 <h2 id="complete-example">Complete Example</h2>
 <p>Save this as <code>isocenter_config.yaml</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># 1. Privacy Profile (Base Rules)</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1"># Options: "basic", "comprehensive", or path to external YAML</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1"># Options: "basic", "none", or path to external YAML</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nt">privacy_profile</span><span class="p">:</span><span class="w"> </span><span class="s">"basic"</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># 2. Date Jitter</span>
@@ -1776,14 +1776,17 @@
 <hr />
 <h2 id="detailed-options">Detailed Options</h2>
 <h3 id="privacy-profile">Privacy Profile</h3>
-<p>Sets the baseline behavior for thousands of DICOM tags.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">privacy_profile</span><span class="p">:</span><span class="w"> </span><span class="s">"comprehensive"</span>
+<p>Sets the baseline rules that <code>phi_tags</code> then extends or overrides.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">privacy_profile</span><span class="p">:</span><span class="w"> </span><span class="s">"basic"</span>
 </code></pre></div>
 <ul>
-<li><strong><code>basic</code></strong>: Implements the <em>DICOM PS3.15 Annex E Basic Profile</em>. Retains some descriptors but removes direct identifiers.</li>
-<li><strong><code>comprehensive</code></strong>: Aggressive de-identification. Removes almost all non-structural text fields.</li>
-<li><strong>External File</strong>: You can provide a path to another YAML file (e.g., <code>./profiles/my_hospital_standard.yaml</code>) to inherit its rules.</li>
+<li><strong><code>basic</code></strong>: A reduced <em>DICOM PS3.15 Annex E Basic Profile</em> (<code>BASIC_PROFILE</code> in <code>isocenter/profiles.py</code>, 35 tags). Retains some descriptors but removes direct identifiers.</li>
+<li><strong><code>none</code></strong>: No base. The file's <code>phi_tags</code> are the whole policy.</li>
+<li><strong>External File</strong>: You can provide a path to another YAML file (e.g., <code>./profiles/my_hospital_standard.yaml</code>) to inherit its rules. That file must carry them under a <code>phi_tags:</code> mapping — a config-shaped file works, a bare tag map at its root raises <code>ValueError</code>, because the root used to be read as the tags and a profile written like a config then loaded <code>privacy_profile</code> itself as a "tag".</li>
 </ul>
+<p>Any other value is refused: <code>load_config()</code> raises <code>ValueError</code> naming it. (These docs once offered a <code>comprehensive</code> profile, which never existed; loading it warned and applied no base.)</p>
+<p>A session that has loaded no configuration applies the <strong>floor policy</strong>, <code>FLOOR_POLICY</code> in <code>isocenter/profiles.py</code>: the basic profile plus the three research defaults <code>create_config()</code> writes (Study Date jittered, Patient's Sex and Age kept), 36 rules.</p>
+<p><strong>Omitting <code>privacy_profile</code> means the floor beneath your <code>phi_tags</code>.</strong> A file with a few tags and no profile line extends the floor rather than replacing it, so a one-tag config cannot switch the floor off by accident. To opt a single tag out, give it <code>action: "KEEP"</code>; to opt out of the floor entirely, write <code>privacy_profile: "none"</code>.</p>
 <h3 id="date-jitter">Date Jitter</h3>
 <p>Shifts all date attributes (<code>DA</code>, <code>DT</code>) by a random number of days.</p>
 <ul>

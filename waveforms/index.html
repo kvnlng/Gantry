@@ -1411,14 +1411,15 @@ to read. Isocenter does not read WFDB back in.</p>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="k">with</span> <span class="n">Session</span><span class="p">(</span><span class="s2">"ecg_study.db"</span><span class="p">)</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">session</span><span class="o">.</span><span class="n">ingest</span><span class="p">(</span><span class="s2">"/data/ecg"</span><span class="p">)</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="c1"># Load a PHI tag configuration before auditing -- an unconfigured</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="c1"># session only checks the hardcoded baseline (see "Privacy" below).</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">session</span><span class="o">.</span><span class="n">create_config</span><span class="p">(</span><span class="s2">"config.yaml"</span><span class="p">)</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">session</span><span class="o">.</span><span class="n">load_config</span><span class="p">(</span><span class="s2">"config.yaml"</span><span class="p">)</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="n">session</span><span class="o">.</span><span class="n">audit</span><span class="p">()</span>
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="n">session</span><span class="o">.</span><span class="n">anonymize</span><span class="p">()</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="n">session</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">"/out"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"wfdb"</span><span class="p">)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="c1"># Write and load a configuration before auditing. An unconfigured</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="c1"># session applies the floor policy (see "Privacy" below); the config</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="c1"># is where you record the policy you actually want.</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">session</span><span class="o">.</span><span class="n">create_config</span><span class="p">(</span><span class="s2">"config.yaml"</span><span class="p">)</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">session</span><span class="o">.</span><span class="n">load_config</span><span class="p">(</span><span class="s2">"config.yaml"</span><span class="p">)</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="n">session</span><span class="o">.</span><span class="n">audit</span><span class="p">()</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="n">session</span><span class="o">.</span><span class="n">anonymize</span><span class="p">()</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="n">session</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">"/out"</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="s2">"wfdb"</span><span class="p">)</span>
 </code></pre></div>
 <p>Each waveform instance becomes one WFDB record, written into the same
 <code>Subject_/Study_/Series_</code> directory tree the DICOM exporter uses --
@@ -1482,25 +1483,31 @@ though: private tags with a binary VR never reach the graph -- see
 data rather than a footnote.</p>
 <p>There are three configurations a reader of this guide can be in:</p>
 <ul>
-<li><strong>A bare <code>Session()</code>, never <code>load_config()</code>-ed.</strong> <code>phi_tags</code> is
-  empty. Only the hardcoded baseline scan runs: Patient Name and
-  Patient ID get replaced, Study Date gets shifted. Nothing else is
-  touched.</li>
+<li><strong>A bare <code>Session()</code>, never <code>load_config()</code>-ed.</strong> <code>phi_tags</code> is the
+  floor policy, <code>FLOOR_POLICY</code> (<code>isocenter/profiles.py</code>): the basic
+  profile below plus the three research defaults <code>create_config()</code>
+  writes (Study Date jittered, Patient's Sex and Age kept) -- 36 rules.
+  Until #495 this configuration applied no tag policy at all, and Study
+  ID, Institution Name, Station Name and the series/acquisition/content
+  dates reached the export.</li>
 <li><strong>The Quick Start above.</strong> <code>create_config()</code> scaffolds a config with
   <code>privacy_profile: basic</code>; <code>load_config()</code> expands that into
-  <code>PRIVACY_PROFILES["basic"]</code> (<code>isocenter/profiles.py</code>) -- <strong>34 tags, 34
+  <code>PRIVACY_PROFILES["basic"]</code> (<code>isocenter/profiles.py</code>) -- <strong>35 tags, 35
   effective</strong> -- covering patient identity, study/series dates and
   times, and institution/physician fields, based on DICOM PS3.15 Annex
   E's Basic Profile. This is what actually runs on the documented path.
   <code>(0070,0006)</code> was the exception until 0.8.0: it lives inside Waveform
   Annotation Sequence, and the scan never opened sequences (#57), so it
   sat in the profile doing nothing. It fires now.
-  <code>isocenter/resources/phi_tags.json</code>, a separate 6-tag file, is <em>not</em>
-  reached from this flow: <code>create_config()</code> deliberately drops its
-  REMOVE-action tags from the scaffold, on the assumption the Basic
-  profile already covers them.</li>
-<li><strong>Your own <code>phi_tags</code> configuration</strong>, loaded standalone or layered
-  on top of a profile -- your explicit tags win over the profile's.</li>
+  The scaffold lists only the three research defaults beneath
+  <code>privacy_profile: basic</code> -- the entries of the floor whose action
+  differs from the profile's -- so the loaded policy is the same 36
+  rules a bare session applies.</li>
+<li><strong>Your own <code>phi_tags</code> configuration.</strong> With no <code>privacy_profile</code>
+  line it is layered on the floor policy; with <code>privacy_profile: basic</code>
+  on the basic profile; with <code>privacy_profile: none</code> it is the whole
+  policy. Your explicit tags win over the base either way, and
+  <code>action: KEEP</code> opts a tag out.</li>
 </ul>
 <p>Series Description <code>(0008,103E)</code> -- and the Study Description it sits
 alongside -- are both correctly emptied on the documented path. (A

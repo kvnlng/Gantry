@@ -1441,7 +1441,7 @@
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">session</span><span class="o">.</span><span class="n">examine</span><span class="p">()</span>
 </code></pre></div>
 <h2 id="3-configure-audit">3. Configure &amp; Audit</h2>
-<p>Before changing anything, define your privacy rules. Use <code>create_config</code> to generate a scaffolding based on your inventory, then <code>audit</code> to scan that inventory against your rules. This "Measure Twice, Cut Once" approach lets you identify all PHI risks before applying any irreversible changes.</p>
+<p>Before changing anything, define your privacy rules. Use <code>create_config</code> to generate a scaffolding based on your inventory, then <code>audit</code> to scan that inventory against your rules. This "Measure Twice, Cut Once" approach lets you identify all PHI risks before applying any irreversible changes. A session that has loaded no configuration still applies a floor policy (the PS3.15 basic profile plus Study Date jittered, Sex and Age kept); the config file is where you record the policy you actually want.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Create a default configuration file (v2.0 YAML)</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">session</span><span class="o">.</span><span class="n">create_config</span><span class="p">(</span><span class="s2">"config.yaml"</span><span class="p">)</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
@@ -1469,7 +1469,7 @@
 <ol>
 <li><strong>Anonymize</strong>: Strips or replaces metadata tags (PatientID, Names, Dates) based on your config.</li>
 <li><strong>Redact</strong>: Loads pixel data and scrubs burned-in PHI from defined regions.</li>
-<li><strong>Export</strong>: The final "Gatekeeper". Writes clean files to a new directory. Setting <code>check_burned_in=True</code> ensures the export halts if any verification checks fail (e.g., corrupt images or missing codecs).</li>
+<li><strong>Export</strong>: The final "Gatekeeper". Writes clean files to a new directory. With <code>check_burned_in=True</code> the export runs <code>audit()</code> first and skips every instance that still carries an identifier, on itself or a parent, under the policy in force -- so on a session that has not run <code>anonymize()</code>, that is every instance carrying a value any rule of the policy would act on.</li>
 </ol>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Apply metadata remediation (anonymization) using the findings</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">session</span><span class="o">.</span><span class="n">anonymize</span><span class="p">(</span><span class="n">report</span><span class="p">)</span>
