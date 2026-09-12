@@ -9164,10 +9164,10 @@ below renders every frozen method; it rendered 16 of the 28 until 0.9.4.</p>
 <a id="__codelineno-0-3582" name="__codelineno-0-3582"></a>
 <a id="__codelineno-0-3583" name="__codelineno-0-3583"></a><span class="sd">        Returns:</span>
 <a id="__codelineno-0-3584" name="__codelineno-0-3584"></a><span class="sd">            int: How many instances had at least one configured zone</span>
-<a id="__codelineno-0-3585" name="__codelineno-0-3585"></a><span class="sd">                applied to their pixels. Two boundaries, both deliberate:</span>
-<a id="__codelineno-0-3586" name="__codelineno-0-3586"></a><span class="sd">                an instance a rule *matched* but whose every zone fell</span>
-<a id="__codelineno-0-3587" name="__codelineno-0-3587"></a><span class="sd">                outside the image is **not** counted, and a zone that is</span>
-<a id="__codelineno-0-3588" name="__codelineno-0-3588"></a><span class="sd">                in bounds but selects zero pixels **is**. Zero means</span>
+<a id="__codelineno-0-3585" name="__codelineno-0-3585"></a><span class="sd">                applied to their pixels. An instance a rule *matched* but</span>
+<a id="__codelineno-0-3586" name="__codelineno-0-3586"></a><span class="sd">                whose every zone fell outside the image is **not** counted;</span>
+<a id="__codelineno-0-3587" name="__codelineno-0-3587"></a><span class="sd">                a zone with no area fails its instance and the pass raises</span>
+<a id="__codelineno-0-3588" name="__codelineno-0-3588"></a><span class="sd">                `RedactionError` (#244), so it is never counted. Zero means</span>
 <a id="__codelineno-0-3589" name="__codelineno-0-3589"></a><span class="sd">                nothing was redacted -- no rules loaded, no image matched</span>
 <a id="__codelineno-0-3590" name="__codelineno-0-3590"></a><span class="sd">                one, every match was already redacted under this</span>
 <a id="__codelineno-0-3591" name="__codelineno-0-3591"></a><span class="sd">                configuration, or no zone landed.</span>
@@ -13336,10 +13336,10 @@ existence, including the ones that were never damaged.</p>
             <td>
               <div class="doc-md-description">
                 <p>How many instances had at least one configured zone
-applied to their pixels. Two boundaries, both deliberate:
-an instance a rule <em>matched</em> but whose every zone fell
-outside the image is <strong>not</strong> counted, and a zone that is
-in bounds but selects zero pixels <strong>is</strong>. Zero means
+applied to their pixels. An instance a rule <em>matched</em> but
+whose every zone fell outside the image is <strong>not</strong> counted;
+a zone with no area fails its instance and the pass raises
+<code>RedactionError</code> (#244), so it is never counted. Zero means
 nothing was redacted -- no rules loaded, no image matched
 one, every match was already redacted under this
 configuration, or no zone landed.</p>
@@ -13673,10 +13673,10 @@ row, not a silent skip.</p>
 <a id="__codelineno-0-3582" name="__codelineno-0-3582"></a>
 <a id="__codelineno-0-3583" name="__codelineno-0-3583"></a><span class="sd">    Returns:</span>
 <a id="__codelineno-0-3584" name="__codelineno-0-3584"></a><span class="sd">        int: How many instances had at least one configured zone</span>
-<a id="__codelineno-0-3585" name="__codelineno-0-3585"></a><span class="sd">            applied to their pixels. Two boundaries, both deliberate:</span>
-<a id="__codelineno-0-3586" name="__codelineno-0-3586"></a><span class="sd">            an instance a rule *matched* but whose every zone fell</span>
-<a id="__codelineno-0-3587" name="__codelineno-0-3587"></a><span class="sd">            outside the image is **not** counted, and a zone that is</span>
-<a id="__codelineno-0-3588" name="__codelineno-0-3588"></a><span class="sd">            in bounds but selects zero pixels **is**. Zero means</span>
+<a id="__codelineno-0-3585" name="__codelineno-0-3585"></a><span class="sd">            applied to their pixels. An instance a rule *matched* but</span>
+<a id="__codelineno-0-3586" name="__codelineno-0-3586"></a><span class="sd">            whose every zone fell outside the image is **not** counted;</span>
+<a id="__codelineno-0-3587" name="__codelineno-0-3587"></a><span class="sd">            a zone with no area fails its instance and the pass raises</span>
+<a id="__codelineno-0-3588" name="__codelineno-0-3588"></a><span class="sd">            `RedactionError` (#244), so it is never counted. Zero means</span>
 <a id="__codelineno-0-3589" name="__codelineno-0-3589"></a><span class="sd">            nothing was redacted -- no rules loaded, no image matched</span>
 <a id="__codelineno-0-3590" name="__codelineno-0-3590"></a><span class="sd">            one, every match was already redacted under this</span>
 <a id="__codelineno-0-3591" name="__codelineno-0-3591"></a><span class="sd">            configuration, or no zone landed.</span>

@@ -1411,7 +1411,7 @@
 
 
 <h1 id="installation">Installation</h1>
-<p>Isocenter requires <strong>Python 3.12+</strong>.</p>
+<p>Isocenter requires <strong>Python 3.12+</strong> on a POSIX system (Linux or macOS). It does not import on Windows: the storage layer's locks use <code>fcntl</code>.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>isocenter
 </code></pre></div>
 <p>Releases are published to PyPI from a tagged GitHub Release, via Trusted
@@ -1452,15 +1452,16 @@ it raises <code>PixelScanError</code>, also a <code>RuntimeError</code> (#423). 
 did not import; it does not check the binary.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>The <code>imagecodecs</code> dependency is included and strongly recommended for handling JPEG Lossless and other compressed Transfer Syntaxes.</p>
+<p><code>imagecodecs</code> is a required dependency and installs with Isocenter. It is the JPEG 2000 encoder the default compressed export uses, and it decodes JPEG Lossless, JPEG-LS and JPEG 2000 files that pydicom's installed plugins cannot.</p>
 </div>
 <h2 id="dependencies">Dependencies</h2>
 <p>Dependencies are declared in one place, <code>setup.py</code>. There is deliberately
 no <code>requirements.txt</code>: two lists drift apart, and only <code>install_requires</code>
 is consulted when you <code>pip install</code>.</p>
-<p>To set up a development environment, install the package with its test
-extra:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">".[tests]"</span>
+<p>To set up a development environment, install the package with its
+contributor extra (tests, pylint and coverage); <code>.[tests]</code> alone is enough
+to run the suite:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span><span class="s2">".[dev]"</span>
 </code></pre></div>
 <h2 id="system-requirements">System Requirements</h2>
 <p>Isocenter's parallel processing engine is designed to maximize CPU utilization. However, heavy operations like JPEG 2000 compression require significant memory per worker.</p>
@@ -1468,7 +1469,7 @@ extra:</p>
 <li><strong>Memory</strong>: Isocenter is memory-intensive during specific operations (e.g., Pixel Redaction, J2K Export).</li>
 <li><strong>Minimum</strong>: 2GB RAM per vCPU.</li>
 <li><strong>Recommended (Heavy Workloads)</strong>: 8GB RAM per vCPU (e.g., for massive multi-frame J2K compression).</li>
-<li><strong>Concurrency</strong>: By default, Isocenter uses all available cores (<code>1:1</code> ratio). Use <code>ISOCENTER_MAX_WORKERS</code> env var to limit this if OOM occurs.</li>
+<li><strong>Concurrency</strong>: By default, ingest, audit and export use one worker per CPU; <code>redact()</code>, which holds a decoded frame per worker, uses half the CPUs and at most eight. Use the <code>ISOCENTER_MAX_WORKERS</code> env var to limit both if OOM occurs.</li>
 </ul>
 
 

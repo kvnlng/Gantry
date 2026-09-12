@@ -1740,8 +1740,8 @@
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nt">privacy_profile</span><span class="p">:</span><span class="w"> </span><span class="s">"basic"</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># 2. Date Jitter</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Shifts all dates by a random amount within this range.</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># The shift is deterministic per-patient (consistent across studies).</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Range for the per-patient date shift, applied to Study Date and to</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># every tag whose rule is SHIFT or JITTER (consistent across studies).</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="nt">date_jitter</span><span class="p">:</span>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span><span class="nt">min_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-30</span>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="nt">max_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-10</span>
@@ -1752,26 +1752,25 @@
 <a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>
 <a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="c1"># 4. Custom PHI Tags (Overrides Profile)</span>
 <a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="nt">phi_tags</span><span class="p">:</span>
-<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">  </span><span class="s">"0010,0010"</span><span class="p p-Indicator">:</span><span class="w"> </span>
-<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">    </span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="s">"REMOVE"</span>
-<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">"PatientName"</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">  </span><span class="s">"0008,1030"</span><span class="p p-Indicator">:</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">    </span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="s">"EMPTY"</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">"StudyDescription"</span>
 <a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>
-<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">  </span><span class="s">"0010,0020"</span><span class="p p-Indicator">:</span><span class="w"> </span>
-<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">    </span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="s">"REPLACE"</span>
-<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">"PatientID"</span>
-<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a><span class="w">    </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="s">"ANONYMIZED"</span><span class="w"> </span><span class="c1"># Matches default if omitted</span>
-<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>
-<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">  </span><span class="s">"0008,0080"</span><span class="p p-Indicator">:</span>
-<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="w">    </span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="s">"KEEP"</span><span class="w"> </span><span class="c1"># Exception: Keep InstitutionName</span>
-<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>
-<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="c1"># 5. Pixel Redaction Rules (Machine Specific)</span>
-<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="nt">machines</span><span class="p">:</span>
-<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">serial_number</span><span class="p">:</span><span class="w"> </span><span class="s">"US-12345"</span>
-<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="w">    </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="s">"Voluson</span><span class="nv"> </span><span class="s">E10"</span>
-<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="w">    </span><span class="nt">redaction_zones</span><span class="p">:</span>
-<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="w">      </span><span class="c1"># [row_start, row_end, col_start, col_end]</span>
-<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">800</span><span class="p p-Indicator">]</span><span class="w">   </span><span class="c1"># Top Banner</span>
-<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">900</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1024</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">400</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="c1"># Bottom Left Details</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="w">  </span><span class="s">"0008,103e"</span><span class="p p-Indicator">:</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="w">    </span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="s">"REPLACE"</span><span class="w"> </span><span class="c1"># Writes "ANONYMIZED"</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a><span class="w">    </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">"SeriesDescription"</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="w">  </span><span class="s">"0008,0080"</span><span class="p p-Indicator">:</span>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="w">    </span><span class="nt">action</span><span class="p">:</span><span class="w"> </span><span class="s">"KEEP"</span><span class="w"> </span><span class="c1"># Exception: Keep InstitutionName</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a><span class="c1"># 5. Pixel Redaction Rules (Machine Specific)</span>
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a><span class="nt">machines</span><span class="p">:</span>
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">serial_number</span><span class="p">:</span><span class="w"> </span><span class="s">"US-12345"</span>
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a><span class="w">    </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="s">"Voluson</span><span class="nv"> </span><span class="s">E10"</span>
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a><span class="w">    </span><span class="nt">redaction_zones</span><span class="p">:</span>
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a><span class="w">      </span><span class="c1"># [row_start, row_end, col_start, col_end]</span>
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">50</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">800</span><span class="p p-Indicator">]</span><span class="w">   </span><span class="c1"># Top Banner</span>
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">900</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1024</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">400</span><span class="p p-Indicator">]</span><span class="w"> </span><span class="c1"># Bottom Left Details</span>
 </code></pre></div>
 <hr />
 <h2 id="detailed-options">Detailed Options</h2>
@@ -1780,15 +1779,19 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">privacy_profile</span><span class="p">:</span><span class="w"> </span><span class="s">"basic"</span>
 </code></pre></div>
 <ul>
-<li><strong><code>basic</code></strong>: A reduced <em>DICOM PS3.15 Annex E Basic Profile</em> (<code>BASIC_PROFILE</code> in <code>isocenter/profiles.py</code>, 35 tags). Retains some descriptors but removes direct identifiers.</li>
+<li><strong><code>basic</code></strong>: A reduced <em>DICOM PS3.15 Annex E Basic Profile</em> (<code>BASIC_PROFILE</code> in <code>isocenter/profiles.py</code>, 35 tags). Retains some descriptors but removes direct identifiers. It does <strong>not</strong> replace UIDs: Study, Series and SOP Instance UIDs are exported as they were ingested (a redacted instance gets a new SOP Instance UID, and references to it are not updated), so an export can be linked back to its source by anyone who can see the source UIDs (<a href="https://github.com/kvnlng/Isocenter/issues/544">#544</a>).</li>
 <li><strong><code>none</code></strong>: No base. The file's <code>phi_tags</code> are the whole policy.</li>
 <li><strong>External File</strong>: You can provide a path to another YAML file (e.g., <code>./profiles/my_hospital_standard.yaml</code>) to inherit its rules. That file must carry them under a <code>phi_tags:</code> mapping — a config-shaped file works, a bare tag map at its root raises <code>ValueError</code>, because the root used to be read as the tags and a profile written like a config then loaded <code>privacy_profile</code> itself as a "tag".</li>
 </ul>
 <p>Any other value is refused: <code>load_config()</code> raises <code>ValueError</code> naming it. (These docs once offered a <code>comprehensive</code> profile, which never existed; loading it warned and applied no base.)</p>
 <p>A session that has loaded no configuration applies the <strong>floor policy</strong>, <code>FLOOR_POLICY</code> in <code>isocenter/profiles.py</code>: the basic profile plus the three research defaults <code>create_config()</code> writes (Study Date jittered, Patient's Sex and Age kept), 36 rules.</p>
 <p><strong>Omitting <code>privacy_profile</code> means the floor beneath your <code>phi_tags</code>.</strong> A file with a few tags and no profile line extends the floor rather than replacing it, so a one-tag config cannot switch the floor off by accident. To opt a single tag out, give it <code>action: "KEEP"</code>; to opt out of the floor entirely, write <code>privacy_profile: "none"</code>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Three tags are not governed by <code>phi_tags</code></p>
+<p>Patient's Name <code>(0010,0010)</code>, Patient ID <code>(0010,0020)</code> and Study Date <code>(0008,0020)</code> belong to the patient and study, and <code>anonymize()</code> always replaces them -- the name with <code>ANONYMIZED</code>, the ID with an <code>ANON_</code> pseudonym, the study date with its per-patient shift -- under every profile, including <code>none</code>. A <code>KEEP</code>, <code>REMOVE</code>, <code>EMPTY</code> or <code>REPLACE</code> rule on one of them does not change the exported value (<a href="https://github.com/kvnlng/Isocenter/issues/537">#537</a>).</p>
+</div>
 <h3 id="date-jitter">Date Jitter</h3>
-<p>Shifts all date attributes (<code>DA</code>, <code>DT</code>) by a random number of days.</p>
+<p>Sets the range of the per-patient date shift. It is applied to Study Date and to every tag whose rule is <code>SHIFT</code> or <code>JITTER</code>; other date tags follow their own rule, and the <code>basic</code> profile <em>removes</em> Series, Acquisition and Content dates rather than shifting them.</p>
 <ul>
 <li><strong>Logic</strong>: Isocenter generates a secret random offset for each <code>PatientID</code>. This offset is consistent for that patient across all their studies and series, preserving temporal relationships (intervals) while hiding the absolute dates.</li>
 <li>
@@ -1815,137 +1818,110 @@ survived into the exported file with its private creator stripped off
 it. A private sequence nested inside another sequence is swept on the
 same rule.</p>
 <p>The flag governs the private tags Isocenter <em>holds</em>, which is not every
-private tag in your source files. Where the line falls:</p>
+private tag in your source files. Whether a private value is held is
+decided by its <strong>size</strong>, not its VR
+(<a href="https://github.com/kvnlng/Isocenter/issues/151">#151</a>):</p>
 <table>
 <thead>
 <tr>
-<th style="text-align: left;">Private tag, by the VR it is read with</th>
+<th style="text-align: left;">Private tag</th>
 <th style="text-align: left;"><code>remove_private_tags: true</code></th>
 <th style="text-align: left;"><code>remove_private_tags: false</code></th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td style="text-align: left;">Text, numeric, and <code>UN</code> -- <code>LO</code>, <code>SH</code>, <code>DS</code>, <code>UN</code></td>
+<td style="text-align: left;">Text or numeric VR (<code>LO</code>, <code>SH</code>, <code>DS</code>, ...)</td>
 <td style="text-align: left;">Removed</td>
 <td style="text-align: left;"><strong>Kept</strong>, and written to the exported file</td>
 </tr>
 <tr>
-<td style="text-align: left;">Binary VRs -- <code>OB</code>, <code>OW</code>, <code>OF</code>, <code>OD</code>, <code>OL</code></td>
-<td style="text-align: left;">Gone</td>
-<td style="text-align: left;"><strong>Gone</strong> -- dropped at ingest, before the flag is read</td>
+<td style="text-align: left;">Binary value (<code>OB</code>, <code>OW</code>, <code>OF</code>, <code>OD</code>, <code>OL</code>, or <code>UN</code>) of 65534 bytes or less</td>
+<td style="text-align: left;">Removed</td>
+<td style="text-align: left;"><strong>Kept</strong>, and written to the exported file</td>
+</tr>
+<tr>
+<td style="text-align: left;">Binary value over 65534 bytes</td>
+<td style="text-align: left;">Dropped at ingest, <code>DATA_LOSS</code> row</td>
+<td style="text-align: left;">Dropped at ingest, <code>DATA_LOSS</code> row</td>
 </tr>
 </tbody>
 </table>
-<p><strong>Both rows assume an explicit-VR source.</strong> Under implicit VR there is no VR
-in the file, so pydicom reads <em>every</em> private tag as <code>UN</code> -- the first row
-becomes the whole table, the second applies to nothing, and a vendor <code>OB</code> is
-kept and exported with no <code>DATA_LOSS</code> entry. The first row is therefore not
-the small-strings case it looks like; under implicit VR it is all of your
-private data, blobs included. See below
-(<a href="https://github.com/kvnlng/Isocenter/issues/151">#151</a>).</p>
+<p>The limit is <code>BINARY_RETENTION_MAX_BYTES</code> in <code>isocenter/io_handlers.py</code>,
+the largest value an explicit-VR 16-bit length field can carry. Because it
+weighs the value rather than the VR it was read with, explicit-VR and
+implicit-VR copies of one study give the same answer: under implicit VR
+pydicom reads every private tag as <code>UN</code>, and a <code>UN</code> blob takes exactly the
+same size rule. Before 0.9.1 the rule keyed on VR, so the two syntaxes
+disagreed; if you read an older description of a binary-VR private tag
+being "always dropped", it is out of date.</p>
 <p><strong>One <code>UN</code> value is resolved rather than kept opaque.</strong> If a private
 <code>UN</code> value begins with the item tag <code>(FFFE,E000)</code> and re-encodes byte
 for byte as an implicit-VR sequence, it is ingested as a sequence -- the
 same graph the explicit-VR reading of the same file produces -- so the
 PHI scan walks inside it, remediation reaches the values there, and
 <code>remove_private_tags: true</code> removes it
-(<a href="https://github.com/kvnlng/Isocenter/issues/167">#167</a>). Its items then
-follow the ordinary rules, binary-VR children included, so a vendor <code>OB</code>
-inside such a sequence is dropped at ingest and reported like any other.
-A candidate that does <em>not</em> re-encode exactly keeps its bytes untouched
-at ingest and files a <code>SCAN_GAP</code> entry, which appears in section 3.2 of
-the compliance report with a disposition resolved at report time: under
+(<a href="https://github.com/kvnlng/Isocenter/issues/167">#167</a>). A recovered
+sequence is exempt from the size rule, and its items then follow the
+ordinary rules, so a large binary child inside it is dropped and reported
+like any other. A candidate that does <em>not</em> re-encode exactly keeps its
+bytes untouched at ingest (if they are within the size limit) and files a
+<code>SCAN_GAP</code> entry, which appears in section 3.2 of the compliance report
+with a disposition resolved at report time: under
 <code>remove_private_tags: true</code> the sweep removes the bytes like any other
 private attribute and the entry reads <code>removed before export</code> (grading
 <code>PASS</code>); under <code>false</code> they are retained byte-for-byte, the entry reads
 <code>retained for export</code>, and the session grades <code>REVIEW_REQUIRED</code>.</p>
 <div class="admonition warning">
-<p class="admonition-title"><code>false</code> cannot retain private tags with a binary VR</p>
-<p>Elements with a binary VR (<code>OB</code>, <code>OW</code>, <code>OF</code>, <code>OD</code>, <code>OL</code>) are skipped
-by <code>populate_attrs</code> at ingest and never enter the object graph, so
-there is nothing left for this flag to keep by the time it is read. A
-vendor block routinely carries one. Setting <code>false</code> does not fail: it
-succeeds on a tag that has been gone since ingest, and the exported
-file simply does not have it.</p>
-<p><strong>Only that VR family is affected.</strong> Private tags with a text or
-numeric VR are ingested normally and are governed by this flag in
-both directions -- swept when it is <code>true</code>, kept and written to the
-exported file when it is <code>false</code>. That covers the <code>LO</code> private
-creator and the <code>SH</code>/<code>LO</code> strings a vendor block is mostly made of.
-"Private tags are not retained" is the wrong reading; one VR family
-of them is not.</p>
-<p><code>UN</code> -- Unknown -- is raw bytes and neither text nor numeric, and it
-is deliberately kept out of the binary set anyway, on the assumption
-that a private <code>UN</code> is a small value rather than a blob. The next
-paragraph is where that assumption stops holding
-(<a href="https://github.com/kvnlng/Isocenter/issues/151">#151</a>).</p>
-<p><strong>The VR that decides is the one pydicom reads, not the one the
-vendor wrote</strong>, and for a private tag those differ by transfer
-syntax. An implicit-VR file carries no VR field at all: pydicom
-resolves it from the standard dictionary, which has no entry for a
-private tag, and hands back <code>UN</code> -- which is not in the binary set.
-So the same vendor <code>OB</code> element that is dropped out of an
-explicit-VR source is ingested, retained, exported, and files no
-<code>DATA_LOSS</code> entry when it arrives in an implicit-VR one. Do not plan
-around that: one study written in the two syntaxes gives two
-different answers, and only the explicit-VR one is the answer this
-section describes.</p>
-<p>That tension is real and is tracked: under implicit VR the blob <em>is</em>
-resident, which is exactly what the rule below exists to prevent
-(<a href="https://github.com/kvnlng/Isocenter/issues/151">#151</a>).</p>
+<p class="admonition-title">Private binary values over 64 KiB cannot be retained</p>
+<p>A binary value larger than 65534 bytes never enters the object graph,
+so <code>remove_private_tags: false</code> has nothing left to keep. Setting
+<code>false</code> does not fail: the exported file simply does not have it.</p>
 <p><strong>The loss is announced, not silent.</strong> Each dropped element is logged
 as a warning and written to the audit log as a <code>DATA_LOSS</code> entry
-naming the tag <em>and its VR</em> -- the VR is the part that says whether
-you lost a four-byte serial number or a megabyte of vendor
-telemetry. It reaches you in three places: the session log, section
-3.1 (<em>Data Loss</em>, under <em>Data Loss &amp; Unscanned Content</em>) of the
-compliance report written by
+naming the tag <em>and its VR</em>. It reaches you in three places: the
+session log, section 3.1 (<em>Data Loss</em>, under <em>Data Loss &amp; Unscanned
+Content</em>) of the compliance report written by
 <code>session.generate_report(path)</code>, and
 <code>session.store_backend.get_audit_losses()</code> if you want the rows
-directly. Read that section before concluding a vendor block came
-through a run intact.</p>
+directly. A dropped <em>private</em> element grades the run
+<code>REVIEW_REQUIRED</code>. Read that section before concluding a vendor block
+came through a run intact.</p>
 <p><strong>This is settled rather than pending</strong>
-(<a href="https://github.com/kvnlng/Isocenter/issues/125">#125</a>). Warning
-plus an audit entry is the answer; storing the bytes is not planned.
-If you need them, keep your source files -- Isocenter never modifies
-them, so the vendor block is still there to go back to.</p>
+(<a href="https://github.com/kvnlng/Isocenter/issues/125">#125</a>). If you need
+those bytes, keep your source files -- Isocenter never modifies them,
+so the vendor block is still there to go back to.</p>
 </div>
-<p><strong>Why the bytes are not stored.</strong> Both ways of keeping them were considered
-and rejected. Holding vendor binary in <code>attributes</code> makes an arbitrary blob
-permanently resident, which is what the binary-VR rule exists to prevent:
-memory scaling on 100GB+ datasets depends on heavy arrays never being
-resident by default, and that guarantee is worth more than an unread vendor
-block. The implicit-VR case above is a hole in that rule rather than an
-argument against it -- the rule is worth having <em>and</em> it does not currently
-cover every input, which is why
-<a href="https://github.com/kvnlng/Isocenter/issues/151">#151</a> is open rather than
-closed as intended behaviour.</p>
-<p>Routing them to the sidecar instead means giving private tags an
-offset/length representation the EAV table does not have, plus a lazy
-loader and an export re-merge path. <code>session.compact()</code> rewrites the
-sidecar and rewires every offset it knows about, so a class of offset it
-does not know about is silent corruption after the first compaction. (It
-also holds the sidecar gate for the whole rewrite, so any writer of such
-an offset would have to take that gate too, and it refuses outright while
-a <code>redact()</code> or <code>ingest()</code> pass is open -- see <code>compact()</code>'s API entry.)
-That is design work, not a flag.</p>
-<div class="admonition warning">
-<p class="admonition-title">Standard binary elements are dropped too</p>
-<p>The same rule takes Overlay Data <code>(60xx,3000)</code> and the palette color
-LUTs <code>(0028,120x)</code>, which are <code>OW</code>. <code>PixelData</code> and <code>WaveformData</code>
-are the only binary elements routed to the sidecar; everything else
-with a binary VR is dropped whatever its group.</p>
+<p><strong>Why large values are not stored.</strong> Holding a megabyte vendor blob in
+<code>attributes</code> makes it permanently resident, and memory scaling on 100GB+
+datasets depends on heavy arrays never being resident by default; the
+64 KiB cap bounds what retention can cost per element. Routing large values
+to the sidecar instead means giving private tags an offset/length
+representation the EAV table does not have, plus a lazy loader and an
+export re-merge path. <code>session.compact()</code> rewrites the sidecar and rewires
+every offset it knows about, so a class of offset it does not know about is
+silent corruption after the first compaction. (It also holds the sidecar
+gate for the whole rewrite, so any writer of such an offset would have to
+take that gate too, and it refuses outright while a <code>redact()</code> or
+<code>ingest()</code> pass is open -- see <code>compact()</code>'s API entry.) That is design
+work, not a flag.</p>
+<div class="admonition note">
+<p class="admonition-title">Standard binary elements follow the same size rule</p>
+<p>Overlay Data <code>(60xx,3000)</code> and the palette color LUTs <code>(0028,120x)</code>
+are <code>OW</code>. At or below 65534 bytes they are carried into the export --
+a 256-entry palette LUT is 512 bytes -- and above it they are dropped
+and reported. <code>PixelData</code> and <code>WaveformData</code> are the only binary
+elements routed to the sidecar.</p>
 <p>An overlay's <em>descriptors</em> (<code>OverlayRows</code>, <code>OverlayColumns</code>,
-<code>OverlayBitPosition</code> and friends) are <code>US</code>, so they do survive. An
-exported file therefore declares an overlay plane it does not carry.
-The descriptors are deliberately left in place rather than stripped:
-an overlay may legitimately live in the unused high bits of
-<code>PixelData</code> (addressed by <code>OverlayBitPosition</code>), and since Isocenter
-preserves <code>PixelData</code> intact, those overlays survive and their
-descriptors are the only pointer to them. Stripping the descriptors
-would turn a correct passthrough into silent destruction.</p>
-<p>These drops are reported as <code>DATA_LOSS</code> entries the same way
+<code>OverlayBitPosition</code> and friends) are <code>US</code>, so they always survive,
+and an export from which a large overlay plane was dropped declares a
+plane it does not carry. The descriptors are deliberately left in
+place rather than stripped: an overlay may legitimately live in the
+unused high bits of <code>PixelData</code> (addressed by <code>OverlayBitPosition</code>),
+and since Isocenter preserves <code>PixelData</code> intact, those overlays
+survive and their descriptors are the only pointer to them.</p>
+<p>A dropped <em>standard</em> element is listed in the report's Data Loss
+section but does not change the grade
 (<a href="https://github.com/kvnlng/Isocenter/issues/137">#137</a>).</p>
 </div>
 <h3 id="phi-tags">PHI Tags</h3>
@@ -1962,8 +1938,8 @@ would turn a correct passthrough into silent destruction.</p>
 <tbody>
 <tr>
 <td style="text-align: left;"><strong><code>REPLACE</code></strong></td>
-<td style="text-align: left;">Replaces value with "ANONYMIZED" (or custom string).</td>
-<td style="text-align: left;"><code>action: "REPLACE", value: "Project-X"</code></td>
+<td style="text-align: left;">Replaces the value with <code>ANONYMIZED</code>. A <code>value:</code> key is accepted and not used (<a href="https://github.com/kvnlng/Isocenter/issues/538">#538</a>).</td>
+<td style="text-align: left;"><code>action: "REPLACE"</code></td>
 </tr>
 <tr>
 <td style="text-align: left;"><strong><code>REMOVE</code></strong></td>
@@ -1981,12 +1957,18 @@ would turn a correct passthrough into silent destruction.</p>
 <td style="text-align: left;"><code>action: "SHIFT"</code></td>
 </tr>
 <tr>
+<td style="text-align: left;"><strong><code>JITTER</code></strong></td>
+<td style="text-align: left;">Same as <code>SHIFT</code>. The generated scaffold and the floor policy use it for Study Date.</td>
+<td style="text-align: left;"><code>action: "JITTER"</code></td>
+</tr>
+<tr>
 <td style="text-align: left;"><strong><code>KEEP</code></strong></td>
 <td style="text-align: left;">Explicitly retains the original value (Exception to profile).</td>
 <td style="text-align: left;"><code>action: "KEEP"</code></td>
 </tr>
 </tbody>
 </table>
+<p>Any other action makes <code>load_config()</code> raise <code>ValueError</code> naming the tag. The three patient- and study-owned tags above are not governed by these actions.</p>
 <p><strong>Example:</strong></p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">phi_tags</span><span class="p">:</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="s">"0008,1030"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="s">"action"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"EMPTY"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"name"</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">"StudyDescription"</span><span class="w"> </span><span class="p p-Indicator">}</span>
@@ -2005,6 +1987,7 @@ would turn a correct passthrough into silent destruction.</p>
 <li><strong><code>redaction_zones</code></strong>: List of regions to zero out.</li>
 <li>Format: <code>[y1, y2, x1, x2]</code> (Row Start, Row End, Col Start, Col End).</li>
 <li>Coordinates are 0-indexed.</li>
+<li>End must be strictly greater than start on both axes. <code>load_config()</code> accepts a zone whose start equals its end, but it selects no pixels, and <code>redact()</code> fails every instance it applies to with <code>RedactionError</code>.</li>
 </ul>
 <h3 id="generating-configuration-templates">Generating Configuration Templates</h3>
 <p>You can generate a starter <code>isocenter_config.yaml</code> based on your current session inventory. This is useful for bootstrapping a new configuration file that includes all detected machines.</p>
@@ -2017,15 +2000,16 @@ would turn a correct passthrough into silent destruction.</p>
 <h3 id="accessing-configuration">Accessing Configuration</h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">isocenter</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">session</span> <span class="o">=</span> <span class="n">isocenter</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="n">data_directory</span><span class="o">=</span><span class="s2">"./dicom_data"</span><span class="p">)</span>
-<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
-<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="c1"># improved: Access the IsocenterConfiguration object directly</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">session</span> <span class="o">=</span> <span class="n">isocenter</span><span class="o">.</span><span class="n">Session</span><span class="p">(</span><span class="s2">"my_project.db"</span><span class="p">)</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">session</span><span class="o">.</span><span class="n">load_config</span><span class="p">(</span><span class="s2">"isocenter_config.yaml"</span><span class="p">)</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
 <a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="n">config</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">configuration</span>
 <a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>
-<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">rules</span><span class="p">)</span>    <span class="c1"># List active redaction rules</span>
-<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="nb">print</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">phi_tags</span><span class="p">)</span> <span class="c1"># List active PHI tag overrides</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="nb">print</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">rules</span><span class="p">)</span>    <span class="c1"># machine redaction rules</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="nb">print</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">phi_tags</span><span class="p">)</span> <span class="c1"># the full tag policy in force, floor included</span>
 </code></pre></div>
 <h3 id="methods">Methods</h3>
+<p>These methods change the configuration in memory and, if it came from <code>load_config(path)</code>, <strong>write it back to <code>path</code> immediately</strong>. The rewritten file holds the whole policy in force, with the profile and floor tags expanded inline and comments dropped, so keep your hand-edited original under version control. A session that loaded no file keeps the changes in memory only. <code>auto_remediate_config()</code> is the exception: it edits the rules in memory and does not save.</p>
 <h4 id="add_rule">add_rule()</h4>
 <p><code>add_rule(serial_number, manufacturer="Unknown", model="Unknown", zones=None)</code></p>
 <p>Add a new machine redaction rule dynamically.</p>
@@ -2047,12 +2031,12 @@ would turn a correct passthrough into silent destruction.</p>
 <p>Update a rule by serial number.</p>
 <h4 id="set_phi_tag">set_phi_tag()</h4>
 <p><code>set_phi_tag(tag, action, replacement=None)</code></p>
-<p>Update the policy for a specific DICOM tag.</p>
+<p>Update the policy for a specific DICOM tag. <code>REPLACE</code> always writes <code>ANONYMIZED</code>; the <code>replacement</code> argument is stored in the policy and not currently applied (<a href="https://github.com/kvnlng/Isocenter/issues/538">#538</a>).</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># Force removal of PatientWeight</span>
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">session</span><span class="o">.</span><span class="n">configuration</span><span class="o">.</span><span class="n">set_phi_tag</span><span class="p">(</span><span class="s2">"0010,1030"</span><span class="p">,</span> <span class="s2">"REMOVE"</span><span class="p">)</span>
 <a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># Replace StudyDescription with a constant</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">session</span><span class="o">.</span><span class="n">configuration</span><span class="o">.</span><span class="n">set_phi_tag</span><span class="p">(</span><span class="s2">"0008,1030"</span><span class="p">,</span> <span class="s2">"REPLACE"</span><span class="p">,</span> <span class="n">replacement</span><span class="o">=</span><span class="s2">"RESEARCH STUDY"</span><span class="p">)</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># Blank StudyDescription</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">session</span><span class="o">.</span><span class="n">configuration</span><span class="o">.</span><span class="n">set_phi_tag</span><span class="p">(</span><span class="s2">"0008,1030"</span><span class="p">,</span> <span class="s2">"EMPTY"</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="auto-discovery-of-redaction-zones">Auto-Discovery of Redaction Zones</h2>
 <p>To help identify pixel redaction zones (e.g., for burned-in PHI), Isocenter provides a discovery tool that analyzes a sample of images from a specific machine to find common text "hotspots".</p>

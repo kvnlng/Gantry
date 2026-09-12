@@ -1369,7 +1369,7 @@
 <h1 id="migration-tools">Migration Tools</h1>
 <h2 id="upgrading-an-existing-store">Upgrading an existing store</h2>
 <p>The code in a new release is fixed; the data an old release wrote is
-not. Three shapes of legacy damage are known, and each is handled the
+not. Four shapes of legacy damage are known, and each is handled the
 way its information allows -- healed where the store itself proves what
 is wrong, detected where it cannot be repaired, and left to an explicit
 opt-in where only the site knows the answer.</p>
@@ -1389,7 +1389,8 @@ holding detected damage grades <code>REVIEW_REQUIRED</code> rather than <code>PA
 The check is exact for frames stored uncompressed; a zlib-stored
 frame's length is post-compression, so damage behind one is caught
 where the bytes are decoded instead: <code>export(verify_readback=True)</code>
-(#209) re-reads every written file and fails the mismatch at delivery.</p>
+(#209, #449) decodes every written file and compares every pixel sample
+with what it meant to write, failing the mismatch at delivery.</p>
 <p>There is deliberately no automatic repair. The sidecar's bytes are
 shape-free, so a migration would be a best-effort guess, and a
 best-effort repair that silently half-works is worse than a detector.
@@ -1436,6 +1437,23 @@ exists in the API, nothing changes silently, and the caller is choosing
 its cost. A site that does not know its history should re-run the
 privacy pipeline over the store instead, which re-strips the graph and
 (since #158) mirrors the deletions into the tier on save.</p>
+<h3 id="dates-shifted-before-096-510-518">Dates shifted before 0.9.6 (#510, #518)</h3>
+<p>From 0.9.6 Isocenter records, per value, which dates its own shift
+produced: a date under a <code>SHIFT</code>/<code>JITTER</code> rule that the pipeline never
+shifted is raised and shifted on a later pass, and a shifted one is never
+shifted twice. A store written earlier has no such record. For instances
+under a study whose date was already shifted, Isocenter keeps the
+pre-0.9.6 rule: their <code>SHIFT</code>/<code>JITTER</code> values are not re-examined, so a
+date first named in a later policy can survive. Nothing is shifted twice.</p>
+<p>Opening such a store logs a warning and writes one <code>WARNING</code> audit row
+naming how many instances and studies are affected -- <strong>on every open</strong>,
+because nothing in the store can change their status. That row appears
+under <em>Exceptions &amp; Errors</em>, so every compliance report generated over the
+store grades <code>REVIEW_REQUIRED</code>. Re-ingesting the source files into a new
+store gives them the full guarantee and a clean audit log. A pre-0.9.6
+store with no shifted study writes nothing.</p>
+<p>Also changed at the same release: <code>Instance.date_shifted</code> is gone (see
+<a href="../api/stability/">API stability</a>).</p>
 <h2 id="clinical-trial-processor-ctp">Clinical Trial Processor (CTP)</h2>
 <p>Isocenter includes a utility to convert legacy CTP <code>DicomPixelAnonymizer.script</code> files into Isocenter's YAML configuration format.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Convert CTP script to Isocenter YAML</span>
