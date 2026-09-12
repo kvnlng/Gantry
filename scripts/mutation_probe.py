@@ -322,6 +322,7 @@ TARGETS = {
                                 "tests/test_export_delivery_counters.py"], 30),
     "isocenter/privacy.py": (["tests/test_analysis.py", "tests/test_analysis_persistence.py",
                               "tests/test_a_pre_096_store_is_not_reshifted.py",
+                              "tests/test_a_replaced_study_date_is_raised.py",
                               "tests/test_an_unshifted_date_is_raised.py",
                               "tests/test_audit_suppression.py", "tests/test_automation.py",
                               "tests/test_config_tags_shapes.py",
@@ -343,6 +344,7 @@ TARGETS = {
                               "tests/test_sr_anonymization.py",
                               "tests/test_the_jitter_seed_survives_anonymize.py"], 30),
     "isocenter/remediation.py": (["tests/test_audit_suppression.py",
+                                  "tests/test_a_replaced_study_date_is_raised.py",
                                   "tests/test_an_unshifted_date_is_raised.py",
                                   "tests/test_declined_date_recurs.py",
                                   "tests/test_declined_remediation_is_recorded.py",
@@ -371,6 +373,7 @@ TARGETS = {
                                   "tests/test_one_value_per_owned_tag.py",
                                   "tests/test_the_jitter_seed_survives_anonymize.py"], 30),
     "isocenter/io_handlers.py": (["tests/test_api_coherence.py",
+                                  "tests/test_a_replaced_study_date_is_raised.py",
                                   "tests/test_audit_read_barrier.py",
                                   "tests/test_binary_retention_threshold.py",
                                   "tests/test_check_reversibility.py",
@@ -482,6 +485,7 @@ TARGETS = {
     # are 34 others, each of which the guard demands.
     "isocenter/persistence.py": (["tests/test_api_coherence.py",
                                   "tests/test_a_pre_096_store_is_not_reshifted.py",
+                                  "tests/test_a_replaced_study_date_is_raised.py",
                                   "tests/test_an_unshifted_date_is_raised.py",
                                   "tests/test_async_persistence.py",
                                   "tests/test_audit_drop_accounting.py",
@@ -589,6 +593,7 @@ TARGETS = {
     # budget.
     "isocenter/session.py": (["tests/test_analysis.py",
                               "tests/test_a_pre_096_store_is_not_reshifted.py",
+                              "tests/test_a_replaced_study_date_is_raised.py",
                               "tests/test_an_unshifted_date_is_raised.py",
                               "tests/test_analysis_persistence.py",
                               "tests/test_api_coherence.py",
@@ -795,6 +800,7 @@ TARGETS = {
     # Cost: ~1.8 h of a default run as an upper bound.
     "isocenter/entities.py": (["tests/test_analysis.py",
                                "tests/test_a_pre_096_store_is_not_reshifted.py",
+                               "tests/test_a_replaced_study_date_is_raised.py",
                                "tests/test_an_unshifted_date_is_raised.py",
                                "tests/test_api_coherence.py",
                                "tests/test_async_persistence.py",

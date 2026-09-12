@@ -26,9 +26,16 @@ today's code already re-shifts such a date -- and marking it legacy would
 hide a rule added in a later pass once its study is shifted under 0.9.6,
 which is #510 persisting for an instance with no real legacy.
 
+**The study half (#518) is the same ruling one level up**, and needs no
+provenance column of its own: `studies.date_shifted` with no
+`shifted_study_date` already means "shifted before 0.9.6, value
+unknowable", and such a study keeps the pre-0.9.6 rule too. The instance
+half needed a column precisely because `Instance.date_shifted` was never
+persisted, so an instance row carried no witness at all.
+
 **The notice.** One `WARNING` audit row and one log line per *load*, not
-per instance, counting the affected instances and naming the guarantee
-that does not apply. A `WARNING` row grades the session
+per instance and not one per level, counting the affected instances and
+studies and naming the guarantee that does not apply. A `WARNING` row grades the session
 `REVIEW_REQUIRED` (#479), which is intended: a session that cannot answer
 the question for part of its graph should say so, in the compliance
 report and not only on a console.
@@ -101,6 +108,10 @@ def _age_the_store(db_path):
     and no `__shifted__` key in any instance's JSON."""
     with sqlite3.connect(db_path) as conn:
         conn.execute("ALTER TABLE instances DROP COLUMN shift_provenance")
+        # The study half of the same migration (#518): a pre-0.9.6 store
+        # has neither column, and a study with `date_shifted` set and no
+        # record is one whose shifted value is unknowable.
+        conn.execute("ALTER TABLE studies DROP COLUMN shifted_study_date")
         rows = conn.execute(
             "SELECT sop_instance_uid, attributes_json FROM instances").fetchall()
         for uid, blob in rows:
@@ -284,6 +295,52 @@ def test_a_declined_date_on_a_legacy_instance_is_still_raised(tmp_path):
         assert loaded.attributes[CONTENT_DATE] == "notadate"
 
     assert len(_declines(db_path)) == len(declines_before) + 1
+
+
+def test_a_pre_096_study_date_is_not_raised_either(tmp_path):
+    """The study half of the same ruling (#518). `date_shifted` set with
+    no record means "shifted before 0.9.6, value unknowable", so the
+    study keeps the pre-0.9.6 rule: its date is not raised, even after a
+    hand edit, because nothing here can tell a fresh original from the
+    shift's own output.
+
+    Stated as its own case because the truth table has four rows and
+    this is the one that has to read the two columns *together*: the
+    same NULL under `date_shifted = 0` means "never shifted" and must
+    raise.
+    """
+    db_path, _ = _write_store(tmp_path, study_date=date(2023, 1, 1))
+    _age_the_store(db_path)
+
+    reopened = DicomSession(db_path)
+    with reopened:
+        study = reopened.store.patients[0].studies[0]
+        assert study.date_shifted and study._shifted_study_date is None
+        settled = study.study_date
+        assert [f for f in reopened.audit().findings
+                if f.entity_type == "Study"] == []
+        study.study_date = date(2024, 7, 4)
+        assert [f for f in reopened.audit().findings
+                if f.entity_type == "Study"] == []
+        reopened.anonymize(reopened.audit())
+        assert study.study_date == date(2024, 7, 4)
+    assert settled != date(2023, 1, 1)
+
+
+def test_the_notice_counts_studies_as_well_as_instances(tmp_path):
+    """One notice for one limitation at two levels, not two rows. An
+    operator reading two WARNING rows about one store would reasonably
+    think there were two problems."""
+    db_path, _ = _write_store(tmp_path, study_date=date(2023, 1, 1), count=2)
+    _age_the_store(db_path)
+
+    reopened = DicomSession(db_path)
+    with reopened:
+        pass
+
+    rows = _warnings(db_path)
+    assert len(rows) == 1, rows
+    assert "2 instances and 1 study" in rows[0], rows[0]
 
 
 def test_a_record_still_vouches_on_a_legacy_instance(tmp_path):

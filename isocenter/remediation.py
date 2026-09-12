@@ -329,6 +329,14 @@ class RemediationService:
                     entity.record_date_shift(proposal.target_attr, new_date)
                     entity.set_attr(proposal.target_attr, new_date)
                 else:
+                    # `Study`'s own one-value record, before the write
+                    # for the same reason (#518). `new_date` is already
+                    # the value the entity will hold -- `Study` only
+                    # normalises `study_date`, and `format_study_date`
+                    # renders both spellings identically -- so recording
+                    # it first is recording what is about to be written.
+                    if hasattr(entity, "record_date_shift"):
+                        entity.record_date_shift(new_date)
                     setattr(entity, proposal.target_attr, new_date)
                     if hasattr(entity, "mark_modified"):
                         entity.mark_modified()

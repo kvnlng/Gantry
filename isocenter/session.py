@@ -5032,6 +5032,12 @@ class DicomSession:
             )
             if hasattr(s, "date_shifted"):
                 s_new.date_shifted = s.date_shifted
+            # The study's own date record travels too (#518).
+            # `_scan_study` runs inside `scan_patient`, which the worker
+            # calls on this clone, so without this line every worker
+            # sees a study that looks pre-0.9.6 and raises nothing --
+            # the whole fix invisible on both parallel paths at once.
+            s_new._shifted_study_date = s._shifted_study_date
 
             p_new.studies.append(s_new)
 

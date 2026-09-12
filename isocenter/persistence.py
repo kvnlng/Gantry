@@ -579,6 +579,7 @@ class SqliteStore:
         study_instance_uid TEXT NOT NULL,
         study_date TEXT,
         date_shifted INTEGER,
+        shifted_study_date TEXT, -- what a shift produced; NULL pre-0.9.6
         phi_status TEXT,
         FOREIGN KEY(patient_id_fk) REFERENCES patients(id),
         UNIQUE(study_instance_uid)
@@ -1090,6 +1091,32 @@ class SqliteStore:
             "PRAGMA table_info(studies)").fetchall()}
         if "date_shifted" not in study_columns:
             conn.execute("ALTER TABLE studies ADD COLUMN date_shifted INTEGER")
+
+        # `shifted_study_date` on studies (#518). `date_shifted` above
+        # says a shift ran; this says what it produced, so `_scan_study`
+        # can tell the shift's own output from a fresh original assigned
+        # over `study_date` -- which the flag alone never could.
+        #
+        # Read with the flag, NULL is unambiguous and needs no second
+        # provenance column:
+        #
+        #   False / NULL   never shifted        -> raise if there is a date
+        #   True  / string shifted by >=0.9.6   -> vouched while it matches
+        #   True  / NULL   shifted pre-0.9.6    -> no finding (the owner's
+        #                                          ruling: nothing in an
+        #                                          existing store changes)
+        #   False / string a hand-edited or partially-written row -> the
+        #                                          record wins, being the
+        #                                          more specific claim
+        #
+        # The instance half needed its own `shift_provenance` column
+        # precisely because `Instance.date_shifted` was never persisted,
+        # so an instance row carried no witness at all. A study row
+        # carries one. Naming that asymmetry is worth more than making
+        # the two halves look symmetrical.
+        if "shifted_study_date" not in study_columns:
+            conn.execute(
+                "ALTER TABLE studies ADD COLUMN shifted_study_date TEXT")
 
         # `shift_provenance` on instances (#510). The scan decides
         # per value whether a date has already been shifted, reading the
@@ -1832,12 +1859,23 @@ class SqliteStore:
                     stored_statuses.append((p, r['phi_status']))
 
                 st_map = {}
+                legacy_studies = 0
                 for r in st_rows:
                     st = Study(r['study_instance_uid'], _as_loaded_date(r['study_date']))
                     # NULL (a row from before the column, #182) and 0 both
                     # read False: only a store that recorded the shift may
                     # claim one.
                     st.date_shifted = bool(r['date_shifted'])
+                    # What the shift produced, or NULL for a row written
+                    # before 0.9.6 -- which with the flag set means
+                    # "shifted, value unknowable" and keeps the
+                    # pre-0.9.6 rule for this study (#518). Assigned,
+                    # not recorded through `record_date_shift`, because
+                    # hydration restores a state rather than making an
+                    # edit (#154).
+                    st._shifted_study_date = r['shifted_study_date']
+                    if st.date_shifted and st._shifted_study_date is None:
+                        legacy_studies += 1
                     st_map[r['id']] = st
                     stored_statuses.append((st, r['phi_status']))
                     if r['patient_id_fk'] in p_map:
@@ -1988,7 +2026,7 @@ class SqliteStore:
                     stored_statuses.append((inst, r['phi_status']))
 
             self.logger.info(f"Loaded {len(patients)} patients from {self.db_path}")
-            self._report_legacy_shift_provenance(legacy_instances)
+            self._report_legacy_shift_provenance(legacy_instances, legacy_studies)
 
             # The row that was loaded is the row the status was written for,
             # so the stored conclusion applies to this revision. Recorded
@@ -2041,6 +2079,7 @@ class SqliteStore:
                 # store's rows.
                 hydrated_instances = []
                 legacy_instances = 0
+                legacy_studies = 0
 
                 # Same one-query pre-fetch as load_all; see the note there.
                 wave_refs = {
@@ -2078,6 +2117,10 @@ class SqliteStore:
                     # Same NULL-reads-False rule as load_all; see the
                     # note there. (#182)
                     st.date_shifted = bool(st_r['date_shifted'])
+                    # Same rule as load_all's; see the note there (#518).
+                    st._shifted_study_date = st_r['shifted_study_date']
+                    if st.date_shifted and st._shifted_study_date is None:
+                        legacy_studies += 1
                     st_pk = st_r['id']
                     stored_statuses.append((st, st_r['phi_status']))
 
@@ -2178,7 +2221,8 @@ class SqliteStore:
                 for entity, stored in stored_statuses:
                     entity.record_phi_status(_phi_status_from_stored(stored))
 
-                self._report_legacy_shift_provenance(legacy_instances)
+                self._report_legacy_shift_provenance(legacy_instances,
+                                                     legacy_studies)
                 p.mark_subtree_persisted()
                 return p
         except sqlite3.Error as e:
@@ -2215,13 +2259,23 @@ class SqliteStore:
         "guarantee."
     )
 
-    def _report_legacy_shift_provenance(self, instances: int):
-        """Say once that part of this graph keeps the pre-0.9.6 rule."""
-        if not instances:
+    def _report_legacy_shift_provenance(self, instances: int, studies: int = 0):
+        """Say once that part of this graph keeps the pre-0.9.6 rule.
+
+        One notice, not two: the instance half (#510) and the study half
+        (#518) are the same limitation at two levels, and an operator
+        reading two rows about one store would reasonably think there
+        were two problems.
+        """
+        if not instances and not studies:
             return
-        noun = "instance" if instances == 1 else "instances"
-        detail = self._LEGACY_SHIFT_NOTICE.format(
-            count=f"{instances} {noun}")
+        parts = []
+        if instances:
+            parts.append(f"{instances} instance"
+                         f"{'' if instances == 1 else 's'}")
+        if studies:
+            parts.append(f"{studies} stud{'y' if studies == 1 else 'ies'}")
+        detail = self._LEGACY_SHIFT_NOTICE.format(count=" and ".join(parts))
         self.logger.warning(detail)
         self.log_audit(action_type="WARNING", entity_uid=self.db_path,
                        details=detail)
@@ -3229,16 +3283,25 @@ class SqliteStore:
         """Writes the study row if dirty; returns its primary key."""
         if study.has_unsaved_changes:
             cur.execute("""
-                INSERT INTO studies (patient_id_fk, study_instance_uid, study_date, date_shifted, phi_status)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO studies (patient_id_fk, study_instance_uid, study_date, date_shifted,
+                                     shifted_study_date, phi_status)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(study_instance_uid) DO UPDATE SET
                     study_date=excluded.study_date,
                     date_shifted=excluded.date_shifted,
+                    shifted_study_date=excluded.shifted_study_date,
                     patient_id_fk=excluded.patient_id_fk,
                     phi_status=excluded.phi_status
             """, (patient_pk, study.study_instance_uid,
                   _as_stored_date(study.study_date),
                   1 if study.date_shifted else 0,
+                  # Plain assignment, not COALESCE-guarded, for
+                  # `shift_provenance`'s reason (#518): a study whose
+                  # record is None has to be able to write that None, or
+                  # a record could never be cleared and a stale one
+                  # would go on vouching for a value the graph no longer
+                  # holds.
+                  study._shifted_study_date,
                   study.phi_status.value))
             tally.studies += 1
 

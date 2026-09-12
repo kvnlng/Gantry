@@ -2020,6 +2020,8 @@ class Study(TrackedEntity):
         study_date (Any): The date of the study.
         series (List[Series]): List of series belonging to this study.
         date_shifted (bool): Whether dates in this study have been shifted.
+            Whether *this* study date is one the shift produced is
+            `date_shift_vouches_for` (#518).
         study_time (Optional[str]): The time of the study.
     """
     study_instance_uid: str
@@ -2027,6 +2029,30 @@ class Study(TrackedEntity):
     series: List[Series] = field(default_factory=list)
     date_shifted: bool = False
     study_time: Optional[str] = None
+
+    # What a `SHIFT_DATE` on this study's own date produced, as the DA
+    # string (#518). The same self-invalidating shape as
+    # `DicomItem._shifted_dates`, sized for the one value a `Study`
+    # owns, and reached through the same two method names -- two
+    # entities, one question, one vocabulary.
+    #
+    # `date_shifted` beside it is **not** redundant, and neither is
+    # enough alone. The flag says a de-identifying shift ran on this
+    # study, which is the honest entity-level question and the one
+    # `exporters/wfdb.py` asks before letting the header say
+    # "de-identified start date"; the record says *what the shift
+    # produced*, which is what tells a fresh original written into
+    # `study_date` from the shift's own output. Together they are
+    # unambiguous, and that is why the study half needs no
+    # `shift_provenance` column of its own the way the instance half
+    # does: `True` with no record means "shifted before 0.9.6, value
+    # unknowable", and the instance row carried no such witness at all
+    # because `Instance.date_shifted` was never persisted.
+    #
+    # Private, and `init=False`, so no frozen-surface pin moves and the
+    # positional constructor order is untouched.
+    _shifted_study_date: Optional[str] = field(
+        default=None, init=False, repr=False)
 
     def __setattr__(self, name, value):
         # The boundary for #188, and it is one spelling on purpose: the
@@ -2077,6 +2103,38 @@ class Study(TrackedEntity):
         # cell zero-arg super() reads still names the discarded one and
         # every assignment raises "obj must be an instance or subtype".
         object.__setattr__(self, name, value)
+
+    def record_date_shift(self, value) -> None:
+        """Records that a `SHIFT_DATE` on this study produced `value`.
+
+        Stored as the DA string, through the one spelling of "a Study's
+        date as a DA string" (#189) -- the spelling
+        `_write_to_instances` and `_holds_owners_replacement` already
+        compare against -- so the record and the graph are held in one
+        representation and a `date` cannot disagree with its own string.
+
+        One value and no tag, unlike `DicomItem.record_date_shift`,
+        because a `Study` owns exactly one date. The method names match
+        on purpose: it is the same question at another level.
+
+        The import is local because `io_handlers` imports this module.
+        """
+        from .io_handlers import format_study_date  # pylint: disable=import-outside-toplevel
+        self._shifted_study_date = format_study_date(value) or None
+
+    def date_shift_vouches_for(self, value) -> bool:
+        """Whether `value` is the date a shift on this study produced.
+
+        False with no record, and False the moment `study_date` stops
+        holding what the shift wrote -- which is #518: the flag recorded
+        *that* a shift happened and never *what it produced*, so it
+        could not tell its own output from a new input, and a fresh
+        original assigned to `study_date` was never raised again.
+        """
+        if not self._shifted_study_date:
+            return False
+        from .io_handlers import format_study_date  # pylint: disable=import-outside-toplevel
+        return format_study_date(value) == self._shifted_study_date
 
     def mark_subtree_persisted(self):
         """Marks this study and every series beneath it as stored."""

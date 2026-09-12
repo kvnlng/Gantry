@@ -90,6 +90,40 @@ def jitter_digest(patient_id) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:_JITTER_DIGEST_CHARS]
 
 
+def _study_date_is_this_pipelines(study) -> bool:
+    """Whether `study.study_date` is a value this pipeline's shift
+    produced -- as far as the store can tell (#518).
+
+    Spelled once because two places ask it: `_scan_study`, which raises
+    a study date the pipeline did not produce, and
+    `_holds_owners_replacement`, which skips an instance's top-level
+    copy of a study date only when the owner's value is one this
+    pipeline produced (#496). It was `bool(study.date_shifted)` in both,
+    and that flag records *that* a shift happened, never *what it
+    produced* -- so a fresh original assigned to `study_date` was never
+    raised again, and an instance's copy of that fresh original skipped
+    as "the owner's replacement". Leaving either on the flag keeps half
+    of #518 alive.
+
+    A study shifted before 0.9.6 reads `date_shifted` with no record,
+    and what its shift produced is unknowable. That counts as "this
+    pipeline's", which keeps the pre-0.9.6 behaviour for such a store
+    exactly as the instance half does -- the owner's ruling is that
+    nothing in an existing store changes under the user. The load says
+    so once, as a WARNING audit row.
+
+    `getattr` throughout because the arm and the scan both fire for any
+    object carrying these names, test doubles included.
+    """
+    if study is None:
+        return False
+    vouches = getattr(study, "date_shift_vouches_for", None)
+    if callable(vouches) and vouches(getattr(study, "study_date", None)):
+        return True
+    return (bool(getattr(study, "date_shifted", False))
+            and getattr(study, "_shifted_study_date", None) is None)
+
+
 @dataclass(slots=True)
 class PhiRemediation:
     """
@@ -715,9 +749,15 @@ class PhiInspector:
         copy equals its owner's *original*, and that is PHI. The owner's
         value has to be a replacement by the scan's own test --
         `_is_replacement_name` / `_is_replacement_id`, the ones
-        `scan_patient` stops raising on -- or, for the date, the shifted
-        date of a study `SHIFT_DATE` has marked `date_shifted`. No owner,
-        no skip.
+        `scan_patient` stops raising on -- or, for the date, a study date
+        this pipeline's shift produced (`_study_date_is_this_pipelines`).
+        No owner, no skip.
+
+        The date arm read `study.date_shifted` until 0.9.6, and that flag
+        cannot tell the shift's own output from a fresh original assigned
+        over it -- so an instance's copy of a hand-replaced study date
+        skipped here as "the owner's replacement", which is #518 reached
+        through #496's door.
         """
         if tag == "0008,0020":
             if study is None:
@@ -726,7 +766,7 @@ class PhiInspector:
             # spelling of "a Study's date as a DA string" (#189) -- the
             # spelling the owner's write put on the copy.
             from .io_handlers import format_study_date
-            return (bool(getattr(study, "date_shifted", False))
+            return (_study_date_is_this_pipelines(study)
                     and value == format_study_date(study.study_date))
         if patient is None:
             return False
@@ -751,8 +791,18 @@ class PhiInspector:
         findings = []
         uid = study.study_instance_uid
 
-        # If successfully remediated (shifted), do not flag as PHI again
-        if hasattr(study, "date_shifted") and study.date_shifted:
+        # A date this pipeline's own shift produced is not raised again;
+        # anything else under `study_date` is (#518).
+        #
+        # This read `study.date_shifted` and returned no findings at all
+        # while it was set. The flag records *that* a shift happened,
+        # never *what it produced*, so it could not tell its own output
+        # from a new input: shift a study's date, assign a fresh
+        # original to `study.study_date`, re-audit, and the real date was
+        # never raised again and was exported. Measured on `927cb2b`:
+        # `2023-01-01` -> `2022-03-21`, then `study.study_date =
+        # date(2024, 7, 4)`, then `raised=0` with `date_shifted=True`.
+        if _study_date_is_this_pipelines(study):
             return findings
 
         if study.study_date:
