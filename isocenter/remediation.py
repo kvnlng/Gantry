@@ -314,6 +314,19 @@ class RemediationService:
 
             if new_date:
                 if hasattr(entity, "set_attr"):
+                    # Recorded **before** the write, not after (#510,
+                    # #513). `anonymize()` does not drain the
+                    # persistence manager -- `audit()` and `redact()` do
+                    # -- so a background `save()` can serialize this
+                    # entity between the two statements. A stored value
+                    # whose record did not reach the store is raised
+                    # again on the next load and shifted twice, which is
+                    # #513 reintroduced as a race; a stored record whose
+                    # value did not reach the store is harmless, because
+                    # the equality check fails and the old value is
+                    # correctly raised. One ordering is recoverable and
+                    # the other is not.
+                    entity.record_date_shift(proposal.target_attr, new_date)
                     entity.set_attr(proposal.target_attr, new_date)
                 else:
                     setattr(entity, proposal.target_attr, new_date)

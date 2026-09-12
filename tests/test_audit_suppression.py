@@ -4,10 +4,18 @@ from isocenter.entities import Patient, Study, Series, Instance
 from isocenter.privacy import PhiInspector, PhiFinding, PhiReport
 from isocenter.remediation import RemediationService
 
-def test_audit_suppresses_shifted_dates():
+def test_audit_suppresses_a_value_it_shifted():
     """
-    Verifies that if an instance has 'date_shifted=True',
-    the PhiInspector does NOT report SHIFT/JITTER tags as findings.
+    Verifies that the PhiInspector does NOT report a SHIFT/JITTER value
+    the pipeline already shifted -- and that what makes it stop is the
+    per-value record, not an entity-level flag (#510, #513).
+
+    The flag half is asserted in both directions on purpose. The
+    suppression used to be `if instance.date_shifted or
+    study.date_shifted`, and that is the defect: a flag set by one date
+    said nothing about the next one, so a valid date the pipeline never
+    touched was skipped for ever (#510) while a date inside a sequence,
+    where no flag exists at all, was re-shifted every pass (#513).
     """
     # 1. Setup Instance with a Date that requires shifting
     inst = Instance("I1", "SOP1", 1)
@@ -26,13 +34,19 @@ def test_audit_suppresses_shifted_dates():
     assert findings[0].tag == "0008,0020"
     assert findings[0].remediation_proposal.action_type == "SHIFT_DATE"
 
-    # 4. Simulate Remediation
-    # We set date_shifted manually to simulate successful jitter
+    # 4. The entity-level flag alone suppresses nothing: it claims a
+    # shift landed somewhere on the instance, never that it landed on
+    # this value.
     inst.date_shifted = True
+    assert len(inspector._scan_instance(inst, "P1")) == 1
 
-    # 5. Rescan -> Should NOT find it
-    findings_after = inspector._scan_instance(inst, "P1")
-    assert len(findings_after) == 0
+    # 5. The record for the value the tag actually holds suppresses it.
+    inst.record_date_shift("0008,0020", "20230101")
+    assert inspector._scan_instance(inst, "P1") == []
+
+    # 6. ...and stops the moment the tag stops holding that value.
+    inst.set_attr("0008,0020", "20240704")
+    assert len(inspector._scan_instance(inst, "P1")) == 1
 
 def test_remediation_service_sets_flag():
     """
@@ -65,3 +79,5 @@ def test_remediation_service_sets_flag():
     # 4. Verify Flag
     assert inst.date_shifted is True
     assert inst.attributes["0008,0020"] == "20230111" # Shifted by 10 days
+    # ...and the per-value record, which is what the scan reads (#510).
+    assert inst.date_shift_vouches_for("0008,0020", "20230111")

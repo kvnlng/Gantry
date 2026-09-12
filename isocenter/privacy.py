@@ -603,25 +603,70 @@ class PhiInspector:
                     remediation_action = "REPLACE_TAG"
                     new_val = ""
             elif action_code in ["SHIFT", "JITTER"]:
-                # Date Shifting
-                # If instance or its parent study is already shifted, this is not a finding
-                is_shifted = False
-                if hasattr(instance, "date_shifted") and instance.date_shifted:
-                    is_shifted = True
-                elif study and hasattr(study, "date_shifted") and study.date_shifted:
-                    is_shifted = True
-
-                # `is_shifted` is the entity's flag, not this value's
-                # (#498): it says a shift landed somewhere on the instance
-                # or its study, and a value the arm declined in the same
-                # pass sits beside it unshifted. Skip only a value the
-                # shift could apply to -- it has moved once, and raising
-                # it again would move it twice. One the arm cannot parse
-                # is raised again, so its decline recurs and the pass-end
-                # demotion keeps the instance IDENTIFIED; skipping it let
-                # a second anonymize() record CLEARED over it. The import
-                # is local because remediation imports this module.
-                if is_shifted:
+                # Date shifting, decided **per value** (#510, #513).
+                #
+                # This used to read `instance.date_shifted` and, failing
+                # that, `study.date_shifted`. Neither flag speaks for a
+                # value: each says a shift landed somewhere on an entity,
+                # so the shortcut over-suppressed a valid date the
+                # pipeline never touched (a rule first named in pass 2,
+                # or a value left out of `anonymize(findings=[...])`, was
+                # skipped forever while the instance read CLEARED --
+                # #510) and under-suppressed a date inside a sequence (no
+                # flag exists on a `DicomItem`, so a nested date was
+                # re-shifted on every pass with a
+                # `REMEDIATION_SHIFT_DATE` row each time -- #513).
+                # Neither flag is read here any more; a second reading of
+                # them beside the record would be a second answer, and
+                # the legacy branch below already carries the only
+                # persisted evidence that a shift ever ran.
+                if item.date_shift_vouches_for(tag, val):
+                    # This item shifted this tag to this value, and the
+                    # tag still holds it. Shifting again would move it
+                    # twice.
+                    needs_remediation = False
+                elif val is None or not str(val).strip():
+                    # A blank value is not a `SHIFT`/`JITTER` finding at
+                    # all. `EMPTY` already tests `val != ""` and
+                    # `REPLACE` tests `val != "ANONYMIZED" and val !=
+                    # ""`, so three of the four value-writing actions
+                    # skip blank; and the arm's own reasoning is that an
+                    # empty value is not retained PHI -- there is nothing
+                    # to shift and nothing left behind, which is why it
+                    # is the one non-success path that writes no decline
+                    # row. Spelled as the arm spells it
+                    # (`str(...).strip()`), so a multi-valued element is
+                    # not mistaken for a blank one. Before the record
+                    # this asymmetry was invisible, because the flag
+                    # suppressed every pass after the first; with a
+                    # per-value record every pass looks like pass 1, so a
+                    # blank would otherwise raise a finding the arm
+                    # declines to act on for ever and #491's pass-end
+                    # demotion would leave a clean instance IDENTIFIED.
+                    # This branch is *above* the legacy one, so
+                    # `_date_shift_declines`' own blank guard is no
+                    # longer reachable from here; it is kept because the
+                    # predicate is also read directly and must answer
+                    # the same way alone as it does in place.
+                    needs_remediation = False
+                elif getattr(instance, "_legacy_shift_provenance", False):
+                    # A pre-0.9.6 store has no per-value records for the
+                    # dates it already holds, so this instance keeps the
+                    # entity-level rule for them, permanently: reading
+                    # "no record" as "not shifted" here would shift every
+                    # already-shifted date in the archive a second time.
+                    # The load says so once, as a WARNING audit row.
+                    #
+                    # "The entity-level rule" is #498's version of it,
+                    # not the older one: a value the arm could not parse
+                    # is raised again so its decline recurs and the
+                    # pass-end demotion keeps the instance IDENTIFIED,
+                    # while a value the shift could apply to is skipped
+                    # because it has moved once already. The import is
+                    # local because remediation imports this module.
+                    #
+                    # This whole branch dies when no pre-0.9.6 store
+                    # remains.
                     from .remediation import (  # pylint: disable=import-outside-toplevel
                         _date_shift_declines)
                     needs_remediation = _date_shift_declines(val)

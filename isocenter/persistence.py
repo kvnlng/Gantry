@@ -2119,6 +2119,15 @@ class SqliteStore:
         Serializes a DicomItem (or Instance) to a dictionary, including attributes and sequences.
         """
         data = item.attributes.copy()
+        # `__shifted__` here as well as in `_serialize_dicom_item`, and
+        # unlike `__vrs__`, which the root deliberately omits (#510,
+        # #513). A root private tag's VR has a storage home of its own in
+        # `value_rep`, so a copy here would be a second answer; a date
+        # record has no other home at any depth, so the root needs this
+        # key or a top-level shifted date is raised and shifted again on
+        # the next load.
+        if getattr(item, "_shifted_dates", None):
+            data['__shifted__'] = dict(item._shifted_dates)
         if item.sequences:
             seq_data = {}
             for tag, seq in item.sequences.items():
@@ -2151,6 +2160,12 @@ class SqliteStore:
         data = item.attributes.copy()
         if getattr(item, "attribute_vrs", None):
             data['__vrs__'] = dict(item.attribute_vrs)
+        # The per-value date record, the same way (#513). A nested date
+        # is the half `Instance.date_shifted` could never speak for, so
+        # without this key it comes back from the store unvouched-for and
+        # the next pass shifts it again.
+        if getattr(item, "_shifted_dates", None):
+            data['__shifted__'] = dict(item._shifted_dates)
         if item.sequences:
             seq_data = {}
             for tag, seq in item.sequences.items():
@@ -2165,6 +2180,12 @@ class SqliteStore:
         """
         sequences_data = data.pop('__sequences__', None)
         vrs_data = data.pop('__vrs__', None)
+        # Popped **before** `attributes.update(data)` below, exactly as
+        # `__vrs__` is: left in, the key would land in `attributes` as a
+        # tag that is not a tag, and reach every reader of it -- the
+        # exporter's merge and `export_dataframe(expand_metadata=True)`
+        # among them (#510, #513).
+        shifted_data = data.pop('__shifted__', None)
 
         # 1. Attributes
         target_item.attributes.update(data)
@@ -2173,6 +2194,10 @@ class SqliteStore:
             # same reason the attributes above are: hydration restores a
             # state, it does not make an edit (#154).
             target_item.attribute_vrs.update(vrs_data)
+        if shifted_data:
+            # Assigned rather than recorded through `record_date_shift`,
+            # for the same reason (#154): hydration restores a state.
+            target_item._shifted_dates = dict(shifted_data)
 
         # 2. Sequences
         if sequences_data:

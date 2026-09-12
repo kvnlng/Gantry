@@ -284,10 +284,92 @@ class DicomItem(TrackedEntity):
     sequences: Dict[str, DicomSequence] = field(init=False)
     attribute_vrs: Dict[str, str] = field(init=False)
 
+    # What the `SHIFT_DATE` arm wrote, per tag: `{tag: the date string it
+    # produced}` (#510, #513). Read through `date_shift_vouches_for` and
+    # written through `record_date_shift`; never as a raw dict.
+    #
+    # **Why it is here and not on `Instance`.** A shifted date and an
+    # original are the same bytes, so "has this value already been
+    # shifted" is not answerable from the graph -- it has to be recorded
+    # when the shift happens. It used to be recorded as
+    # `Instance.date_shifted`, one boolean speaking for every date on the
+    # instance *and* for every date nested in its sequences, which both
+    # over-suppressed (a valid date under a rule added in a later pass
+    # was never raised, #510) and under-suppressed (a date inside a
+    # sequence was re-shifted every pass, because no flag exists on a
+    # `DicomItem`, #513). The scan's decision point holds the item and
+    # the tag, and the arm's write point holds the item, so a record on
+    # `DicomItem` answers both depths with one mechanism and needs
+    # nothing plumbed.
+    #
+    # The `_nested_pixel_refs` comment below argues a nested concern
+    # belongs on the `Instance`, and **its own stated reason inverts
+    # here**: it says "the PHI-scan copies must not carry sidecar
+    # references at all", whereas the scan copies *must* carry this
+    # record or the scan cannot make its decision. `clone_sequences` and
+    # `_make_lightweight_copy` therefore both copy it on purpose.
+    #
+    # **Keyed on the value, which is what makes it self-invalidating.**
+    # The record vouches for a tag only while that tag still holds the
+    # string the shift produced, so overwriting the tag stops it being
+    # vouched for structurally -- no invalidation pass, no convention to
+    # remember. Same species as `phi_status` keyed on
+    # `_phi_status_revision`; disagreement is the signal, not a bug.
+    #
+    # `default=None` and **not** `default_factory=dict`: an empty dict is
+    # 64 bytes and a fourth slot is 8, so a dict default would cost 64 B
+    # and an allocation on every one of the 99% of sequence items that
+    # hold no date (measured: a slots dataclass goes 56 B -> 64 B for a
+    # fourth field; `DicomItem()` is 88 B -> 96 B).
+    #
+    # Not initialised in `__post_init__`, unlike the three fields above:
+    # those are `init=False` with *no* default, so only `__post_init__`
+    # can set them, while a defaulted `init=False` field is assigned by
+    # the generated `__init__` before `__post_init__` runs. Measured on
+    # 3.12.14: a subclass whose `__post_init__` does not mention such a
+    # field still reads `None` from it, so there is nothing here for the
+    # inlined copy in `Instance.__post_init__` to fall out of step with.
+    _shifted_dates: Optional[Dict[str, str]] = field(
+        default=None, init=False, repr=False)
+
     def __post_init__(self):
         self.attributes = {}
         self.sequences = {}
         self.attribute_vrs = {}
+
+    def record_date_shift(self, tag: str, value) -> None:
+        """Records that the `SHIFT_DATE` arm wrote `value` at `tag`.
+
+        There is deliberately **no setter and no "mark this shifted"
+        without a value**: "this tag was shifted" with no value is
+        exactly the entity-level claim #510 and #513 exist to delete.
+
+        The tag is canonicalised here because `set_attr` canonicalises
+        too -- a hand-authored `0008,103E` is stored lowercase, and a
+        record kept under the other spelling would vouch for nothing and
+        read as absent rather than raising.
+
+        This deliberately does **not** `mark_modified()`. The arm calls
+        it immediately before the `set_attr` that writes the value, and
+        that call advances the revision for both halves; a second bump
+        here would be one change the store is told about twice.
+        """
+        if self._shifted_dates is None:
+            self._shifted_dates = {}
+        self._shifted_dates[_canonical_tag(tag)] = value
+
+    def date_shift_vouches_for(self, tag: str, value) -> bool:
+        """Whether `value` at `tag` is the value a shift on this item
+        produced.
+
+        False for a tag with no record, and False the moment the tag
+        stops holding what the shift wrote -- a value replaced after a
+        shift is raised again, which is the whole point of recording the
+        value rather than a boolean.
+        """
+        if not self._shifted_dates:
+            return False
+        return self._shifted_dates.get(_canonical_tag(tag)) == value
 
     def set_attr(self, tag: str, value: Any):
         """
@@ -523,6 +605,12 @@ def clone_sequences(item: 'DicomItem') -> dict:
         for nested in sequence.items:
             nested_clone = DicomItem()
             nested_clone.attributes = dict(nested.attributes)
+            # The per-value date record travels with the item (#513).
+            # Without it a worker sees a nested date with no record
+            # against it, raises it, and the arm shifts it a second time
+            # -- the defect, with the fix in place.
+            if nested._shifted_dates:
+                nested_clone._shifted_dates = dict(nested._shifted_dates)
             nested_clone.sequences = clone_sequences(nested)
             clone.items.append(nested_clone)
         clones[tag] = clone
@@ -764,6 +852,24 @@ class Instance(DicomItem):
 
     # Transient: Track if dates have been shifted in memory
     date_shifted: bool = field(default=False, init=False)
+
+    # Whether this instance came out of a store written before per-value
+    # date records existed (#510). `False` for a freshly constructed or
+    # ingested instance -- it has no history to be ignorant of -- and set
+    # only by hydration, which reads it off the row.
+    #
+    # It exists because reading "no record" as "not shifted" would make
+    # the first `audit()` after upgrading raise every already-shifted
+    # date in every pre-0.9.6 store, and `anonymize()` shift each one a
+    # second time with a `REMEDIATION_SHIFT_DATE` row that looks
+    # legitimate: #513 applied to a whole archive, caused by the fix.
+    # Such an instance keeps the old entity-level rule for the values
+    # nobody can name, permanently; its records are still written and
+    # still vouch, so a new shift under 0.9.6 is exact.
+    #
+    # `init=False`: it is state, not an argument, and an `init=True`
+    # field would add a positional to a frozen constructor order.
+    _legacy_shift_provenance: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self):
         # Inlined from DicomItem to avoid super() mismatch issues with slots/reloads

@@ -321,6 +321,7 @@ TARGETS = {
                                 "tests/test_report_export_boundary.py",
                                 "tests/test_export_delivery_counters.py"], 30),
     "isocenter/privacy.py": (["tests/test_analysis.py", "tests/test_analysis_persistence.py",
+                              "tests/test_an_unshifted_date_is_raised.py",
                               "tests/test_audit_suppression.py", "tests/test_automation.py",
                               "tests/test_config_tags_shapes.py",
                               "tests/test_declined_date_recurs.py",
@@ -328,6 +329,7 @@ TARGETS = {
                               "tests/test_floor_policy.py",
                               "tests/test_multiprocessing.py",
                               "tests/test_mutation_gaps.py", "tests/test_ocr_formal.py",
+                              "tests/test_nested_date_shifts_once.py",
                               "tests/test_one_value_per_owned_tag.py",
                               "tests/test_patient_level_remediation_reaches_instances.py",
                               "tests/test_persistence.py", "tests/test_privacy.py",
@@ -340,10 +342,12 @@ TARGETS = {
                               "tests/test_sr_anonymization.py",
                               "tests/test_the_jitter_seed_survives_anonymize.py"], 30),
     "isocenter/remediation.py": (["tests/test_audit_suppression.py",
+                                  "tests/test_an_unshifted_date_is_raised.py",
                                   "tests/test_declined_date_recurs.py",
                                   "tests/test_declined_remediation_is_recorded.py",
                                   "tests/test_deid_tags.py",
                                   "tests/test_mutation_gaps.py",
+                                  "tests/test_nested_date_shifts_once.py",
                                   "tests/test_patient_level_remediation_reaches_instances.py",
                                   "tests/test_persistence.py",
                                   "tests/test_private_sequence_implicit_vr.py",
@@ -476,6 +480,7 @@ TARGETS = {
     # persistence_manager). #383 named eight; all eight are here and so
     # are 34 others, each of which the guard demands.
     "isocenter/persistence.py": (["tests/test_api_coherence.py",
+                                  "tests/test_an_unshifted_date_is_raised.py",
                                   "tests/test_async_persistence.py",
                                   "tests/test_audit_drop_accounting.py",
                                   "tests/test_audit_read_barrier.py",
@@ -496,6 +501,7 @@ TARGETS = {
                                   "tests/test_json_serialization.py",
                                   "tests/test_legacy_waveform_hydration.py",
                                   "tests/test_memory_store_unlinks_its_temp_files.py",
+                                  "tests/test_nested_date_shifts_once.py",
                                   "tests/test_packaging_contract.py",
                                   "tests/test_persistence.py",
                                   "tests/test_persistence_concurrency.py",
@@ -580,6 +586,7 @@ TARGETS = {
     # time is the kind of thing someone later "fixes" by cutting the
     # budget.
     "isocenter/session.py": (["tests/test_analysis.py",
+                              "tests/test_an_unshifted_date_is_raised.py",
                               "tests/test_analysis_persistence.py",
                               "tests/test_api_coherence.py",
                               "tests/test_async_persistence.py",
@@ -641,6 +648,7 @@ TARGETS = {
                               "tests/test_multiprocessing.py",
                               "tests/test_murmur_annotations.py",
                               "tests/test_naming_structure.py",
+                              "tests/test_nested_date_shifts_once.py",
                               "tests/test_nested_pixel_carriage.py",
                               "tests/test_ocr_leaves_frames_where_it_found_them.py",
                               "tests/test_ocr_unavailable_refuses.py",
@@ -783,6 +791,7 @@ TARGETS = {
     #
     # Cost: ~1.8 h of a default run as an upper bound.
     "isocenter/entities.py": (["tests/test_analysis.py",
+                               "tests/test_an_unshifted_date_is_raised.py",
                                "tests/test_api_coherence.py",
                                "tests/test_async_persistence.py",
                                "tests/test_audit_suppression.py",
@@ -841,6 +850,7 @@ TARGETS = {
                                "tests/test_memory_store_reports_its_processes_lever.py",
                                "tests/test_murmur_annotations.py",
                                "tests/test_mutation_gaps.py",
+                               "tests/test_nested_date_shifts_once.py",
                                "tests/test_nested_phi_audit.py",
                                "tests/test_ocr_formal.py",
                                "tests/test_ocr_leaves_frames_where_it_found_them.py",

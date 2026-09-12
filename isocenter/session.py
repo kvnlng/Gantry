@@ -5074,6 +5074,18 @@ class DicomSession:
                     if hasattr(i, "date_shifted"):
                         i_new.date_shifted = i.date_shifted
 
+                    # The per-value date records and the store's own
+                    # provenance travel too (#510, #513). `audit()`
+                    # scans this clone unconditionally, threads and
+                    # processes alike, so without these two lines every
+                    # worker sees an instance with no record against any
+                    # of its dates, raises them all, and the arm shifts
+                    # each a second time -- the defect, with the fix in
+                    # place. The nested half is `clone_sequences`, above.
+                    if i._shifted_dates:
+                        i_new._shifted_dates = dict(i._shifted_dates)
+                    i_new._legacy_shift_provenance = i._legacy_shift_provenance
+
                     se_new.instances.append(i_new)
 
         return p_new

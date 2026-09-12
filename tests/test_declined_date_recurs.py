@@ -235,7 +235,7 @@ def test_date_shift_declines_is_the_arms_own_answer(value, declines):
     assert _date_shift_declines(value) is declines
 
 
-@pytest.mark.parametrize("tag,value", UNSHIFTABLE + SHIFTABLE + BLANK)
+@pytest.mark.parametrize("tag,value", UNSHIFTABLE + SHIFTABLE)
 def test_the_arm_declines_exactly_what_the_predicate_says_it_will(tmp_path, tag, value):
     """The two halves cannot silently disagree -- run the arm, compare.
 
@@ -274,3 +274,42 @@ def test_the_arm_declines_exactly_what_the_predicate_says_it_will(tmp_path, tag,
     # Read after close, so the audit-log writer thread has flushed.
     declined = [d for d in _declines(tmp_path / "m.db") if tag in d]
     assert bool(declined) is _date_shift_declines(value), declined
+
+
+@pytest.mark.parametrize("tag,value", BLANK)
+def test_the_arm_declines_nothing_for_a_blank_the_scan_no_longer_raises(
+        tmp_path, tag, value):
+    """The blank half of the pairing above, driven through the arm itself.
+
+    The pairing was parametrized over `BLANK` too until #510/#513, when
+    shifted-ness became a per-value record: with a record every pass
+    looks like pass 1, so a blank raised every pass a finding the arm
+    declines to act on for ever, and #491's demotion left a clean
+    instance IDENTIFIED. The scan therefore stopped raising a blank
+    `SHIFT`/`JITTER` value at all -- which makes the scan-driven pairing
+    *vacuous* for a blank rather than false, the non-vacuity assertion
+    above being exactly what says so.
+
+    So the blank case is handed the proposal the scan used to hand it.
+    The claim it makes is unchanged and is still #498's: the arm writes
+    no decline row for a blank, the predicate says it declines nothing,
+    and neither half may move without the other.
+    """
+    from isocenter.privacy import PhiFinding, PhiRemediation
+    from isocenter.remediation import RemediationService, _date_shift_declines
+
+    session, instance = _built(tmp_path, {tag: value})
+    with session:
+        proposal = PhiRemediation(action_type="SHIFT_DATE", target_attr=tag,
+                                  original_value=value,
+                                  metadata={"patient_id": "P498"})
+        finding = PhiFinding(
+            entity_uid=instance.sop_instance_uid, entity_type="Instance",
+            field_name=tag, value=value, reason="PHI", tag=tag,
+            entity=instance, remediation_proposal=proposal)
+        service = RemediationService(store_backend=session.store_backend)
+        assert service.apply_remediation([finding]) == 0
+        assert instance.attributes[tag] == value
+    declined = [d for d in _declines(tmp_path / "m.db") if tag in d]
+    assert declined == [], declined
+    assert _date_shift_declines(value) is False
