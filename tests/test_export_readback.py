@@ -145,11 +145,16 @@ def _lossy_j2k(monkeypatch, only=None):
     """
     real = io_handlers.jpeg2k_encode
 
-    def _encode(frame, level=0, codecformat="J2K"):
+    def _encode(frame, level=0, **options):
+        # Every option but `level` is passed through, so the double
+        # carries whatever the encoder decides -- `mct` since #490.
+        # Spelled `**options` rather than a fixed signature because a
+        # double that has to be edited each time the call grows is a
+        # double that goes red for the wrong reason.
         if only is None or (frame.shape == only.shape
                             and np.array_equal(frame, only)):
             level = 30
-        return real(frame, level=level, codecformat=codecformat)
+        return real(frame, level=level, **options)
     monkeypatch.setattr(io_handlers, "jpeg2k_encode", _encode)
 
 

@@ -17,8 +17,11 @@ Every case here is asserted at all three: `ingest()`, the store's
 answer after it; `Instance(file_path).get_pixel_data()`; and the
 handler's own `get_pixel_data`.
 
-JPEG 2000 is not touched: `jpeg2k_decode` returns signed samples already
-(S4).
+JPEG 2000 is not touched by *this* rule: `jpeg2k_decode` returns signed
+samples already. It has a rule of its own, keyed on the codestream's SIZ
+header rather than on BitsStored (#460); S4 is the boundary between the
+two, and
+`tests/test_j2k_signedness_against_pixel_representation.py` pins it.
 
 **Every fixture first asserts that `pydicom.dcmread(p).pixel_array`
 raises**, so no case passes through pydicom's door and says nothing about
@@ -394,24 +397,189 @@ def test_a_precision_12_jpeg_ls_stream_from_another_encoder_reads_exactly(
 
 def test_a_signed_decode_narrower_than_bits_stored_is_refused_at_both_doors(
         doors):
-    """S6: an 8-bit JPEG-LS stream under a signed BitsStored 12 header.
+    """S6: an 8-bit JPEG Lossless stream under BitsAllocated 8 and a
+    signed BitsStored 12.
 
-    The codec returns `uint8`, and 12 bits cannot be sign-extended inside
-    8: the shift the rule computes would be -4. The handler refuses, in
-    its words, at the read door, and ingest refuses. Found by the probe
-    (#446 review): with `and` in place of `or` in the guard, a `uint8`
-    decode passed it and came back as whatever a negative shift made of
-    it, with no error at the read door.
+    The codec returns `uint8`, the header's container is 8 bits too, so
+    there is nothing to widen it into (S7), and 12 bits cannot be
+    sign-extended inside 8: the shift the rule computes would be -4. The
+    handler refuses, in its words, at the read door, and ingest refuses.
+    Found by the probe (#446 review): with `and` in place of `or` in the
+    guard, a `uint8` decode passed it and came back as whatever a negative
+    shift made of it, with no error at the read door.
+
+    JPEG Lossless under BitsAllocated 8, where until #454 this was a
+    JPEG-LS stream under BitsAllocated 16. That stream is now widened into
+    its 16-bit container and read, as pydicom reads it (S7b). And a
+    JPEG-LS stream is sign-extended from its own precision (#478), so it
+    never asks this guard about BitsStored. JPEG Lossless is read by
+    BitsStored, so the guard is what stands between it and the shift.
     """
     source = np.arange(16 * 16, dtype=np.uint8).reshape(16, 16)
-    got = doors(_dataset(JPEGLS, imagecodecs.jpegls_encode(source),
-                         source.shape, 12, bits_allocated=16))
+    got = doors(_dataset(LJPEG_SV1, _ljpeg(source, 8), source.shape, 12,
+                         bits_allocated=8))
     assert got["ingest"][0] == 0
     for door in ("instance", "handler"):
         words = str(got[door])
         assert isinstance(got[door], Exception), f"{door}: {got[door]!r}"
         assert "cannot sign-extend a uint8 decode from BitsStored 12" in \
             words, f"{door}: {words}"
+
+
+# ---------------------------------------------------------------------------
+# S7 -- a precision-8 stream under BitsAllocated 16 reads in that container
+# ---------------------------------------------------------------------------
+
+#: Every 8-bit pattern once, so each value a sign bit can change shows.
+UNSIGNED_8 = np.arange(256, dtype=np.uint8).reshape(16, 16)
+
+#: `(ts, pixel_representation, encoder)`: JPEG-LS at both syntaxes, and
+#: JPEG Lossless from both encoders, each signed and unsigned.
+_S7_CASES = [
+    (JPEGLS, 0, _jpegls), (JPEGLS, 1, _jpegls),
+    (JPEGLS_NEAR, 0, _jpegls), (JPEGLS_NEAR, 1, _jpegls),
+    (LJPEG_SV1, 0, _ljpeg), (LJPEG_SV1, 1, _ljpeg),
+    (LJPEG, 0, _sof3_predictor_6), (LJPEG, 1, _sof3_predictor_6),
+]
+
+
+@pytest.mark.parametrize(
+    "ts,pixel_representation,encode", _S7_CASES,
+    ids=[f"{ts[-3:]}-pr{pr}-{enc.__name__.strip('_')}"
+         for ts, pr, enc in _S7_CASES])
+def test_a_precision_8_stream_under_a_16_bit_header_reads_in_that_container(
+        doors, ts, pixel_representation, encode):
+    """S7 (#454): widened to the container BitsAllocated 16 declares.
+
+    Before: both read doors returned `uint8` or `int8`, holding the right
+    values, and ingest refused the file (`it decoded to uint8, where
+    BitsAllocated 16 and PixelRepresentation 0 declare uint16`). Two
+    doors, two answers. pydicom with pyjpegls returns `uint16`/`int16`
+    for these JPEG-LS streams (measured, pydicom 3.0.2, pyjpegls 1.5.1).
+    pydicom with pylibjpeg-libjpeg raises on the JPEG Lossless ones
+    (`could not broadcast input array from shape (128,) into shape
+    (256,)`), so for those the three doors agree with each other, and
+    there is no pydicom answer to agree with.
+
+    Mutant: `_decode_frame` without the widening. Every case goes red,
+    at ingest's refusal and at the read doors' 8-bit dtype.
+    """
+    if pixel_representation:
+        source, want = _pattern(SIGNED[8], 8), SIGNED[8].astype(np.int16)
+    else:
+        source, want = UNSIGNED_8, UNSIGNED_8.astype(np.uint16)
+    _assert_reads(doors(_dataset(ts, encode(source, 8), want.shape, 8,
+                                 bits_allocated=16,
+                                 pixel_representation=pixel_representation)),
+                  want)
+
+
+@pytest.mark.parametrize("layout", ["rgb", "two-frames"])
+def test_a_precision_8_colour_or_multi_frame_stream_is_widened_too(
+        doors, layout):
+    """S7a: through the multi-frame arm and at three samples.
+
+    The handler decodes a multi-frame file frame by frame in a different
+    arm from the single-frame one, and each frame is widened as it is
+    decoded. RGB, because a colour frame is where the container width
+    decides whether `colour_conversion` runs (it converts 8-bit only), and
+    an RGB frame is not converted, so its samples are the source's.
+    """
+    if layout == "rgb":
+        source = np.stack([UNSIGNED_8, UNSIGNED_8[::-1], UNSIGNED_8.T], -1)
+        ds = _dataset(JPEGLS, imagecodecs.jpegls_encode(source), source.shape,
+                      8, bits_allocated=16, pixel_representation=0,
+                      photometric="RGB", samples=3)
+    else:
+        source = np.stack([UNSIGNED_8, UNSIGNED_8[::-1]])
+        streams = [imagecodecs.jpegls_encode(np.ascontiguousarray(f))
+                   for f in source]
+        # `_dataset` takes one codestream (`encapsulate` refuses an empty
+        # frame), and `_multiframe` then replaces it with both.
+        ds = _multiframe(
+            _dataset(JPEGLS, streams[0], source.shape[1:], 8,
+                     bits_allocated=16, pixel_representation=0),
+            streams)
+    _assert_reads(doors(ds), source.astype(np.uint16))
+
+
+#: `UNSIGNED_8`'s patterns sign-extended from 8 bits, in the `int16`
+#: container: 0..127, then -128..-1. What pydicom with pyjpegls returns for
+#: S7b's file (measured, 3.12.14, pydicom 3.0.2, pyjpegls 1.5.1).
+P8_SIGNED_IN_16 = np.concatenate(
+    [np.arange(0, 128), np.arange(-128, 0)]).astype(np.int16).reshape(16, 16)
+
+
+def test_a_precision_8_jpeg_ls_stream_under_signed_bits_stored_12_reads_as_pydicom_does(  # noqa: E501  pylint: disable=line-too-long
+        doors):
+    """S7b: S6's fixture until #454, which every door used to refuse.
+
+    A JPEG-LS stream of precision 8 under BitsAllocated 16 and a signed
+    BitsStored 12. Widened into the `int16` container it now fits, and
+    sign-extended from the stream's own precision, 8 (#478), so the
+    patterns 128..255 read -128..-1. That is pydicom's answer. Until #454
+    every door refused it: `cannot sign-extend a uint8 decode from
+    BitsStored 12`.
+
+    Mutant: `_decode_frame` without the widening. Refused again in S6's
+    words, at every door.
+    """
+    _assert_reads(doors(_dataset(JPEGLS, imagecodecs.jpegls_encode(UNSIGNED_8),
+                                 UNSIGNED_8.shape, 12, bits_allocated=16)),
+                  P8_SIGNED_IN_16)
+
+
+#: `UNSIGNED_8`'s patterns in `int16` with **no** extension: 0..255. What a
+#: width-16 sign extension leaves them as, because the shift is 0.
+P8_UNEXTENDED_IN_16 = UNSIGNED_8.astype(np.int16)
+
+#: The same patterns extended from 8 bits: 0..127, then -128..-1.
+P8_EXTENDED_FROM_8 = np.concatenate(
+    [np.arange(0, 128), np.arange(-128, 0)]).astype(np.int16).reshape(16, 16)
+
+
+@pytest.mark.parametrize("ts,encode,want", [
+    (LJPEG_SV1, lambda a: imagecodecs.ljpeg_encode(a),
+     P8_UNEXTENDED_IN_16),
+    (JPEGLS, lambda a: imagecodecs.jpegls_encode(a), P8_EXTENDED_FROM_8),
+], ids=["jpeg-lossless-by-bits-stored", "jpeg-ls-by-its-own-precision"])
+def test_a_precision_8_stream_under_a_signed_bits_stored_16_reads_per_syntax(
+        doors, ts, encode, want):
+    """S7c (#454, N4): the third transition, and the two syntaxes differ.
+
+    A precision-8 stream under BitsAllocated 16, BitsStored 16, HighBit
+    15 and PixelRepresentation 1. **Every door refused this file before
+    #454** -- the codec returned `uint8`, and `_sign_extend` refused a
+    BitsStored wider than the container it was handed (`cannot
+    sign-extend a uint8 decode from BitsStored 16`). Since #454 the
+    decode is widened to `uint16` first, so it now returns `int16` at
+    every door, and the values follow each syntax's own documented rule
+    rather than one shared answer:
+
+    - **JPEG Lossless** is read by BitsStored, which is pydicom's rule
+      for it too (`_correct_unused_bits`). Width 16 in a 16-bit
+      container is a shift of 0, so the patterns are reinterpreted and
+      not extended: 0..255 stay 0..255.
+    - **JPEG-LS** is read by the stream's own precision (#478, the
+      owner's ruling), which is 8, so the same patterns extend to
+      0..127 then -128..-1.
+
+    The two rows differing is the point: the same header and the same
+    bytes read differently because the syntaxes carry precision
+    differently, and a reader who assumes one answer for "precision 8
+    under a signed 16-bit header" is wrong for one of them.
+
+    No pydicom column: neither syntax has a plugin in the environment
+    this package installs (only Pillow is present; pydicom raises
+    `Unable to decompress ... all plugins are missing dependencies`),
+    which is why these files reach the imagecodecs fallback at all.
+
+    Mutant: `_decode_frame` without the widening. Both rows go red,
+    refused in S6's words at every door.
+    """
+    _assert_reads(doors(_dataset(ts, encode(UNSIGNED_8), UNSIGNED_8.shape, 16,
+                                 bits_allocated=16, pixel_representation=1)),
+                  want)
 
 
 # ---------------------------------------------------------------------------
@@ -500,18 +668,28 @@ def test_an_odd_length_jpeg_lossless_fragment_decodes(doors):
 
 
 # ---------------------------------------------------------------------------
-# S4 -- JPEG 2000 keeps its own signedness
+# S4 -- JPEG 2000 is read against its own header, not by this rule
 # ---------------------------------------------------------------------------
 
-def test_a_j2k_codestream_keeps_its_own_signedness(doors):
-    """S4: the correction is keyed on the syntax, never applied to J2K.
+def test_a_j2k_codestream_is_read_against_its_own_header(doors):
+    """S4: BitsStored's correction never reaches J2K; #460's does.
 
-    `jpeg2k_decode` returns signed samples, already sign-extended, from a
-    signed codestream (F1's `int16` cases in
-    `tests/test_ingest_imagecodecs_fallback.py`). So an *unsigned*
-    codestream under PixelRepresentation 1 is a contradiction the file
-    makes, and the fallback refuses it. A correction reaching J2K would
-    admit it with wrong values -- and raise on F1's signed output.
+    `jpeg2k_decode` returns the codestream's own signedness, so a J2K
+    frame is never the case this module is about: a signed codestream
+    arrives signed and already sign-extended (F1's `int16` cases in
+    `tests/test_ingest_imagecodecs_fallback.py`), and applying this rule
+    to it would raise on its dtype.
+
+    An *unsigned* codestream under PixelRepresentation 1 is the
+    contradiction the file makes, and until #460 every door refused it
+    (`decoded to uint16, where ... declare int16`). The owner's ruling is
+    to read it by the header, at the codestream's own precision, as
+    pydicom's plugins read its own `J2K_pixelrep_mismatch.dcm`. So this
+    case now reads its values at all three doors. It stays here as the
+    boundary between the two rules -- the sign extension is keyed on the
+    syntax, and the J2K arm is `_against_pixel_representation`'s, keyed on
+    the SIZ header. `tests/test_j2k_signedness_against_pixel_representation.py`
+    is where both directions are pinned.
 
     Three samples, because only 16-bit multi-sample J2K reaches the
     fallback here: pydicom's Pillow plugin decodes 16-bit monochrome
@@ -519,11 +697,7 @@ def test_a_j2k_codestream_keeps_its_own_signedness(doors):
     """
     want = np.stack([SIGNED[16]] * 3, axis=-1)
     codestream = imagecodecs.jpeg2k_encode(_pattern(want, 16), level=0,
-                                           codecformat="J2K")
+                                           codecformat="J2K", mct=False)
     got = doors(_dataset(J2K_LOSSLESS, codestream, want.shape, 16,
                          photometric="RGB", samples=3))
-    ingested, failures, _stored = got["ingest"]
-    assert ingested == 0
-    reason = failures[0][1]
-    assert "decoded to uint16" in reason, reason
-    assert "declare int16" in reason, reason
+    _assert_reads(got, want)

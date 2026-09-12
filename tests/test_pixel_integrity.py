@@ -108,7 +108,11 @@ def test_rgb_preservation(tmp_path):
         assert len(exported_files) == 1
         ds = pydicom.dcmread(exported_files[0])
 
-        assert ds.PhotometricInterpretation == "RGB"
+        # `export()` compresses by default, and an RGB source is encoded
+        # with the multiple-component transform, which PS3.5 8.2.4 names
+        # `YBR_RCT` (#490). The samples are unchanged, which the array
+        # comparison below is what asserts.
+        assert ds.PhotometricInterpretation == "YBR_RCT"
         assert ds.SamplesPerPixel == 3
         assert ds.Rows == rows
         assert ds.Columns == cols

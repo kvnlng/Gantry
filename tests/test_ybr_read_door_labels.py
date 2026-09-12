@@ -389,6 +389,20 @@ def _hand_built(session, sources, serial=None):
     return list(series.instances)
 
 
+def _written_label(use_compression):
+    """The label an RGB 3-sample instance's exported file carries.
+
+    `RGB` natively. Under compression `YBR_RCT` since #490: an RGB source
+    is encoded with the multiple-component transform, and PS3.5 8.2.4
+    gives that codestream `YBR_RCT` under a reversible encode. What this
+    module is about -- the label telling the truth about the bytes beside
+    it -- is unchanged either way; only which truth it tells changes with
+    the encode. Before #482 the same file said `YBR_FULL` or `YBR_RCT`
+    over untransformed RGB samples, which was true of neither.
+    """
+    return "YBR_RCT" if use_compression else "RGB"
+
+
 def _exported(folder):
     """`{sop_uid: (label, stored samples, dataset)}` for every file written.
 
@@ -478,7 +492,7 @@ def test_a_hand_built_export_writes_rgb_bytes_under_an_rgb_label(
     assert set(from_hand) == set(from_ingest) == set(colours)
     for uid, want in colours.items():
         label, stored, ds = from_hand[uid]
-        assert label == "RGB", (uid, label)
+        assert label == _written_label(use_compression), (uid, label)
         assert _same(stored, want), (uid, stored)
         assert from_ingest[uid][0] == label
         assert _same(from_ingest[uid][1], stored)
@@ -591,7 +605,8 @@ def test_a_redacted_hand_built_graph_exports_rgb_bytes_under_an_rgb_label(
         1, 2]
     for label, stored, ds in written.values():
         want = colours[int(ds.InstanceNumber)]
-        assert label == "RGB", (int(ds.InstanceNumber), label)
+        assert label == _written_label(use_compression), (
+            int(ds.InstanceNumber), label)
         assert (stored.dtype, stored.shape) == (want.dtype, want.shape)
         assert stored[outside].tolist() == want[outside].tolist()
         assert not stored[~outside].any()
