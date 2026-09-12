@@ -125,9 +125,11 @@ def test_an_id_that_only_looks_like_a_replacement_is_hashed(patient_id):
 def test_an_id_that_is_already_replacement_shaped_seeds_from_its_own_text():
     """The pre-existing edge, stated so it is not mistaken for the fix.
 
-    A real PatientID of the form `ANON_` + 8 hex characters is read as a
-    replacement and seeds from the digest it appears to carry, not from a
-    hash of itself. That is consistent with the rest of the scan --
+    A real PatientID whose eight characters after `ANON_` are all
+    lowercase hex is read as a replacement and seeds from the digest it
+    appears to carry, not from a hash of itself -- eight characters read,
+    not eight characters long, so the 12-hex id below qualifies. That is
+    consistent with the rest of the scan --
     `_is_replacement_id` already treats such an id as anonymized and
     `scan_patient` never proposes a replacement for it, so the
     "replacement" spelling is the only spelling this pipeline will ever

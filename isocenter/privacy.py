@@ -75,12 +75,16 @@ def jitter_digest(patient_id) -> str:
     would compute. `tests/test_the_jitter_seed_survives_anonymize.py`
     pins it in both directions.
 
-    Known, pre-existing edge, not widened here: a real PatientID that
-    literally begins `ANON_` followed by 8 hex characters is read as a
-    replacement and seeded from its own text. `_is_replacement_id`
+    Known, pre-existing edge, not widened here: a real PatientID
+    whose eight characters after `ANON_` are all lowercase hex is read as
+    a replacement and seeded from its own text. `_is_replacement_id`
     already treats such an id as anonymized, so this is consistent with
-    what the scan does; it is stable, merely arbitrary. An id that starts
-    `ANON_` and is *not* 8 hex characters is hashed like any other value.
+    what the scan does; it is stable, merely arbitrary. Note which eight
+    characters: eight *read*, not eight *long*, so
+    `ANON_deadbeefcafe` -- the 12-hex shape `_replacement_id_for` itself
+    writes -- is one of these ids, and only an id carrying fewer than
+    eight characters after the prefix, or something other than lowercase
+    hex among the eight, is hashed like any other value.
     """
     text = str(patient_id)
     if _is_replacement_id(text):
