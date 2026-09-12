@@ -483,6 +483,14 @@ class _PhotometricRefusal(RuntimeError):
     back by this library at all (ingest refuses it before any label is
     examined). "What this library can read back" is the standard
     `_J2K_ENCODABLE_FRAMES` already refuses on.
+
+    **Raised on what the file would carry, not on what was declared.**
+    At one sample the geometry resolver has already answered
+    `MONOCHROME2`, so an instance whose *declaration* is multi-valued
+    still writes a single-valued, re-ingestible file -- and that file is
+    delivered. Refusing it on the declaration would deny the caller an
+    output this library can read back, which is the one thing this
+    exception is not for.
     """
 
 
