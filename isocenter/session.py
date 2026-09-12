@@ -4334,14 +4334,40 @@ class DicomSession:
                 and holds it against what it meant to write: Rows,
                 Columns, SamplesPerPixel, NumberOfFrames and
                 BitsAllocated against the dataset it serialized (#209);
-                then every pixel sample, decoded through the same door
-                `ingest()` reads through and compared bit for bit with
-                the samples written, after redaction (#449); and a DICOM
-                waveform's `WaveformData` bytes. The stored samples are
-                compared, not a colour conversion of them. A value
-                outside the declared BitsStored fails an uncompressed
-                file, because every conformant reader masks it (-3024
-                at BitsStored 12 reads as 1072). An unreadable or
+                then the file's `PhotometricInterpretation` against the
+                transfer syntax the file itself carries, which must
+                admit it and be a single value (#507); then every pixel
+                sample, decoded through the same door `ingest()` reads
+                through and compared bit for bit with the samples
+                written, after redaction (#449); and a DICOM waveform's
+                `WaveformData` bytes. The stored samples are compared,
+                not a colour conversion of them. A value outside the
+                declared BitsStored fails an uncompressed file, because
+                every conformant reader masks it (-3024 at BitsStored 12
+                reads as 1072).
+
+                **True since #507: passing True can cost you a file the
+                default export delivers.** The label check is the first
+                of these on which verification refuses something the
+                export worker wrote *on purpose*. By default a
+                Photometric Interpretation the written syntax does not
+                admit -- `YBR_ICT` or `YBR_RCT` on an uncompressed file,
+                `YBR_PARTIAL_422`/`_420` on any this exporter writes --
+                is written exactly as the instance declared it, with a
+                `WARNING` audit row and a `REVIEW_REQUIRED` grade, on
+                the reasoning that a de-identified copy the caller can
+                fix beats no copy. Passing True is asking for the
+                stronger claim instead, so that same instance fails,
+                gets an `ERROR` row, and **no file for it reaches the
+                output folder**; the reason names the label, the syntax
+                and a remedy. There is deliberately no third setting.
+                What the check does *not* ask is whether the samples are
+                really in the colour space the label names -- three
+                samples are equally RGB and YBR_FULL, so `RGB` over YBR
+                samples passes, and so does a file under a transfer
+                syntax the table has no measured row for.
+
+                An unreadable or
                 undecodable file, or any mismatch, fails that instance's
                 export: it is counted out of "Instances Written", files
                 an `ERROR` audit row and takes the compliance grade to

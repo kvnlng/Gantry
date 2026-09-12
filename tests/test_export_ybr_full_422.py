@@ -187,6 +187,13 @@ def test_other_colour_labels_are_left_as_declared(tmp_path, label):
     this is the control: the relabel must not become a `samples >= 3`
     rewrite, which is the rule #186 removed. Killing mutation: the
     relabel keyed on the sample count alone.
+
+    `YBR_RCT` is still written as declared since #502, and now carries a
+    `WARNING` saying an uncompressed file has no codestream for the
+    label to name. Both halves are asserted here, because this is the
+    file's own statement about that instance and
+    `tests/test_export_photometric_admissibility.py` must not be able to
+    disagree with it.
     """
     arr = _ybr()
     inst = _image(arr, (("0028,0004", label),))
@@ -196,6 +203,11 @@ def test_other_colour_labels_are_left_as_declared(tmp_path, label):
     assert outcome.ok, outcome.error
     assert pydicom.dcmread(outcome.output_path).PhotometricInterpretation \
         == label
+    if label == "YBR_RCT":
+        assert len(outcome.warnings) == 1, outcome.warnings
+        assert f"'{label}'" in outcome.warnings[0], outcome.warnings
+    else:
+        assert outcome.warnings == [], outcome.warnings
 
 
 @pytest.mark.parametrize("samples", [1, 2])
