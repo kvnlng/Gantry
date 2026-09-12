@@ -13,7 +13,14 @@ class IODValidator:
     _MODULE_DEFINITIONS = {
         'Common': {
             '0008,0016': '1', '0008,0018': '1', '0008,0020': '1',
-            '0008,0030': '1', '0008,0060': '1', '0020,000e': '1',
+            # Study Time is Type 2 in General Study (PS3.3 C.7.2.1):
+            # present and empty is conformant. It read '1' until #495,
+            # which nothing noticed while no policy touched the tag; the
+            # basic profile empties it, and under '1' the Type-1 arm
+            # below rejected the empty value, so the documented
+            # create_config -> load_config -> anonymize -> export path
+            # raised on every CT file and wrote nothing.
+            '0008,0030': '2', '0008,0060': '1', '0020,000e': '1',
         },
         'CTImage': {
             '0018,0050': '2', '0018,0060': '2',  # SliceThickness, KVP

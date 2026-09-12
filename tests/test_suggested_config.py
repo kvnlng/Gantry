@@ -66,10 +66,12 @@ def test_the_counts_survive_as_yaml_comments(capsys):
 
 def test_tag_names_come_from_the_shipped_mapping(capsys):
     """`_suggested_tag_name` recognised three tags and called everything
-    else `unknown_tag`, while `phi_tags.json` already named more."""
+    else `unknown_tag`, while the default policy already named more. It
+    reads `FLOOR_POLICY` since #495, whose names are the profile's PS3.6
+    spellings."""
     parsed = yaml.safe_load(_emit(capsys))
 
-    assert parsed["phi_tags"]["0010,0010"]["name"] == "Patient Name"
+    assert parsed["phi_tags"]["0010,0010"]["name"] == "Patient's Name"
     assert parsed["phi_tags"]["0008,0020"]["name"] == "Study Date"
 
 

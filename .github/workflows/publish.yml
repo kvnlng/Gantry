@@ -114,15 +114,40 @@ jobs:
           python -m venv /tmp/verify
           /tmp/verify/bin/pip install --quiet dist/*.whl
           cd /tmp
+          #
+          # The file read is redaction_rules.json, through the same helper
+          # the runtime uses. It was ConfigLoader.load_phi_config(), which
+          # read resources/phi_tags.json until #495 moved the default PHI
+          # policy into Python (FLOOR_POLICY); against that, this step
+          # would pass on a wheel shipping no resources at all.
           /tmp/verify/bin/python - <<'PY'
-          from isocenter.config_manager import ConfigLoader
+          import os
 
-          tags = ConfigLoader.load_phi_config()
-          assert tags, (
-              "the built wheel ships no default PHI policy -- resources are "
-              "missing from the distribution, and this release would "
-              "silently de-identify nothing")
-          print(f"default PHI tags present in the wheel: {len(tags)}")
+          from isocenter.config_manager import RESOURCES_DIR, require_package_resource
+
+          path = require_package_resource(
+              RESOURCES_DIR, "redaction_rules.json",
+              "scanned every frame with no machine redaction rules")
+          assert os.path.getsize(path) > 0, (
+              f"the built wheel ships an empty {path} -- this release would "
+              "redact no burned-in text by serial")
+          assert "site-packages" in path, (
+              f"resolved {path}, which is not the installed wheel -- this "
+              "check is reading the source tree")
+          print(f"machine redaction rules present in the wheel: {path}")
+          #
+          # The other shipped resource, through the same helper and with
+          # the same consequence _load_ctp_rules names at runtime.
+          ctp = require_package_resource(
+              RESOURCES_DIR, "ctp_rules.json",
+              "matched no CTP de-identification rules")
+          assert os.path.getsize(ctp) > 0, (
+              f"the built wheel ships an empty {ctp} -- this release would "
+              "match no CTP de-identification rules")
+          assert "site-packages" in ctp, (
+              f"resolved {ctp}, which is not the installed wheel -- this "
+              "check is reading the source tree")
+          print(f"CTP rules present in the wheel: {ctp}")
           PY
 
       - uses: actions/upload-artifact@v7

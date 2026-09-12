@@ -18,6 +18,14 @@ made to … `_verify_readback` never decodes pixels", and review item 19 in
 §11.13 ("`_verify_readback` cannot catch this family … it never decodes
 pixels"). Since #449 the readback decodes every written file and compares it
 bit for bit with the samples written. Both clauses are struck in place.
+**Superseded in part (later):** #495 (v0.9.6) — §12.5's clause that "a bare
+session already audits against an empty policy and says so with its own
+`"PHI Scan Warning: No PHI tags defined"` — a different question, and not a
+silence". A bare session now applies the floor policy (`FLOOR_POLICY`), and the
+empty policy was the silence: Study ID, Station Name and Institution Name
+reached the export under a PASS. #495 also deleted `resources/phi_tags.json`,
+so this brief's `phi_tags.json` arm of #388 no longer exists. The clause is
+struck in place.
 
 **Superseded in part, by implementation:** §11.12's "no 3.14.7t run is
 required" (struck in place — #404 added an unguarded module-scope C-extension
@@ -1952,10 +1960,11 @@ about work this PR does rather than about #404:
   asserting a session cannot `audit()` on that install". Measured:
   `session.audit()` passes `config_tags=self.configuration.phi_tags` to
   `PhiInspector`, and `{}` is not `None`, so `__init__` takes its first
-  branch and `load_phi_config()` is never reached. A bare session already
+  branch and `load_phi_config()` is never reached. ~~A bare session already
   audits against an empty policy and says so with its own
   `"PHI Scan Warning: No PHI tags defined"` — a different question, and
-  not a silence. The test instead asserts the two paths that do reach the
+  not a silence.~~ *(Superseded by #495: the empty policy was a silence,
+  and a bare session now applies the floor policy.)* The test instead asserts the two paths that do reach the
   loader: `PhiInspector()` with no policy (`privacy.py:161`), and
   `create_config()` through `_scaffold_phi_tags`, which is also the arm
   that proves the `except (OSError, ValueError)` handlers do not swallow a

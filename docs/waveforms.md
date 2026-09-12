@@ -15,8 +15,9 @@ from isocenter import Session
 with Session("ecg_study.db") as session:
     session.ingest("/data/ecg")
 
-    # Load a PHI tag configuration before auditing -- an unconfigured
-    # session only checks the hardcoded baseline (see "Privacy" below).
+    # Write and load a configuration before auditing. An unconfigured
+    # session applies the floor policy (see "Privacy" below); the config
+    # is where you record the policy you actually want.
     session.create_config("config.yaml")
     session.load_config("config.yaml")
 
@@ -76,25 +77,31 @@ data rather than a footnote.
 
 There are three configurations a reader of this guide can be in:
 
-- **A bare `Session()`, never `load_config()`-ed.** `phi_tags` is
-  empty. Only the hardcoded baseline scan runs: Patient Name and
-  Patient ID get replaced, Study Date gets shifted. Nothing else is
-  touched.
+- **A bare `Session()`, never `load_config()`-ed.** `phi_tags` is the
+  floor policy, `FLOOR_POLICY` (`isocenter/profiles.py`): the basic
+  profile below plus the three research defaults `create_config()`
+  writes (Study Date jittered, Patient's Sex and Age kept) -- 36 rules.
+  Until #495 this configuration applied no tag policy at all, and Study
+  ID, Institution Name, Station Name and the series/acquisition/content
+  dates reached the export.
 - **The Quick Start above.** `create_config()` scaffolds a config with
   `privacy_profile: basic`; `load_config()` expands that into
-  `PRIVACY_PROFILES["basic"]` (`isocenter/profiles.py`) -- **34 tags, 34
+  `PRIVACY_PROFILES["basic"]` (`isocenter/profiles.py`) -- **35 tags, 35
   effective** -- covering patient identity, study/series dates and
   times, and institution/physician fields, based on DICOM PS3.15 Annex
   E's Basic Profile. This is what actually runs on the documented path.
   `(0070,0006)` was the exception until 0.8.0: it lives inside Waveform
   Annotation Sequence, and the scan never opened sequences (#57), so it
   sat in the profile doing nothing. It fires now.
-  `isocenter/resources/phi_tags.json`, a separate 6-tag file, is *not*
-  reached from this flow: `create_config()` deliberately drops its
-  REMOVE-action tags from the scaffold, on the assumption the Basic
-  profile already covers them.
-- **Your own `phi_tags` configuration**, loaded standalone or layered
-  on top of a profile -- your explicit tags win over the profile's.
+  The scaffold lists only the three research defaults beneath
+  `privacy_profile: basic` -- the entries of the floor whose action
+  differs from the profile's -- so the loaded policy is the same 36
+  rules a bare session applies.
+- **Your own `phi_tags` configuration.** With no `privacy_profile`
+  line it is layered on the floor policy; with `privacy_profile: basic`
+  on the basic profile; with `privacy_profile: none` it is the whole
+  policy. Your explicit tags win over the base either way, and
+  `action: KEEP` opts a tag out.
 
 Series Description `(0008,103E)` -- and the Study Description it sits
 alongside -- are both correctly emptied on the documented path. (A

@@ -235,8 +235,13 @@ def test_a_declined_finding_on_the_same_instance_says_false(tmp_path, strategy):
     session, instance = _built(tmp_path)
     instance.set_attr("0008,0090", "Dr^Leak")
     instance.set_attr("0008,0023", "notadate")
-    config = tmp_path / "tags.json"
-    config.write_text(json.dumps(TAGS_WITH_A_DATE), encoding="utf-8")
+    # `privacy_profile: none`, so TAGS_WITH_A_DATE is the whole policy.
+    # This was a root-level tag mapping written as tags.json, accepted
+    # only through the `audit(config_path=)` fallback #456 removed. JSON
+    # text is valid YAML.
+    config = tmp_path / "tags.yaml"
+    config.write_text(json.dumps({"privacy_profile": "none",
+                                  "phi_tags": TAGS_WITH_A_DATE}), encoding="utf-8")
     with session:
         findings = session.audit(str(config)).findings
         assert session.anonymize(findings) >= 1

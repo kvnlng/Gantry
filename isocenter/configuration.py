@@ -6,9 +6,12 @@ needed to drive a session's behavior, including redaction rules, PHI profiling,
 and date shifting parameters. It also handles the persistent state of these
 settings by syncing with a backing YAML file.
 """
+import copy
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 import yaml
+
+from .profiles import FLOOR_POLICY
 
 
 class FlowList(list):
@@ -38,17 +41,22 @@ class IsocenterConfiguration:
     Attributes:
         rules (List[Dict[str, Any]]): List of machine redaction rules.
         phi_tags (Dict[str, Any]): PHI tag policies (e.g. {tag: action}).
+            With none given, a copy of `profiles.FLOOR_POLICY` -- the
+            policy a session applies before any config is loaded (#495).
+            A copy per instance, so one session's `set_phi_tag` cannot
+            reach another's policy or the module table.
         date_jitter (Dict[str, int]): Date shifting parameters.
         remove_private_tags (bool): Global flag to strip private tags.
         config_path (Optional[str]): Path to the backing YAML file for auto-save.
         privacy_profile (Optional[str]): Name of the profile whose rules were
-            merged into `phi_tags`, or None when none was applied. Only ever
-            set to a profile that actually resolved -- an unknown reference is
-            warned about and dropped at load, so the compliance report cannot
-            name protection that never ran.
+            merged into `phi_tags`, or None when no named profile was
+            applied (the floor, or `privacy_profile: none`). Only ever set
+            to a profile that actually resolved, so the compliance report
+            cannot name protection that never ran.
     """
     rules: List[Dict[str, Any]] = field(default_factory=list)
-    phi_tags: Dict[str, Any] = field(default_factory=dict)
+    phi_tags: Dict[str, Any] = field(
+        default_factory=lambda: copy.deepcopy(FLOOR_POLICY))
     date_jitter: Dict[str, int] = field(default_factory=lambda: {"min_days": -365, "max_days": -1})
     remove_private_tags: bool = True
     config_path: Optional[str] = None
@@ -89,8 +97,13 @@ class IsocenterConfiguration:
         data = {
             "version": "2.0",
             # The profile that actually produced these tags, so a round-trip
-            # through save() does not relabel a 'basic' config as 'custom'.
-            "privacy_profile": self.privacy_profile or "custom",
+            # through save() does not relabel a 'basic' config. With no
+            # named profile, `phi_tags` already holds the whole policy
+            # (the floor included), so the file says `none` -- load no
+            # base beneath it. This wrote "custom" until #495: an unknown
+            # name, which the loader dropped with a warning then and
+            # refuses now (#456), so the round trip would have raised.
+            "privacy_profile": self.privacy_profile or "none",
             "phi_tags": self.phi_tags,
             "date_jitter": self.date_jitter,
             "remove_private_tags": self.remove_private_tags,
@@ -179,7 +192,13 @@ class IsocenterConfiguration:
             action (str): The remediation action ('KEEP', 'REMOVE', 'REPLACE', 'JITTER', 'EMPTY').
             replacement (str, optional): The replacement value if action is 'REPLACE'.
         """
-        tag = tag.upper()
+        # Lowercase, as every other key in the policy is (profiles.py's
+        # header comment gives the reason). This was `tag.upper()`, so
+        # `set_phi_tag("0008,103e", ...)` stored `0008,103E` beside the
+        # floor's own `0008,103e`: two rules for one tag, one of which
+        # `PhiInspector._normalize_tag_keys` silently dropped at scan time
+        # by dict order, and a report counting both (#495).
+        tag = tag.lower()
         # `config_manager` accepts a tag value in either of two shapes --
         # a bare name string, or the structured
         # `{"name": ..., "action": ...}` form -- and this method always

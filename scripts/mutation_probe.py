@@ -236,9 +236,36 @@ TARGETS = {
     #     returning None, is equivalent: the one caller,
     #     `DicomExporter._finalize_dataset` in io_handlers.py, only
     #     truth-tests the result.
-    "isocenter/validation.py": (["tests/test_export_error.py", "tests/test_io.py",
+    "isocenter/validation.py": (["tests/test_export_error.py",
+                                 "tests/test_floor_policy.py", "tests/test_io.py",
                                  "tests/test_structured_export.py",
                                  "tests/test_validation.py", "tests/test_wfdb_writer.py"], 30),
+    # Promoted out of NOT_PROBED by #495/#456, whose tests exercise both
+    # modules' behaviour rather than their shapes: the loader's refusals
+    # (tests/test_load_config_raises.py) and the floor seed, the lowercase
+    # key and the `none` round trip (tests/test_floor_policy.py). The
+    # lists are exactly the importers the scan demands -- no hand extras.
+    # Their NOT_PROBED notes (config_manager 29/40 killed, configuration
+    # 21/31) were measured before either bunch and are not carried over:
+    # the first default run is the new measurement.
+    "isocenter/config_manager.py": (["tests/test_api_coherence.py",
+                                     "tests/test_config.py",
+                                     "tests/test_custom_profiles.py",
+                                     "tests/test_documented_zones_are_zone_space.py",
+                                     "tests/test_floor_policy.py",
+                                     "tests/test_load_config_raises.py",
+                                     "tests/test_profiles.py",
+                                     "tests/test_scaffold_features.py",
+                                     "tests/test_shipped_resource_is_required.py",
+                                     "tests/test_structured_export.py",
+                                     "tests/test_suggested_config.py",
+                                     "tests/test_zone_validation.py"], 30),
+    "isocenter/configuration.py": (["tests/test_automation.py",
+                                    "tests/test_configuration_manual.py",
+                                    "tests/test_configuration_persistence.py",
+                                    "tests/test_documented_zones_are_zone_space.py",
+                                    "tests/test_floor_policy.py",
+                                    "tests/test_redaction_export.py"], 30),
     # 18 sites, exhaustive: 15 killed. Three files, 2s per pass.
     #
     # tests/test_relock_identity_token.py is a hand extra (#441): it reaches
@@ -297,6 +324,7 @@ TARGETS = {
                               "tests/test_audit_suppression.py", "tests/test_automation.py",
                               "tests/test_config_tags_shapes.py",
                               "tests/test_declined_remediation_is_recorded.py",
+                              "tests/test_floor_policy.py",
                               "tests/test_multiprocessing.py",
                               "tests/test_mutation_gaps.py", "tests/test_ocr_formal.py",
                               "tests/test_patient_level_remediation_reaches_instances.py",
@@ -580,6 +608,7 @@ TARGETS = {
                               "tests/test_export_ybr_full_422.py",
                               "tests/test_feature_regression.py",
                               "tests/test_float_pixel_data_export.py",
+                              "tests/test_floor_policy.py",
                               "tests/test_frozen_surface.py",
                               "tests/test_full_logging.py",
                               "tests/test_import_validation.py",
@@ -588,6 +617,7 @@ TARGETS = {
                               "tests/test_ingestion_normalization.py",
                               "tests/test_io_no_pixels.py",
                               "tests/test_legacy_waveform_hydration.py",
+                              "tests/test_load_config_raises.py",
                               "tests/test_lock_identities_signature.py",
                               "tests/test_logging.py",
                               "tests/test_manifest.py",
@@ -782,6 +812,7 @@ TARGETS = {
                                "tests/test_export_worker_graph_purity.py",
                                "tests/test_export_ybr_full_422.py",
                                "tests/test_float_pixel_data_export.py",
+                               "tests/test_floor_policy.py",
                                "tests/test_flush_orphan_recovery.py",
                                "tests/test_frozen_surface.py",
                                "tests/test_ingest_imagecodecs_fallback.py",
@@ -1016,12 +1047,6 @@ NOT_PROBED = {
         "its then 5 importers -- the survivors are both flocks, a flush, "
         "an fsync and the decompressor's flush(), durability and "
         "cross-process locking, unclassified",
-    "isocenter/configuration.py":
-        "deferred: 31 sites, 5 importers, 3.5s per pass; killed 21/31, ten "
-        "survivors unclassified",
-    "isocenter/config_manager.py":
-        "deferred: 40 sites, 10 importers, 4.4s per pass; killed 29/40, "
-        "eleven survivors unclassified",
     "isocenter/utils/ctp_parser.py":
         "deferred: 22 sites, 2 importers, 1.3s per pass; killed 15/22 -- "
         "four sys.exit or print deletions in the CLI main(), two yaml "

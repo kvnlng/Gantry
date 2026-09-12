@@ -3,7 +3,10 @@
 Three loaders returned an empty collection when a file the package
 *ships* was not on disk: `_load_redaction_knowledge_base` and
 `_load_ctp_rules` in `session.py`, and `ConfigLoader.load_phi_config` in
-`config_manager.py`. Measured before-state, with
+`config_manager.py`. The third no longer reads a resource: #495 deleted
+`resources/phi_tags.json` and the default PHI policy is
+`profiles.FLOOR_POLICY`, so its three tests went with it and
+`tests/test_floor_policy.py` pins what replaced it. Measured before-state, with
 `session.RESOURCES_DIR` pointed at an empty directory and one instance
 ingested whose `DeviceSerialNumber` is a serial the shipped knowledge
 base names:
@@ -20,10 +23,7 @@ base names:
     --- audit rows while missing: []
 
 A config instructing the pipeline to redact nothing, written without a
-single log line or audit row. The `load_phi_config` version is louder
-still: `publish.yml`'s own comment says a wheel without `phi_tags.json`
-"audited against an empty PHI tag list and reported clean", which is the
-worst thing a de-identification tool can do quietly.
+single log line or audit row.
 
 **Raise, not warn** (#400's ruling, which this reads as one with). A
 warning in front of a run that then succeeds is a line nobody reads, and
@@ -59,9 +59,7 @@ import os
 
 import pytest
 
-import isocenter.config_manager as config_manager
 import isocenter.session as session_module
-from isocenter.config_manager import ConfigLoader
 from isocenter.session import DicomSession
 
 #: The consequence clause each call site supplies. A refusal must be
@@ -69,11 +67,10 @@ from isocenter.session import DicomSession
 #: -- with the basename and the searched path -- that make each test pin
 #: the speech rather than match any string containing "missing".
 CONSEQUENCES = {
+    # `publish.yml`'s wheel gate passes the same words since #495, so the
+    # runtime refusal and the release gate say the same thing about it.
     "redaction_rules.json": "scanned every frame with no machine redaction rules",
     "ctp_rules.json": "matched no CTP de-identification rules",
-    # `publish.yml`'s own wording for the same failure, so the runtime
-    # refusal and the release gate say the same thing about the file.
-    "phi_tags.json": "audited against an empty PHI tag list",
 }
 
 
@@ -208,99 +205,6 @@ def test_a_missing_ctp_yaml_is_not_a_broken_install(tmp_path, monkeypatch):
         {"serial_number": "SN-1"}]
 
 
-# ---------------------------------------------------------------------------
-# config_manager.py's third loader
-# ---------------------------------------------------------------------------
-
-def test_a_missing_phi_tag_policy_refuses_instead_of_auditing_against_nothing(
-        tmp_path, monkeypatch):
-    """The loudest of the three silences.
-
-    An empty PHI tag list makes `audit()` report success on data full of
-    PHI. Red when `return {}` is restored.
-
-    The monkeypatch targets `config_manager.RESOURCES_DIR`, which #388
-    hoisted out of `load_phi_config`'s body. Patching the `filepath`
-    argument instead would exercise the *user-config* branch and never
-    enter the arm under test.
-    """
-    monkeypatch.setattr(config_manager, "RESOURCES_DIR", str(tmp_path))
-
-    with pytest.raises(RuntimeError) as excinfo:
-        ConfigLoader.load_phi_config(None)
-
-    _assert_three_anchors(str(excinfo.value), "phi_tags.json", str(tmp_path))
-
-
-def test_the_default_phi_policy_refuses_through_the_scan_machinery(
-        tmp_path, monkeypatch):
-    """`PhiInspector()` with no policy is the arm `privacy.py:161` takes.
-
-    This is where the empty-tag-list silence actually lands: an inspector
-    built with neither `config_tags` nor `config_path` loads the shipped
-    default, and a `{}` there is a scan that finds nothing and a run that
-    reports clean.
-
-    A note for the next reader, because the brief this test was written
-    from says otherwise: **`session.audit()` does not reach this loader.**
-    It passes `config_tags=self.configuration.phi_tags`, and `{}` is not
-    `None`, so `PhiInspector.__init__` takes its first branch and the
-    shipped default is never consulted. A bare session already audits
-    against an empty policy and says so with its own
-    `"PHI Scan Warning: No PHI tags defined"` -- a different question from
-    this one, and not a silence.
-    """
-    from isocenter.privacy import PhiInspector
-
-    monkeypatch.setattr(config_manager, "RESOURCES_DIR", str(tmp_path / "gone"))
-
-    with pytest.raises(RuntimeError) as excinfo:
-        PhiInspector()
-
-    _assert_three_anchors(str(excinfo.value), "phi_tags.json",
-                          str(tmp_path / "gone"))
-
-
-def test_a_broken_phi_policy_refuses_where_a_handler_would_have_hidden_it(
-        tmp_path, monkeypatch):
-    """The speech, through the public API, past four `except` clauses.
-
-    A session on a broken install can still be *constructed* -- none of
-    the six `load_phi_config` call sites is `Session.__init__`, which is
-    what keeps `docs/api/stability.md`'s prose about construction true --
-    and then refuses at the first call that needs the policy. Here that is
-    `create_config()`, whose `_scaffold_phi_tags` reads the default tag
-    set.
-
-    Four of the six sites sit inside `except (OSError, ValueError)`
-    handlers that fall back to `{}` or warn. `RuntimeError` is neither, so
-    it propagates -- deliberately, and that is the whole reason the
-    exception is not a `FileNotFoundError`. Red when any of those handlers
-    is widened to catch it, which would reproduce this exact bug one layer
-    up. Only `config_manager`'s resources directory is broken here, so the
-    redaction knowledge base loads and this is unambiguously the PHI
-    policy's refusal.
-    """
-    src = tmp_path / "src"
-    src.mkdir()
-    _write_src(str(src))
-    output_path = tmp_path / "phi_scaffold.yaml"
-
-    monkeypatch.setattr(config_manager, "RESOURCES_DIR", str(tmp_path / "gone"))
-
-    session = DicomSession(persistence_file=str(tmp_path / "phi.db"))
-    try:
-        session.ingest(str(src))
-        with pytest.raises(RuntimeError) as excinfo:
-            session.create_config(str(output_path))
-    finally:
-        session.close()
-
-    _assert_three_anchors(str(excinfo.value), "phi_tags.json",
-                          str(tmp_path / "gone"))
-    assert not output_path.exists()
-
-
 def test_a_broken_install_cannot_scaffold_a_config(tmp_path, monkeypatch):
     """The speech, through the public API, and nothing is written.
 
@@ -346,11 +250,13 @@ def test_the_helper_reads_the_directory_it_is_given(tmp_path):
     from isocenter.config_manager import require_package_resource
 
     with pytest.raises(RuntimeError) as excinfo:
-        require_package_resource(str(tmp_path), "phi_tags.json",
-                                 CONSEQUENCES["phi_tags.json"])
-    _assert_three_anchors(str(excinfo.value), "phi_tags.json", str(tmp_path))
+        require_package_resource(str(tmp_path), "redaction_rules.json",
+                                 CONSEQUENCES["redaction_rules.json"])
+    _assert_three_anchors(str(excinfo.value), "redaction_rules.json",
+                          str(tmp_path))
 
-    (tmp_path / "phi_tags.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "redaction_rules.json").write_text("{}", encoding="utf-8")
     assert require_package_resource(
-        str(tmp_path), "phi_tags.json",
-        CONSEQUENCES["phi_tags.json"]) == str(tmp_path / "phi_tags.json")
+        str(tmp_path), "redaction_rules.json",
+        CONSEQUENCES["redaction_rules.json"]) == str(
+            tmp_path / "redaction_rules.json")

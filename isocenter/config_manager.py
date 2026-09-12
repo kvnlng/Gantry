@@ -10,25 +10,24 @@ import os
 import logging
 import copy
 from typing import Dict, Any, List, Optional
-import json
 import re
 import yaml
 
 from dotenv import load_dotenv
 
-from .profiles import PRIVACY_PROFILES
+from .profiles import FLOOR_POLICY, PRIVACY_PROFILES
 
 CONFIG_VERSION = "2.0"
 
 #: Where this package's own shipped resources live.
 #:
-#: Hoisted out of `load_phi_config`'s body in #388. Computed inline there,
-#: there was nothing for a test to monkeypatch, so a test of the
-#: missing-resource arm either passed against the real source tree -- the
-#: correct-by-accident shape -- or was written against the `filepath`
-#: argument instead, which exercises the *user-config* branch and never
-#: enters the arm under test. `session.py` has had its own `RESOURCES_DIR`
-#: all along; this is the same constant for the same reason.
+#: Hoisted out of `load_phi_config`'s body in #388 so a test could
+#: monkeypatch it. `load_phi_config` no longer reads a resource -- the
+#: default PHI policy is `profiles.FLOOR_POLICY`, in Python, since #495
+#: deleted `resources/phi_tags.json` -- and the constant stays because
+#: `publish.yml`'s wheel gate passes it to `require_package_resource` from
+#: an installed wheel, where it is the only spelling of "this package's
+#: resources directory" that does not point back at the source tree.
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "resources")
 
@@ -82,7 +81,7 @@ def require_package_resource(directory: str, basename: str,
             caller so `test_every_shipped_resource_is_named_by_the_package`
             can still see it in the AST.
         consequence (str): what a silent continue would have done, e.g.
-            "audited against an empty PHI tag list".
+            "scanned every frame with no machine redaction rules".
 
     Returns:
         str: the resolved path, which exists.
@@ -112,6 +111,99 @@ def get_logger() -> logging.Logger:
     return logging.getLogger("isocenter")
 
 
+def _lowercase_tag_keys(tags: Dict[Any, Any]) -> Dict[Any, Any]:
+    """`tags` with every string key lowercased, order kept."""
+    return {(key.lower() if isinstance(key, str) else key): value
+            for key, value in tags.items()}
+
+
+def _names_no_profile(profile_name: Any) -> bool:
+    """True for `privacy_profile: none` and `privacy_profile: null`."""
+    return profile_name is None or (
+        isinstance(profile_name, str) and profile_name.strip().lower() == "none")
+
+
+#: The actions `PhiInspector._scan_instance` dispatches on (`REPLACE` is
+#: its `else` arm). Anything else was scanned as REPLACE without a word
+#: until #456, so `action: OBLITERATE` loaded, printed "Configuration
+#: Loaded", and replaced the value with `ANONYMIZED`.
+_PHI_ACTIONS = frozenset({"KEEP", "REMOVE", "EMPTY", "REPLACE", "SHIFT", "JITTER"})
+
+
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _is_tag_key(key: str) -> bool:
+    """True for a `gggg,eeee` key: four hex digits, a comma, four more.
+
+    The spelling every tag table here uses, and the only one the scan
+    looks up. `'8,80'` (for 0008,0080) or a keyword such as `PatientName`
+    loaded before #456 and matched nothing, so the rule never ran and
+    nothing said so.
+    """
+    return (len(key) == 9 and key[4] == ","
+            and all(ch in _HEX_DIGITS for ch in key[:4] + key[5:]))
+
+
+def _external_profile_tags(path: str) -> Any:
+    """The `phi_tags:` mapping of an external profile file.
+
+    A file with no `phi_tags` key had its root mapping used as the tags
+    (`load_phi_config`'s legacy fallback), so a profile written as a
+    config -- `privacy_profile: basic` and its rules at the top level --
+    loaded `privacy_profile` itself as a "tag" (review of #509). Refused,
+    naming the file; the value is validated by the caller.
+    """
+    data = ConfigLoader._load_yaml(path)
+    if not isinstance(data, dict) or "phi_tags" not in data:
+        raise ValueError(
+            f"{path}: an external privacy profile must carry its rules under "
+            f"a 'phi_tags:' mapping; this file has no phi_tags key")
+    return data["phi_tags"]
+
+
+def _validated_phi_tags(tags: Any, source: str) -> Dict[str, Any]:
+    """`tags` as a lowercase-keyed mapping, or a `ValueError` naming the tag.
+
+    A tag's value is a display name (a string, which leaves the action at
+    REPLACE) or a rule mapping whose `action`, if present, is one the
+    inspector implements. Each of the other shapes loaded silently before
+    #456 and failed, or misbehaved, later: a list-shaped `phi_tags` broke
+    the scan when it iterated the mapping, an int rule was read as a name, and an unknown
+    action was scanned as REPLACE. `None` (a bare `phi_tags:` line) is the
+    empty mapping it plainly means.
+    """
+    if tags is None:
+        return {}
+    if not isinstance(tags, dict):
+        raise ValueError(
+            f"{source}: 'phi_tags' must be a mapping of tag to rule, got "
+            f"{type(tags).__name__}")
+    for tag, rule in tags.items():
+        if not isinstance(tag, str):
+            raise ValueError(
+                f"{source}: phi_tags key {tag!r} must be a quoted "
+                f"'gggg,eeee' string, got {type(tag).__name__}")
+        if not _is_tag_key(tag):
+            raise ValueError(
+                f"{source}: phi_tags key {tag!r} is not a 'gggg,eeee' tag "
+                f"(four hex digits, a comma, four hex digits, such as "
+                f"'0010,0010'); the scan reads no tag by that key, so the "
+                f"rule would never run")
+        if isinstance(rule, dict):
+            action = rule.get("action", "REPLACE")
+            if not isinstance(action, str) or action.upper() not in _PHI_ACTIONS:
+                raise ValueError(
+                    f"{source}: phi_tags[{tag!r}] has action {action!r}; the "
+                    f"actions are {', '.join(sorted(_PHI_ACTIONS))}")
+        elif not isinstance(rule, str):
+            raise ValueError(
+                f"{source}: phi_tags[{tag!r}] is {rule!r}; a tag's value is "
+                f"either its display name (a string) or a rule mapping such "
+                f"as {{action: REMOVE, name: ...}}")
+    return _lowercase_tag_keys(tags)
+
+
 def load_unified_config(path: str) -> Dict[str, Any]:
     """
     Loads the unified configuration file (YAML).
@@ -131,11 +223,53 @@ def load_unified_config(path: str) -> Dict[str, Any]:
     if not (path.endswith('.yaml') or path.endswith('.yml')):
         raise ValueError("Configuration file must be a YAML file (.yaml or .yml)")
 
-    with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    # Through `_load_yaml`, so a missing file is `FileNotFoundError` and a
+    # syntax error is `ValueError("Invalid YAML format ...")`. This called
+    # `yaml.safe_load` directly, so a syntax error escaped as
+    # `yaml.parser.ParserError` -- which `load_config` then swallowed
+    # along with everything else (#456).
+    config = ConfigLoader._load_yaml(path)
+    if not isinstance(config, dict):
+        # An empty file (None), a scalar or a list at the root. Each of
+        # these escaped as a TypeError or AttributeError from the first
+        # `.get` below.
+        raise ValueError(
+            f"{path}: a configuration must be a YAML mapping at its root "
+            f"(privacy_profile, phi_tags, machines, ...), got "
+            f"{type(config).__name__}")
 
-    # Handle Standard Config
-    config = data
+    # Validated, and lowercased, before anything is merged. The profiles'
+    # keys are lowercase (profiles.py's header comment), so a user's
+    # `0008,103E` merged as spelled sat beside the profile's `0008,103e`
+    # as a second rule for one tag: `PhiInspector` collapsed the pair at
+    # scan time with the later entry winning by dict order, and the
+    # report counted both (#495).
+    config["phi_tags"] = _validated_phi_tags(config.get("phi_tags"), path)
+
+    # `privacy_profile: none` (or `null`): the file's `phi_tags` are the
+    # whole policy, with no base beneath them. The scaffold's header has
+    # told users to write this "for manual control" since v2.0, and it
+    # warned "Unknown privacy profile" and loaded nothing until #495.
+    if "privacy_profile" in config and _names_no_profile(config["privacy_profile"]):
+        config.pop("privacy_profile")
+        return config
+
+    # No `privacy_profile` line: the floor policy beneath the file's tags
+    # (#495). A loaded config extends or overrides
+    # what a bare session applies rather than replacing it with its own
+    # few tags -- otherwise a one-tag file switches the floor off by
+    # accident, which the #495 measurement shows (`MODE=onetag`: Study ID
+    # and Institution Name back in the export). `action: KEEP` opts one
+    # tag out; `privacy_profile: none` opts out of the floor entirely.
+    if "privacy_profile" not in config:
+        floor = copy.deepcopy(FLOOR_POLICY)
+        get_logger().info(
+            "%s names no privacy_profile: applying the floor policy (%d rules) "
+            "beneath its %d phi_tags. Write 'privacy_profile: none' to load "
+            "only the file's own tags.", path, len(floor), len(config["phi_tags"]))
+        floor.update(config["phi_tags"])
+        config["phi_tags"] = floor
+        return config
 
     # Merge Privacy Profile
     if "privacy_profile" in config:
@@ -144,33 +278,39 @@ def load_unified_config(path: str) -> Dict[str, Any]:
         profile_rules = {}
 
         # 1. Check Built-in Profiles
-        if profile_name in PRIVACY_PROFILES:
+        if isinstance(profile_name, str) and profile_name in PRIVACY_PROFILES:
             profile_rules = copy.deepcopy(PRIVACY_PROFILES[profile_name])
             get_logger().info("Loaded built-in privacy profile '%s' with %d rules.", profile_name, len(profile_rules))
 
-        # 2. Check External File (Custom Profile)
-        elif os.path.exists(profile_name):
-            try:
-                # We reuse load_phi_config logic to parse just the tags
-                profile_rules = ConfigLoader.load_phi_config(profile_name)
-                get_logger().info("Loaded custom privacy profile from '%s' with %d rules.", profile_name, len(profile_rules))
-            except (ValueError, OSError) as e:
-                get_logger().error("Failed to load custom profile '%s': %s", profile_name, e)
+        # 2. Check External File (Custom Profile). Its failures propagate:
+        # this logged "Failed to load custom profile" and carried on with
+        # no profile, which is #456's silence one file further out.
+        elif isinstance(profile_name, str) and os.path.isfile(profile_name):
+            profile_rules = _validated_phi_tags(
+                _external_profile_tags(profile_name), profile_name)
+            get_logger().info("Loaded custom privacy profile from '%s' with %d rules.", profile_name, len(profile_rules))
 
         else:
-            get_logger().warning("Unknown privacy profile reference '%s' (not a built-in or file). Ignoring.", profile_name)
+            # A misspelt profile is refused, not warned about and dropped
+            # (#456): the drop loaded the file's own tags with no base
+            # beneath them, a policy nobody wrote, behind a warning in
+            # front of a run that then succeeded. `comprehensive`, which
+            # README and docs/configuration.md offered, never existed and
+            # took this path.
+            raise ValueError(
+                f"{path}: privacy_profile {profile_name!r} is neither a "
+                f"built-in profile ({', '.join(sorted(PRIVACY_PROFILES))}), "
+                f"'none', nor an existing file")
 
         if not profile_rules:
-            # Ignoring it means ignoring it everywhere. Leaving the name in
-            # the config would let the compliance report name a profile that
-            # contributed no rules -- protection that never ran.
+            # An external profile with no tags contributed nothing; naming
+            # it would let the compliance report describe protection that
+            # never ran.
             config.pop("privacy_profile", None)
 
-        if profile_rules:
-            # User rules override profile rules
-            user_rules = config.get("phi_tags", {})
-            profile_rules.update(user_rules)
-            config["phi_tags"] = profile_rules
+        # User rules override profile rules
+        profile_rules.update(config["phi_tags"])
+        config["phi_tags"] = profile_rules
 
     return config
 
@@ -214,17 +354,37 @@ class ConfigLoader:
         # Call the top-level loader which handles YAML, Legacy List, and Privacy Profiles
         data = load_unified_config(filepath)
 
-        phi_tags = data.get("phi_tags", {})
+        # Everything below validates before it returns, and `load_config`
+        # assigns only what this returns: a file that fails any check
+        # leaves the session's configuration exactly as it was (#456).
+        phi_tags = data["phi_tags"]
         # Support 'machines' (v2) or 'machine_rules' (legacy internal)
         machine_rules = data.get("machines", data.get("machine_rules", []))
+        if machine_rules is None:
+            machine_rules = []
+        if not isinstance(machine_rules, list) or not all(
+                isinstance(rule, dict) for rule in machine_rules):
+            raise ValueError(
+                f"{filepath}: 'machines' must be a list of rule mappings "
+                f"(serial_number, redaction_zones, ...), got {machine_rules!r}")
 
-        # Date Jitter Normalization
-        dj = data.get("date_jitter", {"min_days": -365, "max_days": -1})
-        if isinstance(dj, int):
-            # Legacy support or user provided int. Convert to fixed shift.
+        # Date Jitter Normalization. Two shapes are read: an int, a fixed
+        # shift (legacy), and {min_days: int, max_days: int}. Anything else
+        # loaded until #456 and then failed in `load_config`'s own print,
+        # after the assignments, leaving `date_jitter: soon` in the session.
+        dj = data.get("date_jitter")
+        if dj is None:
+            date_jitter_config = {"min_days": -365, "max_days": -1}
+        elif isinstance(dj, int) and not isinstance(dj, bool):
             date_jitter_config = {"min_days": dj, "max_days": dj}
-        else:
+        elif (isinstance(dj, dict) and set(dj) == {"min_days", "max_days"}
+              and all(isinstance(v, int) and not isinstance(v, bool)
+                      for v in dj.values())):
             date_jitter_config = dj
+        else:
+            raise ValueError(
+                f"{filepath}: 'date_jitter' must be {{min_days: int, "
+                f"max_days: int}} or a single int, got {dj!r}")
 
         remove_private_tags = data.get("remove_private_tags", True)
 
@@ -269,32 +429,32 @@ class ConfigLoader:
         Legacy/Convenience support for loading only PHI Tags.
 
         Arg:
-            filepath (str, optional): Path to config file. If None, loads internal defaults.
+            filepath (str, optional): Path to config file. If None, returns
+                a copy of the floor policy, `profiles.FLOOR_POLICY`.
 
         Returns:
             Dict: Mapping of tags to configuration (action/name).
         """
         if filepath:
             data = ConfigLoader._load_yaml(filepath)
+            if not isinstance(data, dict):
+                raise ValueError(
+                    f"{filepath}: a PHI tag file must be a YAML mapping at its "
+                    f"root, got {type(data).__name__}")
 
             # Support v2 unified file used as simple PHI config
             if "phi_tags" in data:
                 return data["phi_tags"]
             return data.get("phi_tags", data)  # Fallback to assumes root dict is tags if no key
-        else:
-            # Load default from package resources. The refusal replaces a
-            # `return {}` that made `audit()` report success on data full
-            # of PHI -- `publish.yml`'s own words for the same failure
-            # (#388), so the release gate and the runtime now say the same
-            # thing about the same file.
-            filepath = require_package_resource(
-                RESOURCES_DIR, "phi_tags.json",
-                "audited against an empty PHI tag list")
-            # Read with json, not the YAML helper: user-facing config
-            # files are YAML-only by design, but this is a shipped
-            # package resource and stays JSON.
-            with open(filepath, 'r', encoding="utf-8") as f:
-                return json.load(f).get("phi_tags", {})
+        # The default policy is the floor a bare session applies (#495).
+        # It was `resources/phi_tags.json` -- six name-only tags, every
+        # one of them already in the basic profile -- which only this
+        # arm, the scaffold's tag names and the report's rule count ever
+        # read, while `audit()` on a bare session scanned against `{}`:
+        # the report named six rules the scan never ran. A copy, because
+        # `PhiInspector` normalizes what it is handed and a caller may
+        # edit it.
+        return copy.deepcopy(FLOOR_POLICY)
 
     @staticmethod
     def clean_filename(filename: str) -> str:
@@ -339,7 +499,12 @@ class ConfigLoader:
                 raise ValueError(
                     f"Rule #{index} ({sn}), Zone #{z_idx}: Invalid zone format (must be list or dict).")
 
-            if not roi or not isinstance(roi, list) or len(roi) != 4:
+            # The integer check is part of the shape check: a zone of
+            # strings reached the `x < 0` below and escaped as TypeError,
+            # which `load_config` then swallowed (#456).
+            if (not roi or not isinstance(roi, list) or len(roi) != 4
+                    or not all(isinstance(x, int) and not isinstance(x, bool)
+                               for x in roi)):
                 raise ValueError(
                     f"Rule #{index} ({sn}), Zone #{z_idx}: ROI must be a list of 4 integers.")
 

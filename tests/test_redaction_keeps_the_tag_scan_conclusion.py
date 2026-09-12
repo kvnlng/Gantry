@@ -210,8 +210,13 @@ REPLACE_REFERRING = {"0008,0090": {"name": "ReferringPhysicianName",
 def _with_a_tag_on_the_instance(tmp_path):
     session, instance = _session(tmp_path)
     instance.set_attr("0008,0090", "Dr^Leak")
-    config = tmp_path / "tags.json"
-    config.write_text(json.dumps(REPLACE_REFERRING), encoding="utf-8")
+    # `privacy_profile: none`, so REPLACE_REFERRING is the whole policy.
+    # This was a root-level tag mapping written as tags.json, which
+    # `audit(config_path=)` accepted only through the plain-tag-file
+    # fallback #456 removed. JSON text is valid YAML.
+    config = tmp_path / "tags.yaml"
+    config.write_text(json.dumps({"privacy_profile": "none",
+                                  "phi_tags": REPLACE_REFERRING}), encoding="utf-8")
     return session, instance, str(config)
 
 

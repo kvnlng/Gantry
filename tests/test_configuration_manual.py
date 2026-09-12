@@ -15,7 +15,9 @@ def test_configuration_api():
     # 1. Test Initial State
     assert isinstance(s.configuration, IsocenterConfiguration)
     assert s.configuration.rules == []
-    assert s.configuration.phi_tags == {}
+    # A session that has loaded no config carries the floor policy (#495).
+    from isocenter.profiles import FLOOR_POLICY
+    assert s.configuration.phi_tags == FLOOR_POLICY
 
     # 2. Test Add Rule
     print("Testing Add Rule...")

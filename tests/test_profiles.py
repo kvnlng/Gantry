@@ -68,9 +68,11 @@ def test_unknown_profile(tmp_path):
     with open(config_path, "w") as f:
         yaml.dump({"privacy_profile": "super_secret_profile"}, f)
 
-    config = load_unified_config(str(config_path))
-    # Should just ignore and load empty/rules
-    assert config.get("phi_tags", {}) == {}
+    # Refused (#456). It was ignored, which loaded no base beneath the
+    # file's tags behind a warning nobody read.
+    import pytest
+    with pytest.raises(ValueError, match="super_secret_profile"):
+        load_unified_config(str(config_path))
 
 
 def test_basic_profile_covers_datetime_twins_of_the_dates_it_removes():
@@ -165,7 +167,7 @@ def test_documented_basic_profile_tag_count_matches_the_code():
     doc = pathlib.Path(__file__).resolve().parent.parent / "docs" / "waveforms.md"
     text = doc.read_text(encoding="utf-8")
 
-    # Matches the "**34 tags, 33 effective**" phrasing.
+    # Matches the "**35 tags, 35 effective**" phrasing.
     match = re.search(r"\*\*(\d+) tags, (\d+)\s+effective\*\*", text)
     assert match, (
         "could not find the Basic-profile tag-count sentence in "

@@ -175,7 +175,7 @@ class PhiInspector:
         # Normalize tag-key casing HERE, once, at the boundary between
         # "however phi_tags got built" (a built-in PRIVACY_PROFILES entry,
         # a user's own YAML, an external custom-profile file, or the
-        # shipped default resource) and "how it's looked up"
+        # floor policy) and "how it's looked up"
         # (`_scan_instance`'s `self.phi_tags.get(tag)` below). Every
         # ingested attribute key on the object graph is lowercased
         # (`io_handlers.py`'s `populate_attrs`,

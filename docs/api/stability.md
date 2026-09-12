@@ -168,7 +168,12 @@ three fields. The rest of the fluent chain is tier 2.
 **`IsocenterConfiguration`** as `session.configuration`: `save()`,
 `add_rule()`, `update_rule()`, `delete_rule()`, `set_phi_tag()`,
 `get_rule()`, and the fields `rules`, `phi_tags`, `date_jitter`,
-`remove_private_tags`, `privacy_profile`.
+`remove_private_tags`, `privacy_profile`. On a session that has loaded
+no configuration, `phi_tags` is a copy of the floor policy,
+`profiles.FLOOR_POLICY`, and `audit()`/`anonymize()` apply it; a config
+with no `privacy_profile` line extends it, and one with
+`privacy_profile: none` opts out of it (#495). `set_phi_tag()`
+stores lowercase keys, as every other key in the policy is.
 
 **Exceptions.** `RedactionError(failures, attempted)`, a `RuntimeError`,
 with `.failures` (a list of `(entity_uid, details)`) and `.attempted`,
@@ -188,7 +193,14 @@ raise `RuntimeError` after the pass when at least one instance failed
 and none could be read (#423); a scan that read some instances returns
 its report with the others in `failures`, and discovery counts only the
 instances it read in `n_sources`. `ValueError` from
-`generate_report` on an unknown format.
+`generate_report` on an unknown format. `load_config(config_file)` and
+`audit(config_path=)` raise `ValueError` when the file fails validation
+(not `.yaml`/`.yml`, YAML syntax, a root that is not a mapping, an
+unknown `privacy_profile`, an unknown `action`, a `phi_tags`,
+`date_jitter` or `machines` of the wrong shape, a rule
+`_validate_rule` rejects) and `FileNotFoundError` when it does not
+exist; after either, the configuration is exactly what it was before
+the call (#456).
 
 **Environment.** Every `ISOCENTER_*` name in
 [Environment Variables](../environment.md), its default and its

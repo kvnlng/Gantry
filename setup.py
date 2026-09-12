@@ -82,11 +82,13 @@ setup(
     # and half of PyPI also wants.
     packages=find_packages(include=["isocenter", "isocenter.*"]),
     # Without this the JSON under isocenter/resources/ ships in neither the
-    # wheel nor the sdist, and nothing fails loudly: every loader guards
-    # on os.path.exists, so `ConfigLoader.load_phi_config()` returns {}
-    # and a pip-installed Isocenter audits against an empty PHI tag list and
-    # reports clean. The .yaml glob covers the ctp_rules.yaml that
-    # session.py prefers over the .json when present.
+    # wheel nor the sdist. It once failed silently (a pip-installed
+    # Isocenter audited against an empty PHI tag list and reported clean);
+    # since #388 a missing resource raises `RuntimeError` at first use,
+    # and since #495 the default PHI policy is Python (`FLOOR_POLICY`),
+    # so what is at stake is the machine redaction knowledge base and the
+    # CTP rules. The .yaml glob covers the ctp_rules.yaml that session.py
+    # prefers over the .json when present.
     package_data={"isocenter": ["resources/*.json", "resources/*.yaml"]},
     # Single source of truth for dependencies. There is deliberately no
     # requirements.txt: two lists drift, and `pip install isocenter` only ever

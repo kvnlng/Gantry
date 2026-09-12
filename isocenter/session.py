@@ -37,7 +37,7 @@ from .parallel import run_parallel, _env_int, _resolve_strategy, resolve_worker_
 from .configuration import IsocenterConfiguration, FlowList
 from .entities import (PhiStatus, SOURCE_SOP_UID_ATTR, clone_sequences,
                        resolve_item_path, iter_item_tree)
-from .profiles import PRIVACY_PROFILES
+from .profiles import BASIC_PROFILE, FLOOR_POLICY, PRIVACY_PROFILES
 from . import entities
 from . import pixel_analysis
 from .automation import ConfigAutomator
@@ -302,7 +302,8 @@ _CONFIG_HEADER = """# Isocenter Privacy Configuration (v2.0)
 #
 # privacy_profile: "basic"
 #   - Standard profile handling common PHI (Name, ID, etc).
-#   - Set to "none" for manual control.
+#   - Omit the line to apply the floor policy beneath your phi_tags.
+#   - Set to "none" for manual control: phi_tags is the whole policy.
 #
 # phi_tags:
 #   - Define custom overrides here.
@@ -418,20 +419,6 @@ def _match_kb_by_model(equipment, kb_machines):
             f"Auto-matched from Model Knowledge Base ({equipment.model_name})")
         return matched
     return None
-
-
-def _default_action_for_tag(tag: str) -> str:
-    """The research-friendly default action for a PHI tag.
-
-    Only three tags deviate from REMOVE. Earlier versions also branched on
-    "Date"/"Time"/"ID" appearing in the tag's name, but every one of those
-    branches also chose REMOVE, so they never changed an outcome.
-    """
-    if tag == "0008,0020":      # Study Date: keep intervals, lose the date
-        return "JITTER"
-    if tag in ("0010,0040", "0010,1010"):   # Sex, Age: research-relevant
-        return "KEEP"
-    return "REMOVE"
 
 
 def _render_config_yaml(data: Dict[str, Any]) -> str:
@@ -599,19 +586,6 @@ def _report_phi_findings(findings) -> None:
     _print_suggested_config(counts)
 
 
-# Names for tags the shipped `resources/phi_tags.json` does not list.
-# `_scaffold_phi_tags` needs them because they are the research-friendly
-# defaults a scaffold should mention, and `_suggested_tag_name` needs them
-# because Study Date is one of the tags a safety scan flags most often.
-# Kept in one place so the two cannot drift into disagreeing about what a
-# tag is called.
-_SUPPLEMENTAL_TAG_NAMES = {
-    "0008,0020": "Study Date",
-    "0010,0040": "Patient Sex",
-    "0010,1010": "Patient Age",
-}
-
-
 def _print_suggested_config(counts) -> None:
     """Prints a config fragment removing every tag the scan flagged.
 
@@ -640,29 +614,21 @@ def _print_suggested_config(counts) -> None:
 
 
 def _suggested_tag_name(tag: str) -> str:
-    """A readable name for a flagged tag, from the shipped PHI defaults.
+    """A readable name for a flagged tag, from the floor policy.
 
     This recognised three tags by hand and called everything else
-    `unknown_tag`, while `resources/phi_tags.json` already named more --
-    two spellings of the same mapping, with the smaller one facing the
-    user at the exact moment they need it to be right.
+    `unknown_tag`, then read the six-tag `resources/phi_tags.json` plus a
+    three-entry supplement. Since #495 it reads `profiles.FLOOR_POLICY`,
+    the one table that names every tag a bare session or the scaffold
+    applies, so the name here is the name the config file uses.
 
     Falls back to the tag itself rather than to `unknown_tag`: the name is
     a comment to the reader, and a tag repeated is at least true, where
     three rules all called `unknown_tag` are indistinguishable.
     """
-    try:
-        names = dict(ConfigLoader.load_phi_config())
-    except (OSError, ValueError):
-        names = {}
-    for extra_tag, extra_name in _SUPPLEMENTAL_TAG_NAMES.items():
-        names.setdefault(extra_tag, extra_name)
-
-    entry = names.get(tag)
-    if isinstance(entry, dict):
-        return str(entry.get("name") or tag)
-    if isinstance(entry, str) and entry:
-        return entry
+    entry = FLOOR_POLICY.get(tag)
+    if isinstance(entry, dict) and entry.get("name"):
+        return str(entry["name"])
     return tag
 
 
@@ -1798,44 +1764,49 @@ class DicomSession:
         `preview_config()` before performing any destructive actions.
 
         Args:
-            config_file (str): Path to the YAML or JSON configuration file.
+            config_file (str): Path to the YAML configuration file.
+
+        Raises:
+            FileNotFoundError: If `config_file` does not exist.
+            ValueError: If the file fails validation -- not `.yaml`/`.yml`,
+                YAML syntax, a root that is not a mapping, an unknown
+                `privacy_profile`, an unknown `action`, a `phi_tags`,
+                `date_jitter` or `machines` of the wrong shape, or a rule
+                `_validate_rule` rejects. Either way the configuration is
+                exactly what it was before the call.
         """
-        try:
-            get_logger().info(f"Loading configuration from {config_file}...")
-            print(f"Loading configuration from {config_file}...")
+        get_logger().info(f"Loading configuration from {config_file}...")
+        print(f"Loading configuration from {config_file}...")
 
-            # UNIFIED LOAD (v2) - Now loading into IsocenterConfiguration object
-            (tags, rules, jitter, remove_private,
-             profile) = ConfigLoader.load_unified_config(config_file)
+        # No `try`, and nothing assigned until the loader has returned
+        # (#456). This caught every exception, printed `Load failed` beside
+        # an ERROR log of the same text, reset `rules`, `phi_tags` and
+        # `privacy_profile` to empty, and returned normally -- so a file
+        # that failed validation wiped the policy the session already had
+        # and the caller was told nothing. The loader validates every
+        # shape it returns, so the prints below cannot fail after the
+        # assignments either (`date_jitter: soon` used to, leaving half
+        # of a failed file in the session).
+        (tags, rules, jitter, remove_private,
+         profile) = ConfigLoader.load_unified_config(config_file)
 
-            # Update the configuration object
-            self.configuration.phi_tags = tags
-            self.configuration.rules = rules
-            self.configuration.date_jitter = jitter
-            self.configuration.remove_private_tags = remove_private
-            self.configuration.config_path = config_file
-            self.configuration.privacy_profile = profile
+        self.configuration.phi_tags = tags
+        self.configuration.rules = rules
+        self.configuration.date_jitter = jitter
+        self.configuration.remove_private_tags = remove_private
+        self.configuration.config_path = config_file
+        self.configuration.privacy_profile = profile
 
-            get_logger().info(
-                f"Loaded {len(self.configuration.rules)} machine rules and {len(self.configuration.phi_tags)} PHI tags.")
-            print(
-                f"Configuration Loaded:\n - {len(self.configuration.rules)} Machine Redaction Rules\n - {len(self.configuration.phi_tags)} PHI Tags")
-            print(
-                f" - Date Jitter: {
-                    self.configuration.date_jitter['min_days']} to {
-                    self.configuration.date_jitter['max_days']} days")
-            print(f" - Remove Private Tags: {self.configuration.remove_private_tags}")
-            print("Tip: Run .audit() to check PHI, or .redact() to apply redaction.")
-        except Exception as e:
-            import traceback
-            get_logger().error(f"Load failed: {e}")
-            print(f"Load failed: {e}")
-            print(traceback.format_exc())
-            # Reset on failure? OR keep previous?
-            # Original behavior was reset.
-            self.configuration.rules = []
-            self.configuration.phi_tags = {}
-            self.configuration.privacy_profile = None
+        get_logger().info(
+            f"Loaded {len(self.configuration.rules)} machine rules and {len(self.configuration.phi_tags)} PHI tags.")
+        print(
+            f"Configuration Loaded:\n - {len(self.configuration.rules)} Machine Redaction Rules\n - {len(self.configuration.phi_tags)} PHI Tags")
+        print(
+            f" - Date Jitter: {
+                self.configuration.date_jitter['min_days']} to {
+                self.configuration.date_jitter['max_days']} days")
+        print(f" - Remove Private Tags: {self.configuration.remove_private_tags}")
+        print("Tip: Run .audit() to check PHI, or .redact() to apply redaction.")
 
     def preview_config(self):
         """
@@ -1988,34 +1959,36 @@ class DicomSession:
     def _scaffold_phi_tags(self) -> Dict[str, Any]:
         """The PHI tag section of a scaffolded config.
 
-        Only tags that *deviate* from the basic profile are written. The
-        scaffold sets `privacy_profile: basic`, which already removes
-        everything listed there, so re-listing a REMOVE tag would add a
-        line that changes nothing. What survives is the research-friendly
-        defaults: a jittered study date, and age and sex kept.
+        Every entry of the session's policy whose action differs from the
+        basic profile's -- the scaffold sets `privacy_profile: basic`, so
+        a line repeating the profile would change nothing. On a bare
+        session the policy is the floor, and the difference is exactly
+        `profiles.RESEARCH_DEFAULTS`: a jittered study date, and sex and
+        age kept.
+
+        Derived rather than listed (#495). The research defaults used to
+        live here as their own table (`_default_action_for_tag` and a
+        supplement of names) beside a floor that did not exist, so the
+        scaffold and what a bare session applied could not be checked
+        against each other. Now the floor is the one table and this is a
+        diff of it, so a bare session's scaffold loads back to exactly the
+        floor. It is exact only because the policy it diffs is a superset
+        of the basic profile: a session under `privacy_profile: none`
+        (or one whose basic tags were deleted) is still scaffolded under
+        `basic`, and its file reloads with the basic profile beneath its
+        own tags -- more protection than the session had, never less.
+
+        A plain-string value is a tag's display name and leaves the
+        inspector's action at REPLACE (`PhiInspector.__init__`), so it is
+        written structured, as the REPLACE it is.
         """
-        phi_tags = dict(self.configuration.phi_tags)
-        if not phi_tags:
-            try:
-                phi_tags = dict(ConfigLoader.load_phi_config())
-            except (OSError, ValueError) as exc:
-                get_logger().warning("Failed to load default PHI tags: %s", exc)
-
-        for tag, name in _SUPPLEMENTAL_TAG_NAMES.items():
-            phi_tags.setdefault(tag, name)
-
         structured = {}
-        for tag, val in phi_tags.items():
-            if isinstance(val, dict):
-                # Already structured by a loaded config; pass it through.
-                structured[tag] = val
-                continue
-
-            action = _default_action_for_tag(tag)
-            if action == "REMOVE":
-                continue
-            structured[tag] = {"name": val, "action": action}
-
+        for tag, val in self.configuration.phi_tags.items():
+            rule = dict(val) if isinstance(val, dict) else {
+                "name": str(val), "action": "REPLACE"}
+            base = BASIC_PROFILE.get(tag, {}).get("action")
+            if str(rule.get("action", "REPLACE")).upper() != base:
+                structured[tag] = rule
         return structured
 
     # =========================================================================
@@ -2059,21 +2032,27 @@ class DicomSession:
         tags_to_use = self.configuration.phi_tags
 
         if config_path:
-            try:
-                t, _, _, _, _ = ConfigLoader.load_unified_config(config_path)
-                tags_to_use = t
-            except (OSError, ValueError, yaml.YAMLError) as exc:
-                # Not a unified v2 config; try it as a plain PHI tag file.
-                get_logger().debug(
-                    "%s is not a unified config (%s); reading it as PHI tags",
-                    config_path, exc)
-                tags_to_use = ConfigLoader.load_phi_config(config_path)
+            # The same loader, and the same exceptions, as `load_config`
+            # (#456). A fallback here read the file as a plain tag list
+            # whenever the unified loader refused it, so a rule with no
+            # serial number -- rejected one call earlier -- was audited
+            # against happily, a `.json` file `load_config` refuses was
+            # accepted, and a root-level tag file loaded tags the scan
+            # then never matched.
+            tags_to_use, _, _, _, _ = ConfigLoader.load_unified_config(config_path)
 
         # Uses IsocenterConfiguration derived tags
         inspector = PhiInspector(config_tags=tags_to_use,
                                  remove_private_tags=self.configuration.remove_private_tags)
         if not inspector.phi_tags:
-            get_logger().warning("PHI Scan Warning: No PHI tags defined. Scan will find nothing. Check your config.")
+            # Reachable only when a config said `privacy_profile: none`
+            # and listed no tags: a session with no config applies the
+            # floor policy (#495). The scan still runs the hardcoded
+            # patient/study checks and the private-tag sweep.
+            get_logger().warning(
+                "PHI Scan Warning: No PHI tags defined (privacy_profile: none "
+                "with no phi_tags). Only patient name, patient ID, study date "
+                "and private tags will be checked.")
 
         get_logger().info("Scanning for PHI (Parallel)...")
 
@@ -2724,15 +2703,14 @@ class DicomSession:
         # "Safe Harbor (Basic Profile)" that nothing assigned, so every
         # report -- including a bare session's, scanning six tags --
         # asserted HIPAA Safe Harbor above a DPO signature line.
-        # The tag count mirrors what PhiInspector actually scans with:
-        # the configured policy, or the shipped defaults when there is
-        # none (see PhiInspector.__init__).
+        # The tag count is what `audit()` scans with: the session's
+        # policy, with no fallback. This fell back to the shipped
+        # `phi_tags.json` when `phi_tags` was empty, while `audit()` used
+        # the empty dict -- so a bare session's report said "6 tag rules"
+        # over a scan that applied none (#495). A bare session now
+        # carries the floor; an empty policy means `privacy_profile:
+        # none` with no tags, and "0 tag rules" is then the truth.
         effective_tags = self.configuration.phi_tags
-        if not effective_tags:
-            try:
-                effective_tags = ConfigLoader.load_phi_config()
-            except (OSError, ValueError):
-                effective_tags = {}
 
         profile_name = self.configuration.privacy_profile
         if not profile_name:
@@ -3052,9 +3030,21 @@ class DicomSession:
             if first_instance:
                 break
 
+        # A name or ID the first instance no longer carries is stashed from
+        # the patient (#495), as the no-instances arm below always did. The
+        # floor's instance rules remove those copies, so after an
+        # instance-only anonymize() the copies are gone while the patient
+        # still holds the originals, nothing reads as a replacement, and a
+        # stash of the copies alone wrote a token holding only
+        # {'0010,0040': 'O'} over the good one (review of #509). Where the
+        # patient is itself a replacement, the refusal below names it.
+        entity_fallback = {"0010,0010": patient.patient_name,
+                           "0010,0020": patient.patient_id}
         if first_instance:
             for tag in tags_to_lock:
                 val = first_instance.attributes.get(tag)
+                if val is None:
+                    val = entity_fallback.get(tag)
                 if val is not None:
                     original_attrs[tag] = val
         else:
@@ -3079,6 +3069,19 @@ class DicomSession:
         # `"ANONYMIZED"` / `startswith("ANON_")` tests it skips by).
         # A re-lock of still-original values is unchanged and is what
         # recovery answers with (#399).
+        #
+        # What is refused, exactly (#495): any value about to be stashed
+        # that reads ANONYMIZED or starts ANON_ -- each tag's
+        # first-instance copy, and for name and ID the patient's own
+        # value where that copy is absent (above). Under the floor
+        # `anonymize()` removes the instance's own name and ID, so a
+        # refusal reading only the copies saw nothing: measured on
+        # CT_small, bare session, lock -> anonymize -> lock again raised
+        # nothing and wrote a token holding only {'0010,0040': 'O'} over
+        # the good one -- #492's defect by another route. A copy that is
+        # present is what gets stashed, so it alone is checked: a patient
+        # reading ANONYMIZED beside copies that still hold the originals
+        # has originals to stash.
         for tag, val in original_attrs.items():
             if val == "ANONYMIZED" or str(val).startswith("ANON_"):
                 raise RuntimeError(

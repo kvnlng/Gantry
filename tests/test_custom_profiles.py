@@ -48,9 +48,15 @@ def test_load_custom_privacy_profile(tmp_path):
     assert phi_tags["0010,0020"]["action"] == "REPLACE"
 
 def test_load_nonexistent_custom_profile(tmp_path, caplog):
+    """A custom profile path that does not exist is refused (#456).
+
+    It was warned about ("Unknown privacy profile reference") and
+    dropped, which loaded the file's own tags with no base beneath them --
+    a policy nobody wrote, behind a warning in front of a run that then
+    succeeded.
     """
-    Verifies graceful handling of missing custom profile files.
-    """
+    import pytest
+
     main_config = {
         "privacy_profile": "/path/to/nonexistent/profile.yaml"
     }
@@ -58,11 +64,5 @@ def test_load_nonexistent_custom_profile(tmp_path, caplog):
     with open(config_path, "w") as f:
         yaml.dump(main_config, f)
 
-    # Should log a warning but not crash
-    config = load_unified_config(str(config_path))
-
-    # Check that it didn't explode. 'phi_tags' might be None or missing if not in config.
-    assert config.get("phi_tags") is None
-
-    # Verify warning log
-    assert "Unknown privacy profile reference" in caplog.text
+    with pytest.raises(ValueError, match="/path/to/nonexistent/profile.yaml"):
+        load_unified_config(str(config_path))

@@ -403,9 +403,12 @@ def reloaded_redaction_session(tmp_path):
     Type 1 element leaves an empty output tree, and any test that walks
     that tree iterates an empty list and passes. Measured on `4507d48`: a
     CT-class instance without these fails with `['[Type 1 Error] Missing
-    0008,0030 in Common', '[Type 2 Error] Missing 0018,0050 in CTImage',
-    ...]`. Under SC Image Storage the CTImage module does not apply, which
-    is why only the Common-module elements have to be supplied here.
+    0008,0020 in Common', '[Type 2 Error] Missing 0008,0030 in Common',
+    '[Type 2 Error] Missing 0018,0050 in CTImage', ...]` (Study Time was
+    reported as Type 1 until #495 corrected the validator to PS3.3
+    C.7.2.1's Type 2). Under SC Image Storage the CTImage module does not
+    apply, which is why only the Common-module elements have to be
+    supplied here.
 
     Yields:
         A callable `make(zones, ...)` returning `(session, instance)`. The
