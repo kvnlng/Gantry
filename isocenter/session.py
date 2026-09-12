@@ -23,7 +23,8 @@ from .services import (RedactionService, RedactionOutcome, RedactionError,
                        carry_phi_status_across_redaction,
                        _report_redaction_failures)
 from .config_manager import ConfigLoader, require_package_resource
-from .privacy import PhiInspector, PhiFinding, PhiReport
+from .privacy import (PhiInspector, PhiFinding, PhiReport, _is_replacement_id,
+                      _is_replacement_name)
 from .logger import configure_logger, describe_exception, get_logger
 from .reporting import (ComplianceReport, PixelScanSummary, get_renderer, GAP_REMOVED,
                         GAP_RETAINED, GAP_UNRESOLVED)
@@ -3065,8 +3066,8 @@ class DicomSession:
         # the originals by accident, because the instance still carried
         # them. Refused, naming the value, rather than skipped: a lock
         # that silently kept nothing is #399's shape again. The
-        # predicate is `scan_patient`'s own (privacy.py, the
-        # `"ANONYMIZED"` / `startswith("ANON_")` tests it skips by).
+        # predicate is `scan_patient`'s own: privacy's
+        # `_is_replacement_name` / `_is_replacement_id`, not a copy.
         # A re-lock of still-original values is unchanged and is what
         # recovery answers with (#399).
         #
@@ -3083,7 +3084,7 @@ class DicomSession:
         # reading ANONYMIZED beside copies that still hold the originals
         # has originals to stash.
         for tag, val in original_attrs.items():
-            if val == "ANONYMIZED" or str(val).startswith("ANON_"):
+            if _is_replacement_name(val) or _is_replacement_id(val):
                 raise RuntimeError(
                     f"lock_identities: patient {patient_id!r} already "
                     f"carries a replacement in {tag} ({val!r}), so there "

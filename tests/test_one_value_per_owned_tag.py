@@ -72,10 +72,11 @@ def _threads(monkeypatch):
     monkeypatch.delenv("ISOCENTER_MAX_TASKS_PER_CHILD", raising=False)
 
 
-def _built(tmp_path, *, study_date="20240101", instance_dates=("20240101", "20240101")):
+def _built(tmp_path, *, study_date="20240101", instance_dates=("20240101", "20240101"),
+           name=NAME, pid=PID):
     tmp_path.mkdir(parents=True, exist_ok=True)
     session = DicomSession(str(tmp_path / "m.db"))
-    patient = Patient(PID, NAME)
+    patient = Patient(pid, name)
     study = Study("1.2.826.0.1.496", "20240101")
     # Assigned after construction, as a graph from a damaged store would
     # carry it: the SHIFT_DATE arm declines a value it cannot parse.
@@ -83,8 +84,8 @@ def _built(tmp_path, *, study_date="20240101", instance_dates=("20240101", "2024
     series = Series("1.2.826.0.1.496.1", "OT", 1)
     for i, inst_date in enumerate(instance_dates):
         instance = Instance(f"1.2.826.0.1.496.1.{i}", SC_SOP_CLASS, i + 1)
-        instance.set_attr("0010,0010", NAME)
-        instance.set_attr("0010,0020", PID)
+        instance.set_attr("0010,0010", name)
+        instance.set_attr("0010,0020", pid)
         instance.set_attr("0008,0020", inst_date)
         series.instances.append(instance)
     study.series.append(series)
@@ -370,7 +371,9 @@ def _instance_tags(findings):
 def test_a_copy_equal_to_an_original_owner_value_is_still_a_finding():
     """The skip is for a replacement, not for agreement: before anything is
     anonymized the instance copies equal the Patient's (original) values,
-    and both are still findings."""
+    and both are still findings. The exception is an original that itself
+    passes the replacement test; see
+    `test_an_original_that_looks_like_a_replacement_is_not_a_finding`."""
     findings = PhiInspector(config_tags=REPLACE).scan_patient(
         _patient_with_one_instance(NAME, PID))
     assert _instance_tags(findings) == [("0010,0010", ()), ("0010,0020", ())]
@@ -428,3 +431,127 @@ def test_remediation_folds_only_a_copy_the_owners_write_reached():
     service = RemediationService()
     assert service.apply_remediation(list(reversed(findings))) == 3
     assert instance.attributes["0010,0020"] == patient.patient_id
+
+
+# ---------------------------------------------------------------------------
+# Review round (#508)
+# ---------------------------------------------------------------------------
+
+def _two_studies(tmp_path, dates):
+    """One patient, one study per `(key, study_date)`, one instance each
+    whose own StudyDate is 20240101."""
+    session = DicomSession(str(tmp_path / "m.db"))
+    patient = Patient(PID, NAME)
+    for key, study_date in dates:
+        study = Study(f"1.2.826.0.1.496.{key}", "20240101")
+        study.study_date = study_date
+        series = Series(f"1.2.826.0.1.496.{key}.1", "OT", 1)
+        instance = Instance(f"1.2.826.0.1.496.{key}.1.0", SC_SOP_CLASS, 1)
+        instance.set_attr("0008,0020", "20240101")
+        series.instances.append(instance)
+        study.series.append(series)
+        patient.studies.append(study)
+    session.store.patients.append(patient)
+    return session
+
+
+@pytest.mark.parametrize("order", ORDERS)
+def test_a_fold_is_keyed_on_the_copy_not_on_the_tag(tmp_path, order):
+    """F across two studies of one patient. Study 7's date declines and
+    study 8's shifts; study 8's write reached only its own instance, so
+    study 7's instance applies its own SHIFT_DATE. A fold keyed on the tag
+    alone folds it into a write it never received: it keeps the original
+    20240101, is stamped REMEDIATED, and the count falls from 4 to 3
+    (review of #508, mutant M1)."""
+    with _two_studies(tmp_path, [("7", "NOT-A-DATE"), ("8", "20240101")]) as session:
+        assert _anonymize(session, JITTER, order) == 4
+        declined, shifted = session.store.patients[0].studies
+        (own,) = declined.series[0].instances
+        (folded,) = shifted.series[0].instances
+        assert declined.study_date == "NOT-A-DATE"
+        assert own.attributes["0008,0020"] != "20240101"
+        assert own.date_shifted
+        assert folded.attributes["0008,0020"] == format_study_date(shifted.study_date)
+    declines = _audit_rows(tmp_path / "m.db", "REMEDIATION_DECLINED")
+    assert len(declines) == 1 and "study_date" in declines[0], declines
+
+
+def test_the_entity_first_sort_keeps_private_sequence_removals_deepest_first(tmp_path):
+    """#167's deepest-first order survives the entity-first sort. For a
+    private sequence inside a private sequence the scan proposes the inner
+    removal first, so its REMEDIATION_REMOVE row is written while the item
+    holding it is still in the graph. Reverse the instance half of the
+    sort and the outer sequence goes first; the inner row then describes a
+    dict nothing reaches any more (review of #508, mutant M4). Distinct
+    tags, because the row names only the tag. Scan order only: a caller
+    who reverses the list reverses this too, as before #496."""
+    outer_tag, inner_tag = "0009,1003", "0011,1005"
+    with _built(tmp_path) as session:
+        instance = _instances(session)[0]
+        outer_item = DicomItem()
+        outer_item.sequences[inner_tag] = DicomSequence(tag=inner_tag, items=[DicomItem()])
+        instance.sequences[outer_tag] = DicomSequence(tag=outer_tag, items=[outer_item])
+        session.configuration.remove_private_tags = True
+        _anonymize(session, REPLACE, "scan-order")
+        assert outer_tag not in instance.sequences
+    with sqlite3.connect(str(tmp_path / "m.db")) as conn:
+        rows = [row[0] for row in conn.execute(
+            "SELECT details FROM audit_log WHERE action_type='REMEDIATION_REMOVE' "
+            "AND details LIKE 'Removed Sequence %' ORDER BY rowid")]
+    assert [row.split()[2] for row in rows] == [inner_tag, outer_tag], rows
+
+
+@pytest.mark.parametrize("policy", [REPLACE, EMPTY], ids=["replace", "empty"])
+def test_an_original_that_looks_like_a_replacement_is_not_a_finding(tmp_path, policy):
+    """The skip's cost, named (review of #508). A source file whose own
+    PatientName is `ANONYMIZED` and PatientID `ANON_REAL77` raised 2
+    instance findings under REPLACE and 4 under EMPTY before #496, and
+    `anonymize()` returned 3 and 5. Now it raises none and returns 1, the
+    study date: the copies equal the Patient's values, and those pass
+    `scan_patient`'s replacement test, which is why the Patient itself was
+    never raised on them either. The copies keep the values."""
+    with _built(tmp_path, name="ANONYMIZED", pid="ANON_REAL77") as session:
+        session.configuration.phi_tags = policy
+        findings = list(session.audit())
+        assert [f for f in findings if f.entity_type == "Instance"] == []
+        assert session.anonymize(findings) == 1
+        for copy in _copies(session):
+            assert (copy["0010,0010"], copy["0010,0020"]) == ("ANONYMIZED", "ANON_REAL77")
+
+
+@pytest.mark.parametrize("order", ORDERS)
+def test_a_malformed_instance_date_under_a_parseable_study_folds_and_grades_pass(tmp_path, order):
+    """The grade change, named (review of #508). Before #496 the
+    instance's own SHIFT_DATE declined on '2024-13-45X': a DECLINED row,
+    the instance IDENTIFIED, the manifest false, REVIEW_REQUIRED. Now the
+    study's write reaches that copy first and puts the study's shifted
+    date on it, so the finding folds: no decline, REMEDIATED, true, PASS.
+    That is the truthful outcome -- the malformed value is gone from the
+    copy, and the exporter stamps the same shifted date."""
+    with _built(tmp_path, instance_dates=("20240101", "2024-13-45X")) as session:
+        assert _anonymize(session, JITTER, order) == 3
+        study = session.store.patients[0].studies[0]
+        for inst in _instances(session):
+            assert inst.attributes["0008,0020"] == format_study_date(study.study_date)
+            assert inst.phi_status is PhiStatus.REMEDIATED
+        session.save(sync=True)
+        report = tmp_path / "r.md"
+        session.generate_report(str(report))
+        manifest = tmp_path / "manifest.json"
+        session.generate_manifest(str(manifest), format="json")
+        items = json.loads(manifest.read_text(encoding="utf-8"))["items"]
+        assert [item["anonymized"] for item in items] == [True, True]
+    assert _audit_rows(tmp_path / "m.db", "REMEDIATION_DECLINED") == []
+    assert "**Grade Basis:** PASS" in report.read_text(encoding="utf-8")
+
+
+def test_one_copy_and_one_fold_are_counted_in_the_singular(tmp_path):
+    """"written to 1 instance copy; 1 instance-level finding", not
+    "1 instance copies; 1 instance-level findings" (review of #508)."""
+    with _built(tmp_path, instance_dates=("20240101",)) as session:
+        assert _anonymize(session, REPLACE, "scan-order") == 3
+    rows = _audit_rows(tmp_path / "m.db", "REMEDIATION_REPLACE")
+    assert len(rows) == 2, rows
+    for row in rows:
+        assert row.endswith("; written to 1 instance copy; "
+                            "1 instance-level finding on this tag folded into it"), row

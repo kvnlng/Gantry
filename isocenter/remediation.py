@@ -34,6 +34,22 @@ REMEDIATION_ACTION_TYPES = frozenset({
 REMEDIATION_DECLINED = "REMEDIATION_DECLINED"
 
 
+def _count(number: int, singular: str, plural: str = None) -> str:
+    """A number and its noun, agreeing: `"1 instance copy"`, `"2 instance
+    copies"`.
+
+    One spelling for the three places #492 and #496 added a count to a
+    `REMEDIATION_*` row or to the log. Written inline, each of the three
+    said `"1 instance copies"` and `"1 instance-level findings"` -- a row
+    an operator reads, and the one place the fold is explained at all, so
+    the plural is not a cosmetic slip but a row that misdescribes itself.
+    `plural` is optional because most of these nouns take `s`; `copy`
+    does not, which is why the parameter exists rather than a bare
+    `+ "s"` at the call sites.
+    """
+    return f"{number} {singular if number == 1 else (plural or singular + 's')}"
+
+
 class RemediationService:
     """
     Applies remediation proposals found by the PhiInspector.
@@ -164,9 +180,9 @@ class RemediationService:
 
         if folded_keys:
             self.logger.info(
-                f"{len(folded_keys)} instance-level findings folded into "
-                "their patient's or study's remediation: its value is already "
-                "on those copies (#496).")
+                f"{_count(len(folded_keys), 'instance-level finding')} folded "
+                "into a patient's or study's remediation: the owner's value "
+                "is already on the copies it reached (#496).")
 
         # An entity that declined during this pass does not leave it
         # REMEDIATED. The success block stamps REMEDIATED per proposal
@@ -400,14 +416,14 @@ class RemediationService:
                 written, folds = wrote
                 verb = ("removed from" if action_type == "REMEDIATION_REMOVE"
                         else "written to")
-                details += f"; {verb} {written} instance copies"
+                details += f"; {verb} {_count(written, 'instance copy', 'instance copies')}"
                 # Said on this row because the folded findings get no rows
                 # of their own (#496). Counted from the pass's pending set
                 # before they run, so the row is complete when it is
                 # appended: Pin A in `tests/test_frozen_surface.py`
                 # refuses any rewrite of a row already in `audit_buffer`.
                 if folds:
-                    details += (f"; {folds} instance-level findings on this "
+                    details += (f"; {_count(folds, 'instance-level finding')} on this "
                                 f"tag folded into it")
             # Recorded after the change, never before: remediation modifies
             # the entity, so a status stamped first would name a revision

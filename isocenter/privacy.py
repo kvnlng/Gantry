@@ -605,6 +605,12 @@ class PhiInspector:
         if tag == "0010,0020":
             return (value == patient.patient_id
                     and _is_replacement_id(value))
+        # No StudyTime (0008,0030) arm, though `ENTITY_FIELD_TAGS` carries
+        # one. The skip needs a value *known* to be a replacement, and a
+        # time has no such test: no `date_shifted` flag, no `ANON_`
+        # prefix, and no shipped scan remediates `Study.study_time`. An
+        # arm could only skip on agreement, and agreement with an original
+        # is PHI -- the case this function exists to refuse.
         return False
 
     def _scan_study(self, study: Study, patient_id: str = None) -> List[PhiFinding]:
