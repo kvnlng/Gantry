@@ -224,8 +224,11 @@ def test_a_blank_value_is_not_raised_again(tmp_path):
     ("2024-05-11", False), (date(2023, 5, 15), False), ("", False), ("   ", False),
 ])
 def test_date_shift_declines_is_the_arms_own_answer(value, declines):
-    """The predicate the scan asks is the SHIFT_DATE arm's parser: True
-    exactly when the arm would record a decline for the value."""
+    """The predicate the scan asks is the SHIFT_DATE arm's own parser: True
+    exactly when that parser would leave the value unshifted, which is the
+    decline the scan has to re-raise. Only that decline -- the arm's other
+    one, an unresolvable PatientID, is not modelled and cannot be reached
+    from the scan; the predicate's docstring carries the argument."""
     from isocenter.remediation import _date_shift_declines
     assert _date_shift_declines(value) is declines
 
