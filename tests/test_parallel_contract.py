@@ -287,6 +287,648 @@ def test_the_shared_session_executor_pins_spawn(tmp_path, monkeypatch):
             "#250)")
 
 
+def _record_session_pools(monkeypatch):
+    """Records the keyword arguments of every `ProcessPoolExecutor(...)` built."""
+    import concurrent.futures
+
+    calls = []
+    real = concurrent.futures.ProcessPoolExecutor
+
+    class Recording(real):
+        def __init__(self, *args, **kwargs):
+            calls.append(kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", Recording)
+    return calls
+
+
+def test_the_shared_session_executor_is_sized_by_isocenter_max_workers(
+        tmp_path, monkeypatch):
+    """`ISOCENTER_MAX_WORKERS` sizes the pool `ingest()` runs on (#501).
+
+    `Session.__init__` built `ProcessPoolExecutor(max_workers=None)`, so
+    the stdlib chose the width, one per CPU. The variable every
+    worker-count doc points at was read by `run_parallel` and by
+    `redact()`, and never by the pool that `ingest()` is handed. Measured
+    on 49e135a with 14 CPUs: 14 workers with the variable at `2`, on
+    3.12.14 and on 3.14.7t alike. The shared pool is processes on both
+    builds; only `run_parallel`'s own pool takes threads on 3.14t.
+
+    Asserted on the constructor argument, as the spawn test above is.
+    Reading `_max_workers` afterwards would see the stdlib's default
+    under the mutant, and the test would only be right on a machine
+    whose CPU count happened to match. Killing mutation: the
+    constructor's `max_workers` reverted to `None`.
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "2")
+    calls = _record_session_pools(monkeypatch)
+
+    with DicomSession(str(tmp_path / "s.db")):
+        pass
+
+    assert calls, "Session() built no ProcessPoolExecutor at all"
+    assert calls[0].get("max_workers") == 2, (
+        f"the session's shared pool was built with {calls[0]!r} under "
+        "ISOCENTER_MAX_WORKERS=2. ingest() runs on that pool, so the "
+        "documented way to narrow a run did not narrow ingest")
+
+
+def test_the_shared_session_executor_defaults_to_one_worker_per_cpu(
+        tmp_path, monkeypatch):
+    """Unset, the shared pool gets `run_parallel`'s default (#501).
+
+    The CPU count is pinned to 3, which is neither this box's count nor
+    a runner's, so the number cannot be right by coincidence. Killing
+    mutations: the kwarg reverted to `None` (it is then `None`, not 3);
+    the default computed as the `CPU * 1.5` the stale comment at the
+    constructor claimed (4, not 3).
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.delenv("ISOCENTER_MAX_WORKERS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 3)
+    calls = _record_session_pools(monkeypatch)
+
+    with DicomSession(str(tmp_path / "s.db")):
+        pass
+
+    assert calls and calls[0].get("max_workers") == 3, (
+        f"with ISOCENTER_MAX_WORKERS unset and 3 CPUs the shared pool was "
+        f"built with {calls[0] if calls else None!r}; run_parallel's "
+        "default is one worker per CPU")
+
+
+def test_a_restarted_shared_executor_is_sized_the_same_way(
+        tmp_path, monkeypatch):
+    """`_restart_executor()` resolves the width construction does; an argument wins.
+
+    The OOM-recovery path rebuilds with `max_workers=None` by default, so
+    even after construction honoured the variable, a restart would have
+    undone it. An explicit argument, the "fewer workers" its docstring
+    promises, still wins. Killing mutations: `_restart_executor`'s
+    default passed through as `None`; the explicit argument ignored in
+    favour of the resolver.
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "2")
+    calls = _record_session_pools(monkeypatch)
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        session._restart_executor()
+        session._restart_executor(max_workers=1)
+
+    assert [kwargs.get("max_workers") for kwargs in calls] == [2, 2, 1], (
+        f"pool widths across construction, a bare restart and a "
+        f"restart(max_workers=1): {[k.get('max_workers') for k in calls]}")
+
+
+def test_a_zero_worker_count_is_reported_when_the_session_opens(
+        tmp_path, monkeypatch, caplog):
+    """`0` warns at `Session()`, and the shared pool gets the default (#501).
+
+    Now that construction reads the variable, it has to read it through
+    the same floor `_resolve_strategy` does (#335, #341). Otherwise `0`
+    reaches `ProcessPoolExecutor`, which raises `ValueError: max_workers
+    must be greater than 0` without naming any variable, and the session
+    does not open. Killing mutation: the helper reading the variable
+    with `minimum=None`.
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "0")
+    monkeypatch.setattr(os, "cpu_count", lambda: 3)
+    calls = _record_session_pools(monkeypatch)
+
+    with caplog.at_level(logging.WARNING):
+        with DicomSession(str(tmp_path / "s.db")):
+            pass
+
+    assert calls and calls[0].get("max_workers") == 3, (
+        f"a rejected worker count must fall back to the default, got "
+        f"{calls[0] if calls else None!r}")
+    assert any("ISOCENTER_MAX_WORKERS" in record.getMessage()
+               and "0" in record.getMessage()
+               for record in caplog.records), (
+        "0 was discarded at Session() without a warning naming the "
+        "variable and the value")
+
+
+def _write_ct(folder, name):
+    """A minimal ingestable CT file, with its own study and series UIDs.
+
+    Fresh UIDs per call, so two of these are never declined as duplicates
+    (#431).
+    """
+    # pylint: disable=import-outside-toplevel
+    import numpy as np
+    from pydicom.dataset import FileDataset, FileMetaDataset
+    from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+
+    ct_storage = "1.2.840.10008.5.1.4.1.1.2"
+    meta = FileMetaDataset()
+    meta.MediaStorageSOPClassUID = ct_storage
+    meta.MediaStorageSOPInstanceUID = generate_uid()
+    meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ds = FileDataset(None, {}, file_meta=meta, preamble=b"\0" * 128)
+    ds.PatientID, ds.PatientName = "P_POOL", "DOE^POOL"
+    ds.StudyInstanceUID, ds.SeriesInstanceUID = generate_uid(), generate_uid()
+    ds.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
+    ds.SOPClassUID = ct_storage
+    ds.Modality, ds.SeriesNumber, ds.InstanceNumber = "CT", 1, 1
+    ds.StudyDate = "20230101"
+    ds.Manufacturer, ds.ManufacturerModelName = "ACME", "SCAN"
+    ds.DeviceSerialNumber = "SN_POOL"
+    ds.Rows = ds.Columns = 32
+    ds.BitsAllocated = ds.BitsStored = 8
+    ds.HighBit = 7
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = "MONOCHROME2"
+    ds.PixelRepresentation = 0
+    ds.PixelData = np.random.default_rng(len(name)).integers(
+        0, 256, (32, 32), dtype=np.uint8).tobytes()
+    path = os.path.join(folder, name)
+    ds.save_as(path, enforce_file_format=True)
+    return path
+
+
+def _folder(tmp_path, tag, files=0):
+    folder = tmp_path / tag
+    folder.mkdir()
+    for i in range(files):
+        _write_ct(str(folder), f"{tag}_{i}.dcm")
+    return str(folder)
+
+
+def _instance_count(session):
+    """Instances in the session's graph, the count an ingest is measured by."""
+    return sum(len(series.instances)
+               for patient in session.store.patients
+               for study in patient.studies
+               for series in study.series)
+
+
+def _wait_until(predicate, what, timeout=60.0):
+    """Bounded wait on a condition, never a sleep on a guess."""
+    import time  # pylint: disable=import-outside-toplevel
+
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, f"timed out waiting for {what}"
+        time.sleep(0.01)
+
+
+def test_each_ingest_re_resolves_the_shared_pool_width(tmp_path, monkeypatch):
+    """`ingest()` reads `ISOCENTER_MAX_WORKERS` again and rebuilds on a change (#511).
+
+    #501 made `Session()` size the shared pool from the variable, and
+    stopped there: a value set after the session opened reached the next
+    internal restart of that pool and nothing else, so an operator who
+    narrowed the lever in a notebook narrowed `audit()` and `redact()`
+    and not the next `ingest()`. Every other reader is per call --
+    `run_parallel` on each call, `redact()` in `_redaction_worker_count`
+    on each pass -- and #504 made the argument for closing this one: a
+    construction-time read is ignored in silence when the variable is set
+    later.
+
+    The CPU count is pinned to 3 so the construction width is neither
+    this box's nor a runner's and cannot be right by coincidence.
+    Killing mutation: `ingest()` dispatching to `self._executor` again
+    instead of re-resolving, which builds one pool, not two.
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.delenv("ISOCENTER_MAX_WORKERS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 3)
+    calls = _record_session_pools(monkeypatch)
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "2")
+        session.ingest(_folder(tmp_path, "src", files=1))
+
+    assert [kwargs.get("max_workers") for kwargs in calls] == [3, 2], (
+        f"pool widths across Session() with 3 CPUs and an ingest() under "
+        f"ISOCENTER_MAX_WORKERS=2: "
+        f"{[k.get('max_workers') for k in calls]}. The variable was set "
+        f"after the session opened, so an ingest that never re-reads it "
+        f"runs at the construction width")
+
+
+def test_an_ingest_at_an_unchanged_width_keeps_the_pool_it_has(
+        tmp_path, monkeypatch):
+    """Re-resolving is not rebuilding: an unchanged width costs nothing (#511).
+
+    The rebuild is gated on the width having actually moved, so the
+    ordinary session -- which never touches the variable -- keeps one
+    pool for its lifetime and pays no teardown or respawn per ingest.
+    Killing mutation: the width comparison dropped, so every `ingest()`
+    rebuilds.
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "2")
+    calls = _record_session_pools(monkeypatch)
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        before = session._executor
+        session.ingest(_folder(tmp_path, "one", files=1))
+        session.ingest(_folder(tmp_path, "two", files=1))
+        assert session._executor is before, (
+            "the shared pool was replaced by an ingest() that asked for "
+            "the width it already had")
+
+    assert [kwargs.get("max_workers") for kwargs in calls] == [2], (
+        f"two ingests at an unchanged width built "
+        f"{len(calls)} pools: {[k.get('max_workers') for k in calls]}")
+
+
+def test_a_restarted_pool_records_the_width_it_was_built_with(
+        tmp_path, monkeypatch):
+    """The recorded width follows an OOM restart, not just construction (#511).
+
+    `_restart_executor(max_workers=1)` is the memory-recovery path. If
+    the recorded width stayed at the construction number, the next
+    `ingest()` would resolve that same number, find it unchanged, and run
+    on the 1-worker recovery pool believing it had the full width -- the
+    silent direction. Killing mutation: `_restart_executor` not moving
+    `_executor_width`, which makes the third width absent.
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.delenv("ISOCENTER_MAX_WORKERS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 3)
+    calls = _record_session_pools(monkeypatch)
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        session._restart_executor(max_workers=1)
+        session.ingest(_folder(tmp_path, "src", files=1))
+
+    assert [kwargs.get("max_workers") for kwargs in calls] == [3, 1, 3], (
+        f"pool widths across Session(), a restart at 1 and an ingest() "
+        f"with the variable unset and 3 CPUs: "
+        f"{[k.get('max_workers') for k in calls]}. The ingest must see "
+        f"the restart's width as the current one and rebuild back to the "
+        f"resolved 3")
+
+
+def _slow_identity(value):
+    """Module scope: it pickles into a worker.
+
+    Slow enough that the tasks queued behind it are still queued when the
+    caller retires the pool.
+    """
+    import time  # pylint: disable=import-outside-toplevel
+    time.sleep(0.3)
+    return value
+
+
+def test_retiring_the_shared_pool_cancels_nothing_that_is_queued(
+        tmp_path, monkeypatch):
+    """`_retire_shared_executor()` is the opposite of the OOM teardown (#511).
+
+    The resize path retires a pool no `ingest()` is running on, so
+    `shutdown(wait=True)` with no `cancel_futures` is both correct and
+    prompt. `_restart_executor()`'s `shutdown(wait=False,
+    cancel_futures=True)` is the *broken*-pool contract -- that pool is
+    assumed unusable, so what is queued on it is lost either way -- and
+    the two are one line apart in spelling. This is what goes red if the
+    healthy path is ever "modernised" into the recovery path's teardown:
+    with one worker and four slow tasks, three are still queued when the
+    retire lands, and cancelling them raises `CancelledError` at
+    `result()`.
+
+    Killing mutation: `_retire_shared_executor`'s shutdown given
+    `cancel_futures=True`.
+
+    It is called with the pool, not with nothing: the resize path swaps
+    the replacement in first and retires the pool it swapped out
+    afterwards, outside `_ingest_lock`, so `self._executor` is already
+    the new one by then.
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "1")
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        pool = session._executor
+        futures = [pool.submit(_slow_identity, i) for i in range(4)]
+        session._retire_shared_executor(pool)
+        assert [f.result(timeout=60) for f in futures] == [0, 1, 2, 3], (
+            "retiring the shared pool dropped work that was queued on it; "
+            "only the broken-pool restart may cancel futures")
+
+
+def test_a_pool_rebuild_that_fails_leaves_the_session_usable(
+        tmp_path, monkeypatch, caplog):
+    """A failed resize costs one `ingest()`, not the session (#511).
+
+    `ProcessPoolExecutor(...)` raises `OSError` when the box has no file
+    descriptors or memory left for the queue pipes -- EMFILE, ENOMEM --
+    which is the failure mode of exactly the memory-short machine an
+    operator narrows `ISOCENTER_MAX_WORKERS` for. The rebuild is
+    therefore ordered so that a raise mutates nothing: the replacement
+    is constructed **before** the old pool is retired, and the in-flight
+    counter is incremented **after** the swap. The ruling is that the
+    session keeps the live pool it had and the exception reaches the
+    caller.
+
+    Get either order wrong and the session is bricked permanently, which
+    is what the three post-conditions here measure, two of them by using
+    the session afterwards rather than by reading its attributes:
+
+    - Retired first: `self._executor` points at a pool already shut
+      down, so the **next `ingest()` at an unchanged width** -- which
+      rebuilds nothing and dispatches to what is there -- raises
+      `cannot schedule new futures after shutdown` or silently indexes
+      nothing. It is permanent, because the width left at the old
+      number means no later call finds a rebuild to do.
+    - Incremented first: `_ingest_executor` is a `@contextmanager`, so
+      an exception before the `yield` escapes `__enter__` and the
+      `finally` that decrements never runs. The counter left at 1 is a
+      phantom peer, so the **next lone `ingest()`** takes the peer
+      branch: it warns and runs at the old width instead of rebuilding.
+
+    The environment is healthy again for both probes -- the real
+    constructor is restored -- so nothing here is about the failure
+    persisting. It is about the session's own state after it.
+
+    Killing mutations: the retire moved back above the construction; the
+    increment moved back above the rebuild.
+    """
+    import concurrent.futures  # pylint: disable=import-outside-toplevel
+    import errno  # pylint: disable=import-outside-toplevel
+
+    from isocenter.session import DicomSession
+
+    monkeypatch.delenv("ISOCENTER_MAX_WORKERS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 3)
+
+    attempts, built, fail_next = [], [], []
+    real = concurrent.futures.ProcessPoolExecutor
+
+    class Arming(real):
+        """Records every construction; raises EMFILE for an armed one."""
+
+        def __init__(self, *args, **kwargs):
+            attempts.append(kwargs.get("max_workers"))
+            if fail_next:
+                fail_next.pop()
+                raise OSError(errno.EMFILE, "Too many open files")
+            super().__init__(*args, **kwargs)
+            built.append(kwargs.get("max_workers"))
+
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", Arming)
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        assert built == [3], f"the session's own pool was not built: {built}"
+        before = session._executor
+
+        monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "2")
+        fail_next.append(True)
+        with pytest.raises(OSError) as failure:
+            session.ingest(_folder(tmp_path, "doomed", files=1))
+        assert failure.value.errno == errno.EMFILE
+
+        assert attempts == [3, 2], (
+            f"the failed rebuild was not attempted at the requested "
+            f"width: {attempts}")
+        assert built == [3], f"a second pool was built after all: {built}"
+        assert session._ingests_in_flight == 0, (
+            f"the failed rebuild leaked the in-flight counter at "
+            f"{session._ingests_in_flight}; every later ingest() sees a "
+            f"peer that is not there and never resizes again")
+        assert session._executor_width == 3, (
+            f"the recorded width moved to {session._executor_width} for a "
+            f"pool that was never built")
+        assert session._executor is before, (
+            "the failed rebuild left the session pointing at something "
+            "other than the pool it still has")
+
+        # Probe 1 -- the width is unchanged, so nothing is rebuilt and
+        # this dispatches to the pool the session kept. Red if that pool
+        # was retired before the replacement failed.
+        monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "3")
+        session.ingest(_folder(tmp_path, "healthy", files=1))
+        assert built == [3], (
+            f"an ingest() at an unchanged width rebuilt the pool: {built}")
+        assert _instance_count(session) == 1, (
+            f"the session's kept pool no longer runs an ingest(): "
+            f"{_instance_count(session)} instance(s) indexed")
+
+        # Probe 2 -- a real resize, alone. Red if the counter leaked,
+        # because the peer branch warns and skips instead.
+        monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "2")
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            session.ingest(_folder(tmp_path, "resized", files=1))
+        assert built == [3, 2], (
+            f"the ingest() after a failed rebuild did not resize: {built}")
+        assert _instance_count(session) == 2, (
+            f"the rebuilt pool did not run its ingest(): "
+            f"{_instance_count(session)} instance(s) indexed")
+        skipped = [record.getMessage() for record in caplog.records
+                   if record.levelno >= logging.WARNING
+                   and "ISOCENTER_MAX_WORKERS" in record.getMessage()]
+        assert not skipped, (
+            f"a lone ingest() reported a peer that is not there: {skipped}")
+
+
+def test_a_retirement_that_raises_does_not_leak_the_in_flight_counter(
+        tmp_path, monkeypatch, caplog):
+    """Nothing between the increment and the decrement is outside the `try` (#511).
+
+    The sibling of the failed-rebuild case, and the same defect class:
+    `_ingest_executor` is a `@contextmanager`, so anything that raises
+    before the `yield` escapes `__enter__`, and a counter left at 1 is a
+    phantom peer that makes every later `ingest()` skip the resize for a
+    call that is not there. The rebuild is ordered so it cannot leak;
+    what is left outside the lock after the increment is the log line and
+    the retirement of the pool that was swapped out, and the retirement
+    is the one that can block -- it waits out a worker wedged in a C
+    library -- so `KeyboardInterrupt` there is the realistic raise.
+    `_retire_shared_executor` catches `RuntimeError` and `OSError` and
+    not that.
+
+    The `try` therefore opens the instant the lock is released rather
+    than just before the `yield`. A retirement that raises still leaves
+    the swap in place, so the session keeps a live pool at the recorded
+    width and only this `ingest()` is lost -- which is what the second
+    half measures, by resizing again to a third width and requiring the
+    rebuild rather than the peer branch's warning.
+
+    Killing mutation: the `try` moved back below the retire.
+    """
+    from isocenter.session import DicomSession
+
+    monkeypatch.delenv("ISOCENTER_MAX_WORKERS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 3)
+    calls = _record_session_pools(monkeypatch)
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        real_retire = session._retire_shared_executor
+        interrupt = {"armed": True}
+
+        def maybe_retire(executor):
+            if interrupt["armed"]:
+                raise KeyboardInterrupt("Ctrl-C while the old pool drained")
+            return real_retire(executor)
+
+        monkeypatch.setattr(session, "_retire_shared_executor", maybe_retire)
+        monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "2")
+        with pytest.raises(KeyboardInterrupt):
+            session.ingest(_folder(tmp_path, "interrupted", files=1))
+
+        assert session._ingests_in_flight == 0, (
+            f"a retirement that raised left the in-flight counter at "
+            f"{session._ingests_in_flight}; every later ingest() would "
+            f"see a peer that is not there and never resize again")
+        # The swap stands: the pool is the new one, at the new width.
+        assert session._executor_width == 2
+        assert [kwargs.get("max_workers") for kwargs in calls] == [3, 2]
+
+        interrupt["armed"] = False
+        monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "1")
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            session.ingest(_folder(tmp_path, "after", files=1))
+        assert [kwargs.get("max_workers") for kwargs in calls] == [3, 2, 1], (
+            f"the ingest() after an interrupted retirement did not resize: "
+            f"{[k.get('max_workers') for k in calls]}")
+        assert _instance_count(session) == 1, (
+            f"the session could not ingest after an interrupted "
+            f"retirement: {_instance_count(session)} instance(s)")
+        skipped = [record.getMessage() for record in caplog.records
+                   if record.levelno >= logging.WARNING
+                   and "ISOCENTER_MAX_WORKERS" in record.getMessage()]
+        assert not skipped, (
+            f"a lone ingest() reported a peer that is not there: {skipped}")
+
+
+def test_a_peer_ingest_keeps_its_pool_and_the_skipped_resize_is_reported(
+        tmp_path, monkeypatch, caplog):
+    """A resize never touches a pool another `ingest()` is running on (#511).
+
+    Two `ingest()` calls on two threads of one session can overlap: the
+    sidecar pass-lock is taken *shared* for an ingest, so the lock design
+    admits it, and the shared pool is the only thing the two calls share.
+    Rebuilding it under a peer would shut down the pool holding that
+    peer's queued files. They are all submitted in one `executor.map`
+    inside `_run_on_shared_executor`, so cancelling them drops the files
+    the peer has not started yet with nothing raised at the caller --
+    #232's shape. So the second call runs on the pool as it stands and
+    says so, in #471's shape: one `WARNING` naming the variable, the
+    pool's width and the width asked for. The next `ingest()` that starts
+    with no peer gets the new width, which the third phase here asserts
+    rather than taking on trust from the message.
+
+    The park is the seam `test_compact_refuses_during_a_pass.py` uses for
+    the same window: the first `Equipment.from_parts`, reached while
+    linking the first result, inside the pass and after the counter has
+    been incremented. The peer waits on the counter reading 1, a bounded
+    condition, never on a sleep. It ingests an **empty** folder on
+    purpose: this test is about which pool the second call is handed, and
+    a second real ingest mutating the graph while the first is parked
+    mid-link would be measuring something else.
+
+    Run on both gate interpreters. On the free-threaded build two
+    threads in one session is the ordinary case, not a corner.
+
+    Killing mutation: the peer check dropped, so the second call rebuilds
+    the pool under the first.
+    """
+    import threading  # pylint: disable=import-outside-toplevel
+
+    from isocenter.entities import Equipment
+    from isocenter.session import DicomSession
+
+    monkeypatch.delenv("ISOCENTER_MAX_WORKERS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 3)
+    calls = _record_session_pools(monkeypatch)
+
+    parked, released = threading.Event(), threading.Event()
+    real_from_parts = Equipment.from_parts
+    seen = []
+
+    def parking_from_parts(*args, **kwargs):
+        seen.append(True)
+        if len(seen) == 1:
+            parked.set()
+            assert released.wait(60.0), "the peer never released the park"
+        return real_from_parts(*args, **kwargs)
+
+    monkeypatch.setattr(Equipment, "from_parts", parking_from_parts)
+
+    with DicomSession(str(tmp_path / "s.db")) as session:
+        first = threading.Thread(
+            target=session.ingest,
+            args=(_folder(tmp_path, "first", files=2),))
+        first.start()
+        try:
+            _wait_until(parked.is_set, "the first ingest to park")
+            _wait_until(lambda: session._ingests_in_flight == 1,
+                        "the first ingest to be counted in flight")
+
+            monkeypatch.setenv("ISOCENTER_MAX_WORKERS", "2")
+            before = session._executor
+            with caplog.at_level(logging.WARNING):
+                session.ingest(_folder(tmp_path, "peer"))
+
+            assert session._executor is before, (
+                "an ingest() resized the shared pool while another "
+                "ingest() was running on it; the peer's queued files "
+                "would have been cancelled")
+            assert [kwargs.get("max_workers") for kwargs in calls] == [3], (
+                f"a second pool was built under a peer ingest: "
+                f"{[k.get('max_workers') for k in calls]}")
+            skipped = [record.getMessage() for record in caplog.records
+                       if record.levelno >= logging.WARNING
+                       and "ISOCENTER_MAX_WORKERS" in record.getMessage()]
+            assert len(skipped) == 1, (
+                f"expected exactly one WARNING about the skipped resize, "
+                f"got {skipped}")
+            # The widths in the order the sentence promises, not just
+            # present somewhere in it: `"2" in msg and "3" in msg` also
+            # passes for the message with the two format arguments
+            # transposed, which tells the operator that a pool of 2 was
+            # asked to be 3 -- the exact opposite of the truth, and #500's
+            # own theme in this branch. Matched as a rendered substring
+            # rather than by regex so the assertion reads as the line an
+            # operator sees.
+            assert ("asks for 2 worker(s) and this session's shared "
+                    "process pool has 3" in skipped[0]), (
+                f"the warning does not name the requested width and the "
+                f"pool's, in that order: {skipped[0]}")
+            assert "ran at 3" in skipped[0] and "built at 2" in skipped[0], (
+                f"the warning does not say which width this ingest() ran "
+                f"at and which the next one gets: {skipped[0]}")
+        finally:
+            released.set()
+            first.join(timeout=60.0)
+        assert not first.is_alive(), "the first ingest never finished"
+        # What this test is actually about: the peer's files. `join()`
+        # returning and `is_alive()` being False are both true of a
+        # thread whose target *raised*, so neither says the two files
+        # arrived -- an ingest that lost its pool would satisfy both and
+        # index nothing. The count is the direct measurement.
+        assert _instance_count(session) == 2, (
+            f"the ingest that was running when the resize was skipped "
+            f"did not index its two files: "
+            f"{_instance_count(session)} instance(s) in the graph")
+
+        # The promise the warning makes: the next ingest() that starts
+        # alone is built at the new width.
+        session.ingest(_folder(tmp_path, "alone", files=1))
+        assert [kwargs.get("max_workers") for kwargs in calls] == [3, 2], (
+            f"the ingest() that started with no peer did not pick up the "
+            f"new width: {[k.get('max_workers') for k in calls]}")
+        assert _instance_count(session) == 3, (
+            f"the ingest() on the rebuilt pool did not index its file: "
+            f"{_instance_count(session)} instance(s) in the graph")
+
+
 def test_the_shared_executor_gets_no_initializer_without_a_lever(
         tmp_path, monkeypatch):
     """`Session.__init__` calls `resolve_worker_initializer()` bare (#365).
@@ -406,6 +1048,17 @@ def _head_waits_for_the_rest(item):
     only make that likely, and a respawn under `maxtasksperchild=1` can
     take longer than any sleep short enough to keep in the suite. The
     60-second bound turns a broken barrier into a failure, not a hang.
+
+    **Finishing last is not arriving last (#505).** Items 1..3 write
+    their marker *before* they return, so item 0 leaves the barrier
+    while item 3 is still inside its worker, and item 0's result can
+    reach the parent while item 3's is still being pickled back through
+    the pool's result queue. Only item 3 can lose that race: under
+    `max_workers=2, maxtasksperchild=1` item 0 holds one slot and items
+    1..3 run one after another on the other, so 1 and 2 have delivered
+    long before 3 starts. Anything asserted here about *arrival* order
+    must therefore be about item 0 not being first, never about it being
+    last.
     """
     import time  # pylint: disable=import-outside-toplevel
     index, folder = item
@@ -433,9 +1086,28 @@ def test_an_ordered_recycling_run_yields_in_submission_order(tmp_path):
     keeps the same duplicate every time.
 
     The unordered run is here as the precondition: item 0 is made to
-    finish last, and if the default did *not* then yield it last the
-    fixture would not be able to tell `imap` from `imap_unordered`, and
-    the ordered assertion would pass for the wrong reason.
+    finish after items 1 and 2, and if the default did *not* then yield
+    it after them the fixture would not be able to tell `imap` from
+    `imap_unordered`, and the ordered assertion would pass for the wrong
+    reason.
+
+    **The precondition is item 0 not arriving first, not item 0 arriving
+    last (#505).** Those establish the same thing -- under `imap` item 0
+    is always first -- and only the first of them is race-free. Item 0
+    cannot overtake items 1 and 2, which have delivered before item 3
+    even starts; it can and does overtake item 3, whose marker it is
+    waiting on. `unordered[-1] == 0` therefore lost the race once in a
+    2313-test run on 3.14t, failing `got [1, 2, 0, 3]` (#505). See
+    `_head_waits_for_the_rest` for why arrival order is not completion
+    order.
+
+    Both runs need the strategy's chunksize to be 1, `run_parallel`'s
+    default, and the autouse `clean_env` fixture is what guarantees it:
+    under a chunksize of 2 items 0 and 1 share a chunk, so item 0 waits
+    60 s on a marker its own chunk-mate cannot write until item 0
+    returns. That fixture's reach over `ISOCENTER_CHUNKSIZE` is
+    load-bearing here, and the failure if it ever stops reaching is a
+    loud `TimeoutError`, not a quiet pass.
     """
     def items(tag):
         folder = tmp_path / tag
@@ -446,8 +1118,9 @@ def test_an_ordered_recycling_run_yields_in_submission_order(tmp_path):
         _head_waits_for_the_rest, items("unordered"), show_progress=False,
         max_workers=2, maxtasksperchild=1)
     assert sorted(unordered) == [0, 1, 2, 3]
-    assert unordered[-1] == 0, (
-        f"precondition: item 0 must arrive last by default; got "
+    assert unordered[0] != 0, (
+        f"precondition: item 0 must not arrive first by default, or the "
+        f"ordered run below cannot tell imap from imap_unordered; got "
         f"{unordered}")
 
     ordered = parallel.run_parallel(
@@ -617,8 +1290,10 @@ def test_a_lever_set_both_ways_runs_in_threads(monkeypatch):
     escape hatch for an environment where processes do not work, and an
     escape hatch that a second variable can veto is not one.
 
-    Worker recycling beats both, whichever way they are set: only
-    `multiprocessing.Pool` implements `maxtasksperchild`. That is why
+    Worker recycling beats both, whichever way they are set: on 3.12,
+    the floor, only `multiprocessing.Pool` recycles workers
+    (`ProcessPoolExecutor(max_tasks_per_child=)` deadlocks `map` there at
+    the first replacement). That is why
     `session.export()`, which passes `maxtasksperchild=25`, ignores both
     force variables entirely (#185).
 
@@ -637,7 +1312,7 @@ def test_a_lever_set_both_ways_runs_in_threads(monkeypatch):
         "docs/environment.md says the reverse")
     assert _threads_chosen(False, 25, "the maxtasksperchild argument") is False, (
         "worker recycling was asked for and threads were chosen anyway; "
-        "only multiprocessing.Pool implements maxtasksperchild")
+        "on 3.12 only multiprocessing.Pool recycles workers")
 
 
 def test_only_the_literal_one_switches_a_flag_on(monkeypatch):
@@ -807,8 +1482,9 @@ def test_an_explicit_zero_worker_count_is_not_an_environment_typo(monkeypatch):
 # --------------------------------------------------------------------
 #
 # `session.export()` passes `maxtasksperchild=25`, and worker recycling
-# rules threads out however the rest of the environment is set -- only
-# `multiprocessing.Pool` implements it. So the export path runs in
+# rules threads out however the rest of the environment is set -- on
+# 3.12, the floor, only `multiprocessing.Pool` recycles workers without
+# deadlocking. So the export path runs in
 # processes on every interpreter, including a free-threaded build, and
 # `ISOCENTER_FORCE_THREADS` cannot change that. That is a decision (the
 # recycling reclaims memory leaked by the imaging C libraries, and a

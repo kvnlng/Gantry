@@ -222,3 +222,48 @@ def test_unavailable_imagecodecs_names_why(monkeypatch, mock_dataset, door):
     assert "ImportError" in msg, msg
     assert "libjpeg.so.8" in msg, msg
     assert exc.value.__cause__ is _BROKEN_IMPORT
+
+
+def test_the_unavailable_print_names_a_message_less_import_error(
+        monkeypatch, capsys):
+    """`is_available()`'s stderr line names the type too (#500).
+
+    The one site of #500's shape the AST scan in
+    `tests/test_log_lines_name_their_exception.py` structurally cannot
+    see: the `except ImportError as e` at the top of the module assigns
+    the exception to `IMPORT_ERROR` and returns, and the line that
+    formats it is in another function, so the name it formats is a module
+    global rather than a bound handler name. A broken install whose
+    `__init__` ends in a bare `raise ImportError` renders as `str()` of
+    nothing, so the line read "NOT AVAILABLE. Import Error: " and named
+    neither the type nor a reason -- the same silence, in the one place a
+    reader looks first when the codec is missing.
+
+    Killing mutation: the f-string back to `{IMPORT_ERROR}`.
+    """
+    monkeypatch.setattr(imagecodecs_handler, "imagecodecs", None)
+    monkeypatch.setattr(imagecodecs_handler, "IMPORT_ERROR", ImportError())
+
+    assert imagecodecs_handler.is_available() is False
+    line = capsys.readouterr().err
+    assert "Import Error: ImportError" in line, (
+        f"a message-less ImportError left the stderr line saying a codec "
+        f"is unavailable without saying why: {line!r}")
+
+
+def test_the_unavailable_print_survives_an_unrecorded_import_error(
+        monkeypatch, capsys):
+    """No import error recorded is said, not crashed on (#500).
+
+    `imagecodecs` set to None with `IMPORT_ERROR` left at its
+    import-time None is a real state: `test_is_available_import_error`
+    above produces it, and so does any caller that stubs the module out.
+    `describe_exception(None)` has no type to name, so the guard is the
+    point -- the line says the failure was not recorded rather than
+    raising `AttributeError` inside a diagnostic.
+    """
+    monkeypatch.setattr(imagecodecs_handler, "imagecodecs", None)
+    monkeypatch.setattr(imagecodecs_handler, "IMPORT_ERROR", None)
+
+    assert imagecodecs_handler.is_available() is False
+    assert "Import Error: none recorded" in capsys.readouterr().err

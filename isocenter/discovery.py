@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from typing import List, Tuple, Any, Dict, Union, Callable
 
+from .logger import describe_exception
+
 # Lazy imports for optional dependencies
 # import pandas as pd
 # import spacy
@@ -255,7 +257,7 @@ class ZoneDiscoverer:
                     ZoneDiscoverer._nlp_model = spacy.load("en_core_web_sm")
                     logger.info("Loaded spaCy NLP model.")
                 except Exception as e:
-                    logger.warning(f"Failed to load or import spaCy: {e}. Fallback to regex.")
+                    logger.warning(f"Failed to load or import spaCy: {describe_exception(e)}. Fallback to regex.")
                     ZoneDiscoverer._nlp_model_failed = True
 
         if ZoneDiscoverer._nlp_model:

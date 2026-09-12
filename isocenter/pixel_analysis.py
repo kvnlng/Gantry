@@ -201,7 +201,7 @@ def _get_voi_lut_dataset(instance: Instance) -> Dataset:
                 # quietly missing the windowing tags that decide contrast.
                 get_logger().debug(
                     "Skipping attribute %s while rebuilding dataset: %s",
-                    tag, exc)
+                    tag, describe_exception(exc))
 
     return ds
 
@@ -277,7 +277,7 @@ def detect_text_regions(pixel_data: np.ndarray, frame_idx: int = 0) -> List[Text
     try:
         return _detect_text_regions_or_raise(pixel_data, frame_idx=frame_idx)
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.error(f"OCR failed: {e}")
+        logger.error(f"OCR failed: {describe_exception(e)}")
         return []
 
 
@@ -316,7 +316,7 @@ def _frames_for_ocr(instance: Instance, pixel_array: np.ndarray) -> List[np.ndar
     except (ValueError, TypeError, AttributeError) as exc:
         # Fall back to raw pixel data when VOI LUT cannot be applied
         # (missing or malformed windowing tags).
-        get_logger().debug("VOI LUT application failed: %s", exc)
+        get_logger().debug("VOI LUT application failed: %s", describe_exception(exc))
 
     # Frames vs. samples is decided from the instance's descriptors,
     # not from the array's last axis. The old `shape[-1] in [3, 4]`

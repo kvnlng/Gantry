@@ -12,6 +12,7 @@ from typing import List, Dict, Any, Optional
 import yaml
 
 from .profiles import FLOOR_POLICY
+from .logger import describe_exception
 
 
 class FlowList(list):
@@ -116,7 +117,7 @@ class IsocenterConfiguration:
         except (IOError, OSError, yaml.YAMLError) as e:
             # We don't want to crash the runtime if save fails, but we should log/warn
             # Since we don't have logger here easily without import
-            print(f"WARNING: Failed to auto-save configuration: {e}")
+            print(f"WARNING: Failed to auto-save configuration: {describe_exception(e)}")
 
     def add_rule(self, serial_number: str, manufacturer: str = "Unknown",
                  model: str = "Unknown", zones: List[Any] = None) -> None:
