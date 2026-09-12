@@ -182,6 +182,7 @@ from .pixel_geometry import (
     PIXEL_DTYPE_ATTR,
     TAG_DOUBLE_FLOAT_PIXEL_DATA,
     TAG_FLOAT_PIXEL_DATA,
+    declared_int,
     resolve_photometric_interpretation,
     resolve_pixel_geometry,
 )
@@ -2969,6 +2970,16 @@ class ExportOutcome:
     #: because only the worker still has the tag; by the time
     #: `_report_export_losses` sees this, the tag is prose (#146).
     losses: List[Tuple[str, str]] = field(default_factory=list)
+    #: One sentence per descriptor the worker corrected on the way out,
+    #: for the parent to log at INFO (#468): today, a declared BitsStored
+    #: the values do not fit. Carried here rather than logged by the
+    #: worker, because the worker is usually a spawned process whose
+    #: `isocenter` logger has no handler -- `session.export()` always
+    #: spawns them, and `write_tree()` does on a GIL build -- so a line
+    #: logged there reached no one (0 of 3, measured in the review of
+    #: #506). Not a loss: nothing was dropped and the file is correct,
+    #: so it takes no audit row and does not move the grade.
+    corrections: List[str] = field(default_factory=list)
     error: Optional[BaseException] = None
 
 
@@ -3132,6 +3143,28 @@ def _write_pixel_geometry(ds, geom, attributes, *, float_element: bool) -> None:
     # be back to writing `RGB` onto a float element.
     if photometric is None:
         photometric = attributes.get("0028,0004")
+    # `YBR_FULL_422` names a layout -- two chroma samples per two
+    # pixels, four bytes per pair -- that the array being written cannot
+    # hold: it is `(rows, cols, 3)`, three full-resolution samples per
+    # pixel, and `tobytes()` of that is a third longer than the label
+    # promises. pydicom refuses the native file outright (`a third
+    # larger than expected (192 vs 128 bytes)`) and decodes the JPEG 2000
+    # one beneath a label the codestream contradicts (#470). So the
+    # sampling half of the label is corrected, to `YBR_FULL`, which
+    # names exactly these bytes; the colour-space half, YBR, is the
+    # declaration's and is kept, because three samples are equally RGB
+    # or YBR and a relabel to RGB would be a label without its bytes
+    # (#372, #448, #482). Here and not in
+    # `resolve_photometric_interpretation`, for the reason
+    # `PlanarConfiguration` is written 0 here and not there: that
+    # function answers what the graph should carry and is shared with
+    # `set_pixel_data()`, which writes no file; this one describes the
+    # element just written. Only ever reached at three or more samples:
+    # at one the resolver has already answered MONOCHROME2, and two is a
+    # shape no interpretation names, written as declared.
+    if (geom.samples >= 3 and photometric
+            and str(photometric).strip().upper() == "YBR_FULL_422"):
+        photometric = "YBR_FULL"
     if photometric:
         ds.PhotometricInterpretation = photometric
 
@@ -3157,6 +3190,87 @@ def _write_pixel_geometry(ds, geom, attributes, *, float_element: bool) -> None:
     # still holds, because that path writes no file.
     if geom.samples >= 3:
         ds.PlanarConfiguration = 0
+
+
+def _stored_width(arr: np.ndarray, attributes) -> Tuple[int, Optional[str]]:
+    """BitsStored for the integer pixel element written from `arr`.
+
+    Returns `(bits_stored, why)`. `why` is None when the declaration was
+    kept or there was none, and otherwise says what about the declaration
+    the bytes could not honour, for the worker to hand back to the parent
+    on `ExportOutcome.corrections` (#468). HighBit is not returned: the
+    worker writes BitsStored - 1 beside whatever this answers.
+
+    The rule: **a declared width is written when every sample fits it,
+    and the array's own width is written otherwise.** Held against the
+    array because BitsStored is a claim about the samples beside it that
+    every conformant reader acts on -- a native sample is masked to
+    BitsStored on read, so -3024 under BitsStored 12 reads back as 1072,
+    and a JPEG 2000 codestream carries the value beneath a header that
+    says it cannot. Before this, the worker wrote 8 or 16 when nothing
+    was declared, so `int32` left under a 16-bit claim (27734 read back
+    where -1103401898 was written), and wrote a declaration as it stood.
+    `verify_readback=True` failed both after the fact (#449); the default
+    export wrote both in silence.
+
+    The width the values fit is `BitsAllocated`, `itemsize * 8`, and not
+    the narrowest width that would hold them: the narrowest is a
+    property of this frame's content and would put a different
+    BitsStored on each slice of a series. A declaration the values fit
+    is kept for the same reason -- 12 on a CT is the acquisition's claim,
+    and the bytes cannot say it is wrong. What that still allows, stated:
+    a series in which only some slices overflow their declaration comes
+    out with mixed BitsStored, the declared width on the slices that fit
+    and the array's on the ones that did not.
+
+    The range is the array's **own** signedness (`dtype.kind`), not
+    declared PixelRepresentation: the bytes are the array's, and a
+    declared representation that disagrees with them is a different
+    defect from this one. `bool` is written one byte per sample and
+    ranges as `uint8`.
+
+    Skipped when the declaration equals the array's width: nothing can
+    overflow it, and the min/max pass is the one cost here (measured
+    4 ms on a 52 MB int16 stack, beside 4 ms for the `tobytes()`).
+    A declaration above the width, or below 1, is caught before any
+    range is built: pydicom refuses to decode `BitsStored 17` over
+    16-bit bytes at all, and `1 << -1` raises.
+
+    The declaration is read by `declared_int`, the one reading of a
+    declared descriptor that the geometry resolver and `set_pixel_data()`
+    already use, so absent, `''`, unparseable and non-scalar all mean
+    "not declared" here as they do there, and get the array's own width
+    with nothing to report. That includes a list. `[12]` was exported as
+    BitsStored 12 before #468, because pydicom unwraps a one-element list
+    for a US element, and the first cut of this function raised
+    `int() argument must be ... not 'list'` on it (review of #506). A
+    one-element list is deliberately not unwrapped here: a second
+    reading of the same descriptor, more lenient than the resolver's, is
+    how two answers start to disagree.
+    """
+    allocated = arr.itemsize * 8
+    declared = declared_int(attributes, "0028,0101")
+    if declared is None:
+        return allocated, None
+    if not 1 <= declared <= allocated:
+        return allocated, (
+            f"BitsStored {declared} is not a width {arr.dtype} samples "
+            f"can have (BitsAllocated {allocated})")
+    if declared == allocated:
+        return declared, None
+    if arr.dtype.kind == "i":
+        lo, hi = -(1 << (declared - 1)), (1 << (declared - 1)) - 1
+        signed = "signed"
+    else:
+        lo, hi = 0, (1 << declared) - 1
+        signed = "unsigned"
+    seen_lo, seen_hi = int(arr.min()), int(arr.max())
+    if lo <= seen_lo and seen_hi <= hi:
+        return declared, None
+    return allocated, (
+        f"BitsStored {declared} cannot hold the pixel values: the array "
+        f"holds {seen_lo}..{seen_hi} where {signed} {declared}-bit samples "
+        f"span {lo}..{hi}")
 
 
 #: The descriptors the readback compares first, by pydicom keyword. The
@@ -3627,6 +3741,7 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
             way out for the parent to log and audit (#126).
     """
     losses: List[Tuple[str, str]] = []
+    corrections: List[str] = []
     uid = getattr(ctx.instance, "sop_instance_uid", None)
 
     try:
@@ -4075,11 +4190,6 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
             _write_pixel_geometry(ds, geom, inst.attributes,
                                   float_element=False)
 
-            if arr.itemsize == 1:
-                default_bits = 8
-            else:
-                default_bits = 16
-
             # Derived from the array, never read from `attributes`, for the
             # same reason Rows and SamplesPerPixel now are -- and here the
             # reason is stronger, because `ds.PixelData = arr.tobytes()` is
@@ -4101,12 +4211,35 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
             # where the bytes are produced is the fix that does not put a
             # write back on the load path.
             #
-            # BitsStored, HighBit and PixelRepresentation stay declared:
-            # they do not constrain how many bytes `tobytes()` emits, and
-            # their coherence is out of scope (spec §8).
+            # BitsStored is held against the array too, by
+            # `_stored_width` (#468): a declared width every sample
+            # fits is written as declared, and otherwise -- or when
+            # none was declared, where 8-or-16 stood here and put
+            # `int32` under a 16-bit claim -- the array's own width is.
+            #
+            # HighBit is BitsStored - 1, always, and never the declared
+            # value. The array holds right-aligned values, so its most
+            # significant stored bit is BitsStored - 1 whatever the
+            # source said; a declared 12/15 written beside them claimed
+            # left-aligned samples the bytes do not hold. A HighBit
+            # declared with no BitsStored (16/16/11 before #468) is the
+            # same claim.
+            #
+            # A rewrite of the declared BitsStored is handed back on
+            # `corrections`, not logged here: this is usually a spawned
+            # worker whose `isocenter` logger has no handler, and the
+            # parent logs it (`_report_export_corrections`). `ds` only,
+            # never `inst`, for the reason the float arm above gives.
+            # PixelRepresentation stays declared: it does not constrain
+            # how many bytes `tobytes()` emits, and its coherence with
+            # the array is #499.
             ds.BitsAllocated = arr.itemsize * 8
-            ds.BitsStored = inst.attributes.get("0028,0101", default_bits)
-            ds.HighBit = inst.attributes.get("0028,0102", default_bits - 1)
+            ds.BitsStored, widened = _stored_width(arr, inst.attributes)
+            ds.HighBit = ds.BitsStored - 1
+            if widened is not None:
+                corrections.append(
+                    f"{widened}; written with BitsStored {ds.BitsStored} "
+                    f"and HighBit {ds.HighBit}, the array's own width")
             ds.PixelRepresentation = inst.attributes.get("0028,0103", 0)
 
         # Waveform samples never reach `attributes` -- populate_attrs
@@ -4227,13 +4360,15 @@ def _export_instance_worker(ctx: ExportContext) -> "ExportOutcome":
                 pass  # save_as raised before creating it
             raise
         return ExportOutcome(ok=True, output_path=ctx.output_path,
-                             sop_instance_uid=uid, losses=losses)
+                             sop_instance_uid=uid, losses=losses,
+                             corrections=corrections)
     except Exception as e:
         # Do not raise, as it aborts the entire parallel batch.
         # Report the failure back for the parent to count and raise on.
         print(f"ERROR: Export failed for {ctx.output_path}: {e}", file=sys.stderr)
         return ExportOutcome(ok=False, output_path=ctx.output_path,
-                             sop_instance_uid=uid, losses=losses, error=e)
+                             sop_instance_uid=uid, losses=losses,
+                             corrections=corrections, error=e)
 
 
 class _J2kFrameRefusal(RuntimeError):
@@ -5163,6 +5298,35 @@ class DicomExporter:
         return count
 
     @staticmethod
+    def _report_export_corrections(results) -> int:
+        """Log, at INFO, every descriptor a worker corrected on the way out (#468).
+
+        The parent's half of `ExportOutcome.corrections`, called beside
+        `_report_export_losses` on both public write paths. Here because
+        the parent is the process whose `isocenter` logger has a handler;
+        the worker is usually spawned, and a line it logged was measured
+        reaching no one. INFO, not WARNING: the file is correct, nothing
+        was lost, and the grade must not move. No audit row, by the
+        ruling on #468 -- this line is the record, which is why where it
+        is emitted matters.
+
+        Only for written files. A correction to a file that was never
+        written describes nothing, and the failure has its own ERROR row.
+
+        Returns the number of lines logged.
+        """
+        logger = get_logger()
+        count = 0
+        for r in results:
+            if not getattr(r, "ok", False):
+                continue  # A lost worker or a failed write: no file.
+            for note in r.corrections:
+                logger.info("%s: %s", r.sop_instance_uid or r.output_path,
+                            note)
+                count += 1
+        return count
+
+    @staticmethod
     def _report_export_failures(results, store_backend=None):
         """Log every instance the workers could not write, and audit it.
 
@@ -5322,6 +5486,7 @@ class DicomExporter:
         # the results and every success count would silently read zero.
         results = list(results)
         DicomExporter._report_export_losses(results, store_backend)
+        DicomExporter._report_export_corrections(results)
         success_count = sum(1 for r in results if getattr(r, "ok", False))
         failures = [r.error if isinstance(r, ExportOutcome) else r
                     for r in results
@@ -5395,6 +5560,7 @@ class DicomExporter:
         # Two passes -- see the note in `write_tree`.
         results = list(results)
         DicomExporter._report_export_losses(results, store_backend)
+        DicomExporter._report_export_corrections(results)
         # We don't raise here by default (batch mode). The failures are
         # audited rather than raised, and the summary is what lets the
         # caller say how many of the requested instances exist (#181).
