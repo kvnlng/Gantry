@@ -25,7 +25,11 @@ is raised again, the decline recurs, and the instance stays IDENTIFIED.
 the scan re-raises exactly what the arm declines. A blank value is not
 raised again: the arm skips it without a decline because there is nothing
 to leave behind, and re-raising it would take a clean instance to
-IDENTIFIED on every re-audit.
+IDENTIFIED on every re-audit. That blank exemption is spelled in both
+halves, so one test here runs the arm and compares the decline row it
+actually writes with the predicate's answer: a test of either half alone
+stays green while the other drifts, and an arm that declined a blank the
+scan no longer raises is #498's shape again.
 
 **Why this file imports what it does.** It reaches the scan through
 `isocenter.session` and the parser through `isocenter.remediation`, so it
@@ -66,6 +70,11 @@ SHIFTABLE = [
     pytest.param(ACQUISITION_DATETIME, "20230515104822.123456", id="dt-with-fraction"),
 ]
 
+BLANK = [
+    pytest.param(CONTENT_DATE, "", id="empty"),
+    pytest.param(CONTENT_DATE, "   ", id="whitespace"),
+]
+
 
 @pytest.fixture(autouse=True)
 def _threads(monkeypatch):
@@ -78,10 +87,15 @@ def _threads(monkeypatch):
 def _built(tmp_path, attrs, study_date=date(2023, 1, 1)):
     session = DicomSession(str(tmp_path / "m.db"))
     patient = Patient("P498", "Orig^Name")
-    study = Study("1.2.826.0.1.498", date(2023, 1, 1))
-    # Assigned after construction, as a graph from a damaged store would
-    # carry it: an unparseable study date leaves the study unshifted.
-    study.study_date = study_date
+    # `study_date` is passed in because a caller here may hand it text no
+    # parser can read, and that is a real graph: `normalize_study_date`
+    # keeps an unreadable DA verbatim rather than inventing a day or
+    # dropping one (#60). Such a study never shifts, which is what
+    # `test_the_instances_own_shift_flag_does_not_hide_its_declined_sibling`
+    # needs. In the constructor and not assigned after it: `Study` routes
+    # both through the same `__setattr__`, so the two-step produced an
+    # identical entity -- same value, same `date_shifted`, same revision.
+    study = Study("1.2.826.0.1.498", study_date)
     series = Series("1.2.826.0.1.498.1", "OT", 1)
     series.equipment = Equipment("Acme", "M", "SN-498")
     instance = Instance("1.2.826.0.1.498.1.0", SC_SOP_CLASS, 1)
@@ -214,3 +228,44 @@ def test_date_shift_declines_is_the_arms_own_answer(value, declines):
     exactly when the arm would record a decline for the value."""
     from isocenter.remediation import _date_shift_declines
     assert _date_shift_declines(value) is declines
+
+
+@pytest.mark.parametrize("tag,value", UNSHIFTABLE + SHIFTABLE + BLANK)
+def test_the_arm_declines_exactly_what_the_predicate_says_it_will(tmp_path, tag, value):
+    """The two halves cannot silently disagree -- run the arm, compare.
+
+    The exemption for a blank value is spelled twice: once in the arm,
+    which returns without a decline row rather than crying wolf over a
+    value with nothing left behind, and once in the predicate the scan
+    asks. The test above pins the predicate's answer and
+    `test_a_blank_value_is_not_raised_again` pins the scan's; neither pins
+    that the *arm* still agrees. Make the arm record a decline for a blank
+    and every other test in this file stays green while the scan skips a
+    value the arm declined -- #498's own shape, restored for blanks: the
+    decline row lands in pass 1 and the next audit reports CLEARED over it.
+
+    So this one drives the arm for each value and asserts the decline row
+    it actually writes is the one the predicate promised, which is red for
+    a disagreement in either direction.
+
+    Pinned rather than derived. Having the arm call the predicate looks
+    like the one-spelling fix and is worse twice over: the arm's `else`
+    branch is reached *because* the parser already answered, so it would
+    re-parse to learn what it holds -- and it would re-parse with a shift
+    of 0 rather than the patient's own, which is not the same question for
+    a date near `date.max`.
+    """
+    from isocenter.remediation import _date_shift_declines
+    session, _ = _built(tmp_path, {tag: value})
+    with session:
+        session.configuration.phi_tags = _shift(tag)
+        report = session.audit()
+        # Non-vacuity: the arm is only under measurement if pass 1 raised
+        # the value at all. Without this, a scan that stopped raising
+        # blanks would make "no decline" true for free.
+        raised = [f.tag for f in report.findings if f.entity_type == "Instance"]
+        assert raised == [tag], raised
+        session.anonymize(report.findings)
+    # Read after close, so the audit-log writer thread has flushed.
+    declined = [d for d in _declines(tmp_path / "m.db") if tag in d]
+    assert bool(declined) is _date_shift_declines(value), declined
