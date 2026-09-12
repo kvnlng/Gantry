@@ -23,7 +23,7 @@ There is no command-line tool. The Python API is the whole interface, because a 
 ## What it refuses to do
 
 - **Modify a source file.** Ingest reads. Anonymize and redact change an in-memory graph. Nothing reaches disk until `export()` writes copies to a directory you name, so a crashed or abandoned run leaves the originals as they were.
-- **Grade a lossy export `PASS`.** Every step that can lose data writes an audit row, and the report reads those rows. A cohort that lost a file, a private tag, a waveform group, or a pixel frame grades `REVIEW_REQUIRED` and names the loss. An export that wrote nothing raises rather than returning quietly.
+- **Grade a lossy export `PASS`.** Every step that can lose data writes an audit row, and the report reads those rows. A cohort that lost a file, a private tag, a waveform group, or a pixel frame grades `REVIEW_REQUIRED` and names the loss. A DICOM export that wrote nothing raises rather than returning quietly.
 - **Pass through pixels it could not decode.** A frame that cannot be decompressed fails its instance's export rather than being copied uninspected.
 - **Advertise a Python version it does not test.** The suite runs on Python 3.12 and on the free-threaded 3.14t build on every pull request, and on all four supported versions at release. The PyPI classifiers list only those.
 
@@ -31,11 +31,11 @@ There is no command-line tool. The Python API is the whole interface, because a 
 
 - **An object model over pydicom.** `Patient`, `Study`, `Series`, and `Instance`, with attributes keyed by tag. Pixel and waveform data load lazily from the sidecar and can be released. See [Architecture](architecture.md).
 - **A persistent session.** Reopen a 10,000-instance cohort without rescanning, pause and resume a job, and read the audit log of every action. See the [Quick Start](quickstart.md).
-- **Protocol-conformant de-identification.** A profile decides which tags go, are replaced, or are date-shifted. A field the protocol permits stays. PHI detection walks nested sequences structurally. See [Configuration](configuration.md).
+- **Protocol-conformant de-identification.** A profile decides which tags go, are replaced, or are date-shifted. A field the protocol permits stays. PHI detection walks nested sequences structurally. With no configuration a 36-rule floor policy applies. UIDs are not replaced. See [Configuration](configuration.md).
 - **Machine-specific pixel redaction.** Zones are keyed by device. An optional OCR pass finds where burned-in text actually lands, and CTP `DicomPixelAnonymizer.script` rules import directly. See [Intelligent OCR](ocr.md) and [Migration Tools](migration.md).
 - **Reversible anonymization, if you choose it.** Original identities encrypted under a Fernet key, stored in a private tag, recoverable by whoever holds the key. The export discloses when recoverable identities are present.
 - **Waveforms.** DICOM waveform IODs in, PhysioNet WFDB records out, with an annotation bridge to Murmur Studio. See [Waveforms & WFDB](waveforms.md).
-- **A compliance report.** Manifest, audit trail, every exception listed, a `PASS` or `REVIEW_REQUIRED` grade, and a signature block for the reviewer who accepts it. See [Analytics & Reporting](analytics.md).
+- **A compliance report.** Cohort summary, audit trail, every exception listed, a `PASS` or `REVIEW_REQUIRED` grade, and a signature block for the reviewer who accepts it. See [Analytics & Reporting](analytics.md).
 
 ## Start here
 

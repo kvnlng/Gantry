@@ -26,8 +26,8 @@ Save this as `isocenter_config.yaml`:
 privacy_profile: "basic"
 
 # 2. Date Jitter
-# Shifts all dates by a random amount within this range.
-# The shift is deterministic per-patient (consistent across studies).
+# Range for the per-patient date shift, applied to Study Date and to
+# every tag whose rule is SHIFT or JITTER (consistent across studies).
 date_jitter:
   min_days: -30
   max_days: -10
@@ -38,15 +38,14 @@ remove_private_tags: true
 
 # 4. Custom PHI Tags (Overrides Profile)
 phi_tags:
-  "0010,0010": 
-    action: "REMOVE"
-    name: "PatientName"
-    
-  "0010,0020": 
-    action: "REPLACE"
-    name: "PatientID"
-    value: "ANONYMIZED" # Matches default if omitted
-    
+  "0008,1030":
+    action: "EMPTY"
+    name: "StudyDescription"
+
+  "0008,103e":
+    action: "REPLACE" # Writes "ANONYMIZED"
+    name: "SeriesDescription"
+
   "0008,0080":
     action: "KEEP" # Exception: Keep InstitutionName
 
@@ -72,7 +71,7 @@ Sets the baseline rules that `phi_tags` then extends or overrides.
 privacy_profile: "basic"
 ```
 
-* **`basic`**: A reduced *DICOM PS3.15 Annex E Basic Profile* (`BASIC_PROFILE` in `isocenter/profiles.py`, 35 tags). Retains some descriptors but removes direct identifiers.
+* **`basic`**: A reduced *DICOM PS3.15 Annex E Basic Profile* (`BASIC_PROFILE` in `isocenter/profiles.py`, 35 tags). Retains some descriptors but removes direct identifiers. It does **not** replace UIDs: Study, Series and SOP Instance UIDs are exported as they were ingested (a redacted instance gets a new SOP Instance UID, and references to it are not updated), so an export can be linked back to its source by anyone who can see the source UIDs ([#544](https://github.com/kvnlng/Isocenter/issues/544)).
 * **`none`**: No base. The file's `phi_tags` are the whole policy.
 * **External File**: You can provide a path to another YAML file (e.g., `./profiles/my_hospital_standard.yaml`) to inherit its rules. That file must carry them under a `phi_tags:` mapping — a config-shaped file works, a bare tag map at its root raises `ValueError`, because the root used to be read as the tags and a profile written like a config then loaded `privacy_profile` itself as a "tag".
 
@@ -82,9 +81,13 @@ A session that has loaded no configuration applies the **floor policy**, `FLOOR_
 
 **Omitting `privacy_profile` means the floor beneath your `phi_tags`.** A file with a few tags and no profile line extends the floor rather than replacing it, so a one-tag config cannot switch the floor off by accident. To opt a single tag out, give it `action: "KEEP"`; to opt out of the floor entirely, write `privacy_profile: "none"`.
 
+!!! warning "Three tags are not governed by `phi_tags`"
+
+    Patient's Name `(0010,0010)`, Patient ID `(0010,0020)` and Study Date `(0008,0020)` belong to the patient and study, and `anonymize()` always replaces them -- the name with `ANONYMIZED`, the ID with an `ANON_` pseudonym, the study date with its per-patient shift -- under every profile, including `none`. A `KEEP`, `REMOVE`, `EMPTY` or `REPLACE` rule on one of them does not change the exported value ([#537](https://github.com/kvnlng/Isocenter/issues/537)).
+
 ### Date Jitter
 
-Shifts all date attributes (`DA`, `DT`) by a random number of days.
+Sets the range of the per-patient date shift. It is applied to Study Date and to every tag whose rule is `SHIFT` or `JITTER`; other date tags follow their own rule, and the `basic` profile *removes* Series, Acquisition and Content dates rather than shifting them.
 
 * **Logic**: Isocenter generates a secret random offset for each `PatientID`. This offset is consistent for that patient across all their studies and series, preserving temporal relationships (intervals) while hiding the absolute dates.
 * **Config**:
@@ -115,20 +118,24 @@ it. A private sequence nested inside another sequence is swept on the
 same rule.
 
 The flag governs the private tags Isocenter *holds*, which is not every
-private tag in your source files. Where the line falls:
+private tag in your source files. Whether a private value is held is
+decided by its **size**, not its VR
+([#151](https://github.com/kvnlng/Isocenter/issues/151)):
 
-| Private tag, by the VR it is read with | `remove_private_tags: true` | `remove_private_tags: false` |
+| Private tag | `remove_private_tags: true` | `remove_private_tags: false` |
 | :--- | :--- | :--- |
-| Text, numeric, and `UN` -- `LO`, `SH`, `DS`, `UN` | Removed | **Kept**, and written to the exported file |
-| Binary VRs -- `OB`, `OW`, `OF`, `OD`, `OL` | Gone | **Gone** -- dropped at ingest, before the flag is read |
+| Text or numeric VR (`LO`, `SH`, `DS`, ...) | Removed | **Kept**, and written to the exported file |
+| Binary value (`OB`, `OW`, `OF`, `OD`, `OL`, or `UN`) of 65534 bytes or less | Removed | **Kept**, and written to the exported file |
+| Binary value over 65534 bytes | Dropped at ingest, `DATA_LOSS` row | Dropped at ingest, `DATA_LOSS` row |
 
-**Both rows assume an explicit-VR source.** Under implicit VR there is no VR
-in the file, so pydicom reads *every* private tag as `UN` -- the first row
-becomes the whole table, the second applies to nothing, and a vendor `OB` is
-kept and exported with no `DATA_LOSS` entry. The first row is therefore not
-the small-strings case it looks like; under implicit VR it is all of your
-private data, blobs included. See below
-([#151](https://github.com/kvnlng/Isocenter/issues/151)).
+The limit is `BINARY_RETENTION_MAX_BYTES` in `isocenter/io_handlers.py`,
+the largest value an explicit-VR 16-bit length field can carry. Because it
+weighs the value rather than the VR it was read with, explicit-VR and
+implicit-VR copies of one study give the same answer: under implicit VR
+pydicom reads every private tag as `UN`, and a `UN` blob takes exactly the
+same size rule. Before 0.9.1 the rule keyed on VR, so the two syntaxes
+disagreed; if you read an older description of a binary-VR private tag
+being "always dropped", it is out of date.
 
 **One `UN` value is resolved rather than kept opaque.** If a private
 `UN` value begins with the item tag `(FFFE,E000)` and re-encodes byte
@@ -136,113 +143,73 @@ for byte as an implicit-VR sequence, it is ingested as a sequence -- the
 same graph the explicit-VR reading of the same file produces -- so the
 PHI scan walks inside it, remediation reaches the values there, and
 `remove_private_tags: true` removes it
-([#167](https://github.com/kvnlng/Isocenter/issues/167)). Its items then
-follow the ordinary rules, binary-VR children included, so a vendor `OB`
-inside such a sequence is dropped at ingest and reported like any other.
-A candidate that does *not* re-encode exactly keeps its bytes untouched
-at ingest and files a `SCAN_GAP` entry, which appears in section 3.2 of
-the compliance report with a disposition resolved at report time: under
+([#167](https://github.com/kvnlng/Isocenter/issues/167)). A recovered
+sequence is exempt from the size rule, and its items then follow the
+ordinary rules, so a large binary child inside it is dropped and reported
+like any other. A candidate that does *not* re-encode exactly keeps its
+bytes untouched at ingest (if they are within the size limit) and files a
+`SCAN_GAP` entry, which appears in section 3.2 of the compliance report
+with a disposition resolved at report time: under
 `remove_private_tags: true` the sweep removes the bytes like any other
 private attribute and the entry reads `removed before export` (grading
 `PASS`); under `false` they are retained byte-for-byte, the entry reads
 `retained for export`, and the session grades `REVIEW_REQUIRED`.
 
-!!! warning "`false` cannot retain private tags with a binary VR"
+!!! warning "Private binary values over 64 KiB cannot be retained"
 
-    Elements with a binary VR (`OB`, `OW`, `OF`, `OD`, `OL`) are skipped
-    by `populate_attrs` at ingest and never enter the object graph, so
-    there is nothing left for this flag to keep by the time it is read. A
-    vendor block routinely carries one. Setting `false` does not fail: it
-    succeeds on a tag that has been gone since ingest, and the exported
-    file simply does not have it.
-
-    **Only that VR family is affected.** Private tags with a text or
-    numeric VR are ingested normally and are governed by this flag in
-    both directions -- swept when it is `true`, kept and written to the
-    exported file when it is `false`. That covers the `LO` private
-    creator and the `SH`/`LO` strings a vendor block is mostly made of.
-    "Private tags are not retained" is the wrong reading; one VR family
-    of them is not.
-
-    `UN` -- Unknown -- is raw bytes and neither text nor numeric, and it
-    is deliberately kept out of the binary set anyway, on the assumption
-    that a private `UN` is a small value rather than a blob. The next
-    paragraph is where that assumption stops holding
-    ([#151](https://github.com/kvnlng/Isocenter/issues/151)).
-
-    **The VR that decides is the one pydicom reads, not the one the
-    vendor wrote**, and for a private tag those differ by transfer
-    syntax. An implicit-VR file carries no VR field at all: pydicom
-    resolves it from the standard dictionary, which has no entry for a
-    private tag, and hands back `UN` -- which is not in the binary set.
-    So the same vendor `OB` element that is dropped out of an
-    explicit-VR source is ingested, retained, exported, and files no
-    `DATA_LOSS` entry when it arrives in an implicit-VR one. Do not plan
-    around that: one study written in the two syntaxes gives two
-    different answers, and only the explicit-VR one is the answer this
-    section describes.
-
-    That tension is real and is tracked: under implicit VR the blob *is*
-    resident, which is exactly what the rule below exists to prevent
-    ([#151](https://github.com/kvnlng/Isocenter/issues/151)).
+    A binary value larger than 65534 bytes never enters the object graph,
+    so `remove_private_tags: false` has nothing left to keep. Setting
+    `false` does not fail: the exported file simply does not have it.
 
     **The loss is announced, not silent.** Each dropped element is logged
     as a warning and written to the audit log as a `DATA_LOSS` entry
-    naming the tag *and its VR* -- the VR is the part that says whether
-    you lost a four-byte serial number or a megabyte of vendor
-    telemetry. It reaches you in three places: the session log, section
-    3.1 (*Data Loss*, under *Data Loss & Unscanned Content*) of the
-    compliance report written by
+    naming the tag *and its VR*. It reaches you in three places: the
+    session log, section 3.1 (*Data Loss*, under *Data Loss & Unscanned
+    Content*) of the compliance report written by
     `session.generate_report(path)`, and
     `session.store_backend.get_audit_losses()` if you want the rows
-    directly. Read that section before concluding a vendor block came
-    through a run intact.
+    directly. A dropped *private* element grades the run
+    `REVIEW_REQUIRED`. Read that section before concluding a vendor block
+    came through a run intact.
 
     **This is settled rather than pending**
-    ([#125](https://github.com/kvnlng/Isocenter/issues/125)). Warning
-    plus an audit entry is the answer; storing the bytes is not planned.
-    If you need them, keep your source files -- Isocenter never modifies
-    them, so the vendor block is still there to go back to.
+    ([#125](https://github.com/kvnlng/Isocenter/issues/125)). If you need
+    those bytes, keep your source files -- Isocenter never modifies them,
+    so the vendor block is still there to go back to.
 
-**Why the bytes are not stored.** Both ways of keeping them were considered
-and rejected. Holding vendor binary in `attributes` makes an arbitrary blob
-permanently resident, which is what the binary-VR rule exists to prevent:
-memory scaling on 100GB+ datasets depends on heavy arrays never being
-resident by default, and that guarantee is worth more than an unread vendor
-block. The implicit-VR case above is a hole in that rule rather than an
-argument against it -- the rule is worth having *and* it does not currently
-cover every input, which is why
-[#151](https://github.com/kvnlng/Isocenter/issues/151) is open rather than
-closed as intended behaviour.
+**Why large values are not stored.** Holding a megabyte vendor blob in
+`attributes` makes it permanently resident, and memory scaling on 100GB+
+datasets depends on heavy arrays never being resident by default; the
+64 KiB cap bounds what retention can cost per element. Routing large values
+to the sidecar instead means giving private tags an offset/length
+representation the EAV table does not have, plus a lazy loader and an
+export re-merge path. `session.compact()` rewrites the sidecar and rewires
+every offset it knows about, so a class of offset it does not know about is
+silent corruption after the first compaction. (It also holds the sidecar
+gate for the whole rewrite, so any writer of such an offset would have to
+take that gate too, and it refuses outright while a `redact()` or
+`ingest()` pass is open -- see `compact()`'s API entry.) That is design
+work, not a flag.
 
-Routing them to the sidecar instead means giving private tags an
-offset/length representation the EAV table does not have, plus a lazy
-loader and an export re-merge path. `session.compact()` rewrites the
-sidecar and rewires every offset it knows about, so a class of offset it
-does not know about is silent corruption after the first compaction. (It
-also holds the sidecar gate for the whole rewrite, so any writer of such
-an offset would have to take that gate too, and it refuses outright while
-a `redact()` or `ingest()` pass is open -- see `compact()`'s API entry.)
-That is design work, not a flag.
+!!! note "Standard binary elements follow the same size rule"
 
-!!! warning "Standard binary elements are dropped too"
-
-    The same rule takes Overlay Data `(60xx,3000)` and the palette color
-    LUTs `(0028,120x)`, which are `OW`. `PixelData` and `WaveformData`
-    are the only binary elements routed to the sidecar; everything else
-    with a binary VR is dropped whatever its group.
+    Overlay Data `(60xx,3000)` and the palette color LUTs `(0028,120x)`
+    are `OW`. At or below 65534 bytes they are carried into the export --
+    a 256-entry palette LUT is 512 bytes -- and above it they are dropped
+    and reported. `PixelData` and `WaveformData` are the only binary
+    elements routed to the sidecar.
 
     An overlay's *descriptors* (`OverlayRows`, `OverlayColumns`,
-    `OverlayBitPosition` and friends) are `US`, so they do survive. An
-    exported file therefore declares an overlay plane it does not carry.
-    The descriptors are deliberately left in place rather than stripped:
-    an overlay may legitimately live in the unused high bits of
-    `PixelData` (addressed by `OverlayBitPosition`), and since Isocenter
-    preserves `PixelData` intact, those overlays survive and their
-    descriptors are the only pointer to them. Stripping the descriptors
-    would turn a correct passthrough into silent destruction.
+    `OverlayBitPosition` and friends) are `US`, so they always survive,
+    and an export from which a large overlay plane was dropped declares a
+    plane it does not carry. The descriptors are deliberately left in
+    place rather than stripped: an overlay may legitimately live in the
+    unused high bits of `PixelData` (addressed by `OverlayBitPosition`),
+    and since Isocenter preserves `PixelData` intact, those overlays
+    survive and their descriptors are the only pointer to them.
 
-    These drops are reported as `DATA_LOSS` entries the same way
+    A dropped *standard* element is listed in the report's Data Loss
+    section but does not change the grade
     ([#137](https://github.com/kvnlng/Isocenter/issues/137)).
 
 ### PHI Tags
@@ -253,11 +220,14 @@ Define specific rules for individual DICOM tags. Keys are `"gggg,eeee"` hex stri
 
 | Action | Logic | Example Config |
 | :--- | :--- | :--- |
-| **`REPLACE`** | Replaces value with "ANONYMIZED" (or custom string). | `action: "REPLACE", value: "Project-X"` |
+| **`REPLACE`** | Replaces the value with `ANONYMIZED`. A `value:` key is accepted and not used ([#538](https://github.com/kvnlng/Isocenter/issues/538)). | `action: "REPLACE"` |
 | **`REMOVE`** | Completely deletes the tag from the dataset. | `action: "REMOVE"` |
 | **`EMPTY`** | Sets the tag value to an empty string. | `action: "EMPTY"` |
 | **`SHIFT`** | Applies the per-patient Date Jitter offset (Dates only). | `action: "SHIFT"` |
+| **`JITTER`** | Same as `SHIFT`. The generated scaffold and the floor policy use it for Study Date. | `action: "JITTER"` |
 | **`KEEP`** | Explicitly retains the original value (Exception to profile). | `action: "KEEP"` |
+
+Any other action makes `load_config()` raise `ValueError` naming the tag. The three patient- and study-owned tags above are not governed by these actions.
 
 **Example:**
 
@@ -283,6 +253,7 @@ machines:
 * **`redaction_zones`**: List of regions to zero out.
   * Format: `[y1, y2, x1, x2]` (Row Start, Row End, Col Start, Col End).
   * Coordinates are 0-indexed.
+  * End must be strictly greater than start on both axes. `load_config()` accepts a zone whose start equals its end, but it selects no pixels, and `redact()` fails every instance it applies to with `RedactionError`.
 
 
 ### Generating Configuration Templates
@@ -305,16 +276,18 @@ In addition to YAML files, you can manage the configuration dynamically using Py
 ```python
 import isocenter
 
-session = isocenter.Session(data_directory="./dicom_data")
+session = isocenter.Session("my_project.db")
+session.load_config("isocenter_config.yaml")
 
-# improved: Access the IsocenterConfiguration object directly
 config = session.configuration
 
-print(config.rules)    # List active redaction rules
-print(config.phi_tags) # List active PHI tag overrides
+print(config.rules)    # machine redaction rules
+print(config.phi_tags) # the full tag policy in force, floor included
 ```
 
 ### Methods
+
+These methods change the configuration in memory and, if it came from `load_config(path)`, **write it back to `path` immediately**. The rewritten file holds the whole policy in force, with the profile and floor tags expanded inline and comments dropped, so keep your hand-edited original under version control. A session that loaded no file keeps the changes in memory only. `auto_remediate_config()` is the exception: it edits the rules in memory and does not save.
 
 #### add_rule()
 
@@ -351,14 +324,14 @@ Update a rule by serial number.
 
 `set_phi_tag(tag, action, replacement=None)`
 
-Update the policy for a specific DICOM tag.
+Update the policy for a specific DICOM tag. `REPLACE` always writes `ANONYMIZED`; the `replacement` argument is stored in the policy and not currently applied ([#538](https://github.com/kvnlng/Isocenter/issues/538)).
 
 ```python
 # Force removal of PatientWeight
 session.configuration.set_phi_tag("0010,1030", "REMOVE")
 
-# Replace StudyDescription with a constant
-session.configuration.set_phi_tag("0008,1030", "REPLACE", replacement="RESEARCH STUDY")
+# Blank StudyDescription
+session.configuration.set_phi_tag("0008,1030", "EMPTY")
 ```
 
 ## Auto-Discovery of Redaction Zones

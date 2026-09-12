@@ -12,27 +12,28 @@ It is a library, not a service. It runs on the machine the team runs it on, insi
 
 - **It never modifies the source files.** The originals are read and left as they were. A crashed or abandoned run leaves them untouched.
 - **It never certifies compliance.** De-identification under Isocenter is whatever the team's configured profile says it is. Whether that profile satisfies a protocol, an IRB determination, or a regulation is the institution's judgement, and the report exists to make that judgement possible.
-- **It never grades a run that lost data as passing.** If a file, a tag, a pixel frame, or a waveform group could not be carried through, the report says so and grades the run `REVIEW_REQUIRED`.
+- **It never grades a run that lost identifiable or acquired data as passing.** If a file, a private tag, a pixel frame, or a waveform group could not be carried through, the report says so and grades the run `REVIEW_REQUIRED`. Routine losses of standard elements -- a large overlay plane, say -- are listed in the report's Data Loss section but do not change the grade.
 
 ## What the report contains
 
 The team generates a Markdown report at the end of a run. It contains:
 
-- **A cohort manifest**: the patients, studies, and series that were processed.
+- **A cohort summary**: how many patients and instances the session holds and, after an export, how many instances were written of those requested. A per-instance manifest can be written as a separate document.
 - **An audit trail**: counts of every action taken (tags removed or replaced, dates shifted, pixel regions redacted, files exported) and every loss recorded.
 - **Exceptions**: every warning and error the run raised, listed individually.
-- **A grade**: `PASS` or `REVIEW_REQUIRED`. There is deliberately no `FAIL`. A run that lost something is a run a person must look at, and the report names what to look at.
+- **A grade**: `PASS` or `REVIEW_REQUIRED`. There is deliberately no `FAIL`. A run that lost something is a run a person must look at, and the report's *Grade Basis* lists every reason the run is not `PASS`.
 - **A signature block** for the reviewer who accepts the report.
 
 The report is evidence for whatever review the institution runs. It is not itself a determination.
 
 ## How de-identification is configured
 
-The team writes a configuration file that names the de-identification profile, the tags to remove, replace, or date-shift, and the pixel regions to redact on each make and model of equipment. A field the protocol permits is kept; nothing is removed by default beyond what the profile names, so the configuration is the document a reviewer reads to see what will happen to the data.
+The team writes a configuration file that names the de-identification profile, the tags to remove, replace, or date-shift, and the pixel regions to redact on each make and model of equipment. Isocenter does not start from nothing. With no configuration, or a file that names no profile, a floor of 36 tag rules applies -- the DICOM PS3.15 basic profile plus three research defaults -- and private tags are removed unless the file says otherwise. A file removes less than that floor only by saying so explicitly. The configuration plus that floor is what a reviewer reads to see what will happen to the data; two caveats a reviewer should know are that Patient's Name, Patient ID and Study Date are always replaced whatever the file says, and that certain rule options are accepted but not applied ([#537](https://github.com/kvnlng/Isocenter/issues/537), [#538](https://github.com/kvnlng/Isocenter/issues/538)).
 
 Two options bear on review:
 
 - **Date shifting** is deterministic per patient, so intervals between a patient's studies survive while absolute dates do not.
+- **UIDs are kept.** Study, Series and SOP Instance UIDs are not replaced, so exported files remain linkable to the originals by anyone who can see the source UIDs ([#544](https://github.com/kvnlng/Isocenter/issues/544)).
 - **Reversible anonymization** is optional and off by default. When a team turns it on, original identities are encrypted under a key the team holds and stored inside the de-identified files, recoverable only with that key. The export warns and records in the audit trail when it has written files that carry recoverable identities, so a cohort cannot be shared under the impression that it does not.
 
 ## Burned-in text
@@ -53,7 +54,7 @@ The source, the issue tracker, and the full change history are public at [github
 
 ## Where it runs
 
-Python 3.12 or later, on Linux, macOS, or Windows, on the team's own hardware. Sizing guidance for large cohorts is on the [Performance](performance.md) page.
+Python 3.12 or later, on Linux or macOS, on the team's own hardware. Windows is not supported. Sizing guidance for large cohorts is on the [Performance](performance.md) page.
 
 ## Contact
 

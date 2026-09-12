@@ -3,7 +3,7 @@
 ## Upgrading an existing store
 
 The code in a new release is fixed; the data an old release wrote is
-not. Three shapes of legacy damage are known, and each is handled the
+not. Four shapes of legacy damage are known, and each is handled the
 way its information allows -- healed where the store itself proves what
 is wrong, detected where it cannot be repaired, and left to an explicit
 opt-in where only the site knows the answer.
@@ -26,7 +26,8 @@ holding detected damage grades `REVIEW_REQUIRED` rather than `PASS`.
 The check is exact for frames stored uncompressed; a zlib-stored
 frame's length is post-compression, so damage behind one is caught
 where the bytes are decoded instead: `export(verify_readback=True)`
-(#209) re-reads every written file and fails the mismatch at delivery.
+(#209, #449) decodes every written file and compares every pixel sample
+with what it meant to write, failing the mismatch at delivery.
 
 There is deliberately no automatic repair. The sidecar's bytes are
 shape-free, so a migration would be a best-effort guess, and a
@@ -83,6 +84,27 @@ exists in the API, nothing changes silently, and the caller is choosing
 its cost. A site that does not know its history should re-run the
 privacy pipeline over the store instead, which re-strips the graph and
 (since #158) mirrors the deletions into the tier on save.
+
+### Dates shifted before 0.9.6 (#510, #518)
+
+From 0.9.6 Isocenter records, per value, which dates its own shift
+produced: a date under a `SHIFT`/`JITTER` rule that the pipeline never
+shifted is raised and shifted on a later pass, and a shifted one is never
+shifted twice. A store written earlier has no such record. For instances
+under a study whose date was already shifted, Isocenter keeps the
+pre-0.9.6 rule: their `SHIFT`/`JITTER` values are not re-examined, so a
+date first named in a later policy can survive. Nothing is shifted twice.
+
+Opening such a store logs a warning and writes one `WARNING` audit row
+naming how many instances and studies are affected -- **on every open**,
+because nothing in the store can change their status. That row appears
+under *Exceptions & Errors*, so every compliance report generated over the
+store grades `REVIEW_REQUIRED`. Re-ingesting the source files into a new
+store gives them the full guarantee and a clean audit log. A pre-0.9.6
+store with no shifted study writes nothing.
+
+Also changed at the same release: `Instance.date_shifted` is gone (see
+[API stability](api/stability.md)).
 
 ## Clinical Trial Processor (CTP)
 

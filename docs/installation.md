@@ -1,6 +1,6 @@
 # Installation
 
-Isocenter requires **Python 3.12+**.
+Isocenter requires **Python 3.12+** on a POSIX system (Linux or macOS). It does not import on Windows: the storage layer's locks use `fcntl`.
 
 ```bash
 pip install isocenter
@@ -60,7 +60,7 @@ it raises `PixelScanError`, also a `RuntimeError` (#423). `isocenter.pixel_analy
 did not import; it does not check the binary.
 
 !!! note
-    The `imagecodecs` dependency is included and strongly recommended for handling JPEG Lossless and other compressed Transfer Syntaxes.
+    `imagecodecs` is a required dependency and installs with Isocenter. It is the JPEG 2000 encoder the default compressed export uses, and it decodes JPEG Lossless, JPEG-LS and JPEG 2000 files that pydicom's installed plugins cannot.
 
 ## Dependencies
 
@@ -68,11 +68,12 @@ Dependencies are declared in one place, `setup.py`. There is deliberately
 no `requirements.txt`: two lists drift apart, and only `install_requires`
 is consulted when you `pip install`.
 
-To set up a development environment, install the package with its test
-extra:
+To set up a development environment, install the package with its
+contributor extra (tests, pylint and coverage); `.[tests]` alone is enough
+to run the suite:
 
 ```bash
-pip install -e ".[tests]"
+pip install -e ".[dev]"
 ```
 
 ## System Requirements
@@ -82,4 +83,4 @@ Isocenter's parallel processing engine is designed to maximize CPU utilization. 
 - **Memory**: Isocenter is memory-intensive during specific operations (e.g., Pixel Redaction, J2K Export).
   - **Minimum**: 2GB RAM per vCPU.
   - **Recommended (Heavy Workloads)**: 8GB RAM per vCPU (e.g., for massive multi-frame J2K compression).
-- **Concurrency**: By default, Isocenter uses all available cores (`1:1` ratio). Use `ISOCENTER_MAX_WORKERS` env var to limit this if OOM occurs.
+- **Concurrency**: By default, ingest, audit and export use one worker per CPU; `redact()`, which holds a decoded frame per worker, uses half the CPUs and at most eight. Use the `ISOCENTER_MAX_WORKERS` env var to limit both if OOM occurs.
