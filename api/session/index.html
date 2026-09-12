@@ -6307,7 +6307,27 @@ below renders every frozen method; it rendered 16 of the 28 until 0.9.4.</p>
 <span class="normal"><a href="#__codelineno-0-5076">5076</a></span>
 <span class="normal"><a href="#__codelineno-0-5077">5077</a></span>
 <span class="normal"><a href="#__codelineno-0-5078">5078</a></span>
-<span class="normal"><a href="#__codelineno-0-5079">5079</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-774" name="__codelineno-0-774"></a><span class="k">class</span><span class="w"> </span><span class="nc">DicomSession</span><span class="p">:</span>
+<span class="normal"><a href="#__codelineno-0-5079">5079</a></span>
+<span class="normal"><a href="#__codelineno-0-5080">5080</a></span>
+<span class="normal"><a href="#__codelineno-0-5081">5081</a></span>
+<span class="normal"><a href="#__codelineno-0-5082">5082</a></span>
+<span class="normal"><a href="#__codelineno-0-5083">5083</a></span>
+<span class="normal"><a href="#__codelineno-0-5084">5084</a></span>
+<span class="normal"><a href="#__codelineno-0-5085">5085</a></span>
+<span class="normal"><a href="#__codelineno-0-5086">5086</a></span>
+<span class="normal"><a href="#__codelineno-0-5087">5087</a></span>
+<span class="normal"><a href="#__codelineno-0-5088">5088</a></span>
+<span class="normal"><a href="#__codelineno-0-5089">5089</a></span>
+<span class="normal"><a href="#__codelineno-0-5090">5090</a></span>
+<span class="normal"><a href="#__codelineno-0-5091">5091</a></span>
+<span class="normal"><a href="#__codelineno-0-5092">5092</a></span>
+<span class="normal"><a href="#__codelineno-0-5093">5093</a></span>
+<span class="normal"><a href="#__codelineno-0-5094">5094</a></span>
+<span class="normal"><a href="#__codelineno-0-5095">5095</a></span>
+<span class="normal"><a href="#__codelineno-0-5096">5096</a></span>
+<span class="normal"><a href="#__codelineno-0-5097">5097</a></span>
+<span class="normal"><a href="#__codelineno-0-5098">5098</a></span>
+<span class="normal"><a href="#__codelineno-0-5099">5099</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-774" name="__codelineno-0-774"></a><span class="k">class</span><span class="w"> </span><span class="nc">DicomSession</span><span class="p">:</span>
 <a id="__codelineno-0-775" name="__codelineno-0-775"></a><span class="w">    </span><span class="sd">"""</span>
 <a id="__codelineno-0-776" name="__codelineno-0-776"></a><span class="sd">    The Main Facade for the Isocenter library.</span>
 <a id="__codelineno-0-777" name="__codelineno-0-777"></a>
@@ -10568,51 +10588,71 @@ below renders every frozen method; it rendered 16 of the 28 until 0.9.4.</p>
 <a id="__codelineno-0-5032" name="__codelineno-0-5032"></a>            <span class="p">)</span>
 <a id="__codelineno-0-5033" name="__codelineno-0-5033"></a>            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="s2">"date_shifted"</span><span class="p">):</span>
 <a id="__codelineno-0-5034" name="__codelineno-0-5034"></a>                <span class="n">s_new</span><span class="o">.</span><span class="n">date_shifted</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">date_shifted</span>
-<a id="__codelineno-0-5035" name="__codelineno-0-5035"></a>
-<a id="__codelineno-0-5036" name="__codelineno-0-5036"></a>            <span class="n">p_new</span><span class="o">.</span><span class="n">studies</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">s_new</span><span class="p">)</span>
-<a id="__codelineno-0-5037" name="__codelineno-0-5037"></a>
-<a id="__codelineno-0-5038" name="__codelineno-0-5038"></a>            <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">s</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
-<a id="__codelineno-0-5039" name="__codelineno-0-5039"></a>                <span class="n">se_new</span> <span class="o">=</span> <span class="n">Series</span><span class="p">(</span>
-<a id="__codelineno-0-5040" name="__codelineno-0-5040"></a>                    <span class="n">series_instance_uid</span><span class="o">=</span><span class="n">se</span><span class="o">.</span><span class="n">series_instance_uid</span><span class="p">,</span>
-<a id="__codelineno-0-5041" name="__codelineno-0-5041"></a>                    <span class="n">modality</span><span class="o">=</span><span class="n">se</span><span class="o">.</span><span class="n">modality</span><span class="p">,</span>
-<a id="__codelineno-0-5042" name="__codelineno-0-5042"></a>                    <span class="n">series_number</span><span class="o">=</span><span class="n">se</span><span class="o">.</span><span class="n">series_number</span>
-<a id="__codelineno-0-5043" name="__codelineno-0-5043"></a>                <span class="p">)</span>
-<a id="__codelineno-0-5044" name="__codelineno-0-5044"></a>                <span class="k">if</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="p">:</span>
-<a id="__codelineno-0-5045" name="__codelineno-0-5045"></a>                    <span class="n">se_new</span><span class="o">.</span><span class="n">equipment</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span>
-<a id="__codelineno-0-5046" name="__codelineno-0-5046"></a>                <span class="n">s_new</span><span class="o">.</span><span class="n">series</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">se_new</span><span class="p">)</span>
-<a id="__codelineno-0-5047" name="__codelineno-0-5047"></a>
-<a id="__codelineno-0-5048" name="__codelineno-0-5048"></a>                <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">:</span>
-<a id="__codelineno-0-5049" name="__codelineno-0-5049"></a>                    <span class="c1"># Clone Instance</span>
-<a id="__codelineno-0-5050" name="__codelineno-0-5050"></a>                    <span class="n">i_new</span> <span class="o">=</span> <span class="n">Instance</span><span class="p">(</span>
-<a id="__codelineno-0-5051" name="__codelineno-0-5051"></a>                        <span class="n">sop_instance_uid</span><span class="o">=</span><span class="n">i</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="p">,</span>
-<a id="__codelineno-0-5052" name="__codelineno-0-5052"></a>                        <span class="n">instance_number</span><span class="o">=</span><span class="n">i</span><span class="o">.</span><span class="n">instance_number</span><span class="p">,</span>
-<a id="__codelineno-0-5053" name="__codelineno-0-5053"></a>                        <span class="n">sop_class_uid</span><span class="o">=</span><span class="n">i</span><span class="o">.</span><span class="n">sop_class_uid</span><span class="p">,</span>
-<a id="__codelineno-0-5054" name="__codelineno-0-5054"></a>                        <span class="n">file_path</span><span class="o">=</span><span class="n">i</span><span class="o">.</span><span class="n">file_path</span>
-<a id="__codelineno-0-5055" name="__codelineno-0-5055"></a>                    <span class="p">)</span>
-<a id="__codelineno-0-5056" name="__codelineno-0-5056"></a>                    <span class="c1"># `source_path` is not carried across deliberately.</span>
-<a id="__codelineno-0-5057" name="__codelineno-0-5057"></a>                    <span class="c1"># `__post_init__` derives it from the `file_path`</span>
-<a id="__codelineno-0-5058" name="__codelineno-0-5058"></a>                    <span class="c1"># above, which is what a scan worker would see</span>
-<a id="__codelineno-0-5059" name="__codelineno-0-5059"></a>                    <span class="c1"># anyway; the clone is read by `scan_worker` and</span>
-<a id="__codelineno-0-5060" name="__codelineno-0-5060"></a>                    <span class="c1"># discarded, and no finding carries provenance back.</span>
-<a id="__codelineno-0-5061" name="__codelineno-0-5061"></a>                    <span class="c1"># If a clone is ever written to the store, this is</span>
-<a id="__codelineno-0-5062" name="__codelineno-0-5062"></a>                    <span class="c1"># the line that has to change first (#238).</span>
-<a id="__codelineno-0-5063" name="__codelineno-0-5063"></a>                    <span class="c1">#</span>
-<a id="__codelineno-0-5064" name="__codelineno-0-5064"></a>                    <span class="c1"># Key: Ensure attributes are copied so workers can scan tags</span>
-<a id="__codelineno-0-5065" name="__codelineno-0-5065"></a>                    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="s1">'attributes'</span><span class="p">):</span>
-<a id="__codelineno-0-5066" name="__codelineno-0-5066"></a>                        <span class="n">i_new</span><span class="o">.</span><span class="n">attributes</span> <span class="o">=</span> <span class="n">i</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
-<a id="__codelineno-0-5067" name="__codelineno-0-5067"></a>
-<a id="__codelineno-0-5068" name="__codelineno-0-5068"></a>                    <span class="c1"># Sequences travel too. Dropping them was #57: the</span>
-<a id="__codelineno-0-5069" name="__codelineno-0-5069"></a>                    <span class="c1"># worker got a top-level-only instance, so the scan</span>
-<a id="__codelineno-0-5070" name="__codelineno-0-5070"></a>                    <span class="c1"># reported clean on every nested tag -- report text,</span>
-<a id="__codelineno-0-5071" name="__codelineno-0-5071"></a>                    <span class="c1"># annotations, anything below the first level.</span>
-<a id="__codelineno-0-5072" name="__codelineno-0-5072"></a>                    <span class="n">i_new</span><span class="o">.</span><span class="n">sequences</span> <span class="o">=</span> <span class="n">clone_sequences</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+<a id="__codelineno-0-5035" name="__codelineno-0-5035"></a>            <span class="c1"># The study's own date record travels too (#518).</span>
+<a id="__codelineno-0-5036" name="__codelineno-0-5036"></a>            <span class="c1"># `_scan_study` runs inside `scan_patient`, which the worker</span>
+<a id="__codelineno-0-5037" name="__codelineno-0-5037"></a>            <span class="c1"># calls on this clone, so without this line every worker</span>
+<a id="__codelineno-0-5038" name="__codelineno-0-5038"></a>            <span class="c1"># sees a study that looks pre-0.9.6 and raises nothing --</span>
+<a id="__codelineno-0-5039" name="__codelineno-0-5039"></a>            <span class="c1"># the whole fix invisible on both parallel paths at once.</span>
+<a id="__codelineno-0-5040" name="__codelineno-0-5040"></a>            <span class="n">s_new</span><span class="o">.</span><span class="n">_shifted_study_date</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">_shifted_study_date</span>
+<a id="__codelineno-0-5041" name="__codelineno-0-5041"></a>
+<a id="__codelineno-0-5042" name="__codelineno-0-5042"></a>            <span class="n">p_new</span><span class="o">.</span><span class="n">studies</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">s_new</span><span class="p">)</span>
+<a id="__codelineno-0-5043" name="__codelineno-0-5043"></a>
+<a id="__codelineno-0-5044" name="__codelineno-0-5044"></a>            <span class="k">for</span> <span class="n">se</span> <span class="ow">in</span> <span class="n">s</span><span class="o">.</span><span class="n">series</span><span class="p">:</span>
+<a id="__codelineno-0-5045" name="__codelineno-0-5045"></a>                <span class="n">se_new</span> <span class="o">=</span> <span class="n">Series</span><span class="p">(</span>
+<a id="__codelineno-0-5046" name="__codelineno-0-5046"></a>                    <span class="n">series_instance_uid</span><span class="o">=</span><span class="n">se</span><span class="o">.</span><span class="n">series_instance_uid</span><span class="p">,</span>
+<a id="__codelineno-0-5047" name="__codelineno-0-5047"></a>                    <span class="n">modality</span><span class="o">=</span><span class="n">se</span><span class="o">.</span><span class="n">modality</span><span class="p">,</span>
+<a id="__codelineno-0-5048" name="__codelineno-0-5048"></a>                    <span class="n">series_number</span><span class="o">=</span><span class="n">se</span><span class="o">.</span><span class="n">series_number</span>
+<a id="__codelineno-0-5049" name="__codelineno-0-5049"></a>                <span class="p">)</span>
+<a id="__codelineno-0-5050" name="__codelineno-0-5050"></a>                <span class="k">if</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span><span class="p">:</span>
+<a id="__codelineno-0-5051" name="__codelineno-0-5051"></a>                    <span class="n">se_new</span><span class="o">.</span><span class="n">equipment</span> <span class="o">=</span> <span class="n">se</span><span class="o">.</span><span class="n">equipment</span>
+<a id="__codelineno-0-5052" name="__codelineno-0-5052"></a>                <span class="n">s_new</span><span class="o">.</span><span class="n">series</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">se_new</span><span class="p">)</span>
+<a id="__codelineno-0-5053" name="__codelineno-0-5053"></a>
+<a id="__codelineno-0-5054" name="__codelineno-0-5054"></a>                <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">se</span><span class="o">.</span><span class="n">instances</span><span class="p">:</span>
+<a id="__codelineno-0-5055" name="__codelineno-0-5055"></a>                    <span class="c1"># Clone Instance</span>
+<a id="__codelineno-0-5056" name="__codelineno-0-5056"></a>                    <span class="n">i_new</span> <span class="o">=</span> <span class="n">Instance</span><span class="p">(</span>
+<a id="__codelineno-0-5057" name="__codelineno-0-5057"></a>                        <span class="n">sop_instance_uid</span><span class="o">=</span><span class="n">i</span><span class="o">.</span><span class="n">sop_instance_uid</span><span class="p">,</span>
+<a id="__codelineno-0-5058" name="__codelineno-0-5058"></a>                        <span class="n">instance_number</span><span class="o">=</span><span class="n">i</span><span class="o">.</span><span class="n">instance_number</span><span class="p">,</span>
+<a id="__codelineno-0-5059" name="__codelineno-0-5059"></a>                        <span class="n">sop_class_uid</span><span class="o">=</span><span class="n">i</span><span class="o">.</span><span class="n">sop_class_uid</span><span class="p">,</span>
+<a id="__codelineno-0-5060" name="__codelineno-0-5060"></a>                        <span class="n">file_path</span><span class="o">=</span><span class="n">i</span><span class="o">.</span><span class="n">file_path</span>
+<a id="__codelineno-0-5061" name="__codelineno-0-5061"></a>                    <span class="p">)</span>
+<a id="__codelineno-0-5062" name="__codelineno-0-5062"></a>                    <span class="c1"># `source_path` is not carried across deliberately.</span>
+<a id="__codelineno-0-5063" name="__codelineno-0-5063"></a>                    <span class="c1"># `__post_init__` derives it from the `file_path`</span>
+<a id="__codelineno-0-5064" name="__codelineno-0-5064"></a>                    <span class="c1"># above, which is what a scan worker would see</span>
+<a id="__codelineno-0-5065" name="__codelineno-0-5065"></a>                    <span class="c1"># anyway; the clone is read by `scan_worker` and</span>
+<a id="__codelineno-0-5066" name="__codelineno-0-5066"></a>                    <span class="c1"># discarded, and no finding carries provenance back.</span>
+<a id="__codelineno-0-5067" name="__codelineno-0-5067"></a>                    <span class="c1"># If a clone is ever written to the store, this is</span>
+<a id="__codelineno-0-5068" name="__codelineno-0-5068"></a>                    <span class="c1"># the line that has to change first (#238).</span>
+<a id="__codelineno-0-5069" name="__codelineno-0-5069"></a>                    <span class="c1">#</span>
+<a id="__codelineno-0-5070" name="__codelineno-0-5070"></a>                    <span class="c1"># Key: Ensure attributes are copied so workers can scan tags</span>
+<a id="__codelineno-0-5071" name="__codelineno-0-5071"></a>                    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="s1">'attributes'</span><span class="p">):</span>
+<a id="__codelineno-0-5072" name="__codelineno-0-5072"></a>                        <span class="n">i_new</span><span class="o">.</span><span class="n">attributes</span> <span class="o">=</span> <span class="n">i</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
 <a id="__codelineno-0-5073" name="__codelineno-0-5073"></a>
-<a id="__codelineno-0-5074" name="__codelineno-0-5074"></a>                    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="s2">"date_shifted"</span><span class="p">):</span>
-<a id="__codelineno-0-5075" name="__codelineno-0-5075"></a>                        <span class="n">i_new</span><span class="o">.</span><span class="n">date_shifted</span> <span class="o">=</span> <span class="n">i</span><span class="o">.</span><span class="n">date_shifted</span>
-<a id="__codelineno-0-5076" name="__codelineno-0-5076"></a>
-<a id="__codelineno-0-5077" name="__codelineno-0-5077"></a>                    <span class="n">se_new</span><span class="o">.</span><span class="n">instances</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i_new</span><span class="p">)</span>
-<a id="__codelineno-0-5078" name="__codelineno-0-5078"></a>
-<a id="__codelineno-0-5079" name="__codelineno-0-5079"></a>        <span class="k">return</span> <span class="n">p_new</span>
+<a id="__codelineno-0-5074" name="__codelineno-0-5074"></a>                    <span class="c1"># Sequences travel too. Dropping them was #57: the</span>
+<a id="__codelineno-0-5075" name="__codelineno-0-5075"></a>                    <span class="c1"># worker got a top-level-only instance, so the scan</span>
+<a id="__codelineno-0-5076" name="__codelineno-0-5076"></a>                    <span class="c1"># reported clean on every nested tag -- report text,</span>
+<a id="__codelineno-0-5077" name="__codelineno-0-5077"></a>                    <span class="c1"># annotations, anything below the first level.</span>
+<a id="__codelineno-0-5078" name="__codelineno-0-5078"></a>                    <span class="n">i_new</span><span class="o">.</span><span class="n">sequences</span> <span class="o">=</span> <span class="n">clone_sequences</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+<a id="__codelineno-0-5079" name="__codelineno-0-5079"></a>
+<a id="__codelineno-0-5080" name="__codelineno-0-5080"></a>                    <span class="c1"># `date_shifted` is not carried because `Instance` no</span>
+<a id="__codelineno-0-5081" name="__codelineno-0-5081"></a>                    <span class="c1"># longer has one (#510): the scan reads the per-value</span>
+<a id="__codelineno-0-5082" name="__codelineno-0-5082"></a>                    <span class="c1"># records below instead, and the study's flag rides</span>
+<a id="__codelineno-0-5083" name="__codelineno-0-5083"></a>                    <span class="c1"># `s_new.date_shifted` above.</span>
+<a id="__codelineno-0-5084" name="__codelineno-0-5084"></a>                    <span class="c1">#</span>
+<a id="__codelineno-0-5085" name="__codelineno-0-5085"></a>                    <span class="c1"># The per-value date records and the store's own</span>
+<a id="__codelineno-0-5086" name="__codelineno-0-5086"></a>                    <span class="c1"># provenance travel too (#510, #513). `audit()`</span>
+<a id="__codelineno-0-5087" name="__codelineno-0-5087"></a>                    <span class="c1"># scans this clone unconditionally, threads and</span>
+<a id="__codelineno-0-5088" name="__codelineno-0-5088"></a>                    <span class="c1"># processes alike, so without these two lines every</span>
+<a id="__codelineno-0-5089" name="__codelineno-0-5089"></a>                    <span class="c1"># worker sees an instance with no record against any</span>
+<a id="__codelineno-0-5090" name="__codelineno-0-5090"></a>                    <span class="c1"># of its dates, raises them all, and the arm shifts</span>
+<a id="__codelineno-0-5091" name="__codelineno-0-5091"></a>                    <span class="c1"># each a second time -- the defect, with the fix in</span>
+<a id="__codelineno-0-5092" name="__codelineno-0-5092"></a>                    <span class="c1"># place. The nested half is `clone_sequences`, above.</span>
+<a id="__codelineno-0-5093" name="__codelineno-0-5093"></a>                    <span class="k">if</span> <span class="n">i</span><span class="o">.</span><span class="n">_shifted_dates</span><span class="p">:</span>
+<a id="__codelineno-0-5094" name="__codelineno-0-5094"></a>                        <span class="n">i_new</span><span class="o">.</span><span class="n">_shifted_dates</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">i</span><span class="o">.</span><span class="n">_shifted_dates</span><span class="p">)</span>
+<a id="__codelineno-0-5095" name="__codelineno-0-5095"></a>                    <span class="n">i_new</span><span class="o">.</span><span class="n">_legacy_shift_provenance</span> <span class="o">=</span> <span class="n">i</span><span class="o">.</span><span class="n">_legacy_shift_provenance</span>
+<a id="__codelineno-0-5096" name="__codelineno-0-5096"></a>
+<a id="__codelineno-0-5097" name="__codelineno-0-5097"></a>                    <span class="n">se_new</span><span class="o">.</span><span class="n">instances</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">i_new</span><span class="p">)</span>
+<a id="__codelineno-0-5098" name="__codelineno-0-5098"></a>
+<a id="__codelineno-0-5099" name="__codelineno-0-5099"></a>        <span class="k">return</span> <span class="n">p_new</span>
 </code></pre></div></td></tr></table></div>
               </details>
 

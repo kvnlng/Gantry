@@ -1538,9 +1538,11 @@ the positional constructor order, except where marked <code>init=False</code>):
 <code>Series</code>: <code>series_instance_uid, modality, series_number, equipment,
 instances</code>. <code>Instance</code>: <code>attributes, sequences, attribute_vrs</code> (inherited
 from <code>DicomItem</code>, <code>init=False</code>), then <code>sop_instance_uid, sop_class_uid,
-instance_number, file_path, source_path</code>, then <code>date_shifted</code>
-(<code>init=False</code>; <code>pixel_array</code> and <code>waveform_array</code> sit between and are
-tier 2). <code>Equipment</code>: <code>manufacturer, model_name, device_serial_number</code>.
+instance_number, file_path, source_path</code> (<code>pixel_array</code> and
+<code>waveform_array</code> follow and are tier 2). <code>Instance</code> carried a
+<code>date_shifted</code> field until 0.9.6; it is gone (#510) — reading it raises
+<code>AttributeError</code>. <code>Study.date_shifted</code> is unchanged.
+<code>Equipment</code>: <code>manufacturer, model_name, device_serial_number</code>.
 <code>attributes</code> is keyed by lowercase <code>"gggg,eeee"</code> strings; on <code>Instance</code>: <code>get_pixel_data()</code>,
 <code>set_pixel_data()</code>, <code>unload_pixel_data()</code>, <code>discard_pixel_data()</code>,
 <code>get_waveform_data()</code>, and the two-names-two-behaviours rule between
