@@ -326,6 +326,26 @@ class RemediationService:
                     # the equality check fails and the old value is
                     # correctly raised. One ordering is recoverable and
                     # the other is not.
+                    #
+                    # Called bare, where the `else` below guards the same
+                    # name with `hasattr`, and the asymmetry is
+                    # deliberate in **that** direction: `set_attr` and
+                    # `record_date_shift` are both `DicomItem`'s, so
+                    # anything reaching this branch has the second
+                    # method by having the first, and a guard here would
+                    # turn a future writer that somehow lacked it into a
+                    # silently unrecorded shift -- #513 again, as a
+                    # skip rather than an error. The `else` branch
+                    # cannot make that argument: it is reached by
+                    # anything *without* `set_attr`, which since #518 is
+                    # `Study` on every shipped path but, by this arm's
+                    # own duck-typing convention, may be any object
+                    # carrying the names it writes (test doubles
+                    # included). A third entity type is therefore
+                    # required to record by construction on this side
+                    # and merely invited to on the other; if one ever
+                    # arrives without a record, this branch must raise
+                    # and that one must skip.
                     entity.record_date_shift(proposal.target_attr, new_date)
                     entity.set_attr(proposal.target_attr, new_date)
                 else:
@@ -964,20 +984,40 @@ class RemediationService:
 def _date_shift_declines(value) -> bool:
     """True when the `SHIFT_DATE` arm's parser would leave `value` unshifted (#498).
 
-    The inspector asks this of a SHIFT/JITTER value on an entity already
-    `date_shifted`. That flag is the entity's, not the value's: it says a
-    shift landed somewhere on the instance or its study, and a value the
-    arm could not parse in the same pass sits beside it unshifted. The
-    scan may skip a value the shift could apply to (moving it again would
-    shift it twice), but not one it cannot, or a second `anonymize()`
-    records CLEARED over a value the pipeline never touched.
+    **Who asks this, since 0.9.6.** The entity-level rule this was written
+    under is gone: the scan no longer reads `Instance.date_shifted` (the
+    field does not exist) nor `Study.date_shifted` in its instance arm.
+    It asks a per-value record instead -- `DicomItem._shifted_dates`,
+    the value the `SHIFT_DATE` arm wrote at that tag -- so a value the
+    pipeline never shifted is raised because no record vouches for it,
+    not because a predicate rescued it from a flag (#510, #513).
+
+    The one place the old rule survives is the **legacy branch** of
+    `PhiInspector._scan_instance`: an instance hydrated from a pre-0.9.6
+    store carries no records for the dates it already holds, so reading
+    "no record" as "not shifted" there would shift every already-shifted
+    date in an archive a second time. Such an instance therefore keeps
+    the entity-level rule, permanently, and that branch is the only
+    caller inside the scan -- which is exactly why it asks *this* rather
+    than a constant: #498's defect is that a value the arm could not
+    parse must be raised again even while a sibling date on the same
+    entity was shifted. So the rule the branch keeps is #498's version of
+    the entity-level rule, not the older one, and the branch (with this
+    caller) dies when no pre-0.9.6 store remains.
+
+    The predicate itself is unchanged and is still read directly --
+    `tests/test_declined_date_recurs.py` pairs it against the arm's own
+    blank-value guard so the two spellings cannot silently disagree --
+    which is why its blank guard below stays even though the scan's own
+    blank arm now sits *above* the legacy branch and makes it unreachable
+    from there.
 
     The answer is the arm's own parser rather than a second one, so the
     scan re-raises exactly what the arm declines: a DA range, a
     multi-valued DA, and a DT with a UTC offset are declined here the same
     as `'notadate'`. Blank is False because the arm skips a blank value
-    without a decline -- nothing is left behind -- and re-raising it would
-    take a clean instance to IDENTIFIED on every re-audit.
+    without a decline -- nothing is left behind -- and answering True
+    would make this predicate disagree with the arm it models.
 
     The parser is the *one* decline this models, and the arm has a second:
     an unresolvable PatientID. The sentence above says "the parser" rather
@@ -988,20 +1028,20 @@ def _date_shift_declines(value) -> bool:
     (`_scan_study` and `_scan_instance` are both handed
     `patient.patient_id`, and a proposal's `metadata` carries it from the
     scan), so an unresolvable one declines the study's own date and every
-    sibling date beside it, nothing is shifted, no `date_shifted` flag is
-    set, `is_shifted` is False, and the scan re-raises the value without
-    asking this at all.
+    sibling date beside it and nothing on that patient is shifted at all.
 
-    Across passes it is reachable, and the answer is still right: the flag
-    persists, so a pass whose PatientID the pipeline has since emptied can
-    ask this about a value shifted under the old one. Then a True says
-    re-raise, the arm declines on the PatientID instead of the parser, and
-    the value still ends raised, declined and IDENTIFIED -- the same
-    outcome by the other arm, which is why modelling that arm buys nothing
-    and would mean threading an entity through a predicate that takes a
-    value. (A *valid* date left unshifted in such a pass is skipped, but
-    that is #510's gap -- a value the shift never touched -- not this
-    one's.)
+    Across passes it is reachable on the legacy path -- `Study.date_shifted`
+    persists, so a pass whose PatientID the pipeline has since **emptied**
+    can ask this about a value shifted under the old one. The answer is
+    still right: a True says re-raise, the arm declines on the PatientID
+    instead of the parser, and the value still ends raised, declined and
+    IDENTIFIED -- the same outcome by the other arm, which is why
+    modelling that arm buys nothing and would mean threading an entity
+    through a predicate that takes a value. A PatientID the pipeline
+    *replaced* rather than emptied resolves and seeds the same offset it
+    seeded in pass 1 (#517), so that case reaches the parser, which was
+    measured across both spellings of the identity rather than reasoned
+    about.
     """
     if value is None or not str(value).strip():
         return False

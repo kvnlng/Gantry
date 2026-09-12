@@ -659,9 +659,11 @@ class PhiInspector:
                     # tag still holds it. Shifting again would move it
                     # twice.
                     needs_remediation = False
-                elif val is None or not str(val).strip():
+                elif not str(val).strip():
                     # A blank value is not a `SHIFT`/`JITTER` finding at
-                    # all. `EMPTY` already tests `val != ""` and
+                    # all. `val` cannot be `None` here -- the walk above
+                    # skips a tag the item does not hold -- so this tests
+                    # blank, not absent. `EMPTY` already tests `val != ""` and
                     # `REPLACE` tests `val != "ANONYMIZED" and val !=
                     # ""`, so three of the four value-writing actions
                     # skip blank; and the arm's own reasoning is that an

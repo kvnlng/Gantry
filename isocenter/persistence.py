@@ -2266,6 +2266,20 @@ class SqliteStore:
         (#518) are the same limitation at two levels, and an operator
         reading two rows about one store would reasonably think there
         were two problems.
+
+        **"Per load" is a call-site fact here, not a shape.** The owner's
+        ruling is one `WARNING` row and one log line per *load*, counting
+        the instances and studies affected -- never one per instance.
+        Nothing in this method enforces that: it reports whatever counts
+        it is handed, and `load_patient` calls it as well as `load_all`.
+        On every path the public API can reach it is still one notice,
+        because `Session` loads through `load_all` exactly once and never
+        calls `load_patient`. A caller that loaded patients one at a time
+        would get one notice each and break the ruling, so such a caller
+        has to accumulate its counts and report once -- or this method
+        has to learn to speak for a load rather than for a call. Said
+        here because the constraint lives at the call site, where a
+        future reader will not be looking.
         """
         if not instances and not studies:
             return
