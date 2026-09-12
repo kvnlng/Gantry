@@ -17,8 +17,11 @@ Every case here is asserted at all three: `ingest()`, the store's
 answer after it; `Instance(file_path).get_pixel_data()`; and the
 handler's own `get_pixel_data`.
 
-JPEG 2000 is not touched: `jpeg2k_decode` returns signed samples already
-(S4).
+JPEG 2000 is not touched by *this* rule: `jpeg2k_decode` returns signed
+samples already. It has a rule of its own, keyed on the codestream's SIZ
+header rather than on BitsStored (#460); S4 is the boundary between the
+two, and
+`tests/test_j2k_signedness_against_pixel_representation.py` pins it.
 
 **Every fixture first asserts that `pydicom.dcmread(p).pixel_array`
 raises**, so no case passes through pydicom's door and says nothing about
@@ -612,18 +615,28 @@ def test_an_odd_length_jpeg_lossless_fragment_decodes(doors):
 
 
 # ---------------------------------------------------------------------------
-# S4 -- JPEG 2000 keeps its own signedness
+# S4 -- JPEG 2000 is read against its own header, not by this rule
 # ---------------------------------------------------------------------------
 
-def test_a_j2k_codestream_keeps_its_own_signedness(doors):
-    """S4: the correction is keyed on the syntax, never applied to J2K.
+def test_a_j2k_codestream_is_read_against_its_own_header(doors):
+    """S4: BitsStored's correction never reaches J2K; #460's does.
 
-    `jpeg2k_decode` returns signed samples, already sign-extended, from a
-    signed codestream (F1's `int16` cases in
-    `tests/test_ingest_imagecodecs_fallback.py`). So an *unsigned*
-    codestream under PixelRepresentation 1 is a contradiction the file
-    makes, and the fallback refuses it. A correction reaching J2K would
-    admit it with wrong values -- and raise on F1's signed output.
+    `jpeg2k_decode` returns the codestream's own signedness, so a J2K
+    frame is never the case this module is about: a signed codestream
+    arrives signed and already sign-extended (F1's `int16` cases in
+    `tests/test_ingest_imagecodecs_fallback.py`), and applying this rule
+    to it would raise on its dtype.
+
+    An *unsigned* codestream under PixelRepresentation 1 is the
+    contradiction the file makes, and until #460 every door refused it
+    (`decoded to uint16, where ... declare int16`). The owner's ruling is
+    to read it by the header, at the codestream's own precision, as
+    pydicom's plugins read its own `J2K_pixelrep_mismatch.dcm`. So this
+    case now reads its values at all three doors. It stays here as the
+    boundary between the two rules -- the sign extension is keyed on the
+    syntax, and the J2K arm is `_against_pixel_representation`'s, keyed on
+    the SIZ header. `tests/test_j2k_signedness_against_pixel_representation.py`
+    is where both directions are pinned.
 
     Three samples, because only 16-bit multi-sample J2K reaches the
     fallback here: pydicom's Pillow plugin decodes 16-bit monochrome
@@ -631,11 +644,7 @@ def test_a_j2k_codestream_keeps_its_own_signedness(doors):
     """
     want = np.stack([SIGNED[16]] * 3, axis=-1)
     codestream = imagecodecs.jpeg2k_encode(_pattern(want, 16), level=0,
-                                           codecformat="J2K")
+                                           codecformat="J2K", mct=False)
     got = doors(_dataset(J2K_LOSSLESS, codestream, want.shape, 16,
                          photometric="RGB", samples=3))
-    ingested, failures, _stored = got["ingest"]
-    assert ingested == 0
-    reason = failures[0][1]
-    assert "decoded to uint16" in reason, reason
-    assert "declare int16" in reason, reason
+    _assert_reads(got, want)

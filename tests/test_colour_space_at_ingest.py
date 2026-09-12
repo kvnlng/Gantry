@@ -262,8 +262,14 @@ def _error_rows(db_path):
 
 @pytest.mark.parametrize("kind", YBR_KINDS)
 def test_a_ybr_source_is_stored_and_exported_as_rgb(tmp_path, kind):
-    """Label `RGB` in the graph, RGB on disk, `RGB` in the file, and a
-    conformant reader sees the source colour.
+    """Label `RGB` in the graph, RGB on disk, and a conformant reader sees
+    the source colour in the exported file.
+
+    The *file's* label is `YBR_RCT` rather than `RGB` since #490: the
+    default export compresses, and RGB samples encoded with the
+    multiple-component transform are what PS3.5 8.2.4 gives that label
+    to. The graph's label, the sidecar's bytes and the colour a reader
+    sees are all unchanged, and they are what #372 is about.
 
     The sidecar assertion reads the bytes through the loader's
     offset/length, not `get_pixel_data()`, so it is about what is on
@@ -291,9 +297,17 @@ def test_a_ybr_source_is_stored_and_exported_as_rgb(tmp_path, kind):
         session.export(str(out), show_progress=False)
 
     exported = _exported(out)
-    assert exported.PhotometricInterpretation == "RGB", (
-        "the exported file declares %r over RGB bytes; a conformant reader "
-        "shows the wrong colours or refuses the file (#372)"
+    # `YBR_RCT`, not `RGB`, since #490: `export()` compresses by default
+    # and an RGB source is encoded with the multiple-component transform,
+    # which PS3.5 8.2.4 gives exactly that label under a reversible
+    # encode. What #372 is about is unchanged and is what the colour
+    # assertion below holds: the label names the transform the codestream
+    # carries over RGB samples, where it used to name a colour space the
+    # samples were not in.
+    assert exported.PhotometricInterpretation == "YBR_RCT", (
+        "the exported file declares %r over RGB samples carried through "
+        "the multiple-component transform; a conformant reader shows the "
+        "wrong colours or refuses the file (#372, #490)"
         % exported.PhotometricInterpretation)
     px = exported.pixel_array[0, 0]
     assert _close(px), (

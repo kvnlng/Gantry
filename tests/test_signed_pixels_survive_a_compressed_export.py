@@ -507,7 +507,12 @@ def test_an_rgb_frame_still_round_trips(tmp_path, frames, dtype_name, pixrep):
 
     assert error is None, f"an RGB export failed: {error}"
     ds = pydicom.dcmread(files[0])
-    assert ds.PhotometricInterpretation == "RGB"
+    # The label the codestream earns: an RGB source is encoded with the
+    # multiple-component transform, and PS3.5 8.2.4 gives that codestream
+    # `YBR_RCT` under a reversible encode (#490). The samples are what
+    # this test is about and they are unchanged, asserted below against
+    # `RGB_ROWS`.
+    assert ds.PhotometricInterpretation == "YBR_RCT"
     assert ds.PlanarConfiguration == 0
     assert ds.BitsAllocated == 8
     assert ds.pixel_array.dtype == np.dtype(dtype_name)
