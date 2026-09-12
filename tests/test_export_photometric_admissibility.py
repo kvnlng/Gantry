@@ -1,0 +1,546 @@
+"""A label the written transfer syntax does not admit is written, loudly (#502).
+
+Four Photometric Interpretations named a colour space or a layout that
+the syntax the file was written under cannot carry, and the export wrote
+each one as declared, in silence. Measured on a50632d, 3.12.14 and
+3.14.7t, over an 8x8x3 `uint8` array under Implicit VR Little Endian:
+`YBR_ICT`, `YBR_RCT`, `YBR_PARTIAL_422` and `YBR_PARTIAL_420` were all
+written as declared, the samples were bit-exact, `verify_readback=True`
+passed every one, `get_audit_errors()` was empty and the report read
+`PASS -- nothing recorded in sections 2 to 4 costs this run its PASS`.
+A multi-valued label (`['YBR_ICT', 'RGB']`) was written as two values
+of a VM 1 attribute and passed the readback too.
+
+The ruling on the write path is warn and attempt the best output, not
+refuse: there are formats this library can read and cannot write, and a
+de-identified copy the user can fix beats no copy. So the label and the
+samples are written unchanged and the run says what it could not
+honour -- a `WARNING` audit row, which reaches the compliance report and
+grades the run `REVIEW_REQUIRED` (#411, #479). This is the *prohibition*
+class of that ruling: the source's own header is impossible under the
+syntax being written, which is a fact about the user's data, unlike
+#499's exact self-correction, which takes an INFO line and no row.
+
+Why the label is preserved rather than relabelled, measured (the
+reasoning is in the PR body, and these are the numbers):
+
+- where a JPEG 2000 colour transform really was undone on the way in,
+  ingest already stores `RGB` -- so an instance that reaches the writer
+  still carrying `YBR_ICT`/`YBR_RCT` holds the source's own
+  untransformed bytes, and `RGB` would be an invented claim;
+- a genuinely packed 4:2:2 source cannot be ingested at all (refused,
+  `8192 vs 12288 bytes`), so there is no subsampled population to be
+  faithful to, and `YBR_FULL` would assert a full 0-255 range for
+  samples PS3.3 C.7.6.3.1.2 says are 16-235.
+
+The one refusal is the multi-valued label, and it is the ruling's own
+exception: no single value can be chosen without inventing one, and such
+a file cannot be read back by this library at all, so no output here
+would be honest.
+"""
+import itertools
+import logging
+from datetime import date
+
+import numpy as np
+import pydicom
+import pytest
+
+from isocenter.entities import Instance, Patient, Series, Study
+from isocenter.io_handlers import (DicomExporter, ExportContext,
+                                   ExportOutcome, _export_instance_worker,
+                                   _PhotometricRefusal)
+from isocenter.session import DicomSession
+
+SC_STORAGE = "1.2.840.10008.5.1.4.1.1.7"
+IMPLICIT_VR_LE = "1.2.840.10008.1.2"
+J2K_LOSSLESS = "1.2.840.10008.1.2.4.90"
+#: The four this issue is about, under a native syntax.
+INADMISSIBLE = ("YBR_ICT", "YBR_RCT", "YBR_PARTIAL_422", "YBR_PARTIAL_420")
+#: Y, Cb, Cr of one colour, so the samples are plausible for every label
+#: under test and no assertion depends on them being implausible.
+YBR = (100, 123, 214)
+
+_serial = itertools.count(1)
+
+
+def _image(label, *, samples=3, arr=None):
+    """A hand-built colour instance declaring `label`."""
+    if arr is None:
+        arr = np.full((8, 8, samples), YBR[:samples], np.uint8)
+    inst = Instance(f"1.2.826.0.1.502.{next(_serial)}", SC_STORAGE, 1)
+    inst.file_path = None
+    for tag, value in (("0008,0020", "20230101"), ("0008,0030", "120000"),
+                       ("0008,0060", "OT"), ("0028,0002", samples)):
+        inst.set_attr(tag, value)
+    inst.set_pixel_data(arr)
+    inst.set_attr("0028,0004", label)
+    return inst
+
+
+def _export(tmp_path, inst, **kwargs):
+    return _export_instance_worker(ExportContext(
+        instance=inst,
+        output_path=str(tmp_path / "out" / f"{inst.sop_instance_uid}.dcm"),
+        patient_attributes={"0010,0010": "ANON", "0010,0020": "PAT1"},
+        study_attributes={"0020,000d": "1.2.826.0.2.1"},
+        series_attributes={"0020,000e": "1.2.826.0.3.1"},
+        **kwargs))
+
+
+def _graph(instances):
+    patient = Patient("PAT1", "Original Name")
+    study = Study("ST_1", date(2023, 1, 1))
+    study.study_time = "120000"
+    series = Series("SE_1", "OT", 1)
+    series.instances.extend(instances)
+    study.series.append(series)
+    patient.studies.append(study)
+    return patient
+
+
+def _grade(report):
+    return [line.strip() for line in report.read_text().splitlines()
+            if "Grade Basis" in line][0]
+
+
+# ---------------------------------------------------------------------------
+# The label and the bytes are written; the run says so.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("label", INADMISSIBLE)
+def test_the_four_labels_are_written_as_declared_with_a_warning(
+        tmp_path, label):
+    """Best output plus a warning, per the write-path ruling (#502).
+
+    The file exists, its label is the one the source declared, its
+    samples are the array, and one sentence comes back on
+    `ExportOutcome.warnings` naming the label and the syntax. Killing
+    mutations: the `warnings` append dropped (silent, as before); the
+    label rewritten to `RGB` or `YBR_FULL` (the rejected relabels -- the
+    provenance measurements in the PR body are why neither is honest).
+    """
+    inst = _image(label)
+
+    outcome = _export(tmp_path, inst)
+
+    assert outcome.ok, outcome.error
+    ds = pydicom.dcmread(outcome.output_path)
+    assert ds.PhotometricInterpretation == label
+    assert ds.file_meta.TransferSyntaxUID == IMPLICIT_VR_LE
+    assert np.array_equal(
+        np.frombuffer(ds.PixelData, np.uint8)[:3], np.array(YBR, np.uint8))
+    assert len(outcome.warnings) == 1, outcome.warnings
+    warning = outcome.warnings[0]
+    assert warning.startswith(
+        f"PhotometricInterpretation '{label}' is not a label the transfer "
+        f"syntax this file was written under admits"), warning
+    assert IMPLICIT_VR_LE in warning, warning
+    assert ("The label was written as declared, over the samples the "
+            "instance held, and neither was changed.") in warning, warning
+    assert outcome.corrections == [], outcome.corrections
+
+
+@pytest.mark.parametrize("label", INADMISSIBLE)
+def test_the_graph_is_not_touched_by_the_warning(tmp_path, label):
+    """A warning describes the file; it does not edit the instance (#502).
+
+    The graph-purity rule this path keeps (#468, #470, #499). Killing
+    mutation: a `set_attr("0028,0004", ...)` added beside the warning.
+    """
+    inst = _image(label)
+
+    _export(tmp_path, inst)
+
+    assert inst.attributes["0028,0004"] == label
+
+
+def test_the_remedy_sentence_differs_for_the_partial_labels(tmp_path):
+    """A uniform remedy would be false for two of the four (#502).
+
+    Compressing gets `YBR_ICT`/`YBR_RCT` a syntax that admits the label
+    and applies the transform it names (#490, #516). It does nothing for
+    `YBR_PARTIAL_*`, which no syntax this exporter writes admits, so
+    that sentence offers only the relabel. Killing mutation: one shared
+    sentence for all four.
+    """
+    transform = _export(tmp_path, _image("YBR_RCT")).warnings[0]
+    subsampled = _export(tmp_path, _image("YBR_PARTIAL_422")).warnings[0]
+
+    assert "use_compression=True" in transform, transform
+    assert "multiple-component transform" in transform, transform
+    assert "use_compression=True" not in subsampled, subsampled
+    assert "subsampled layout" in subsampled, subsampled
+    assert 'set_attr("0028,0004"' in transform and \
+        'set_attr("0028,0004"' in subsampled
+
+
+@pytest.mark.parametrize("label, expected", [
+    ("YBR_FULL", "YBR_FULL"), ("RGB", "RGB"), ("HSV", "HSV"),
+    ("PALETTE COLOR", "RGB"), ("YBR_FULL_422", "YBR_FULL"),
+], ids=["ybr_full", "rgb", "hsv", "palette", "ybr_full_422"])
+def test_no_warning_for_a_label_the_syntax_admits(tmp_path, label, expected):
+    """The rule is not "warn about what I do not recognise" (#502).
+
+    `HSV` is retired and is still a label an uncompressed file may
+    carry, so it must not warn; `PALETTE COLOR` at three samples is
+    already resolved to `RGB` and `YBR_FULL_422` to `YBR_FULL` (#470),
+    and the check reads the label as *written*, so neither warns either.
+    Killing mutation: the per-syntax table replaced by a list of the four
+    labels this issue names, after which `HSV` warns; or the check
+    reading `inst.attributes` instead of what reached `ds`, after which
+    `YBR_FULL_422` and `PALETTE COLOR` warn about labels the file does
+    not carry.
+    """
+    outcome = _export(tmp_path, _image(label))
+
+    assert outcome.ok, outcome.error
+    assert pydicom.dcmread(
+        outcome.output_path).PhotometricInterpretation == expected
+    assert outcome.warnings == [], outcome.warnings
+
+
+@pytest.mark.parametrize("label", ["YBR_ICT", ["YBR_ICT", "RGB"]],
+                         ids=["single", "multi-valued"])
+def test_a_monochrome_export_warns_about_nothing(tmp_path, label):
+    """One sample resolves to MONOCHROME2 whatever was declared (#502).
+
+    The resolver answers before both halves of the check, so a mono
+    instance cannot reach either however its label was spelled -- and
+    that is why both halves read `ds` rather than `attributes`. The
+    multi-valued arm is the one that matters: the file this export
+    writes carries a single `MONOCHROME2`, is re-ingestible, and is
+    exactly the best-effort output the ruling asks for, so refusing it
+    on the strength of the declaration would be an over-refusal on the
+    one path where refusal is Breaking.
+
+    Killing mutations: either half reading `attributes.get("0028,0004")`
+    instead of the written label (the multi-valued arm refuses a file
+    that would have been fine; the single arm warns about a file
+    labelled MONOCHROME2); the check moved above
+    `_write_pixel_geometry`, which is the same two failures.
+    """
+    inst = _image(label, samples=1, arr=np.full((8, 8), 7, np.uint8))
+
+    outcome = _export(tmp_path, inst)
+
+    assert outcome.ok, outcome.error
+    assert pydicom.dcmread(
+        outcome.output_path).PhotometricInterpretation == "MONOCHROME2"
+    assert outcome.warnings == [], outcome.warnings
+
+
+@pytest.mark.parametrize("label", ["YBR_ICT", "YBR_RCT"])
+def test_ict_and_rct_under_jpeg_2000_warn_about_nothing(tmp_path, label):
+    """JPEG 2000 admits both labels, and #516 keeps them (#502, #490).
+
+    Measured on f3eee9f: a source already labelled `YBR_RCT`/`YBR_ICT`
+    is encoded with the multiple-component transform and keeps its label,
+    because its samples were inverse-transformed on the way in -- so
+    under `...1.2.4.90` the label is true of the codestream and there is
+    nothing to warn about. The J2K row of the table therefore admits
+    `YBR_ICT` as well as `YBR_RCT`, which is the owner's ruling on #490
+    and not the strict reading of `level=0`; a table narrowed to
+    `YBR_RCT` alone would warn about this library's own output. Killing
+    mutations: the check not keyed on the syntax being written (the
+    compressed file warns too); the J2K row narrowed to `YBR_RCT`.
+    """
+    outcome = _export(tmp_path, _image(label), compression="j2k")
+
+    assert outcome.ok, outcome.error
+    ds = pydicom.dcmread(outcome.output_path)
+    assert ds.file_meta.TransferSyntaxUID == J2K_LOSSLESS
+    assert ds.PhotometricInterpretation == label
+    assert outcome.warnings == [], outcome.warnings
+
+
+def test_a_compressed_rgb_export_is_relabelled_and_warns_about_nothing(
+        tmp_path):
+    """#516's other case: `RGB` is transformed and relabelled `YBR_RCT`.
+
+    This passes for a reason worth stating exactly, because the obvious
+    reading of it is wrong. `_write_pixel_geometry` runs **before**
+    `_compress_j2k`, so what the writer judges here is `RGB` against the
+    J2K row -- admitted, hence silent -- and the relabel to `YBR_RCT`
+    happens afterwards. The writer never sees the final label; the
+    readback is the only reader that does (#507). Both labels are on
+    that row, so the ordering is harmless, and this test is the boundary
+    that says so rather than a mutant: a check reading the label after
+    the encoder would pass here too. The mutant for that ordering is in
+    `tests/test_readback_label_admissibility.py`.
+    """
+    outcome = _export(tmp_path, _image("RGB"), compression="j2k")
+
+    assert outcome.ok, outcome.error
+    assert pydicom.dcmread(
+        outcome.output_path).PhotometricInterpretation == "YBR_RCT"
+    assert outcome.warnings == [], outcome.warnings
+
+
+@pytest.mark.parametrize("declared, written", [
+    (" ybr_ict ", " ybr_ict"), (["YBR_ICT"], "YBR_ICT")],
+    ids=["padded-lowercase", "one-element-list"])
+def test_a_padded_or_list_spelling_warns_too(tmp_path, declared, written):
+    """An odd spelling of an inadmissible label is still inadmissible (#502).
+
+    A CS is space-padded to even length in the file and read back
+    stripped on the right, and pydicom unwraps a one-element value on
+    assignment, so both of these reach a reader as `YBR_ICT`. The
+    one-element arm is a **characterisation**: pydicom's unwrap is what
+    makes it work, so `_written_photometric` deliberately does not
+    unwrap anything itself.
+    """
+    outcome = _export(tmp_path, _image(declared))
+
+    assert outcome.ok, outcome.error
+    assert pydicom.dcmread(
+        outcome.output_path).PhotometricInterpretation == written
+    assert len(outcome.warnings) == 1, outcome.warnings
+
+
+@pytest.mark.parametrize("declared", [" rgb ", "rgb", " RGB", ["RGB"]],
+                         ids=["padded-lower", "lower", "padded", "list"])
+def test_an_oddly_spelled_admitted_label_does_not_warn(tmp_path, declared):
+    """This is what the normalization is for, and the other half of it (#502).
+
+    An instance declaring `' rgb '` puts `' rgb '` on the dataset --
+    measured, pydicom does not normalize a declaration on the way in --
+    and writes a label every conformant reader takes as `RGB`. Comparing
+    it unnormalized would raise a `WARNING` and grade the run
+    `REVIEW_REQUIRED` over a file that is perfectly admissible, which is
+    worse than the silence this issue is about: a false alarm in a
+    compliance report costs the reader their trust in the true ones.
+    Killing mutation: `.strip().upper()` dropped from
+    `_written_photometric` (all four arms warn).
+    """
+    outcome = _export(tmp_path, _image(declared))
+
+    assert outcome.ok, outcome.error
+    assert outcome.warnings == [], outcome.warnings
+
+
+# ---------------------------------------------------------------------------
+# The parent's half: the audit row and the grade.
+# ---------------------------------------------------------------------------
+
+_LEVERS = ("ISOCENTER_FORCE_THREADS", "ISOCENTER_FORCE_PROCESSES",
+           "ISOCENTER_MAX_TASKS_PER_CHILD")
+
+
+@pytest.mark.parametrize("threads", [False, True])
+def test_the_warning_reaches_the_audit_log_and_moves_the_grade(
+        tmp_path, monkeypatch, threads):
+    """One `WARNING` row per instance, and the run stops reading PASS (#502).
+
+    The row is what makes a preserved false label honest rather than
+    silent: `get_audit_errors()` selects `ERROR` and `WARNING`, the
+    report renders both under "Exceptions & Errors", and section 4 costs
+    the run its `PASS` (#479). Written in the parent, because the worker
+    is usually a spawned process with no store handle and no log handler
+    (#126) -- measured for `corrections` in the review of #506 as 0 rows
+    from 3 workers. Killing mutations: the row written in the worker
+    instead of returned on `warnings`; `action_type="DATA_LOSS"` or any
+    string other than the frozen `WARNING` (#411).
+    """
+    for name in _LEVERS:
+        monkeypatch.delenv(name, raising=False)
+    if threads:
+        monkeypatch.setenv("ISOCENTER_FORCE_THREADS", "1")
+    instances = [_image("YBR_RCT"), _image("YBR_PARTIAL_420"),
+                 _image("RGB")]
+    report = tmp_path / "report.md"
+
+    with DicomSession(str(tmp_path / "w.db")) as session:
+        session.store.patients.append(_graph(instances))
+        session.save()
+        session.export(str(tmp_path / "out"), use_compression=False,
+                       show_progress=False)
+        rows = [tuple(r) for r in session.store_backend.get_audit_errors()]
+        session.generate_report(str(report))
+
+    # `get_audit_errors()` returns (timestamp, action_type, details).
+    warnings = [r for r in rows if "PhotometricInterpretation" in r[2]]
+    assert len(warnings) == 2, rows
+    assert {r[1] for r in warnings} == {"WARNING"}, warnings
+    # One row per warned label, and none for the clean instance. The
+    # `entity_uid` column is not in what `get_audit_errors()` returns --
+    # `test_a_warning_is_logged_only_for_a_file_that_was_written` pins
+    # that the row carries the right one.
+    assert sorted(label for label in ("YBR_RCT", "YBR_PARTIAL_420", "RGB")
+                  if any(f"'{label}'" in r[2] for r in warnings)) == [
+        "YBR_PARTIAL_420", "YBR_RCT"], warnings
+    assert "REVIEW_REQUIRED" in _grade(report), _grade(report)
+
+
+def test_a_clean_export_still_grades_pass(tmp_path):
+    """The control for the test above (#502).
+
+    Without it, a mutant that writes a `WARNING` row for every export
+    would pass the grade assertion. Killing mutation: the warning
+    appended unconditionally.
+    """
+    report = tmp_path / "report.md"
+
+    with DicomSession(str(tmp_path / "c.db")) as session:
+        session.store.patients.append(_graph([_image("RGB")]))
+        session.save()
+        session.export(str(tmp_path / "out"), use_compression=False,
+                       show_progress=False)
+        assert session.store_backend.get_audit_errors() == []
+        session.generate_report(str(report))
+
+    assert "PASS" in _grade(report), _grade(report)
+
+
+def test_a_warning_is_logged_only_for_a_file_that_was_written(caplog):
+    """No row for a failed outcome or a lost worker (#502).
+
+    A warning describes a file the caller now has. When the write failed
+    there is no file and the failure has its own `ERROR` row; a lost
+    worker comes back as a bare exception with no `warnings` at all
+    (#232). The mirror of `_report_export_corrections`' own rule.
+    Killing mutation: the `ok` filter dropped, after which the failed
+    instance's warning is audited and a lost worker raises
+    `AttributeError` in the parent.
+    """
+    caplog.set_level(logging.WARNING, logger="isocenter")
+    results = [
+        ExportOutcome(ok=True, output_path="/o/a.dcm", sop_instance_uid="A",
+                      warnings=["written warning"]),
+        ExportOutcome(ok=False, output_path="/o/b.dcm", sop_instance_uid="B",
+                      warnings=["unwritten warning"],
+                      error=RuntimeError("disk full")),
+        RuntimeError("worker lost"),
+    ]
+
+    class _Store:
+        def __init__(self):
+            self.rows = []
+
+        def log_audit(self, **kwargs):
+            self.rows.append(kwargs)
+
+    store = _Store()
+    reported = DicomExporter._report_export_warnings(results, store)
+
+    assert reported == 1
+    assert [r["details"] for r in store.rows] == ["written warning"]
+    assert [r["action_type"] for r in store.rows] == ["WARNING"]
+    assert [r["entity_uid"] for r in store.rows] == ["A"]
+    assert [r.getMessage() for r in caplog.records
+            if r.name == "isocenter"] == ["A: written warning"]
+
+
+# ---------------------------------------------------------------------------
+# The multi-valued label: the ruling's exception.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("compression", [None, "j2k"])
+@pytest.mark.parametrize("label", [["YBR_ICT", "RGB"], ["RGB", "RGB"]],
+                         ids=["two-labels", "same-label-twice"])
+def test_a_multi_valued_label_is_refused_on_both_syntaxes(
+        tmp_path, compression, label):
+    """No output here would be honest, so there is none (#502).
+
+    `['RGB', 'RGB']` is in the parameters so the refusal is pinned to
+    the *arity* and not to the labels: two values of a VM 1 attribute is
+    a file this library cannot read back at all, measured -- ingest
+    refuses it before any label is examined. That is the same standard
+    `_J2K_ENCODABLE_FRAMES` refuses a frame on, and it is why this one
+    label is the exception to warn-and-write. Killing mutations: the
+    arity clause dropped (the file is written, as it was before this
+    change); the refusal downgraded to a warning (a file this library
+    cannot re-ingest is delivered as the best output).
+    """
+    outcome = _export(tmp_path, _image(label), compression=compression)
+
+    assert not outcome.ok
+    assert isinstance(outcome.error, _PhotometricRefusal), outcome.error
+    message = str(outcome.error)
+    assert "PhotometricInterpretation (0028,0004) is a single value" in \
+        message, message
+    assert "this instance declares 2" in message, message
+    assert not (tmp_path / "out").exists() or not list(
+        (tmp_path / "out").glob("*.dcm"))
+
+
+def test_session_export_audits_the_refusal_and_grades_it(tmp_path):
+    """The refusal fails one instance and is recorded (#502).
+
+    Raised inside the worker's own `try`, so it comes back as
+    `ExportOutcome(ok=False)` and costs one instance rather than
+    aborting the batch -- the shape `_J2kFrameRefusal` already has. The
+    clean instance beside it is still delivered, which is the whole
+    point of the ruling. Killing mutation: the refusal raised outside
+    the worker's handler, after which nothing reaches disk.
+
+    **Classified survivor, named rather than discovered later:** "the
+    raise moved after `save_as`" is not killable by a disk assertion --
+    the worker unlinks its temporary file on any raise and `output_path`
+    is only populated by the `os.replace`, so "no file at the output
+    path" holds for the original and for that mutant alike.
+    """
+    good, bad = _image("RGB"), _image(["YBR_ICT", "RGB"])
+    report = tmp_path / "report.md"
+    out = tmp_path / "out"
+
+    with DicomSession(str(tmp_path / "r.db")) as session:
+        session.store.patients.append(_graph([good, bad]))
+        session.save()
+        summary = session.export(str(out), use_compression=False,
+                                 show_progress=False)
+        rows = [str(tuple(r)) for r in session.store_backend.get_audit_errors()]
+        session.generate_report(str(report))
+
+    assert [p.stem for p in out.rglob("*.dcm")] == [good.sop_instance_uid]
+    assert len(summary.failures) == 1, summary
+    assert any("is a single value" in r and "ERROR" in r for r in rows), rows
+    assert "REVIEW_REQUIRED" in _grade(report), _grade(report)
+
+
+def test_write_tree_raises_on_the_refusal(tmp_path):
+    """The serializer path's channel is unchanged (#502).
+
+    `write_tree()` counts failures and raises `RuntimeError("Export
+    incomplete. ...")`, as it does for a refused J2K frame. Killing
+    mutation: the refusal swallowed into a warning, after which
+    `write_tree` writes the file and raises nothing.
+    """
+    with pytest.raises(RuntimeError) as raised:
+        DicomExporter.write_tree(_graph([_image(["YBR_ICT", "RGB"])]),
+                                 str(tmp_path / "out"), compression=None,
+                                 show_progress=False)
+
+    assert "Export incomplete. 1 failed." in str(raised.value)
+    assert "is a single value" in str(raised.value)
+
+
+# ---------------------------------------------------------------------------
+# Stability of the preserved label.
+# ---------------------------------------------------------------------------
+
+def test_the_exported_file_re_ingests_with_the_same_label(tmp_path):
+    """Preserving the label does not drift or accumulate (#502).
+
+    **Characterisation pin, no mutant:** it passes on f3eee9f
+    unchanged, because today's export already preserves the label. It
+    is here so that a later relabel to `RGB` or `YBR_FULL` has to be
+    deliberate: pass 2 would differ from pass 1, and a user diffing an
+    export against its source would see a colour claim change that no
+    de-identification asked for.
+    """
+    out1 = tmp_path / "out1"
+    DicomExporter.write_tree(_graph([_image("YBR_RCT")]), str(out1),
+                             compression=None, show_progress=False)
+    assert pydicom.dcmread(
+        next(out1.rglob("*.dcm"))).PhotometricInterpretation == "YBR_RCT"
+
+    out2 = tmp_path / "out2"
+    with DicomSession(str(tmp_path / "ri.db")) as session:
+        assert session.ingest(str(out1)).ingested == 1
+        inst = session.store.patients[0].studies[0].series[0].instances[0]
+        assert inst.attributes["0028,0004"] == "YBR_RCT"
+        session.export(str(out2), use_compression=False, show_progress=False)
+
+    assert pydicom.dcmread(
+        next(out2.rglob("*.dcm"))).PhotometricInterpretation == "YBR_RCT"
