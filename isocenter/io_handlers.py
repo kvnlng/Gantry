@@ -574,9 +574,9 @@ _PHOTOMETRIC_INADMISSIBLE["YBR_PARTIAL_420"] = \
 def _written_photometric(value) -> Optional[str]:
     """One label, normalized for comparison against a syntax's row (#502).
 
-    `.strip().upper()`, because that is what reaches a *reader*: a CS is
-    space-padded to even length in the file and a declaration is not
-    normalized on the way in, so an instance declaring `' rgb '` puts
+    Stripped and upper-cased, because that is what reaches a *reader*: a
+    CS is space-padded to even length in the file and a declaration is
+    not normalized on the way in, so an instance declaring `' rgb '` puts
     `' rgb '` on `ds` (measured) and writes a label every conformant
     reader takes as `RGB`. Comparing it unnormalized would warn about a
     label that is perfectly admissible -- and would equally miss
@@ -597,6 +597,13 @@ def _written_photometric(value) -> Optional[str]:
     the readback fails the file.
 
     An absent or empty value returns `None`: there is no claim to judge.
+
+    (The two normalizations are named in words rather than written as
+    the dotted calls they are, on purpose:
+    `tests/test_documented_api_exists.py` reads a dotted call inside any
+    string in this package as a method the package promises its callers
+    (#234), and `str`'s methods are not ours to promise. Read the code
+    below for the spelling.)
     """
     if value is None:
         return None
