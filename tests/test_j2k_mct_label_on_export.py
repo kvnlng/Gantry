@@ -37,7 +37,7 @@ import numpy as np
 import pydicom
 import pytest
 from pydicom.dataset import FileDataset, FileMetaDataset
-from pydicom.encaps import generate_frames
+from pydicom.encaps import encapsulate, generate_frames
 from pydicom.uid import (ExplicitVRLittleEndian, JPEG2000Lossless,
                          generate_uid)
 
@@ -128,18 +128,20 @@ def test_an_rgb_source_gets_the_transform_and_the_ybr_rct_label():
 
 
 @pytest.mark.parametrize("photometric", ["YBR_FULL", "YBR_FULL_422",
-                                         "YBR_PARTIAL_420", "YBR_RCT",
-                                         "YBR_ICT"])
-def test_a_three_sample_source_that_is_not_rgb_is_encoded_without_the_transform(
+                                         "YBR_PARTIAL_420"])
+def test_a_three_sample_source_in_a_luma_chroma_space_keeps_mct_off(
         photometric):
-    """`mct=False`, and the label the source had.
+    """`mct=False`, and the label the source had (#490 case 3).
 
     A luma/chroma source is already decorrelated: MCT over it is both
     unnameable (the label would describe one transform over samples that
-    went through two) and larger. `YBR_RCT` and `YBR_ICT` are here too --
-    a source *already* carrying such a label is not a second reason to
-    transform; the label describes what the codestream did, and this
-    codestream does nothing.
+    went through two) and larger -- 66482 bytes against `mct=False`'s
+    48819 on a `YBR_FULL` frame. The label describes what the codestream
+    did, and this codestream does nothing to these components.
+
+    `YBR_RCT` and `YBR_ICT` are deliberately **not** here; they are
+    `test_a_source_already_labelled_for_the_transform_is_transformed`
+    below. That is N2's ruling, and it is the half #490 first got wrong.
 
     Mutant: the label test dropped from `mct`, so any 3-sample source
     transforms. Every case goes red at the flag.
@@ -148,6 +150,36 @@ def test_a_three_sample_source_that_is_not_rgb_is_encoded_without_the_transform(
     _compress_j2k(ds, pixel_array=arr)
     assert _cod_transform(_frame(ds)) == 0
     assert str(ds.PhotometricInterpretation) == photometric
+
+
+@pytest.mark.parametrize("photometric", ["YBR_RCT", "YBR_ICT"])
+def test_a_source_already_labelled_for_the_transform_is_transformed(
+        photometric):
+    """`mct=True`, and **the label it came with** (#490 case 2, N2).
+
+    PS3.5 8.2.4 binds transform and label in both directions, and this is
+    the direction #490 first got wrong: encoding `mct=False` under a
+    label the source keeps declares RCT over a `COD` transform byte of 0
+    -- the same non-conformance as an `RGB` label over MCT, mirrored.
+
+    A 3-sample instance carrying such a label can only have come from a
+    J2K source whose samples this library already inverse-transformed
+    into memory (`jpeg2k_decode` undoes the transform, #448), so applying
+    the transform on re-encode is what makes the label true of *this*
+    codestream. The label is not rewritten: `YBR_ICT` stays `YBR_ICT`
+    rather than becoming `YBR_RCT`, because relabelling would name a
+    transform this function did not choose, and relabelling to `RGB`
+    would discard the source's stated colour space against #482.
+
+    Mutant: `_J2K_MCT_SOURCES` narrowed back to `{"RGB"}`, or the
+    relabel's `photometric == "RGB"` guard dropped. The first goes red at
+    the flag, the second at the label.
+    """
+    ds, arr = _dataset(photometric, 3)
+    _compress_j2k(ds, pixel_array=arr)
+    assert _cod_transform(_frame(ds)) == 1
+    assert str(ds.PhotometricInterpretation) == photometric
+    assert ds.file_meta.TransferSyntaxUID == JPEG2000Lossless
 
 
 @pytest.mark.parametrize("photometric", ["MONOCHROME1", "MONOCHROME2",
@@ -261,11 +293,79 @@ def _native_rgb(folder):
     return path, arr
 
 
+def _rng_rgb(rows=8, cols=8):
+    """A deterministic 8-bit RGB frame with every channel distinct."""
+    return np.random.default_rng(490).integers(
+        0, 256, size=(rows, cols, 3), dtype=np.uint8)
+
+
+def _write_j2k(path, arr, photometric, mct):
+    """`arr` as a real J2K file labelled `photometric`.
+
+    `mct=True` writes a codestream that genuinely carries the transform,
+    so a `YBR_RCT` fixture is a conformant file rather than a mislabelled
+    one -- otherwise this test would be measuring the defect #490 fixes
+    instead of the round trip.
+    """
+    codestream = imagecodecs.jpeg2k_encode(arr, level=0, codecformat="J2K", mct=mct)
+    assert _cod_transform(codestream) == (1 if mct else 0), (
+        "fixture does not carry the transform it claims")
+    ds, _unused = _dataset(photometric, 3)
+    ds.file_meta.TransferSyntaxUID = JPEG2000Lossless
+    ds.PixelData = encapsulate([codestream])
+    ds["PixelData"].is_undefined_length = True
+    ds.save_as(str(path), enforce_file_format=True)
+    return str(path)
+
+
 def _exported(out):
     written = [os.path.join(r, f) for r, _d, files in os.walk(str(out))
                for f in files if f.endswith(".dcm")]
     assert len(written) == 1, written
     return written[0]
+
+
+def test_an_ingested_ybr_rct_file_is_stored_rgb_so_the_export_relabels_it(
+        tmp_path):
+    """Which of #490's three cases an *ingested* J2K colour file reaches.
+
+    This is the boundary between case 1 and case 2, and it is measured
+    rather than assumed because #482 and this change touch the same
+    label. `jpeg2k_decode` undoes the codestream's transform and returns
+    RGB, and `_FALLBACK_J2K` stores that answer (#448, #482) -- so a
+    `YBR_RCT` **file** is stored as an `RGB` instance, and the export
+    that follows takes **case 1**: transform on, relabelled `YBR_RCT`.
+
+    So case 2 -- a `YBR_RCT`/`YBR_ICT` label surviving as far as the
+    encoder -- is reachable only through a graph built by hand or a
+    caller who sets `PhotometricInterpretation` itself, never through
+    `ingest()`. That is why N2 is a conformance fix at the encoder and
+    not a change to any ingested file's round trip, and why the owner
+    declined to refuse the combination: no ingested file reaches it.
+
+    The samples survive both passes, which is the thing a relabel must
+    not cost.
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+    arr = _rng_rgb()
+    _write_j2k(src / "ybr.dcm", arr, "YBR_RCT", mct=True)
+    out = tmp_path / "out"
+
+    with DicomSession(str(tmp_path / "one.db")) as session:
+        summary = session.ingest(str(src))
+        assert summary.ingested == 1, summary.failures
+        instance = session.store.patients[0].studies[0].series[0].instances[0]
+        assert instance.attributes.get("0028,0004") == "RGB", (
+            "the decoder's answer is what is stored (#448, #482)")
+        assert instance.get_pixel_data().tolist() == arr.tolist()
+        session.export(str(out), show_progress=False)
+
+    exported = pydicom.dcmread(_exported(out))
+    assert _cod_transform(_frame(exported)) == 1
+    assert str(exported.PhotometricInterpretation) == "YBR_RCT", (
+        "case 1: stored RGB, so transformed and relabelled")
+    assert exported.pixel_array.tolist() == arr.tolist()
 
 
 def test_an_exported_colour_file_declares_the_transform_it_carries(tmp_path):

@@ -4430,6 +4430,20 @@ _J2K_ENCODABLE_FRAMES = frozenset({
     (2, True),
 })
 
+#: The 3-sample labels `_compress_j2k` encodes **with** the multiple
+#: component transform (#490). `RGB` is transformed and relabelled
+#: `YBR_RCT`; `YBR_RCT` and `YBR_ICT` are transformed and keep the label
+#: they came with, because such an instance's samples were already
+#: inverse-transformed into memory by the decode that produced them, so
+#: applying the transform on re-encode is what makes the label true of
+#: the codestream. PS3.5 8.2.4 is symmetric about this: a transformed
+#: codestream must carry one of these labels, and an untransformed one
+#: must carry components matching its Photometric Interpretation. Every
+#: other 3-sample label -- `YBR_FULL`, `YBR_FULL_422`,
+#: `YBR_PARTIAL_420`, `PALETTE COLOR` -- is already decorrelated and
+#: encodes `mct=False`.
+_J2K_MCT_SOURCES = frozenset({"RGB", "YBR_RCT", "YBR_ICT"})
+
 
 def _refuse_unencodable_j2k_frame(arr, ds, samples):
     """Raise before the encode, naming what the codec will not say.
@@ -4487,15 +4501,19 @@ def _compress_j2k(ds, pixel_array=None):
     that, which would replace a loud failure with `wrote 1 of 1` beside a
     file written wrong.
 
-    **A 3-sample `RGB` source is encoded with the multiple-component
-    transform and declared `YBR_RCT`; every other source is encoded with
-    `mct=False` (#490).** PS3.5 8.2.4 gives an MCT codestream those two
-    labels and no others, so the codec's default -- MCT on for any
-    3-component frame, whatever the label said -- wrote a non-conformant
-    `RGB` file for every colour export. See the note at the encoder.
+    **The multiple-component transform and the label are decided
+    together, in three cases (#490).** A 3-sample `RGB` source is
+    transformed and declared `YBR_RCT`; a 3-sample source *already*
+    labelled `YBR_RCT` or `YBR_ICT` is transformed and keeps that label;
+    every other source -- any other 3-sample label, and every 1-sample
+    one -- is encoded `mct=False` and keeps its label. PS3.5 8.2.4 binds
+    the two in both directions, which is why the middle case transforms
+    rather than leaving a label that would describe a transform the
+    codestream does not carry. See `_J2K_MCT_SOURCES` and the note at the
+    encoder.
 
-    Updates `TransferSyntaxUID`, `PixelData` and, for that one case,
-    `PhotometricInterpretation`; mutates nothing when it refuses.
+    Updates `TransferSyntaxUID`, `PixelData` and, for the `RGB` case
+    alone, `PhotometricInterpretation`; mutates nothing when it refuses.
 
     Args:
         ds (pydicom.Dataset): the dataset to compress, in place.
@@ -4641,23 +4659,45 @@ def _compress_j2k(ds, pixel_array=None):
         # `YBR_ICT`: `level=0` is the reversible transform, and it is the
         # only encode this function makes.
         #
-        # Applied to an RGB source only. MCT decorrelates RGB; on a
-        # source already in a luma/chroma space it is both wrong to
-        # declare (the label would name a transform over samples that
-        # went through two) and worse: measured on a `YBR_FULL` frame,
-        # `mct=True` is 66482 bytes against `mct=False`'s 48819, a 36%
-        # loss for a non-conformant file. Every other 3-sample source,
-        # and every 1-sample one, is encoded with `mct=False` and keeps
-        # the label it had. `mct` is passed in both directions rather
-        # than left default, so the flag in the file is this decision
-        # and never the codec's.
+        # **Three cases, and the rule is symmetric (#490, N2).** PS3.5
+        # 8.2.4 binds the transform and the label in both directions: an
+        # MCT codestream must say `YBR_RCT`/`YBR_ICT`, and with no
+        # transformation applied the components shall correspond to those
+        # the Photometric Interpretation specifies. So:
+        #
+        # 1. An `RGB` source is transformed and **relabelled** `YBR_RCT`.
+        #    MCT decorrelates RGB, so it earns its place here (`mct=0` /
+        #    `mct=1` size ratios 1.105-2.195 across five sources).
+        # 2. A source **already** labelled `YBR_RCT`/`YBR_ICT` is
+        #    transformed and **keeps its label**. Such an instance can
+        #    only have come from a J2K source whose samples this library
+        #    already inverse-transformed into memory, so applying the
+        #    transform on re-encode is what makes the label true of this
+        #    codestream. Encoding it `mct=False` under the label it keeps
+        #    -- which is what #490 first shipped -- declares RCT over a
+        #    `COD` transform byte of 0: the same non-conformance,
+        #    mirrored. Not relabelled to `RGB`, which would discard the
+        #    source's stated colour space against #482's work, and not
+        #    refused, which no ingested file would reach.
+        # 3. **Every other 3-sample source** -- `YBR_FULL`,
+        #    `YBR_FULL_422`, `YBR_PARTIAL_420`, `PALETTE COLOR` -- and
+        #    every 1-sample one is encoded `mct=False` and keeps its
+        #    label. A luma/chroma source is already decorrelated, so MCT
+        #    over it is both unnameable and larger: measured on a
+        #    `YBR_FULL` frame, `mct=True` is 66482 bytes against
+        #    `mct=False`'s 48819, a 36% loss for a file that would also
+        #    be mislabelled.
+        #
+        # `mct` is passed in both directions rather than left default, so
+        # the flag in the file is this decision and never the codec's
+        # (whose default is MCT on for every 3-component frame).
         #
         # Keyed on the sample count and the declared label, before any
         # encode. The relabel is written after the last frame encodes,
         # beside the transfer syntax, because this function mutates
         # nothing when it refuses.
         photometric = str(getattr(ds, "PhotometricInterpretation", "") or "")
-        mct = samples == 3 and photometric == "RGB"
+        mct = samples == 3 and photometric in _J2K_MCT_SOURCES
 
         def encode_frame(frame_arr):
             """One frame to a bare JPEG 2000 lossless codestream."""
@@ -4679,14 +4719,19 @@ def _compress_j2k(ds, pixel_array=None):
         # `is_little_endian` are not set alongside it: pydicom derives
         # both from the UID and removes the attributes in 4.0 (#141).
         ds.file_meta.TransferSyntaxUID = JPEG2000Lossless
-        if mct:
-            # The label for the transform the codestream carries (#490,
-            # see the note above). Written here, after every frame
-            # encoded, so a refusal leaves `ds` saying `RGB` over the
-            # pixels it still has. Re-ingesting this file relabels it
-            # `RGB` again, because `jpeg2k_decode` undoes the transform
-            # and `DECODER_RELABELS` says so (#448, #482) -- the round
-            # trip is stable in both directions.
+        if mct and photometric == "RGB":
+            # The label for the transform the codestream now carries
+            # (#490 case 1, see the note above). Only the `RGB` source is
+            # relabelled: a source already labelled `YBR_RCT`/`YBR_ICT`
+            # (case 2) is transformed too, and its own label is already
+            # true of the codestream -- rewriting `YBR_ICT` to `YBR_RCT`
+            # would name the wrong transform for a label this function
+            # did not choose. Written here, after every frame encoded, so
+            # a refusal leaves `ds` saying `RGB` over the pixels it still
+            # has. Re-ingesting this file relabels it `RGB` again,
+            # because `jpeg2k_decode` undoes the transform and
+            # `DECODER_RELABELS` says so (#448, #482) -- the round trip
+            # is stable in both directions.
             ds.PhotometricInterpretation = "YBR_RCT"
 
     except _J2kFrameRefusal:

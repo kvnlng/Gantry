@@ -529,6 +529,59 @@ def test_a_precision_8_jpeg_ls_stream_under_signed_bits_stored_12_reads_as_pydic
                   P8_SIGNED_IN_16)
 
 
+#: `UNSIGNED_8`'s patterns in `int16` with **no** extension: 0..255. What a
+#: width-16 sign extension leaves them as, because the shift is 0.
+P8_UNEXTENDED_IN_16 = UNSIGNED_8.astype(np.int16)
+
+#: The same patterns extended from 8 bits: 0..127, then -128..-1.
+P8_EXTENDED_FROM_8 = np.concatenate(
+    [np.arange(0, 128), np.arange(-128, 0)]).astype(np.int16).reshape(16, 16)
+
+
+@pytest.mark.parametrize("ts,encode,want", [
+    (LJPEG_SV1, lambda a: imagecodecs.ljpeg_encode(a),
+     P8_UNEXTENDED_IN_16),
+    (JPEGLS, lambda a: imagecodecs.jpegls_encode(a), P8_EXTENDED_FROM_8),
+], ids=["jpeg-lossless-by-bits-stored", "jpeg-ls-by-its-own-precision"])
+def test_a_precision_8_stream_under_a_signed_bits_stored_16_reads_per_syntax(
+        doors, ts, encode, want):
+    """S7c (#454, N4): the third transition, and the two syntaxes differ.
+
+    A precision-8 stream under BitsAllocated 16, BitsStored 16, HighBit
+    15 and PixelRepresentation 1. **Every door refused this file before
+    #454** -- the codec returned `uint8`, and `_sign_extend` refused a
+    BitsStored wider than the container it was handed (`cannot
+    sign-extend a uint8 decode from BitsStored 16`). Since #454 the
+    decode is widened to `uint16` first, so it now returns `int16` at
+    every door, and the values follow each syntax's own documented rule
+    rather than one shared answer:
+
+    - **JPEG Lossless** is read by BitsStored, which is pydicom's rule
+      for it too (`_correct_unused_bits`). Width 16 in a 16-bit
+      container is a shift of 0, so the patterns are reinterpreted and
+      not extended: 0..255 stay 0..255.
+    - **JPEG-LS** is read by the stream's own precision (#478, the
+      owner's ruling), which is 8, so the same patterns extend to
+      0..127 then -128..-1.
+
+    The two rows differing is the point: the same header and the same
+    bytes read differently because the syntaxes carry precision
+    differently, and a reader who assumes one answer for "precision 8
+    under a signed 16-bit header" is wrong for one of them.
+
+    No pydicom column: neither syntax has a plugin in the environment
+    this package installs (only Pillow is present; pydicom raises
+    `Unable to decompress ... all plugins are missing dependencies`),
+    which is why these files reach the imagecodecs fallback at all.
+
+    Mutant: `_decode_frame` without the widening. Both rows go red,
+    refused in S6's words at every door.
+    """
+    _assert_reads(doors(_dataset(ts, encode(UNSIGNED_8), UNSIGNED_8.shape, 16,
+                                 bits_allocated=16, pixel_representation=1)),
+                  want)
+
+
 # ---------------------------------------------------------------------------
 # S5 -- a signed header whose HighBit is not BitsStored - 1 is refused
 # ---------------------------------------------------------------------------

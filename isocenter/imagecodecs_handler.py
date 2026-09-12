@@ -429,8 +429,22 @@ def _j2k_sample_layout(codestream) -> Optional[Tuple[bool, int]]:
     codestream, but this project itself wrote the box under it until
     #404: every JPEG 2000 file Isocenter exported before that release is
     JP2-wrapped, `imagecodecs` decodes it, and it must reach the same
-    rule as the codestream. This is pydicom's `parse_j2k`, ported for
-    that reason rather than imported: it is private there.
+    rule as the codestream.
+
+    The offsets are pydicom's own, from `pydicom.pixels.utils.
+    get_j2k_parameters`, and were checked byte for byte against it.
+    Ported rather than imported, and **not because it is private** -- it
+    is a public module-level name, though not in any `__all__`. It is
+    ported because the name a caller would reach it by has already moved
+    once (`pixel_data_handlers.utils` re-exports it and that module is
+    deprecated for removal in pydicom 4.0, which this package's `<4.0`
+    cap is counting down to), and because this handler exists precisely
+    for the files pydicom cannot decode: taking the rule that decides
+    whether to refuse from the library being worked around is a
+    dependency this module should not have. One arm is ours and not
+    pydicom's: `get_j2k_parameters` has no guard for a JP2 box declaring
+    length 0, and this returns None where that walk would not terminate
+    (`test_a_jp2_box_of_zero_length_is_refused_rather_than_walked_forever`).
 
     None when neither form parses, which no stream `jpeg2k_decode`
     accepted can reach -- the SIZ is what tells a decoder the image's

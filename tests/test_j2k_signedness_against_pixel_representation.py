@@ -27,10 +27,24 @@ the value returned is whatever the plugin reinterpreted: for the
 codestream's `[-32768, -800, -1]`, pydicom 3.0.2 with Pillow returns
 `uint16 [0, 31968, 32767]`, and with pylibjpeg-openjpeg `uint16 [32768,
 64736, 65535]` (measured). Two plugins, two arrays, neither of them the
-file's samples. Ingest's imagecodecs fallback already refused the file
-(`it decoded to int16, where BitsAllocated 16 and PixelRepresentation 0
-declare uint16`), so refusing at the handler is what makes the three doors
-say one thing.
+file's samples.
+
+**The refusal's reach is narrower than the reinterpretation's, and
+`test_which_doors_refuse_a_signed_codestream_under_pixel_representation_0`
+is the measurement.** Only a codestream Pillow cannot decode reaches the
+imagecodecs fallback from all three doors, and that is *16-bit colour*
+alone. For 16-bit colour, ingest's fallback already refused the file (`it
+decoded to int16, where BitsAllocated 16 and PixelRepresentation 0 declare
+uint16`), so refusing at the handler makes all three doors say one thing.
+For **monochrome at any depth and for 8-bit colour**, Pillow decodes the
+file first (#416 is pydicom-first), so `ingest()` admits it and the
+Instance door returns Pillow's reading -- the codestream's samples with
+the top bit flipped, `source + 2**(bits-1)` exactly -- and only the
+handler refuses. Those files therefore carry **two** answers, and the
+refusal is what creates the disagreement at that one door rather than
+what resolves it. That is a deliberate, measured limit of option C, not
+an oversight: gating pydicom's J2K decode on the SIZ header at ingest is
+a separate design call the owner is deciding.
 
 Monochrome and 8-bit colour J2K are decoded by pydicom's Pillow plugin at
 ingest and at the Instance door, so for those only the handler is asked
@@ -208,6 +222,67 @@ def test_a_signed_16_bit_colour_codestream_under_pixel_representation_0_is_refus
         with pytest.raises(RuntimeError) as caught:
             read()
         assert REFUSAL in str(caught.value), f"{door}: {caught.value}"
+
+
+# ---------------------------------------------------------------------------
+# B1: which doors the refusal actually reaches
+# ---------------------------------------------------------------------------
+
+#: The shapes Pillow decodes, so ingest and the Instance door never reach
+#: the handler's refusal. 16-bit colour is deliberately absent: Pillow
+#: cannot decode it, so it is refused at all three doors and
+#: `test_a_signed_16_bit_colour_codestream_..._refused_at_all_three_doors`
+#: is its case.
+_PILLOW_STILL_READS = {
+    "mono-16": SIGNED_16, "mono-8": SIGNED_8, "rgb-8": _colour(SIGNED_8),
+}
+
+
+@pytest.mark.parametrize("name", list(_PILLOW_STILL_READS))
+def test_which_doors_refuse_a_signed_codestream_under_pixel_representation_0(
+        tmp_path, name):
+    """Two answers, not one, for every shape Pillow can decode (B1).
+
+    This pins the **limit** of option C's refusal half rather than the
+    refusal itself, because nothing else in the suite does and the
+    changelog claimed a scope the code does not have. `ingest()` and
+    `Instance.get_pixel_data()` go through pydicom first (#416), and
+    Pillow decodes monochrome at any depth and 8-bit colour. So for these
+    shapes the file still ingests, with **no error and no `DATA_LOSS`
+    row**, carrying Pillow's reading: the codestream's samples with the
+    sign bit flipped, which is `source + 2**(bits-1)` exactly and is not
+    the file's values. Only `imagecodecs_handler.get_pixel_data()`
+    refuses.
+
+    A reader deciding whether their file is affected needs this: the
+    refusal is at every door only for 16-bit colour.
+
+    If a later change gates pydicom's J2K decode on the SIZ header at
+    ingest, this test goes red at `summary.ingested`, which is the point
+    -- that is the open design call, and this records today's answer so
+    the change is visible rather than silent.
+    """
+    arr = _PILLOW_STILL_READS[name]
+    ds = _dataset(arr, 0)
+    bits = arr.dtype.itemsize * 8
+
+    # The handler, asked directly, refuses.
+    with pytest.raises(RuntimeError, match=REFUSAL):
+        imagecodecs_handler.get_pixel_data(ds)
+
+    # pydicom reads it as the samples with the top bit flipped.
+    flipped = (arr.astype(np.int32) + 2 ** (bits - 1)).astype(f"u{bits // 8}")
+    assert np.array_equal(ds.pixel_array, flipped), "pydicom's own reading"
+
+    # So ingest admits the file, and the Instance door agrees with pydicom.
+    path = _write(tmp_path, ds)
+    summary, stored = _ingest(tmp_path, os.path.dirname(path))
+    assert (summary.ingested, summary.failures) == (1, []), "ingest admits it"
+    assert stored is not None
+    assert stored.dtype == flipped.dtype, "the unsigned dtype the header says"
+    assert np.array_equal(stored, flipped), "Pillow's reading, not the samples"
+    assert not np.array_equal(stored.astype(np.int32), arr.astype(np.int32)), (
+        "and not the codestream's own values -- that is the divergence")
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +466,30 @@ def test_a_jp2_wrapped_codestream_reaches_the_same_rule(tmp_path):
     got = imagecodecs_handler.get_pixel_data(ds)
     assert got.dtype == want.dtype, got.dtype
     assert got.tolist() == want.tolist()
+
+
+def test_a_jp2_box_of_zero_length_is_refused_rather_than_walked_forever():
+    """The `length <= 0` guard in the box walk (N3).
+
+    A JP2 signature followed by a box declaring length 0 advances the
+    offset by nothing, so without this guard the walk never terminates
+    and `_j2k_sample_layout` **hangs** instead of returning. A hang is
+    the #250 class of defect -- an interpreter that must be killed rather
+    than a test that goes red -- and the guard was the only arm of this
+    parser with no case, so deleting it looked free.
+
+    Built by hand rather than by the encoder, because no encoder emits
+    it: the signature box, then a box whose 4-byte length is zero.
+    """
+    # The zero-length box must not be `jp2c`: that type is recognised and
+    # broken out of before the guard is consulted, so a `jp2c` fixture
+    # tests nothing here (measured -- it leaves the mutant alive). `ftyp`
+    # is an ordinary box the walk must step over, and a declared length of
+    # 0 advances the offset by nothing.
+    forever = (b"\x00\x00\x00\x0c\x6a\x50\x20\x20\x0d\x0a\x87\x0a"
+               + b"\x00\x00\x00\x00" + b"ftyp"
+               + b"\x00\x00\x00\x08" + b"jp2c" + b"\xff\x4f\xff\x51")
+    assert imagecodecs_handler._j2k_sample_layout(forever) is None
 
 
 def test_a_bitstream_that_is_no_codestream_leaves_the_array_alone():
