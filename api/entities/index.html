@@ -8767,16 +8767,7 @@ exists to prevent.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>isocenter/entities.py</code></summary>
-                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2152">2152</a></span>
-<span class="normal"><a href="#__codelineno-0-2153">2153</a></span>
-<span class="normal"><a href="#__codelineno-0-2154">2154</a></span>
-<span class="normal"><a href="#__codelineno-0-2155">2155</a></span>
-<span class="normal"><a href="#__codelineno-0-2156">2156</a></span>
-<span class="normal"><a href="#__codelineno-0-2157">2157</a></span>
-<span class="normal"><a href="#__codelineno-0-2158">2158</a></span>
-<span class="normal"><a href="#__codelineno-0-2159">2159</a></span>
-<span class="normal"><a href="#__codelineno-0-2160">2160</a></span>
-<span class="normal"><a href="#__codelineno-0-2161">2161</a></span>
+                <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2161">2161</a></span>
 <span class="normal"><a href="#__codelineno-0-2162">2162</a></span>
 <span class="normal"><a href="#__codelineno-0-2163">2163</a></span>
 <span class="normal"><a href="#__codelineno-0-2164">2164</a></span>
@@ -8785,25 +8776,64 @@ exists to prevent.</p>
 <span class="normal"><a href="#__codelineno-0-2167">2167</a></span>
 <span class="normal"><a href="#__codelineno-0-2168">2168</a></span>
 <span class="normal"><a href="#__codelineno-0-2169">2169</a></span>
-<span class="normal"><a href="#__codelineno-0-2170">2170</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-2152" name="__codelineno-0-2152"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">eq</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-<a id="__codelineno-0-2153" name="__codelineno-0-2153"></a><span class="k">class</span><span class="w"> </span><span class="nc">Patient</span><span class="p">(</span><span class="n">TrackedEntity</span><span class="p">):</span>
-<a id="__codelineno-0-2154" name="__codelineno-0-2154"></a><span class="w">    </span><span class="sd">"""</span>
-<a id="__codelineno-0-2155" name="__codelineno-0-2155"></a><span class="sd">    Root of the object hierarchy. Groups Studies by Patient ID.</span>
-<a id="__codelineno-0-2156" name="__codelineno-0-2156"></a>
-<a id="__codelineno-0-2157" name="__codelineno-0-2157"></a><span class="sd">    Attributes:</span>
-<a id="__codelineno-0-2158" name="__codelineno-0-2158"></a><span class="sd">        patient_id (str): The primary patient identifier.</span>
-<a id="__codelineno-0-2159" name="__codelineno-0-2159"></a><span class="sd">        patient_name (str): The patient's name.</span>
-<a id="__codelineno-0-2160" name="__codelineno-0-2160"></a><span class="sd">        studies (List[Study]): List of studies belonging to this patient.</span>
-<a id="__codelineno-0-2161" name="__codelineno-0-2161"></a><span class="sd">    """</span>
-<a id="__codelineno-0-2162" name="__codelineno-0-2162"></a>    <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span>
-<a id="__codelineno-0-2163" name="__codelineno-0-2163"></a>    <span class="n">patient_name</span><span class="p">:</span> <span class="nb">str</span>
-<a id="__codelineno-0-2164" name="__codelineno-0-2164"></a>    <span class="n">studies</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Study</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-2170">2170</a></span>
+<span class="normal"><a href="#__codelineno-0-2171">2171</a></span>
+<span class="normal"><a href="#__codelineno-0-2172">2172</a></span>
+<span class="normal"><a href="#__codelineno-0-2173">2173</a></span>
+<span class="normal"><a href="#__codelineno-0-2174">2174</a></span>
+<span class="normal"><a href="#__codelineno-0-2175">2175</a></span>
+<span class="normal"><a href="#__codelineno-0-2176">2176</a></span>
+<span class="normal"><a href="#__codelineno-0-2177">2177</a></span>
+<span class="normal"><a href="#__codelineno-0-2178">2178</a></span>
+<span class="normal"><a href="#__codelineno-0-2179">2179</a></span>
+<span class="normal"><a href="#__codelineno-0-2180">2180</a></span>
+<span class="normal"><a href="#__codelineno-0-2181">2181</a></span>
+<span class="normal"><a href="#__codelineno-0-2182">2182</a></span>
+<span class="normal"><a href="#__codelineno-0-2183">2183</a></span>
+<span class="normal"><a href="#__codelineno-0-2184">2184</a></span>
+<span class="normal"><a href="#__codelineno-0-2185">2185</a></span>
+<span class="normal"><a href="#__codelineno-0-2186">2186</a></span>
+<span class="normal"><a href="#__codelineno-0-2187">2187</a></span>
+<span class="normal"><a href="#__codelineno-0-2188">2188</a></span>
+<span class="normal"><a href="#__codelineno-0-2189">2189</a></span>
+<span class="normal"><a href="#__codelineno-0-2190">2190</a></span>
+<span class="normal"><a href="#__codelineno-0-2191">2191</a></span>
+<span class="normal"><a href="#__codelineno-0-2192">2192</a></span>
+<span class="normal"><a href="#__codelineno-0-2193">2193</a></span>
+<span class="normal"><a href="#__codelineno-0-2194">2194</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-2161" name="__codelineno-0-2161"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">eq</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-0-2162" name="__codelineno-0-2162"></a><span class="k">class</span><span class="w"> </span><span class="nc">Patient</span><span class="p">(</span><span class="n">TrackedEntity</span><span class="p">):</span>
+<a id="__codelineno-0-2163" name="__codelineno-0-2163"></a><span class="w">    </span><span class="sd">"""</span>
+<a id="__codelineno-0-2164" name="__codelineno-0-2164"></a><span class="sd">    Root of the object hierarchy. Groups Studies by Patient ID.</span>
 <a id="__codelineno-0-2165" name="__codelineno-0-2165"></a>
-<a id="__codelineno-0-2166" name="__codelineno-0-2166"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">mark_subtree_persisted</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="__codelineno-0-2167" name="__codelineno-0-2167"></a><span class="w">        </span><span class="sd">"""Marks this patient and every study beneath it as stored."""</span>
-<a id="__codelineno-0-2168" name="__codelineno-0-2168"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_persisted_revision</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_revision</span>
-<a id="__codelineno-0-2169" name="__codelineno-0-2169"></a>        <span class="k">for</span> <span class="n">study</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
-<a id="__codelineno-0-2170" name="__codelineno-0-2170"></a>            <span class="n">study</span><span class="o">.</span><span class="n">mark_subtree_persisted</span><span class="p">()</span>
+<a id="__codelineno-0-2166" name="__codelineno-0-2166"></a><span class="sd">    Attributes:</span>
+<a id="__codelineno-0-2167" name="__codelineno-0-2167"></a><span class="sd">        patient_id (str): The primary patient identifier.</span>
+<a id="__codelineno-0-2168" name="__codelineno-0-2168"></a><span class="sd">        patient_name (str): The patient's name.</span>
+<a id="__codelineno-0-2169" name="__codelineno-0-2169"></a><span class="sd">        studies (List[Study]): List of studies belonging to this patient.</span>
+<a id="__codelineno-0-2170" name="__codelineno-0-2170"></a><span class="sd">    """</span>
+<a id="__codelineno-0-2171" name="__codelineno-0-2171"></a>    <span class="n">patient_id</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-0-2172" name="__codelineno-0-2172"></a>    <span class="n">patient_name</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-0-2173" name="__codelineno-0-2173"></a>    <span class="n">studies</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Study</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+<a id="__codelineno-0-2174" name="__codelineno-0-2174"></a>    <span class="c1"># How this patient's pseudonym and date offset are derived. Keyed</span>
+<a id="__codelineno-0-2175" name="__codelineno-0-2175"></a>    <span class="c1"># (under the store's project secret) unless the store classed the</span>
+<a id="__codelineno-0-2176" name="__codelineno-0-2176"></a>    <span class="c1"># patient as de-identified before 0.9.7 when it was opened, in which</span>
+<a id="__codelineno-0-2177" name="__codelineno-0-2177"></a>    <span class="c1"># case the patient keeps the unkeyed scheme so its dates never carry</span>
+<a id="__codelineno-0-2178" name="__codelineno-0-2178"></a>    <span class="c1"># two offsets. Fixed at open by `SqliteStore`, never re-derived from</span>
+<a id="__codelineno-0-2179" name="__codelineno-0-2179"></a>    <span class="c1"># the entity: once a keyed shift is saved, "has a shifted date" is</span>
+<a id="__codelineno-0-2180" name="__codelineno-0-2180"></a>    <span class="c1"># true of keyed patients too, so only a class fixed before any keyed</span>
+<a id="__codelineno-0-2181" name="__codelineno-0-2181"></a>    <span class="c1"># work can tell the two apart.</span>
+<a id="__codelineno-0-2182" name="__codelineno-0-2182"></a>    <span class="c1">#</span>
+<a id="__codelineno-0-2183" name="__codelineno-0-2183"></a>    <span class="c1"># Every clone of a Patient has to copy it -- `_make_lightweight_copy`</span>
+<a id="__codelineno-0-2184" name="__codelineno-0-2184"></a>    <span class="c1"># above all, or every scan worker sees a legacy patient as keyed and</span>
+<a id="__codelineno-0-2185" name="__codelineno-0-2185"></a>    <span class="c1"># gives it a second offset. Private and `init=False`, so no</span>
+<a id="__codelineno-0-2186" name="__codelineno-0-2186"></a>    <span class="c1"># frozen-surface pin moves and the positional constructor is intact.</span>
+<a id="__codelineno-0-2187" name="__codelineno-0-2187"></a>    <span class="n">_jitter_scheme</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span>
+<a id="__codelineno-0-2188" name="__codelineno-0-2188"></a>        <span class="n">default</span><span class="o">=</span><span class="n">JITTER_SCHEME_KEYED</span><span class="p">,</span> <span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-0-2189" name="__codelineno-0-2189"></a>
+<a id="__codelineno-0-2190" name="__codelineno-0-2190"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">mark_subtree_persisted</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-0-2191" name="__codelineno-0-2191"></a><span class="w">        </span><span class="sd">"""Marks this patient and every study beneath it as stored."""</span>
+<a id="__codelineno-0-2192" name="__codelineno-0-2192"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_persisted_revision</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_revision</span>
+<a id="__codelineno-0-2193" name="__codelineno-0-2193"></a>        <span class="k">for</span> <span class="n">study</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
+<a id="__codelineno-0-2194" name="__codelineno-0-2194"></a>            <span class="n">study</span><span class="o">.</span><span class="n">mark_subtree_persisted</span><span class="p">()</span>
 </code></pre></div></td></tr></table></div>
               </details>
 
@@ -8836,15 +8866,15 @@ exists to prevent.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>isocenter/entities.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2166">2166</a></span>
-<span class="normal"><a href="#__codelineno-0-2167">2167</a></span>
-<span class="normal"><a href="#__codelineno-0-2168">2168</a></span>
-<span class="normal"><a href="#__codelineno-0-2169">2169</a></span>
-<span class="normal"><a href="#__codelineno-0-2170">2170</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-2166" name="__codelineno-0-2166"></a><span class="k">def</span><span class="w"> </span><span class="nf">mark_subtree_persisted</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="__codelineno-0-2167" name="__codelineno-0-2167"></a><span class="w">    </span><span class="sd">"""Marks this patient and every study beneath it as stored."""</span>
-<a id="__codelineno-0-2168" name="__codelineno-0-2168"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_persisted_revision</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_revision</span>
-<a id="__codelineno-0-2169" name="__codelineno-0-2169"></a>    <span class="k">for</span> <span class="n">study</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
-<a id="__codelineno-0-2170" name="__codelineno-0-2170"></a>        <span class="n">study</span><span class="o">.</span><span class="n">mark_subtree_persisted</span><span class="p">()</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2190">2190</a></span>
+<span class="normal"><a href="#__codelineno-0-2191">2191</a></span>
+<span class="normal"><a href="#__codelineno-0-2192">2192</a></span>
+<span class="normal"><a href="#__codelineno-0-2193">2193</a></span>
+<span class="normal"><a href="#__codelineno-0-2194">2194</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-2190" name="__codelineno-0-2190"></a><span class="k">def</span><span class="w"> </span><span class="nf">mark_subtree_persisted</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="__codelineno-0-2191" name="__codelineno-0-2191"></a><span class="w">    </span><span class="sd">"""Marks this patient and every study beneath it as stored."""</span>
+<a id="__codelineno-0-2192" name="__codelineno-0-2192"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_persisted_revision</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_revision</span>
+<a id="__codelineno-0-2193" name="__codelineno-0-2193"></a>    <span class="k">for</span> <span class="n">study</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">studies</span><span class="p">:</span>
+<a id="__codelineno-0-2194" name="__codelineno-0-2194"></a>        <span class="n">study</span><span class="o">.</span><span class="n">mark_subtree_persisted</span><span class="p">()</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
