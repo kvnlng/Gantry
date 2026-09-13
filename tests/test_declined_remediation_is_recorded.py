@@ -34,6 +34,8 @@ from isocenter.persistence import SqliteStore
 from isocenter.privacy import PhiFinding, PhiRemediation
 from isocenter.remediation import RemediationService
 
+from support.project_secret import FIXED_A
+
 # `REMEDIATION_DECLINED` is imported inside the one test that needs it,
 # not here. A module-level import of a name the unfixed tree does not
 # have turns the whole file into a collection error, and an ImportError
@@ -71,7 +73,7 @@ def store(tmp_path):
 
 def _declines(store, finding):
     """Apply one finding through a service wired to `store`, read the rows."""
-    RemediationService(store_backend=store)._apply_single_remediation(finding)
+    RemediationService(store_backend=store, project_secret=FIXED_A)._apply_single_remediation(finding)
     return store.get_audit_declines()
 
 

@@ -51,6 +51,8 @@ from isocenter.privacy import PhiInspector
 from isocenter.remediation import RemediationService
 from isocenter.session import DicomSession
 
+from support.project_secret import FIXED_A, load_fixed_secret
+
 SC_SOP_CLASS = "1.2.840.10008.5.1.4.1.1.7"
 NAME = "Orig^Name"
 PID = "P496"
@@ -192,6 +194,10 @@ def test_the_end_state_does_not_depend_on_finding_order(tmp_path, policy):
     states = []
     for order in ORDERS:
         with _built(tmp_path / order, instance_dates=("20240101", "20240105")) as session:
+            # Two stores compared value for value, so they share a project
+            # secret, said here: each would otherwise mint its own
+            # pseudonym and offset (0.9.7).
+            load_fixed_secret(session, tmp_path / order, FIXED_A)
             _anonymize(session, policy, order)
             states.append(_copies(session))
     assert states[0] == states[1]
@@ -377,7 +383,7 @@ def test_a_copy_equal_to_an_original_owner_value_is_still_a_finding():
     and both are still findings. The exception is an original that itself
     passes the replacement test; see
     `test_an_original_that_looks_like_a_replacement_is_not_a_finding`."""
-    findings = PhiInspector(config_tags=REPLACE).scan_patient(
+    findings = PhiInspector(config_tags=REPLACE, project_secret=FIXED_A).scan_patient(
         _patient_with_one_instance(NAME, PID))
     assert _instance_tags(findings) == [("0010,0010", ()), ("0010,0020", ())]
 
@@ -389,7 +395,7 @@ def test_a_copy_equal_to_an_unshifted_study_date_is_still_a_finding():
     patient = _patient_with_one_instance(NAME, PID)
     patient.studies[0].series[0].instances[0].set_attr("0008,0020", "20240101")
     assert not patient.studies[0].date_shifted
-    findings = PhiInspector(config_tags=REPLACE_DATE).scan_patient(patient)
+    findings = PhiInspector(config_tags=REPLACE_DATE, project_secret=FIXED_A).scan_patient(patient)
     assert _instance_tags(findings) == [("0008,0020", ())]
 
 
@@ -398,7 +404,7 @@ def test_a_nested_copy_of_the_owners_replacement_is_still_a_finding():
     dataset root, so a nested copy is the instance scan's to judge, even
     when it happens to equal the owner's replacement."""
     anon_id = "ANON_0123456789ab"
-    findings = PhiInspector(config_tags=REPLACE).scan_patient(
+    findings = PhiInspector(config_tags=REPLACE, project_secret=FIXED_A).scan_patient(
         _patient_with_one_instance("ANONYMIZED", anon_id, nested_id=anon_id))
     assert _instance_tags(findings) == [("0010,0020", (("0040,a730", 0),))]
 
@@ -417,7 +423,7 @@ def test_an_owned_tag_remove_is_not_skipped_by_the_scan():
     """REMOVE is exempt from the skip as it is from the fold: a copy of the
     owner's replacement under a REMOVE rule is still removed."""
     anon_id = "ANON_0123456789ab"
-    findings = PhiInspector(config_tags=REMOVE).scan_patient(
+    findings = PhiInspector(config_tags=REMOVE, project_secret=FIXED_A).scan_patient(
         _patient_with_one_instance("ANONYMIZED", anon_id))
     assert _instance_tags(findings) == [("0010,0010", ()), ("0010,0020", ())]
 
@@ -427,11 +433,11 @@ def test_remediation_folds_only_a_copy_the_owners_write_reached():
     after the Patient's write has reached it, whatever order the list is in."""
     patient = _patient_with_one_instance(NAME, PID)
     instance = patient.studies[0].series[0].instances[0]
-    findings = PhiInspector(config_tags=REPLACE).scan_patient(patient)
+    findings = PhiInspector(config_tags=REPLACE, project_secret=FIXED_A).scan_patient(patient)
     for inst_finding in findings:
         if inst_finding.entity_type == "Instance":
             inst_finding.entity = instance
-    service = RemediationService()
+    service = RemediationService(project_secret=FIXED_A)
     assert service.apply_remediation(list(reversed(findings))) == 3
     assert instance.attributes["0010,0020"] == patient.patient_id
 

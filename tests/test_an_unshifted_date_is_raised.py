@@ -46,6 +46,8 @@ from isocenter.entities import (DicomItem, DicomSequence, Instance, Patient,
                                 PhiStatus, Series, Study)
 from isocenter.session import DicomSession
 
+from support.project_secret import FIXED_A, load_fixed_secret
+
 SC_SOP_CLASS = "1.2.840.10008.5.1.4.1.1.7"
 STUDY_DATE = "0008,0020"
 CONTENT_DATE = "0008,0023"
@@ -63,7 +65,9 @@ SHIFT_BOTH = {**SHIFT_CONTENT, **SHIFT_ACQ}
 #: it, in whichever pass it is first shifted, which is the promise #510
 #: and #517 make together.
 PID = "P1"
-OFFSET = -286
+#: `P1` under `tests/_project_secret.FIXED_A` since 0.9.7, when the
+#: offset became keyed; it was -286 unkeyed.
+OFFSET = -364
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +81,9 @@ def _threads(monkeypatch):
 def _session(tmp_path, *, study_date=None, attrs=None, nested_date=None,
              tags=None, name="m.db"):
     session = DicomSession(str(tmp_path / name))
+    # The store is given a fixed project secret, so OFFSET is a literal
+    # a reader can check (0.9.7): a generated secret would make it random.
+    load_fixed_secret(session, tmp_path, FIXED_A)
     patient = Patient(PID, "Orig^Name")
     study = Study("1.2.826.0.1.510", study_date)
     series = Series("1.2.826.0.1.510.1", "OT", 1)

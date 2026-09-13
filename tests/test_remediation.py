@@ -2,13 +2,15 @@ import pytest
 import datetime
 from isocenter.entities import Patient, Study
 from isocenter.privacy import PhiInspector
+
+from support.project_secret import FIXED_A
 from isocenter.remediation import RemediationService
 
 def test_replace_tag_remediation():
     # Setup
     pat = Patient("MRN123", "John Doe")
-    inspector = PhiInspector()
-    service = RemediationService()
+    inspector = PhiInspector(project_secret=FIXED_A)
+    service = RemediationService(project_secret=FIXED_A)
 
     # Act
     findings = inspector.scan_patient(pat)
@@ -30,8 +32,8 @@ def test_date_shifting_remediation():
     study = Study("1.2.3.4", study_date)
     pat.studies.append(study)
 
-    inspector = PhiInspector()
-    service = RemediationService()
+    inspector = PhiInspector(project_secret=FIXED_A)
+    service = RemediationService(project_secret=FIXED_A)
 
     # Act
     findings = inspector.scan_patient(pat)
@@ -83,8 +85,8 @@ def test_date_shifting_remediation():
     study2 = Study("1.2.3.5", study_date)
     pat2.studies.append(study2)
 
-    inspector2 = PhiInspector()
-    service2 = RemediationService()
+    inspector2 = PhiInspector(project_secret=FIXED_A)
+    service2 = RemediationService(project_secret=FIXED_A)
     findings2 = inspector2.scan_patient(pat2)
     service2.apply_remediation(findings2)
 
@@ -95,8 +97,8 @@ def test_bad_date_format():
     study = Study("S1", "NOT_A_DATE")
     pat.studies.append(study)
 
-    inspector = PhiInspector()
-    service = RemediationService()
+    inspector = PhiInspector(project_secret=FIXED_A)
+    service = RemediationService(project_secret=FIXED_A)
     findings = inspector.scan_patient(pat)
 
     # Should catch exception/warning but not crash
@@ -111,8 +113,8 @@ def test_date_object_remediation():
     study = Study("S_DATE", study_date)
     pat.studies.append(study)
 
-    inspector = PhiInspector()
-    service = RemediationService()
+    inspector = PhiInspector(project_secret=FIXED_A)
+    service = RemediationService(project_secret=FIXED_A)
 
     findings = inspector.scan_patient(pat)
 
@@ -137,7 +139,7 @@ def test_audit_batching():
     """
     # Setup Mock Store
     mock_store = MagicMock()
-    service = RemediationService(store_backend=mock_store)
+    service = RemediationService(store_backend=mock_store, project_secret=FIXED_A)
 
     # Create dummy findings
     findings = []

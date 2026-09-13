@@ -28,7 +28,7 @@ The behaviours that matter most are refusals, so they come first.
 
 - **Object model.** `Patient`, `Study`, `Series`, and `Instance` objects over pydicom, with attributes keyed by tag. Pixel and waveform data load lazily and can be released.
 - **Persistent session.** Metadata is indexed in SQLite and heavy bytes in an append-only sidecar, so a 10,000-instance cohort reopens without rescanning, and a job can be paused and resumed. Every action is written to an audit log.
-- **Protocol-conformant de-identification.** A profile decides which tags go, are replaced, or are date-shifted; a field the protocol permits stays. PHI detection walks nested sequences structurally, not only the top level. Date jitter is deterministic per patient so intervals survive. Study, Series and SOP Instance UIDs are not replaced, so an export stays linkable to its source by UID ([#544](https://github.com/kvnlng/Isocenter/issues/544)).
+- **Protocol-conformant de-identification.** A profile decides which tags go, are replaced, or are date-shifted; a field the protocol permits stays. PHI detection walks nested sequences structurally, not only the top level. Date jitter is deterministic per patient within a project, keyed by a secret the export does not carry, so intervals survive. Study, Series and SOP Instance UIDs are not replaced, so an export stays linkable to its source by UID ([#544](https://github.com/kvnlng/Isocenter/issues/544)).
 - **Machine-specific pixel redaction.** Redaction zones are keyed by device, because the same model in the same room burns identifiers into the same place every time. An optional OCR pass (`pip install "isocenter[ocr]"`) finds where text actually lands, and existing CTP `DicomPixelAnonymizer.script` rules import directly.
 - **Reversible anonymization, if you choose it.** Original identities can be encrypted under a Fernet key and stored in a private tag before anonymization, and recovered later by whoever holds the key. The export discloses when recoverable identities are present.
 - **Codecs.** Baseline JPEG decodes through Pillow, and RLE through pydicom's own decoder. JPEG Lossless, JPEG-LS and JPEG 2000 decode through pydicom's plugins where one is installed, and otherwise through `imagecodecs`. Strict validation on the way out.
@@ -308,7 +308,7 @@ session.enable_reversible_anonymization("isocenter.key")
 # Recover the original PatientName and PatientID
 # Recover the original identity and restore attributes in-memory
 # restore=True (default) automatically updates the instance with original values
-session.recover_patient_identity("ANON_12345", restore=True)
+session.recover_patient_identity("ANON_5b5ce7b47f254ef3a0d90c0f", restore=True)
 
 # Now, accessing p.patient_name or instance attributes returns original data
 print(f"Restored: {session.store.patients[0].patient_name}")

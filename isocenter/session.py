@@ -38,7 +38,7 @@ from .persistence_manager import PersistenceManager
 from .parallel import (run_parallel, _env_int, _resolve_strategy,
                        resolve_max_workers, resolve_worker_initializer)
 from .configuration import IsocenterConfiguration, FlowList
-from .entities import (PhiStatus, SOURCE_SOP_UID_ATTR, clone_sequences,
+from .entities import (Patient, PhiStatus, SOURCE_SOP_UID_ATTR, clone_sequences,
                        resolve_item_path, iter_item_tree)
 from .profiles import BASIC_PROFILE, FLOOR_POLICY, PRIVACY_PROFILES
 from . import entities
@@ -49,40 +49,37 @@ def scan_worker(args):
     """
     Worker function for parallel PHI scanning.
     Args:
-        args: Tuple of (db_path, patient_id, config_source, remove_private)
-              OR (patient_obj, config_source, remove_private)
+        args: Tuple of (patient_obj, config_source, remove_private,
+              project_secret), exactly.
 
     Returns: List[PhiFinding] (WITHOUT entities)
+
+    The project secret travels **by value**, in the tuple. A worker
+    cannot read it back out of the store: a spawned process cannot reach
+    a `:memory:` database at all, and a second place the worker could
+    get a secret from is a second answer to "which secret keys this
+    patient". There is no default for the same reason -- a worker handed
+    no secret raises at the first pseudonym it has to mint rather than
+    falling back to an unkeyed one.
+
+    A database-path form, `(db_path, patient_id, config_source,
+    remove_private)`, was accepted until 0.9.7 and had no caller; it is
+    gone rather than taught to find a secret.
     """
-    patient = None
-
-    # Check for Object Passing (Legacy/In-Memory/Tests)
-    # If first arg is NOT a string (it's a Patient object)
-    if len(args) >= 1 and not isinstance(args[0], str):
-        if len(args) == 3:
-            patient, config_source, remove_private = args
-        else:
-            patient, config_source = args
-            remove_private = True
-
-    # Check for DB Loading (Large Scale / Production)
-    elif len(args) == 4 and isinstance(args[0], str) and isinstance(args[1], str):
-        db_path, patient_id, config_source, remove_private = args
-        # Rehydrate
-        store = SqliteStore(db_path)
-        patient = store.load_patient(patient_id)
-
-    if not patient:
-        return []
-
-
+    patient, config_source, remove_private, project_secret = args
+    if not isinstance(patient, Patient):
+        raise TypeError(
+            f"scan_worker expects (Patient, config_source, remove_private, "
+            f"project_secret); got a {type(patient).__name__} first")
 
     if isinstance(config_source, dict):
-        inspector = PhiInspector(config_tags=config_source, remove_private_tags=remove_private)
-    elif isinstance(config_source, str) or config_source is None:
-        inspector = PhiInspector(config_path=config_source, remove_private_tags=remove_private)
+        inspector = PhiInspector(config_tags=config_source,
+                                 remove_private_tags=remove_private,
+                                 project_secret=project_secret)
     else:
-        inspector = PhiInspector()
+        inspector = PhiInspector(config_path=config_source,
+                                 remove_private_tags=remove_private,
+                                 project_secret=project_secret)
 
     findings = inspector.scan_patient(patient)
 
@@ -2294,9 +2291,20 @@ class DicomSession:
             # then never matched.
             tags_to_use, _, _, _, _ = ConfigLoader.load_unified_config(config_path)
 
+        # The project secret, once, in the parent, before any work: a
+        # store holding dates shifted under a secret it no longer has
+        # refuses here, with nothing scanned. After the config is resolved,
+        # not before: on a store with no secret this call generates and
+        # commits one, and a config that then raised would have left the
+        # store changed by a call that did nothing (#456). Read from the
+        # store rather than held on the session, so a secret loaded between
+        # two calls is the one used. Workers get it by value in their tuple.
+        project_secret = self.store_backend._project_secret_for_use()
+
         # Uses IsocenterConfiguration derived tags
         inspector = PhiInspector(config_tags=tags_to_use,
-                                 remove_private_tags=self.configuration.remove_private_tags)
+                                 remove_private_tags=self.configuration.remove_private_tags,
+                                 project_secret=project_secret)
         if not inspector.phi_tags:
             # Reachable only when a config said `privacy_profile: none`
             # and listed no tags: a session with no config applies the
@@ -2316,7 +2324,9 @@ class DicomSession:
         for p in self.store.patients:
             # Strip pixels to reduce size
             light_p = self._make_lightweight_copy(p)
-            worker_args.append((light_p, tags_to_use, self.configuration.remove_private_tags))
+            worker_args.append((light_p, tags_to_use,
+                                self.configuration.remove_private_tags,
+                                project_secret))
 
         results = run_parallel(scan_worker, worker_args, desc="Scanning PHI")
 
@@ -3246,7 +3256,10 @@ class DicomSession:
 
         patient = next((p for p in self.store.patients if p.patient_id == patient_id), None)
         if not patient:
-            get_logger().error(f"Patient {patient_id} not found.")
+            # The ID is not logged: it may be an original Patient ID, and
+            # the log file is not guarded as the store is (0.9.7).
+            get_logger().error("lock_identities: no patient in the session "
+                               "has the Patient ID given.")
             return LockingResult([])
 
         return self._lock_patient_identity(patient, persist, verbose, tags_to_lock)
@@ -3264,7 +3277,10 @@ class DicomSession:
         """
         patient_id = patient.patient_id
         if verbose:
-            get_logger().debug(f"Preserving identity for {patient_id}...")
+            # Counts, not the ID: see `lock_identities`.
+            get_logger().debug(
+                f"Preserving identity for a patient of {len(patient.studies)} "
+                f"stud{'y' if len(patient.studies) == 1 else 'ies'}...")
 
         modified_instances = []
         if tags_to_lock is None:
@@ -3360,7 +3376,7 @@ class DicomSession:
             self.store_backend.update_attributes(modified_instances)
             get_logger().info(
                 f"Secured identity (tags: {list(original_attrs.keys())}) in "
-                f"{len(modified_instances)} instances for {patient_id}.")
+                f"{len(modified_instances)} instances of one patient.")
 
         return LockingResult(modified_instances)
 
@@ -3420,6 +3436,7 @@ class DicomSession:
 
         count_patients = 0
         count_instances_chunked = 0
+        missing_ids = 0
 
         from tqdm import tqdm
 
@@ -3450,7 +3467,14 @@ class DicomSession:
 
                     count_patients += 1
                 else:
-                    get_logger().error(f"Patient {pid} not found (batch processing).")
+                    missing_ids += 1
+
+        if missing_ids:
+            # Counted, not named: see `lock_identities`.
+            get_logger().error(
+                f"lock_identities: {missing_ids} Patient ID"
+                f"{'' if missing_ids == 1 else 's'} given matched no patient "
+                "in the session (batch processing).")
 
         # Final cleanup
         if auto_persist_chunk_size > 0:
@@ -4225,22 +4249,29 @@ class DicomSession:
                 below printed the literal "None".
         """
         from .remediation import RemediationService
-        # Pass date jitter config to constructor
-        # Use persistence_manager.store_backend (SqliteStore) for audit logging
+
+        if not findings:
+            # Blind execution: scan with the current configuration, then
+            # remediate. First, so the secret below is read after the
+            # scan's own first use and its notices are written once.
+            findings = self.audit()
+
+        # Asked for here as well as in `audit()`, and never skipped: the
+        # findings-given path does not enter `audit()`, and a store that
+        # lost its secret has to refuse before anything is shifted.
+        # `diagnose=False` because the audit that produced these findings
+        # already wrote its notices.
+        project_secret = self.store_backend._project_secret_for_use(
+            diagnose=False)
         remediator = RemediationService(
             store_backend=self.persistence_manager.store_backend,
-            date_jitter_config=self.configuration.date_jitter
+            date_jitter_config=self.configuration.date_jitter,
+            project_secret=project_secret,
         )
 
         count = 0
         if findings:
             count = remediator.apply_remediation(findings)
-        else:
-            # Blind execution (apply all rules)
-            # Logic for blind anonymization: scan then remediate
-            # Use audit() which uses self.configuration internally now
-            current_findings = self.audit()
-            count = remediator.apply_remediation(current_findings)
 
         if count:
             # A nonzero count is the session claiming remediations were
@@ -5050,6 +5081,12 @@ class DicomSession:
             patient_name=patient.patient_name,
             patient_id=patient.patient_id
         )
+        # The patient's jitter scheme travels too. `scan_patient` mints
+        # the replacement and stamps every SHIFT_DATE proposal from this
+        # clone, so without it every worker sees a legacy patient as
+        # keyed and gives its dates a second offset -- on both parallel
+        # paths at once.
+        p_new._jitter_scheme = patient._jitter_scheme
 
         for s in patient.studies:
             s_new = Study(

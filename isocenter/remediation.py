@@ -1,8 +1,8 @@
 from typing import List, Optional, Tuple
 from datetime import datetime, timedelta
 from tqdm import tqdm
-from .entities import PhiStatus
-from .privacy import PhiFinding, PhiRemediation, jitter_digest
+from .entities import JITTER_SCHEME_KEYED, PhiStatus
+from .privacy import PhiFinding, PhiRemediation, canonical_patient_key
 from .logger import describe_exception, get_logger
 
 #: Every action type `_apply_single_remediation` emits, spelled once for
@@ -57,16 +57,22 @@ class RemediationService:
     date shifting, ensuring data consistency and audit logging.
     """
 
-    def __init__(self, store_backend=None, date_jitter_config: Optional[dict] = None):
+    def __init__(self, store_backend=None, date_jitter_config: Optional[dict] = None,
+                 project_secret: Optional[bytes] = None):
         """
         Initialize the remediation service.
 
         Args:
             store_backend (optional): Persistence layer for logging audit trails.
             date_jitter_config (dict, optional): Configuration for date shifting ({min_days, max_days}).
+            project_secret (bytes, optional): The store's project secret,
+                which keys the date offset. Required at use: a keyed
+                date shift without one raises `RuntimeError`.
+                `Session.anonymize()` always passes it.
         """
         self.logger = get_logger()
         self.store_backend = store_backend
+        self.project_secret = project_secret
         # Entities `_record_decline` named during the current pass;
         # reset by `apply_remediation` and read at its end.
         self._declined_entities: list = []
@@ -174,7 +180,7 @@ class RemediationService:
                 failures += 1
                 self.logger.error(
                     f"Failed to apply remediation for {
-                        finding.entity_uid} ({
+                        self._log_subject(finding)} ({
                         finding.field_name}): {describe_exception(e)}")
 
         if folded_keys:
@@ -246,7 +252,7 @@ class RemediationService:
         if not entity:
             self.logger.warning(
                 f"Finding for {
-                    finding.entity_uid} has no entity reference. Skipping.")
+                    self._log_subject(finding)} has no entity reference. Skipping.")
             self._record_decline(
                 finding,
                 "no entity reference; the finding could not be resolved "
@@ -284,7 +290,7 @@ class RemediationService:
             else:
                 self.logger.warning(
                     f"Entity {
-                        finding.entity_uid} (Type: {
+                        self._log_subject(finding)} (Type: {
                         type(entity).__name__}) has no attribute or setter for {
                         proposal.target_attr}")
                 self._record_decline(
@@ -300,7 +306,7 @@ class RemediationService:
             if not patient_id:
                 self.logger.warning(
                     f"Could not resolve PatientID for {
-                        finding.entity_uid}. Skipping date shift.")
+                        self._log_subject(finding)}. Skipping date shift.")
                 self._record_decline(
                     finding,
                     f"could not resolve a PatientID to seed the jitter "
@@ -309,7 +315,13 @@ class RemediationService:
                     audit_buffer)
                 return False
 
-            shift_days = self._get_date_shift(patient_id)
+            # The scheme the scan recorded for this patient; a finding
+            # built by hand carries none and is keyed, as every patient
+            # this release creates is.
+            shift_days = self._get_date_shift(
+                patient_id,
+                (proposal.metadata or {}).get("jitter_scheme",
+                                              JITTER_SCHEME_KEYED))
             new_date = self._shift_date_string(proposal.original_value, shift_days)
 
             if new_date:
@@ -382,15 +394,15 @@ class RemediationService:
                     # ignored.
                     self.logger.info(
                         f"Skipping jitter for empty date on {
-                            finding.entity_uid} (Tag: {
+                            self._log_subject(finding)} (Tag: {
                             proposal.target_attr})")
                     return False
 
                 self.logger.warning(
                     f"Invalid date format for {
-                        finding.entity_uid} (Tag: {
-                        proposal.target_attr}): {
-                        proposal.original_value}")
+                        self._log_subject(finding)} (Tag: {
+                        proposal.target_attr}); the value is left "
+                    "unchanged")
                 self._record_decline(
                     finding,
                     f"invalid date format for {proposal.target_attr}: "
@@ -470,7 +482,7 @@ class RemediationService:
             # the entity immediately leaves behind and would read as
             # UNSCANNED the moment anyone asked.
             entity.record_phi_status(PhiStatus.REMEDIATED)
-            self.logger.info(details)
+            self.logger.info(self._log_line(action_type, finding, wrote))
             if self.store_backend:
                 if audit_buffer is not None:
                     # Five elements, including the `loss_scope` (#146)
@@ -504,6 +516,42 @@ class RemediationService:
                 f"{type(entity).__name__}",
                 audit_buffer)
             return False
+
+    @staticmethod
+    def _log_subject(finding: PhiFinding) -> str:
+        """What a log line calls the finding's entity.
+
+        A UID for an instance or a study, and never the value of a
+        patient finding's `entity_uid`, which is the original Patient ID.
+        The audit row keeps it: the store is documented as holding the
+        ID-to-pseudonym map and every offset, and is guarded as the
+        project secret is. The log file is not, and until 0.9.7 it held
+        the same map line by line, so a log shipped with an export undid
+        the de-identification.
+        """
+        if finding.entity_type == "Patient":
+            return "a patient"
+        return str(finding.entity_uid)
+
+    def _log_line(self, action_type: str, finding: PhiFinding, wrote) -> str:
+        """The log file's line for an applied remediation.
+
+        Deliberately not the audit row's `details`: that row names the
+        original Patient ID, the replacement written and a shift's days,
+        and a log line pairing an identity with an offset is the offset
+        handed to whoever reads the log. UIDs, the field and counts only.
+        """
+        proposal = finding.remediation_proposal
+        verb = {"REMEDIATION_REPLACE": "Remediated",
+                "REMEDIATION_SHIFT_DATE": "Date Shifted",
+                "REMEDIATION_REMOVE": "Removed"}.get(action_type, action_type)
+        line = f"{verb} {proposal.target_attr} on {self._log_subject(finding)}"
+        if wrote is not None:
+            written, folds = wrote
+            line += f"; {_count(written, 'instance copy', 'instance copies')}"
+            if folds:
+                line += f"; {_count(folds, 'instance-level finding')} folded into it"
+        return line
 
     def _record_decline(self, finding: PhiFinding, reason: str,
                         audit_buffer: list = None):
@@ -778,32 +826,34 @@ class RemediationService:
 
         return None
 
-    def _get_date_shift(self, patient_id: str) -> int:
+    def _get_date_shift(self, patient_id: str, scheme: str) -> int:
         """
-        Generates a deterministic shift between min_days and max_days based on PatientID.
+        Generates a deterministic shift between min_days and max_days for a patient.
 
-        Seeded on the patient's **canonical key** (`privacy.jitter_digest`)
-        rather than on the PatientID text, so the offset survives
-        `anonymize()` replacing that id (#517). Both spellings of one
-        identity -- the original and the `ANON_<digest>` the first pass
-        wrote over it -- give one offset, so a date first shifted in a
-        later pass lands where its siblings did, and a re-ingested
-        anonymized export keeps its patient's offset instead of getting
-        a second one.
+        Seeded on the patient's **canonical key**
+        (`privacy.canonical_patient_key`) rather than on the PatientID
+        text, so the offset survives `anonymize()` replacing that id
+        (#517): the original and the pseudonym the first pass wrote over
+        it give one offset, so a date first shifted in a later pass
+        lands where its siblings did.
 
-        The arithmetic below is untouched, which is the point: the
-        canonical key of an un-replaced id *is* `sha256(id)[:8]`, so
-        every offset this version computes for such an id is the offset
-        0.9.5 computed and no store's dates become inconsistent with
-        dates shifted before the upgrade.
+        For a keyed patient the key is derived under the project secret,
+        so the offset is deterministic per patient *within a project*
+        (stores holding the same secret, under the same jitter range) and
+        cannot be computed from anything an export carries. With no
+        secret this raises `RuntimeError`; there is no unkeyed fallback.
+        `scheme` is required for the same reason: a legacy patient
+        (`JITTER_SCHEME_UNKEYED`) keeps the offset its store already
+        gave its dates, and guessing the scheme would give it a second.
 
         Args:
             patient_id (str): The seed (PatientID), in either spelling.
+            scheme (str): The patient's jitter scheme.
 
         Returns:
             int: The number of days to shift (positive or negative).
         """
-        val = int(jitter_digest(patient_id), 16)
+        val = canonical_patient_key(patient_id, self.project_secret, scheme)
 
         min_days = self.jitter_config.get("min_days", -365)
         max_days = self.jitter_config.get("max_days", -1)

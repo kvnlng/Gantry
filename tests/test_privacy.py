@@ -2,13 +2,15 @@ import pytest
 from isocenter.entities import Patient, Study
 from isocenter.privacy import PhiInspector
 
+from support.project_secret import FIXED_A
+
 def test_phi_detection():
     # Setup
     pat = Patient("MRN123", "John Doe")
     study = Study("1.2.3.4", "20230101")
     pat.studies.append(study)
 
-    inspector = PhiInspector()
+    inspector = PhiInspector(project_secret=FIXED_A)
     findings = inspector.scan_patient(pat)
 
     # Assert
@@ -35,7 +37,7 @@ def test_no_phi():
     pat = Patient("UNKNOWN", "Unknown")
     # No studies
 
-    inspector = PhiInspector()
+    inspector = PhiInspector(project_secret=FIXED_A)
     findings = inspector.scan_patient(pat)
 
     assert len(findings) == 0

@@ -6,7 +6,10 @@ from isocenter.session import DicomSession
 from isocenter.config_manager import ConfigLoader
 from isocenter.entities import Instance, Patient, Study, Series
 from isocenter.privacy import PhiInspector, PhiFinding, PhiRemediation
+from isocenter.privacy import JITTER_SCHEME_KEYED
 from isocenter.remediation import RemediationService
+
+from support.project_secret import FIXED_A
 
 def test_scaffold_config_structure(tmp_path):
     """Verify that scaffold_config produces valid JSON with new fields."""
@@ -63,17 +66,17 @@ def test_date_jitter_service():
     """Verify that remediation service respects jitter config."""
     # Config: ONLY shift by -10 days
     config = {"min_days": -10, "max_days": -10}
-    svc = RemediationService(date_jitter_config=config)
+    svc = RemediationService(date_jitter_config=config, project_secret=FIXED_A)
 
     # With deterministic hashing, the offset is usually (hash % span) + min.
     # Span = (-10) - (-10) + 1 = 1.
     # Offset = (hash % 1) + (-10) = 0 - 10 = -10.
     # So it should ALWAYS be -10.
 
-    shift = svc._get_date_shift("PAT123")
+    shift = svc._get_date_shift("PAT123", JITTER_SCHEME_KEYED)
     assert shift == -10
 
-    shift2 = svc._get_date_shift("OTHER_PAT")
+    shift2 = svc._get_date_shift("OTHER_PAT", JITTER_SCHEME_KEYED)
     assert shift2 == -10
 
     # Test Application

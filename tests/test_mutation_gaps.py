@@ -10,7 +10,10 @@ import pytest
 
 from isocenter.entities import Instance, Patient, Study
 from isocenter.privacy import PhiInspector
+from isocenter.privacy import JITTER_SCHEME_KEYED
 from isocenter.remediation import RemediationService
+
+from support.project_secret import FIXED_A
 
 
 # --- #104: per-patient date jitter ------------------------------------
@@ -21,10 +24,12 @@ from isocenter.remediation import RemediationService
 
 
 def _shift_for(pid, jitter_config=None):
-    svc = RemediationService()
+    # Keyed, under a fixed secret: these tests pin the spread of the
+    # arithmetic, not which secret seeds it.
+    svc = RemediationService(project_secret=FIXED_A)
     if jitter_config is not None:
         svc.jitter_config = jitter_config
-    return svc._get_date_shift(pid)
+    return svc._get_date_shift(pid, JITTER_SCHEME_KEYED)
 
 
 def test_different_patients_get_different_date_shifts():

@@ -2149,6 +2149,15 @@ class Study(TrackedEntity):
             series.mark_subtree_persisted()
 
 
+#: The two ways a patient's pseudonym and date offset can be derived,
+#: stored verbatim in `patients.jitter_scheme`. Spelled here rather than
+#: in `privacy.py`, which derives them, because `Patient` carries one as
+#: its default and `privacy` imports this module. The strings are a store
+#: format: renaming one reclassifies every row that holds it.
+JITTER_SCHEME_KEYED = "keyed-hmac-v1"
+JITTER_SCHEME_UNKEYED = "unkeyed-sha256"
+
+
 @dataclass(slots=True, eq=False)
 class Patient(TrackedEntity):
     """
@@ -2162,6 +2171,21 @@ class Patient(TrackedEntity):
     patient_id: str
     patient_name: str
     studies: List[Study] = field(default_factory=list)
+    # How this patient's pseudonym and date offset are derived. Keyed
+    # (under the store's project secret) unless the store classed the
+    # patient as de-identified before 0.9.7 when it was opened, in which
+    # case the patient keeps the unkeyed scheme so its dates never carry
+    # two offsets. Fixed at open by `SqliteStore`, never re-derived from
+    # the entity: once a keyed shift is saved, "has a shifted date" is
+    # true of keyed patients too, so only a class fixed before any keyed
+    # work can tell the two apart.
+    #
+    # Every clone of a Patient has to copy it -- `_make_lightweight_copy`
+    # above all, or every scan worker sees a legacy patient as keyed and
+    # gives it a second offset. Private and `init=False`, so no
+    # frozen-surface pin moves and the positional constructor is intact.
+    _jitter_scheme: str = field(
+        default=JITTER_SCHEME_KEYED, init=False, repr=False)
 
     def mark_subtree_persisted(self):
         """Marks this patient and every study beneath it as stored."""

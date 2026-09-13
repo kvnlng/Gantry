@@ -15,6 +15,8 @@ from isocenter.entities import DicomItem, Instance, Patient, PhiStatus, Study
 from isocenter.privacy import PhiFinding, PhiRemediation
 from isocenter.remediation import RemediationService
 
+from support.project_secret import FIXED_A
+
 
 def _finding(entity, action, tag, new_value=None, original=None, metadata=None):
     return PhiFinding(
@@ -272,7 +274,7 @@ def _as_reloaded(entity):
 
 
 def test_replacing_a_second_patient_attribute_after_a_reload_still_needs_a_save():
-    """Pins `entity.mark_modified()` at remediation.py line 277.
+    """Pins `entity.mark_modified()` at remediation.py line 283.
 
     That is the `REPLACE_TAG` Python-attribute arm -- the one a
     `Patient` takes, having no `set_attr`.
@@ -291,7 +293,7 @@ def test_replacing_a_second_patient_attribute_after_a_reload_still_needs_a_save(
 
 
 def test_shifting_a_study_date_after_a_reload_still_needs_a_save():
-    """Pins `entity.mark_modified()` at remediation.py line 362.
+    """Pins `entity.mark_modified()` at remediation.py line 374.
 
     That is the `SHIFT_DATE` `setattr` arm, and it is not a corner: the
     inspector's study scan raises `SHIFT_DATE` against `study_date` on a
@@ -306,7 +308,7 @@ def test_shifting_a_study_date_after_a_reload_still_needs_a_save():
     """
     study = _as_reloaded(Study("S1", "20230101"))
 
-    RemediationService().apply_remediation(
+    RemediationService(project_secret=FIXED_A).apply_remediation(
         [_finding(study, "SHIFT_DATE", "study_date",
                   original="20230101", metadata={"patient_id": "PAT-7"})])
 
@@ -318,7 +320,7 @@ def test_shifting_a_study_date_after_a_reload_still_needs_a_save():
 
 
 def test_removing_a_second_tag_after_a_reload_still_needs_a_save():
-    """Pins `entity.mark_modified()` at remediation.py line 412.
+    """Pins `entity.mark_modified()` at remediation.py line 424.
 
     That is the `REMOVE_TAG` arm that `del`s from `attributes` -- a
     plain dict, so the deletion bumps no revision by itself.
@@ -338,7 +340,7 @@ def test_removing_a_second_tag_after_a_reload_still_needs_a_save():
 
 
 def test_removing_a_private_sequence_after_a_reload_still_needs_a_save():
-    """Pins `entity.mark_modified()` at remediation.py line 433.
+    """Pins `entity.mark_modified()` at remediation.py line 445.
 
     That is the private-sequence arm added by #167, which `del`s from
     `sequences`.
@@ -358,7 +360,7 @@ def test_removing_a_private_sequence_after_a_reload_still_needs_a_save():
 
 
 def test_clearing_a_patient_attribute_after_a_reload_still_needs_a_save():
-    """Pins `entity.mark_modified()` at remediation.py line 441.
+    """Pins `entity.mark_modified()` at remediation.py line 453.
 
     That is the `REMOVE_TAG` Python-attribute arm, which sets the
     attribute to None.

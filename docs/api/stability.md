@@ -184,7 +184,11 @@ folder=None)`, a `RuntimeError`, raised last and only when zero of N
 reached disk. `compact()` raises `RuntimeError` while a pass is open
 (below); `redact()` raises `RuntimeError` on a `:memory:` store when
 the environment asks for worker recycling, after the persistence
-drain and before any work is done (#400). `scan_pixel_content()` and
+drain and before any work is done (#400). `audit()`, `anonymize()` and
+`export(check_burned_in=True)` (which runs `audit()` first) raise
+`RuntimeError`, before any work, on a store holding dates shifted under
+a project secret it no longer has; on a store with no secret yet, each
+of the three generates one and commits it to the store (0.9.7). `scan_pixel_content()` and
 `discover_redaction_zones()` raise `RuntimeError` when the `ocr` extra
 or the `tesseract` binary is unavailable to the calling process, before
 any worker is dispatched and before either method reads the graph
@@ -217,7 +221,19 @@ not frozen, their forward compatibility is. A DICOM file exported with
 reversible anonymization by 1.0 is recoverable by every 1.x with its
 key: the tags `(0400,0500)`, `(0400,0510)`, `(0400,0520)` and the key
 file's format (raw Fernet key bytes). Date jitter stays deterministic
-per patient.
+per patient within a project: the same keyed patient under the same
+project secret and the same `date_jitter` range gets the same offset
+in every store holding that secret. A patient a store classed as
+de-identified before 0.9.7 keeps that store's unkeyed offset, which
+another store holding the same secret would not give it; and raw data
+for such a patient arriving in the same store is a keyed subject with
+a different offset. The offset is not derivable from the exported
+pseudonym, or from any other value its derivation uses, without the
+secret; that is not a promise that no exported date is recoverable
+(a date tag no rule shifts, such as Instance Creation Date
+`(0008,0012)`, is exported as ingested, and UIDs can embed dates,
+#544). The project secret's file format (`write_project_secret`) is
+not a data promise.
 
 **Output vocabularies.** These are five separate vocabularies, not one
 list. The page conflated them until 0.9.5, and the category it gave was
@@ -302,6 +318,18 @@ in a 1.x release with a CHANGELOG entry naming both spellings:
   #26 will freeze" is reversed here), `get_audit_losses()` and the other
   `get_audit_*`, `persist_pixel_data`, `save_all`, `compact_sidecar`,
   `stop`. The store's *forward compatibility* is frozen; its API is not.
+  That includes the project-secret carry (0.9.7):
+  `write_project_secret(path)` (`FileExistsError` rather than overwrite;
+  mode `0600`) and `load_project_secret(path)` (`RuntimeError` on a store
+  that already holds a secret, `ValueError` for a malformed file or a
+  secret that minted none of the store's pseudonyms,
+  `FileNotFoundError`; a store with shifted dates and no keyed pseudonym
+  to verify against accepts the secret as unverified and writes a
+  `WARNING` row at the load and at every later `audit()`, and a store
+  that has ever done so loads every later secret as unverified; nothing
+  clears it, so such a store's reports grade `REVIEW_REQUIRED` for
+  good, by design); see the
+  [Migration Guide](../migration.md#carrying-a-project-secret-between-stores).
 - **`session.key_manager`, `session.persistence_manager`,
   `session.reversibility_service`** — attributes that expose services.
 - **`TrackedEntity` bookkeeping**: `has_unsaved_changes`, `phi_status`,

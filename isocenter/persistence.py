@@ -18,6 +18,7 @@ import time
 import weakref
 import hashlib
 import base64
+import secrets
 import traceback
 from typing import List, Optional, Dict, Any, Tuple, NamedTuple
 from dataclasses import dataclass
@@ -32,7 +33,9 @@ from . import entities
 from .blob_kind import parse_blob_kind, serialize_blob_kind
 from .sidecar import SidecarManager
 from .logger import describe_exception, get_logger
-from .privacy import PhiFinding, PhiRemediation
+from .privacy import (PhiFinding, PhiRemediation, _is_keyed_pseudonym_shape,
+                      _is_replacement_id, _is_unkeyed_pseudonym_shape,
+                      _pseudonym_verifies, _unkeyed_replacement_id_for)
 from .io_handlers import (NestedPixelRef, SidecarPixelLoader,
                           nested_item_geometry)
 
@@ -570,7 +573,19 @@ class SqliteStore:
         patient_id TEXT NOT NULL,
         patient_name TEXT,
         phi_status TEXT,
+        -- 'keyed-hmac-v1' or 'unkeyed-sha256'; fixed once per patient,
+        -- NULL only in a row a release before 0.9.7 wrote
+        jitter_scheme TEXT,
         UNIQUE(patient_id)
+    );
+
+    -- The project secret that keys every keyed pseudonym and date offset
+    -- in this store. One row, created on first need. Never exported.
+    CREATE TABLE IF NOT EXISTS project_secret (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        secret_hex TEXT NOT NULL,
+        origin TEXT NOT NULL,     -- 'generated' | 'loaded'
+        created_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS studies (
@@ -1166,6 +1181,63 @@ class SqliteStore:
         if "value_count" not in attribute_columns:
             conn.execute(
                 "ALTER TABLE instance_attributes ADD COLUMN value_count INTEGER")
+
+        # `jitter_scheme` on patients, and the classification that fills
+        # it. Last in this method because the predicate reads
+        # `studies.date_shifted`, added above.
+        patient_columns = {row[1] for row in conn.execute(
+            "PRAGMA table_info(patients)").fetchall()}
+        if "jitter_scheme" not in patient_columns:
+            conn.execute("ALTER TABLE patients ADD COLUMN jitter_scheme TEXT")
+        SqliteStore._classify_unclassified_patients(conn)
+
+    #: The unkeyed scheme's pseudonym, exactly: `ANON_` + 12 lowercase
+    #: hex, 17 characters. A GLOB, so case-sensitive.
+    _UNKEYED_PSEUDONYM_GLOB = "ANON_" + "[0-9a-f]" * 12
+
+    @staticmethod
+    def _classify_unclassified_patients(conn):
+        """Fix the jitter scheme of every patient row that has none.
+
+        A patient a release before 0.9.7 already de-identified -- its id
+        has exactly the shape that release minted, or any of its dates
+        was shifted -- keeps the unkeyed scheme, because a keyed offset
+        would put a second offset on its dates, and its old offset is
+        already readable out of every file exported for it. Every other
+        patient is keyed.
+
+        **On every open, not only when the column is added**, and only
+        for NULL rows. 0.9.7 writes the column on every INSERT and never
+        overwrites it, so a NULL can only come from a release before
+        0.9.7 -- including one run against this store after an upgrade,
+        which this also catches. A class once written is never revisited:
+        after a keyed shift is saved, "has a shifted date" is true of
+        keyed patients too, so re-deriving would downgrade them.
+
+        **The id arm is the exact shape, never a prefix.** A prefix
+        would class a keyed patient's 29-character pseudonym unkeyed if
+        an older release ever wrote its row, and the unkeyed arm would
+        then seed that patient's offset on characters of the pseudonym
+        the export carries. A non-hex `ANON_` id an older release shifted
+        is still caught by the two witness arms. `instr` over the
+        serialized JSON finds a nested item's `__shifted__` record too,
+        because nested items are serialized into the same blob.
+        """
+        conn.execute("""
+            UPDATE patients SET jitter_scheme = CASE WHEN
+                (length(patient_id) = 17 AND patient_id GLOB ?)
+                OR EXISTS (SELECT 1 FROM studies s
+                           WHERE s.patient_id_fk = patients.id
+                             AND s.date_shifted = 1)
+                OR EXISTS (SELECT 1 FROM studies s
+                           JOIN series se ON se.study_id_fk = s.id
+                           JOIN instances i ON i.series_id_fk = se.id
+                           WHERE s.patient_id_fk = patients.id
+                             AND instr(i.attributes_json, '"__shifted__"') > 0)
+              THEN ? ELSE ? END
+            WHERE jitter_scheme IS NULL
+        """, (SqliteStore._UNKEYED_PSEUDONYM_GLOB,
+              entities.JITTER_SCHEME_UNKEYED, entities.JITTER_SCHEME_KEYED))
 
     def _backfill_legacy_blobs(self, conn):
         """Migrate 0.6.x pixel_* columns into instance_blobs.
@@ -1854,6 +1926,10 @@ class SqliteStore:
                 p_map = {}
                 for r in p_rows:
                     p = Patient(r['patient_id'], r['patient_name'])
+                    # Restored, not recorded: the class was fixed when
+                    # the store opened and hydration changes nothing.
+                    p._jitter_scheme = (r['jitter_scheme']
+                                        or entities.JITTER_SCHEME_KEYED)
                     p_map[r['id']] = p
                     patients.append(p)
                     stored_statuses.append((p, r['phi_status']))
@@ -2027,6 +2103,7 @@ class SqliteStore:
 
             self.logger.info(f"Loaded {len(patients)} patients from {self.db_path}")
             self._report_legacy_shift_provenance(legacy_instances, legacy_studies)
+            self._report_unkeyed_scheme(patients)
 
             # The row that was loaded is the row the status was written for,
             # so the stored conclusion applies to this revision. Recorded
@@ -2071,6 +2148,9 @@ class SqliteStore:
                     return None
 
                 p = Patient(p_row['patient_id'], p_row['patient_name'])
+                # Same as load_all's; see the note there.
+                p._jitter_scheme = (p_row['jitter_scheme']
+                                    or entities.JITTER_SCHEME_KEYED)
                 p_pk = p_row['id']
                 stored_statuses = [(p, p_row['phi_status'])]
                 # Collected during the walk and hydrated from the vertical
@@ -2223,6 +2303,7 @@ class SqliteStore:
 
                 self._report_legacy_shift_provenance(legacy_instances,
                                                      legacy_studies)
+                self._report_unkeyed_scheme([p])
                 p.mark_subtree_persisted()
                 return p
         except sqlite3.Error as e:
@@ -2293,6 +2374,415 @@ class SqliteStore:
         self.logger.warning(detail)
         self.log_audit(action_type="WARNING", entity_uid=self.db_path,
                        details=detail)
+
+    #: What a load says once when part of the store keeps the unkeyed
+    #: pseudonym and date offset of releases before 0.9.7. Its own row,
+    #: not folded into `_LEGACY_SHIFT_NOTICE`: that notice is about which
+    #: dates can be told apart, this one about whether they can be
+    #: recovered, and one paragraph carrying both would read as one
+    #: limitation. Same channel and the same "per load" call-site caveat
+    #: as `_report_legacy_shift_provenance`. A sentence whose count is
+    #: zero is left out.
+    _UNKEYED_SCHEME_NOTICE = (
+        "{n} in this store {were} de-identified before 0.9.7 under the "
+        "unkeyed scheme (GHSA-phg9-vcvc-j4r7): {their} `ANON_` "
+        "pseudonym{s}, where {they} {have} one, {is_} an unsalted SHA-256 of "
+        "the original Patient ID, which can be reversed by trying candidate "
+        "IDs, and {their} date offset can be computed from that pseudonym, "
+        "or from the original Patient ID where the pseudonym was never "
+        "written, by anyone who knows the date-jitter range. Isocenter "
+        "keeps that scheme for them so each patient has "
+        "one offset, and dates shifted for them now are recoverable in "
+        "the same way.")
+    _UNKEYED_PSEUDONYM_NOTICE = (
+        "{m} {further}carr{ies} an unkeyed pseudonym from an export made "
+        "before 0.9.7, which is exported unchanged.")
+    _UNKEYED_REMEDY = (
+        "Re-ingesting the source files into a new store gives them a "
+        "keyed pseudonym and offset; files already exported cannot be "
+        "fixed from here.")
+
+    @classmethod
+    def _unkeyed_scheme_detail(cls, legacy: int, pseudonyms: int) -> str:
+        """The unkeyed-scheme notice for these counts, or `""`."""
+        if not legacy and not pseudonyms:
+            return ""
+        parts = []
+        if legacy:
+            parts.append(cls._UNKEYED_SCHEME_NOTICE.format(
+                n=f"{legacy} patient{'' if legacy == 1 else 's'}",
+                were="was" if legacy == 1 else "were",
+                their="its" if legacy == 1 else "their",
+                s="" if legacy == 1 else "s",
+                they="it" if legacy == 1 else "they",
+                have="has" if legacy == 1 else "have",
+                is_="is" if legacy == 1 else "are"))
+        if pseudonyms:
+            parts.append(cls._UNKEYED_PSEUDONYM_NOTICE.format(
+                m=f"{pseudonyms} patient{'' if pseudonyms == 1 else 's'}",
+                further="further " if legacy else "",
+                ies="ies" if pseudonyms == 1 else "y"))
+        parts.append(cls._UNKEYED_REMEDY)
+        return " ".join(parts)
+
+    def _report_unkeyed_scheme(self, patients):
+        """Say once per load how many patients the unkeyed scheme reaches.
+
+        Two counts: patients classed `JITTER_SCHEME_UNKEYED` (their
+        offset stays recoverable), and keyed patients whose id is an
+        unkeyed pseudonym carried in from a pre-0.9.7 export (an id
+        already `ANON_` is never replaced, so it is exported as it is).
+        """
+        legacy = sum(1 for p in patients
+                     if p._jitter_scheme == entities.JITTER_SCHEME_UNKEYED)
+        pseudonyms = sum(1 for p in patients
+                         if p._jitter_scheme != entities.JITTER_SCHEME_UNKEYED
+                         and _is_unkeyed_pseudonym_shape(p.patient_id))
+        detail = self._unkeyed_scheme_detail(legacy, pseudonyms)
+        if not detail:
+            return
+        self.logger.warning(detail)
+        self.log_audit(action_type="WARNING", entity_uid=self.db_path,
+                       details=detail)
+
+    # ------------------------------------------------------------------
+    # The project secret
+    # ------------------------------------------------------------------
+
+    #: The secret file's first line, before the 64 hex characters. A
+    #: version in the prefix so a later format is refused, not misread.
+    _SECRET_FILE_PREFIX = "isocenter-project-secret-v1:"
+
+    _MISSING_SECRET_REFUSAL = (
+        "This store holds dates shifted under a project secret it no "
+        "longer has ({n}). Load that secret with "
+        "store_backend.load_project_secret(path) before audit() or "
+        "anonymize(); generating a new one would give {those} a second "
+        "date offset.")
+
+    _FOREIGN_PSEUDONYM_NOTICE = (
+        "{n} in this store carr{ies} {a}`ANON_` pseudonym{s} minted under a "
+        "different project secret{generated}. {their} dates are shifted "
+        "with this store's offsets, not the ones {their_lc} source store "
+        "used. If this data belongs to an existing project, load that "
+        "project's secret into a fresh store with "
+        "store_backend.load_project_secret(path) before its first "
+        "audit(), and re-ingest.")
+
+    _LEGACY_PATIENT_NEW_DATA_NOTICE = (
+        "{n} in this store {were} added under an original Patient ID whose "
+        "earlier data this store de-identified before 0.9.7 under the "
+        "unkeyed scheme. The new data receives a keyed pseudonym and date "
+        "offset, and the earlier studies keep the unkeyed ones, so each "
+        "such patient appears as two subjects whose dates carry different "
+        "offsets.")
+
+    def _read_project_secret(self, conn) -> Optional[bytes]:
+        return self._read_project_secret_row(conn)[0]
+
+    def _read_project_secret_row(self, conn):
+        """`(secret, origin)`, or `(None, None)` with no row."""
+        row = conn.execute(
+            "SELECT secret_hex, origin FROM project_secret WHERE id = 1"
+        ).fetchone()
+        return (bytes.fromhex(row[0]), row[1]) if row else (None, None)
+
+    def _patient_secret_evidence(self, conn):
+        """`(patient_id, scheme, witnessed)` for every stored patient.
+
+        `witnessed` is whether any of its dates was shifted: a study's
+        `date_shifted`, or a `__shifted__` record at any depth of any of
+        its instances. Ingest writes neither, so a freshly ingested
+        export carries none.
+        """
+        return [(row[0], row[1] or entities.JITTER_SCHEME_KEYED, bool(row[2]))
+                for row in conn.execute("""
+            SELECT p.patient_id, p.jitter_scheme,
+                   EXISTS (SELECT 1 FROM studies s
+                           WHERE s.patient_id_fk = p.id AND s.date_shifted = 1)
+                   OR EXISTS (SELECT 1 FROM studies s
+                              JOIN series se ON se.study_id_fk = s.id
+                              JOIN instances i ON i.series_id_fk = se.id
+                              WHERE s.patient_id_fk = p.id
+                                AND instr(i.attributes_json, '"__shifted__"') > 0)
+            FROM patients p
+        """).fetchall()]
+
+    def _project_secret_for_use(self, diagnose: bool = True) -> bytes:
+        """The project secret `audit()` and `anonymize()` derive under.
+
+        Read from the store on every call and never cached, so a secret
+        loaded between two calls takes effect at once and no pickle of
+        this store carries it. The evidence is the store's rows, which is
+        why `Session.audit()` drains the persistence manager first.
+
+        With no secret row:
+
+        - **Refused** (`RuntimeError`, nothing created) when a keyed
+          patient has any shifted date. The row is created before the
+          first keyed shift can happen, so such a patient's dates were
+          shifted under a secret this store no longer has, and a new one
+          would certainly give them a second offset.
+        - **Generated, with a `WARNING` row**, when keyed `ANON_`
+          pseudonyms are present but nothing was shifted: an export from
+          another project ingested into a fresh store. The split is
+          across stores, not inside this one.
+        - **Generated silently** otherwise.
+
+        With `diagnose` (what `audit()` passes; `anonymize()` does not,
+        so `anonymize(audit())` writes each notice once), a `WARNING` row
+        also names keyed pseudonyms that do not verify under the secret,
+        ids re-ingested from a pre-0.9.7 export, and patients whose raw
+        data arrived after this store de-identified them under the
+        unkeyed scheme.
+
+        Generation is `INSERT OR IGNORE` then `SELECT`, so two sessions
+        reaching first use on one database at once converge on one
+        secret.
+        """
+        with self._get_connection() as conn:
+            secret, origin = self._read_project_secret_row(conn)
+            evidence = self._patient_secret_evidence(conn)
+
+        keyed = [(pid, witnessed) for pid, scheme, witnessed in evidence
+                 if scheme != entities.JITTER_SCHEME_UNKEYED]
+        generated_here = False
+        if secret is None:
+            lost = sum(1 for _pid, witnessed in keyed if witnessed)
+            if lost:
+                raise RuntimeError(self._MISSING_SECRET_REFUSAL.format(
+                    n=f"{lost} patient{'' if lost == 1 else 's'}",
+                    those="that patient" if lost == 1 else "those patients"))
+            generated_here, secret = self._insert_project_secret(
+                secrets.token_bytes(32), self._ORIGIN_GENERATED)
+
+        notices = []
+        if diagnose and origin == self._ORIGIN_LOADED_UNVERIFIED:
+            notices.append(self._UNVERIFIED_SECRET_NOTICE)
+        if diagnose or generated_here:
+            foreign = sum(1 for pid, _w in keyed
+                          if _is_keyed_pseudonym_shape(pid)
+                          and not _pseudonym_verifies(pid, secret))
+            if foreign:
+                notices.append(self._FOREIGN_PSEUDONYM_NOTICE.format(
+                    n=f"{foreign} patient{'' if foreign == 1 else 's'}",
+                    ies="ies" if foreign == 1 else "y",
+                    a="an " if foreign == 1 else "",
+                    s="" if foreign == 1 else "s",
+                    generated=(", and this store had none of its own, so a "
+                               "new one was generated" if generated_here
+                               else ""),
+                    their="Its" if foreign == 1 else "Their",
+                    their_lc="its" if foreign == 1 else "their"))
+        if diagnose:
+            legacy_ids = {pid for pid, scheme, _w in evidence
+                          if scheme == entities.JITTER_SCHEME_UNKEYED}
+            returned = sum(
+                1 for pid, _w in keyed
+                if legacy_ids and not _is_replacement_id(pid)
+                and _unkeyed_replacement_id_for(pid) in legacy_ids)
+            if returned:
+                notices.append(self._LEGACY_PATIENT_NEW_DATA_NOTICE.format(
+                    n=f"{returned} patient{'' if returned == 1 else 's'}",
+                    were="was" if returned == 1 else "were"))
+            carried = sum(1 for pid, _w in keyed
+                          if _is_unkeyed_pseudonym_shape(pid))
+            if carried:
+                notices.append(self._unkeyed_scheme_detail(0, carried))
+        if notices:
+            detail = " ".join(notices)
+            self.logger.warning(detail)
+            self.log_audit(action_type="WARNING", entity_uid=self.db_path,
+                           details=detail)
+        return secret
+
+    def _insert_project_secret(self, secret: bytes, origin: str):
+        """Insert `secret` unless a row exists; return `(inserted, row)`.
+
+        `row` is whatever the store holds afterwards, which is the
+        winner when another session inserted first. Never `REPLACE`: a
+        replaced secret is a second offset for every patient already
+        shifted under the first.
+        """
+        with self._get_connection() as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO project_secret "
+                "(id, secret_hex, origin, created_at) VALUES (1, ?, ?, ?)",
+                (secret.hex(), origin, datetime.now().isoformat()))
+            inserted = cur.rowcount == 1
+            return inserted, self._read_project_secret(conn)
+
+    def write_project_secret(self, path: str) -> None:
+        """Write this store's project secret to a new file at `path`.
+
+        The carry for keeping offsets consistent across stores: write it
+        here, then `load_project_secret(path)` on the other store before
+        its first `audit()`. A store with no secret yet gets one first,
+        under the same rules `audit()` applies.
+
+        The file is created with `O_EXCL` and mode `0o600`, and holds the
+        secret that recovers the dates of every store sharing it: treat
+        it as you treat the store.
+
+        Raises:
+            FileExistsError: `path` exists. Never overwritten: a secret
+                written over another is a project lost.
+            RuntimeError: As `audit()`, for a store holding dates shifted
+                under a secret it no longer has.
+        """
+        if os.path.lexists(path):
+            raise FileExistsError(
+                f"{path} exists; write_project_secret never overwrites a "
+                "file")
+        secret = self._project_secret_for_use(diagnose=False)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="ascii") as handle:
+            handle.write(f"{self._SECRET_FILE_PREFIX}{secret.hex()}\n")
+
+    @classmethod
+    def _parse_secret_file(cls, path: str) -> bytes:
+        with open(path, "r", encoding="ascii", errors="replace") as handle:
+            text = handle.read()
+        body = text[:-1] if text.endswith("\n") else text
+        hex_part = body[len(cls._SECRET_FILE_PREFIX):]
+        if (not body.startswith(cls._SECRET_FILE_PREFIX)
+                or len(hex_part) != 64
+                or any(c not in "0123456789abcdef" for c in hex_part)):
+            # The content is deliberately not quoted: it may be a secret.
+            raise ValueError(
+                f"{path} is not a project secret file (expected one line: "
+                f"{cls._SECRET_FILE_PREFIX} followed by 64 lowercase hex "
+                "characters)")
+        return bytes.fromhex(hex_part)
+
+    def load_project_secret(self, path: str) -> None:
+        """Adopt the project secret in `path` for this store.
+
+        Only for a store with no secret of its own: load it before the
+        store's first `audit()` or `anonymize()`, either of which creates
+        one. A store holding keyed pseudonyms accepts only a secret that
+        minted at least one of them. A store holding shifted dates but no
+        keyed pseudonym (its patients kept their Patient IDs) has nothing
+        to check a secret against: the secret is accepted, recorded as
+        unverified, and a `WARNING` row says so at the load and at every
+        later `audit()`, so the report grades `REVIEW_REQUIRED`.
+
+        Raises:
+            FileNotFoundError: `path` does not exist.
+            ValueError: `path` is not a project secret file, or the store
+                holds keyed pseudonyms and none of them was minted under
+                this secret.
+            RuntimeError: The store already holds a project secret --
+                always, even the same one. Anything it pseudonymized or
+                shifted was derived under that secret, and adopting
+                another would give those patients a second offset.
+        """
+        secret = self._parse_secret_file(path)
+        with self._get_connection() as conn:
+            existing = self._read_project_secret(conn)
+            evidence = self._patient_secret_evidence(conn)
+        if existing is not None:
+            raise RuntimeError(self._SECRET_ALREADY_HELD)
+        keyed_pseudonyms = [
+            pid for pid, scheme, _w in evidence
+            if scheme != entities.JITTER_SCHEME_UNKEYED
+            and _is_keyed_pseudonym_shape(pid)]
+        if keyed_pseudonyms and not any(
+                _pseudonym_verifies(pid, secret) for pid in keyed_pseudonyms):
+            raise ValueError(
+                f"this secret did not mint any pseudonym in this store "
+                f"({len(keyed_pseudonyms)} keyed pseudonym"
+                f"{'' if len(keyed_pseudonyms) == 1 else 's'} checked); "
+                "it belongs to a different project")
+        # Shifted patients with nothing to check this secret against: a
+        # store whose patients kept their Patient IDs. Refusing would
+        # leave such a store no way back after its secret row is lost, so
+        # the load is accepted and recorded as unverified, and says so now
+        # and at every later audit(): if this is not the secret those
+        # dates were shifted under, the next date shifted for them takes a
+        # second offset, and nothing left in the store can tell.
+        unverifiable = 0
+        if not keyed_pseudonyms:
+            unverifiable = sum(
+                1 for _pid, scheme, witnessed in evidence
+                if witnessed and scheme != entities.JITTER_SCHEME_UNKEYED)
+        # Once unverified, always unverified. A store that took a secret
+        # unverified and then minted pseudonyms under it will verify that
+        # same secret on any later load -- after its row is lost again,
+        # say -- but the verification only shows the secret matches what
+        # was derived *after* the unverified load. The dates shifted
+        # before it were shifted under the secret that was lost, and a
+        # verifying pseudonym says nothing about them. So a verified load
+        # is not a reason to stop warning, and the fact is read from the
+        # audit log, which the project_secret row being lost does not
+        # take with it.
+        was_unverified = (not unverifiable
+                          and self._store_recorded_an_unverified_secret())
+        origin = (self._ORIGIN_LOADED_UNVERIFIED
+                  if unverifiable or was_unverified else self._ORIGIN_LOADED)
+        inserted, _row = self._insert_project_secret(secret, origin)
+        if not inserted:
+            raise RuntimeError(self._SECRET_ALREADY_HELD)
+        if unverifiable or was_unverified:
+            if unverifiable:
+                detail = self._UNVERIFIED_LOAD_NOTICE.format(
+                    n=f"{unverifiable} patient{'' if unverifiable == 1 else 's'}",
+                    has="has" if unverifiable == 1 else "have",
+                    those="that patient" if unverifiable == 1 else "those patients")
+            else:
+                detail = self._UNVERIFIED_HISTORY_NOTICE
+            detail += " " + self._UNVERIFIED_SECRET_NOTICE
+            self.logger.warning(detail)
+            self.log_audit(action_type="WARNING", entity_uid=self.db_path,
+                           details=detail)
+
+    def _store_recorded_an_unverified_secret(self) -> bool:
+        """Whether any `WARNING` row says a secret was loaded unverified."""
+        self.flush_audit_queue()
+        with self._get_connection() as conn:
+            return conn.execute(
+                "SELECT 1 FROM audit_log WHERE action_type = 'WARNING' "
+                "AND instr(details, ?) > 0 LIMIT 1",
+                (self._UNVERIFIED_MARKER,)).fetchone() is not None
+
+    #: `project_secret.origin` values. A store format, like the scheme
+    #: names: `_project_secret_for_use` reads the unverified one back at
+    #: every `audit()`, because after the load nothing else in the store
+    #: records that the secret was never checked.
+    _ORIGIN_GENERATED = "generated"
+    _ORIGIN_LOADED = "loaded"
+    _ORIGIN_LOADED_UNVERIFIED = "loaded-unverified"
+
+    _UNVERIFIED_LOAD_NOTICE = (
+        "{n} in this store {has} dates shifted under a project secret and "
+        "no keyed `ANON_` pseudonym to check a secret against, so the "
+        "secret just loaded was accepted without verification.")
+    _UNVERIFIED_HISTORY_NOTICE = (
+        "This store's audit log records a project secret loaded earlier "
+        "without verification. The secret just loaded verifies against "
+        "the store's keyed pseudonyms, but those can have been minted "
+        "under that unverified secret, so the check says nothing about "
+        "the dates shifted before it.")
+
+    #: The words `_store_recorded_an_unverified_secret` finds in the audit
+    #: log. A store format: stores written since 0.9.7 carry them in their
+    #: WARNING rows, so rewording `_UNVERIFIED_SECRET_NOTICE` without
+    #: keeping this phrase forgets every unverified load already recorded.
+    _UNVERIFIED_MARKER = "project secret could not be verified when it was loaded"
+
+    _UNVERIFIED_SECRET_NOTICE = (
+        "This store's project secret could not be verified when it was "
+        "loaded. If it is not the secret this store's earlier dates were "
+        "shifted under, every date shifted since the load carries a "
+        "different offset from the dates of the same patients shifted "
+        "before it, and the store cannot tell which. Confirm the secret "
+        "file came from this store's own project.")
+
+    _SECRET_ALREADY_HELD = (
+        "load_project_secret() refused: this store already holds a project "
+        "secret, and everything it pseudonymized or shifted was derived "
+        "under it. Load a project's secret into a fresh store, before its "
+        "first audit() or anonymize().")
 
     def _serialize_item(self, item: Instance) -> Dict[str, Any]:
         """
@@ -3275,14 +3765,21 @@ class SqliteStore:
     def _upsert_patient(self, cur, patient, tally) -> Optional[int]:
         """Writes the patient row if dirty; returns its primary key."""
         if patient.has_unsaved_changes:
+            # `jitter_scheme` is written on every INSERT, so a NULL can
+            # only come from a release before 0.9.7, and never
+            # overwritten on conflict: a patient's class is fixed once,
+            # and a save must not reclassify it.
             cur.execute("""
-                INSERT INTO patients (patient_id, patient_name, phi_status)
-                VALUES (?, ?, ?)
+                INSERT INTO patients (patient_id, patient_name, phi_status,
+                                      jitter_scheme)
+                VALUES (?, ?, ?, ?)
                 ON CONFLICT(patient_id) DO UPDATE SET
                     patient_name=excluded.patient_name,
-                    phi_status=excluded.phi_status
+                    phi_status=excluded.phi_status,
+                    jitter_scheme=COALESCE(patients.jitter_scheme,
+                                           excluded.jitter_scheme)
             """, (patient.patient_id, patient.patient_name,
-                  patient.phi_status.value))
+                  patient.phi_status.value, patient._jitter_scheme))
             tally.patients += 1
 
         # Re-read rather than use lastrowid: the row may have existed

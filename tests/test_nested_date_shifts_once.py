@@ -48,6 +48,8 @@ from isocenter.entities import (DicomItem, DicomSequence, Instance, Patient,
                                 PhiStatus, Series, Study)
 from isocenter.session import DicomSession
 
+from support.project_secret import FIXED_A, load_fixed_secret
+
 SC_SOP_CLASS = "1.2.840.10008.5.1.4.1.1.7"
 CONTENT_DATE = "0008,0023"
 ACQ_DATE = "0008,0022"
@@ -65,12 +67,14 @@ SHIFT_BOTH = {**SHIFT_CONTENT, **SHIFT_ACQ}
 PID = "P1"
 
 #: The offset `P1` seeds, with the default jitter config
-#: (`min_days=-365`, `max_days=-1`). One number for the whole file: every
+#: (`min_days=-365`, `max_days=-1`) and the fixed project secret
+#: `FIXED_A` every session here loads (it was -286 before the offset was
+#: keyed in 0.9.7). One number for the whole file: every
 #: value of this patient moves by it, in whichever pass it is first
 #: shifted, and it does not change between passes (#517). The arithmetic
 #: that produces it is asserted as a literal once, in
 #: `tests/test_the_jitter_seed_survives_anonymize.py`.
-OFFSET = -286
+OFFSET = -364
 
 #: Both parallel paths. `audit()` clones the graph whichever it picks, so
 #: the same line of code carries the record -- through a `copy` in one
@@ -103,6 +107,9 @@ def _threads_by_default(monkeypatch):
 def _session(tmp_path, *, study_date=None, top_date=None, nested_date=None,
              tags=None, name="m.db"):
     session = DicomSession(str(tmp_path / name))
+    # The store is given a fixed project secret, so OFFSET is a literal
+    # a reader can check (0.9.7): a generated secret would make it random.
+    load_fixed_secret(session, tmp_path, FIXED_A)
     patient = Patient(PID, "Orig^Name")
     study = Study("1.2.826.0.1.513", study_date)
     series = Series("1.2.826.0.1.513.1", "OT", 1)
@@ -156,7 +163,7 @@ def test_a_nested_date_moves_once_over_three_passes(tmp_path):
             seen.append(_nested(session).attributes[CONTENT_DATE])
 
     assert raised == [1, 0, 0], raised
-    assert seen == ["20230515", "20220802", "20220802", "20220802"], seen
+    assert seen == ["20230515", "20220516", "20220516", "20220516"], seen
     assert _days(seen[1], "20230515") == OFFSET, seen
     rows = _shift_rows(tmp_path / "m.db")
     assert len(rows) == 1, rows

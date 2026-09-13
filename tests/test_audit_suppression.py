@@ -80,7 +80,7 @@ def test_remediation_service_records_the_value_it_wrote():
     # 3. Run Remediation
     service = RemediationService(store_backend=None)
     # We mock _get_date_shift to be deterministic/simple
-    service._get_date_shift = lambda pid: 10
+    service._get_date_shift = lambda pid, scheme: 10
 
     service.apply_remediation([finding])
 

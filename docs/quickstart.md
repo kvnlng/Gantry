@@ -187,7 +187,7 @@ session.enable_reversible_anonymization("isocenter.key")
 # Recover the original PatientName and PatientID
 # Recover the original identity and restore attributes in-memory
 # restore=True (default) automatically updates all instances with original values
-session.recover_patient_identity("ANON_12345", restore=True)
+session.recover_patient_identity("ANON_5b5ce7b47f254ef3a0d90c0f", restore=True)
 
 # Now, accessing p.patient_name or instance attributes returns original data
 print(f"Restored: {session.store.patients[0].patient_name}")

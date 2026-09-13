@@ -1,8 +1,10 @@
 from dataclasses import dataclass, field
 from typing import List, Any, Optional, Dict, Tuple
 import hashlib
+import hmac
 import re
-from .entities import Patient, Study, Instance, iter_item_tree
+from .entities import (JITTER_SCHEME_KEYED, JITTER_SCHEME_UNKEYED, Instance,
+                       Patient, Study, iter_item_tree)
 from .logger import get_logger
 
 
@@ -21,77 +23,168 @@ def _is_replacement_id(value) -> bool:
     return str(value).startswith("ANON_")
 
 
-#: The hex run inside an `ANON_` replacement. Used to refuse a value that
-#: merely starts with the prefix (`ANON_xyz`, a user's own id) before
-#: `jitter_digest` reads eight characters out of it as a digest.
-_IS_HEX = re.compile(r"[0-9a-f]+")
+#: The hex run inside an unkeyed `ANON_` replacement. Used to refuse a
+#: value that merely starts with the prefix (`ANON_xyz`, a user's own id)
+#: before `_unkeyed_jitter_digest` reads eight characters out of it.
+_UNKEYED_IS_HEX = re.compile(r"[0-9a-f]+")
 
-#: How many hex characters of the PatientID digest the replacement
-#: carries, and how many the date jitter seeds on. The first is a prefix
-#: of the second, which is the whole reason `jitter_digest` can read the
-#: seed back out of a replacement; shorten `_REPLACEMENT_DIGEST_CHARS`
-#: below `_JITTER_DIGEST_CHARS` and the coupling breaks silently, which
-#: is why `tests/test_the_jitter_seed_survives_anonymize.py` pins it.
-_REPLACEMENT_DIGEST_CHARS = 12
-_JITTER_DIGEST_CHARS = 8
+#: The unkeyed scheme's shape: how many hex characters of the PatientID
+#: digest its replacement carried, and how many its date jitter seeded
+#: on. Kept only for patients a store classed as de-identified before
+#: 0.9.7 (`JITTER_SCHEME_UNKEYED`); nothing keyed reads them.
+_UNKEYED_REPLACEMENT_DIGEST_CHARS = 12
+_UNKEYED_JITTER_DIGEST_CHARS = 8
+
+#: The keyed scheme. The pseudonym is `ANON_` + `_DIGEST_HEX` hex of an
+#: HMAC of the original + `_CHECK_HEX` hex of an HMAC of that digest, so
+#: 29 characters. The digest is 64 bits because a collision merges two
+#: patients under `patients UNIQUE(patient_id)`; the check is what lets
+#: the library tell whether a secret it was given minted a pseudonym
+#: (`_pseudonym_verifies`), which is how a missing or foreign secret is
+#: refused or warned about rather than silently used.
+#:
+#: Three labels, one per derivation, so no output of one is an output of
+#: another: the date offset in particular is **not** readable out of the
+#: pseudonym, as it was under the unkeyed scheme. Changing
+#: a label changes every pseudonym and offset a store has minted.
+_DIGEST_HEX = 16
+_CHECK_HEX = 8
+_LABEL_PATIENT_ID = b"isocenter/v1/patient-id\x00"
+_LABEL_PSEUDONYM_CHECK = b"isocenter/v1/pseudonym-check\x00"
+_LABEL_DATE_JITTER = b"isocenter/v1/date-jitter\x00"
+_KEYED_PSEUDONYM = re.compile(
+    rf"ANON_[0-9a-f]{{{_DIGEST_HEX + _CHECK_HEX}}}")
+_UNKEYED_PSEUDONYM = re.compile(
+    rf"ANON_[0-9a-f]{{{_UNKEYED_REPLACEMENT_DIGEST_CHARS}}}")
 
 
-def _replacement_id_for(patient_id) -> str:
-    """The PatientID replacement `scan_patient` proposes.
+def _require_secret(secret) -> bytes:
+    """The project secret, or `RuntimeError`.
 
-    Spelled once, beside the test that recognises it, because the date
-    jitter reads its digest back out (`jitter_digest`): two spellings of
-    the constructor would let the prefix, the digest length or the hash
-    move on one side only.
+    There is deliberately no default. A keyed derivation handed no secret
+    that quietly used the unkeyed one instead would be a single-line road
+    back to offsets anyone can compute, and no end-to-end test would see
+    it, because the output still looks like a pseudonym.
+    """
+    if not secret:
+        raise RuntimeError(
+            "No project secret: the pseudonym and date offset are derived "
+            "under the store's project secret, and there is no unkeyed "
+            "fallback. Session.audit() and anonymize() obtain it from the "
+            "store; a PhiInspector or RemediationService built by hand has "
+            "to be given one.")
+    return bytes(secret)
+
+
+def _hmac(secret, label: bytes, text) -> bytes:
+    return hmac.new(_require_secret(secret), label + str(text).encode(),
+                    hashlib.sha256).digest()
+
+
+def _replacement_id_for(patient_id, secret) -> str:
+    """The PatientID replacement `scan_patient` proposes for a keyed
+    patient: `ANON_` + 16 hex of a keyed digest + 8 hex of its check.
+
+    Spelled once, because the date jitter canonicalizes an original id
+    to this value (`canonical_patient_key`) and `_pseudonym_verifies`
+    recomputes its check: two spellings would let the prefix, the
+    lengths or a label drift on one side only.
+    """
+    digest = _hmac(secret, _LABEL_PATIENT_ID, patient_id).hex()[:_DIGEST_HEX]
+    check = _hmac(secret, _LABEL_PSEUDONYM_CHECK, digest).hex()[:_CHECK_HEX]
+    return f"ANON_{digest}{check}"
+
+
+def _pseudonym_verifies(patient_id, secret) -> bool:
+    """Whether `patient_id` is a keyed pseudonym minted under `secret`.
+
+    Diagnostics only -- the refusals and warnings about a missing or
+    foreign secret, and `load_project_secret`'s check. Never used to
+    decide an offset: every `ANON_` id seeds from its own text, whether
+    or not it verifies, so a verdict here cannot move a date.
+    """
+    text = str(patient_id)
+    if not _KEYED_PSEUDONYM.fullmatch(text):
+        return False
+    digest, check = text[5:5 + _DIGEST_HEX], text[5 + _DIGEST_HEX:]
+    expected = _hmac(secret, _LABEL_PSEUDONYM_CHECK, digest).hex()[:_CHECK_HEX]
+    return hmac.compare_digest(check, expected)
+
+
+def _is_keyed_pseudonym_shape(patient_id) -> bool:
+    return bool(_KEYED_PSEUDONYM.fullmatch(str(patient_id)))
+
+
+def _is_unkeyed_pseudonym_shape(patient_id) -> bool:
+    return bool(_UNKEYED_PSEUDONYM.fullmatch(str(patient_id)))
+
+
+def _unkeyed_replacement_id_for(patient_id) -> str:
+    """The replacement the unkeyed scheme minted, for a legacy patient.
+
+    Reachable only for a patient its store classed
+    `JITTER_SCHEME_UNKEYED` when opened. A legacy patient whose id is no
+    longer `ANON_` (restored, or never replaced) has to re-mint *this*
+    value, or the next pass reads a different id back and the patient
+    ends up with two offsets.
     """
     digest = hashlib.sha256(str(patient_id).encode()).hexdigest()
-    return f"ANON_{digest[:_REPLACEMENT_DIGEST_CHARS]}"
+    return f"ANON_{digest[:_UNKEYED_REPLACEMENT_DIGEST_CHARS]}"
 
 
-def jitter_digest(patient_id) -> str:
-    """The digest that seeds the date jitter, from either spelling of an
-    identity (#517).
+def _unkeyed_jitter_digest(patient_id) -> str:
+    """The unkeyed scheme's jitter seed, for a legacy patient (#517).
 
-    `_get_date_shift` used to hash whatever PatientID the scan saw, and
-    `anonymize()` replaces PatientID in its first pass -- so every later
-    pass hashed `ANON_<digest>` instead of the original and landed on a
-    different offset (measured: `P1` gives -286 days, the replacement it
-    produces gives -47). A date first shifted in a later pass therefore
-    fell off the offset its siblings got, and "jitter is deterministic
-    per patient so intervals survive" held only within one pass.
-
-    A replacement already **carries** the original's digest -- it is
-    `ANON_` plus its first 12 hex characters, and the jitter reads the
-    first 8 -- so the canonical key is read back out of it rather than
-    recomputed. That is what makes this fix carry no legacy question:
-    for an id that has *not* been replaced the arithmetic is unchanged,
-    bit for bit, so every offset this version computes is the offset
-    0.9.5 computed and a store's dates stay consistent across the
-    upgrade.
-
-    The coupling between the two spellings is load-bearing: it holds only
-    while `_replacement_id_for` carries at least
-    `_JITTER_DIGEST_CHARS` characters of the *same* hash this function
-    would compute. `tests/test_the_jitter_seed_survives_anonymize.py`
-    pins it in both directions.
-
-    Known, pre-existing edge, not widened here: a real PatientID
-    whose eight characters after `ANON_` are all lowercase hex is read as
-    a replacement and seeded from its own text. `_is_replacement_id`
-    already treats such an id as anonymized, so this is consistent with
-    what the scan does; it is stable, merely arbitrary. Note which eight
-    characters: eight *read*, not eight *long*, so
-    `ANON_deadbeefcafe` -- the 12-hex shape `_replacement_id_for` itself
-    writes -- is one of these ids, and only an id carrying fewer than
-    eight characters after the prefix, or something other than lowercase
-    hex among the eight, is hashed like any other value.
+    Exactly what 0.9.6 computed: an `ANON_` id whose first eight
+    characters after the prefix are lowercase hex seeds from those
+    characters, anything else from `sha256(text)[:8]`. Kept bit for bit
+    so a patient whose dates a store already shifted under it gets the
+    same offset for a date shifted now, and never a second one.
     """
     text = str(patient_id)
     if _is_replacement_id(text):
-        carried = text[5:5 + _JITTER_DIGEST_CHARS]
-        if len(carried) == _JITTER_DIGEST_CHARS and _IS_HEX.fullmatch(carried):
+        carried = text[5:5 + _UNKEYED_JITTER_DIGEST_CHARS]
+        if (len(carried) == _UNKEYED_JITTER_DIGEST_CHARS
+                and _UNKEYED_IS_HEX.fullmatch(carried)):
             return carried
-    return hashlib.sha256(text.encode()).hexdigest()[:_JITTER_DIGEST_CHARS]
+    return hashlib.sha256(text.encode()).hexdigest()[
+        :_UNKEYED_JITTER_DIGEST_CHARS]
+
+
+def canonical_patient_key(patient_id, secret, scheme) -> int:
+    """The integer that seeds a patient's date offset, from either
+    spelling of its identity (#517).
+
+    `_get_date_shift` reads a scan's PatientID, and `anonymize()`
+    replaces that id in its first pass -- so a later pass reads the
+    pseudonym where the first read the original. Both spellings have to
+    give one offset, or a date first shifted in a later pass falls off
+    the offset its siblings got.
+
+    **Keyed** (`JITTER_SCHEME_KEYED`): the canonical key is the
+    pseudonym. An original id is mapped to the pseudonym it would be
+    replaced by; an id already `ANON_` is taken as it stands. The seed
+    is then an HMAC of that key under its own label, so it is a function
+    of the secret, and nothing about it can be read out of the
+    pseudonym's characters.
+
+    **Unkeyed** (`JITTER_SCHEME_UNKEYED`): `_unkeyed_jitter_digest`,
+    for a patient its store classed legacy at open. No secret is read.
+
+    Returns an int the caller reduces mod the jitter span. Raises
+    `RuntimeError` for the keyed scheme with no secret, and `ValueError`
+    for a scheme it does not know -- never a default, since a wrong
+    guess is a second offset for a patient.
+    """
+    if scheme == JITTER_SCHEME_UNKEYED:
+        return int(_unkeyed_jitter_digest(patient_id), 16)
+    if scheme != JITTER_SCHEME_KEYED:
+        raise ValueError(f"unknown jitter scheme {scheme!r}")
+    text = str(patient_id)
+    canonical = (text if _is_replacement_id(text)
+                 else _replacement_id_for(text, secret))
+    return int.from_bytes(
+        _hmac(secret, _LABEL_DATE_JITTER, canonical)[:8], "big")
 
 
 def _study_date_is_this_pipelines(study) -> bool:
@@ -266,7 +359,8 @@ class PhiInspector:
                  config_path: str = None,
                  config_tags: Dict[str,
                                    str] = None,
-                 remove_private_tags: bool = False):
+                 remove_private_tags: bool = False,
+                 project_secret: bytes = None):
         """
         Initializes the inspector.
 
@@ -283,10 +377,16 @@ class PhiInspector:
                 replaces the value instead of shifting it, and is warned
                 about at construction (#111).
             remove_private_tags (bool): If True, scans all attributes for non-whitelisted private tags.
+            project_secret (bytes, optional): The store's project secret,
+                which keys the PatientID replacement. Optional here and
+                required at use: `scan_patient` raises `RuntimeError`
+                when it has to mint a keyed replacement without one.
+                `Session.audit()` always passes it.
         """
         from .config_manager import ConfigLoader
 
         self.remove_private_tags = remove_private_tags
+        self.project_secret = project_secret
 
         if config_tags is not None:
             self.phi_tags = config_tags
@@ -411,13 +511,18 @@ class PhiInspector:
 
         if (patient.patient_id and patient.patient_id != "UNKNOWN"
                 and not _is_replacement_id(patient.patient_id)):
-            # Simple deterministic anonymization proposal for now (can be refined in Service)
-            # The Service will handle the hash calculation if 'new_value' is a
-            # placeholder or if logic dictates
-            # Through the constructor, not spelled here: the date jitter
-            # reads this value's digest back out as its seed (#517), so
-            # the prefix and the digest length have one home.
-            hashed_id = _replacement_id_for(patient.patient_id)
+            # Through the constructors, not spelled here: the date
+            # jitter canonicalizes an original id to this value (#517),
+            # so the prefix, lengths and labels have one home. The
+            # scheme is the one the store fixed for this patient at open:
+            # a patient de-identified before 0.9.7 re-mints its old
+            # replacement, or its next pass reads back a different id
+            # and gets a second offset.
+            if patient._jitter_scheme == JITTER_SCHEME_UNKEYED:
+                hashed_id = _unkeyed_replacement_id_for(patient.patient_id)
+            else:
+                hashed_id = _replacement_id_for(patient.patient_id,
+                                                self.project_secret)
             proposal = PhiRemediation(
                 action_type="REPLACE_TAG",
                 target_attr="patient_id",
@@ -438,7 +543,9 @@ class PhiInspector:
 
         # 2. Traverse Children & Scan Instances (Generic Unified Config)
         for study in patient.studies:
-            findings.extend(self._scan_study(study, patient.patient_id))
+            findings.extend(self._scan_study(
+                study, patient.patient_id,
+                jitter_scheme=patient._jitter_scheme))
 
             for series in study.series:
                 for instance in series.instances:
@@ -728,8 +835,17 @@ class PhiInspector:
                     target_attr=tag,
                     new_value=new_val,
                     original_value=val,
+                    # The scheme rides with the id, because the arm that
+                    # computes the offset sees only the finding: a
+                    # legacy patient's date shifted with a keyed offset
+                    # would carry two offsets. No patient (a direct call)
+                    # is a keyed patient, which is what every patient
+                    # this release creates is.
                     metadata={
-                        "patient_id": patient_id} if remediation_action == "SHIFT_DATE" else {})
+                        "patient_id": patient_id,
+                        "jitter_scheme": getattr(
+                            patient, "_jitter_scheme", JITTER_SCHEME_KEYED),
+                    } if remediation_action == "SHIFT_DATE" else {})
 
                 findings.append(PhiFinding(
                     entity_uid=instance.sop_instance_uid,
@@ -790,7 +906,8 @@ class PhiInspector:
         # is PHI -- the case this function exists to refuse.
         return False
 
-    def _scan_study(self, study: Study, patient_id: str = None) -> List[PhiFinding]:
+    def _scan_study(self, study: Study, patient_id: str = None,
+                    jitter_scheme: str = JITTER_SCHEME_KEYED) -> List[PhiFinding]:
         """
         Scans a Study entity for study-level PHI (e.g. StudyDate).
         """
@@ -816,7 +933,8 @@ class PhiInspector:
                 action_type="SHIFT_DATE",  # Special action for the Service to handle
                 target_attr="study_date",
                 original_value=study.study_date,
-                metadata={"patient_id": patient_id}
+                metadata={"patient_id": patient_id,
+                          "jitter_scheme": jitter_scheme}
             )
             findings.append(PhiFinding(
                 entity_uid=uid,

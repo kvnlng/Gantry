@@ -48,15 +48,18 @@ from isocenter.io_handlers import format_study_date
 from isocenter.privacy import PhiInspector, _study_date_is_this_pipelines
 from isocenter.session import DicomSession
 
+from support.project_secret import FIXED_A, load_fixed_secret
+
 SC_SOP_CLASS = "1.2.840.10008.5.1.4.1.1.7"
 STUDY_DATE = "0008,0020"
 STUDY_UID = "1.2.826.0.1.518"
 PID = "P1"
 
-#: `P1`'s offset with the default jitter config, as the jitter-seed file
-#: asserts as a literal. One offset, in whichever pass a value is first
-#: shifted (#517).
-OFFSET = -286
+#: `P1`'s offset with the default jitter config under the fixed project
+#: secret `FIXED_A`, as the jitter-seed file asserts as a literal (it was
+#: -286 before the offset was keyed in 0.9.7). One offset, in whichever
+#: pass a value is first shifted (#517).
+OFFSET = -364
 
 MODES = ["threads", "processes"]
 
@@ -85,6 +88,9 @@ def _threads_by_default(monkeypatch):
 def _session(tmp_path, *, study_date=date(2023, 1, 1), instance_date=None,
              tags=None, name="m.db"):
     session = DicomSession(str(tmp_path / name))
+    # The store is given a fixed project secret, so OFFSET is a literal
+    # a reader can check (0.9.7): a generated secret would make it random.
+    load_fixed_secret(session, tmp_path, FIXED_A)
     patient = Patient(PID, "Orig^Name")
     study = Study(STUDY_UID, study_date)
     series = Series(f"{STUDY_UID}.1", "OT", 1)

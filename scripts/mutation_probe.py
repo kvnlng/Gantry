@@ -239,7 +239,8 @@ TARGETS = {
     "isocenter/validation.py": (["tests/test_export_error.py",
                                  "tests/test_floor_policy.py", "tests/test_io.py",
                                  "tests/test_structured_export.py",
-                                 "tests/test_validation.py", "tests/test_wfdb_writer.py"], 30),
+                                 "tests/test_validation.py", "tests/test_wfdb_writer.py",
+                                 "tests/test_the_project_secret_lives_in_the_store.py"], 30),
     # Promoted out of NOT_PROBED by #495/#456, whose tests exercise both
     # modules' behaviour rather than their shapes: the loader's refusals
     # (tests/test_load_config_raises.py) and the floor seed, the lowercase
@@ -342,7 +343,10 @@ TARGETS = {
                               "tests/test_scaffold_features.py",
                               "tests/test_shipped_resource_is_required.py",
                               "tests/test_sr_anonymization.py",
-                              "tests/test_the_jitter_seed_survives_anonymize.py"], 30),
+                              "tests/test_the_jitter_seed_survives_anonymize.py",
+                              "tests/test_a_pre_097_store_keeps_one_offset_per_patient.py",
+                              "tests/test_the_project_secret_keys_the_pseudonym_and_offset.py",
+                              "tests/test_the_project_secret_lives_in_the_store.py"], 30),
     "isocenter/remediation.py": (["tests/test_audit_suppression.py",
                                   "tests/test_a_replaced_study_date_is_raised.py",
                                   "tests/test_an_unshifted_date_is_raised.py",
@@ -371,7 +375,10 @@ TARGETS = {
                                   # #491); nothing the scan demands does.
                                   "tests/test_manifest_says_what_was_done.py",
                                   "tests/test_one_value_per_owned_tag.py",
-                                  "tests/test_the_jitter_seed_survives_anonymize.py"], 30),
+                                  "tests/test_the_jitter_seed_survives_anonymize.py",
+                                  "tests/test_a_pre_097_store_keeps_one_offset_per_patient.py",
+                                  "tests/test_the_project_secret_keys_the_pseudonym_and_offset.py",
+                                  "tests/test_the_project_secret_lives_in_the_store.py"], 30),
     "isocenter/io_handlers.py": (["tests/test_api_coherence.py",
                                   "tests/test_a_replaced_study_date_is_raised.py",
                                   "tests/test_audit_read_barrier.py",
@@ -461,7 +468,8 @@ TARGETS = {
                                   "tests/test_wfdb_writer.py",
                                   "tests/test_worker_loss_is_reported.py",
                                   "tests/test_ybr_jpegls_read_doors.py",
-                                  "tests/test_ybr_read_door_labels.py"], 30),
+                                  "tests/test_ybr_read_door_labels.py",
+                                  "tests/test_the_project_secret_lives_in_the_store.py"], 30),
     # 453 sites. Until #383 this module had no row at all, so no mutant
     # of `_hold_sidecar_gate`, `_hold_pass_lock`, `_refuse_while_pass_open`,
     # `_flock_within`, `_SIDECAR_GATE_TIMEOUT_S`, the `:memory:` temp-file
@@ -533,7 +541,9 @@ TARGETS = {
                                   "tests/test_sidecar_gate_order.py",
                                   "tests/test_study_date_roundtrip.py",
                                   "tests/test_vertical_table.py",
-                                  "tests/test_worker_start_is_serialised.py"], 30),
+                                  "tests/test_worker_start_is_serialised.py",
+                                  "tests/test_a_pre_097_store_keeps_one_offset_per_patient.py",
+                                  "tests/test_the_project_secret_lives_in_the_store.py"], 30),
     # 587 sites (e184933). Until #414 the facade had no row, so no mutant
     # of `Session` -- the ingest/audit/anonymize/redact/export ordering,
     # `_make_lightweight_copy`, `_verify_worker`, the report's boundary
@@ -748,7 +758,9 @@ TARGETS = {
                               "tests/test_wfdb_writer.py",
                               "tests/test_worker_loss_is_reported.py",
                               "tests/test_ybr_jpegls_read_doors.py",
-                              "tests/test_ybr_read_door_labels.py"],
+                              "tests/test_ybr_read_door_labels.py",
+                              "tests/test_a_pre_097_store_keeps_one_offset_per_patient.py",
+                              "tests/test_the_project_secret_lives_in_the_store.py"],
                              30),
     # 196 sites. Until #419 this module had no row, so the persistence
     # bookkeeping every CLAUDE.md trap is about -- `mark_modified`,
@@ -956,7 +968,10 @@ TARGETS = {
                                "tests/test_worker_loss_is_reported.py",
                                "tests/test_worker_start_is_serialised.py",
                                "tests/test_ybr_jpegls_read_doors.py",
-                               "tests/test_ybr_read_door_labels.py"],
+                               "tests/test_ybr_read_door_labels.py",
+                               "tests/test_a_pre_097_store_keeps_one_offset_per_patient.py",
+                               "tests/test_the_project_secret_keys_the_pseudonym_and_offset.py",
+                               "tests/test_the_project_secret_lives_in_the_store.py"],
                               30),
     # 81 sites; budget 60 is stride 1 (81 // 60), so every site is
     # probed, exhaustive because it is cheap, like parallel.py's 80. It

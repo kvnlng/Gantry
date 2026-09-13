@@ -106,6 +106,30 @@ store with no shifted study writes nothing.
 Also changed at the same release: `Instance.date_shifted` is gone (see
 [API stability](api/stability.md)).
 
+### Stores de-identified before 0.9.7 (GHSA-phg9-vcvc-j4r7)
+
+Before 0.9.7 the `ANON_` pseudonym was the first 12 hex characters of an unsalted SHA-256 of the original Patient ID, and the date offset was read from the same digest. Anyone holding an exported file and the date-jitter range could undo the date shift, and could recover the original ID by hashing candidates. From 0.9.7 both are derived with HMAC-SHA256 under a per-project secret kept in the store, and the pseudonym is `ANON_` plus 24 hex characters.
+
+Opening an older store classifies each patient once. A patient that was already de-identified (an ID of exactly the old `ANON_` shape, or any shifted date) keeps the old scheme, because giving them a new offset would put two offsets on one patient's dates. New studies for that patient are shifted by the old, recoverable offset. Every other patient, and every patient added later, uses the keyed scheme. While any old-scheme patient remains, each open logs a warning and writes one `WARNING` audit row naming how many, so compliance reports over the store grade `REVIEW_REQUIRED`.
+
+Files already exported by an older release stay recoverable, and nothing Isocenter does now changes that. To give those patients the keyed scheme, re-ingest their **source** files into a new store. Re-ingesting an old *export* does not help: an ID that is already `ANON_` is never replaced, so its unkeyed digest is exported unchanged (the load notice and `audit()` count these too). Ingesting raw files for a patient an older release already de-identified, into that same store, makes a second subject: the new data is keyed, its earlier studies keep the old pseudonym and offset, and `audit()` writes a `WARNING` row saying so.
+
+### Carrying a project secret between stores
+
+A store makes its own project secret the first time `audit()` or `anonymize()` needs one, so two stores give the same patient different pseudonyms and different offsets unless they share it. To keep offsets consistent across more than one store (a later batch for the same patients, or re-ingesting an export), carry the secret:
+
+```python
+first.store_backend.write_project_secret("project.secret")   # refuses to overwrite; mode 0600
+second = Session("batch2.db")
+second.store_backend.load_project_secret("project.secret")   # before second's first audit()
+```
+
+`load_project_secret` refuses a store that already holds a secret, whichever one, because everything it pseudonymized or shifted was derived under that secret; load into a fresh store. A store holding keyed pseudonyms accepts only a secret that minted at least one of them. A store whose shifted patients all kept their Patient IDs has no pseudonym to check a secret against: it accepts the secret, records it as unverified, and writes a `WARNING` row at the load and at every later `audit()`, so its reports grade `REVIEW_REQUIRED` -- permanently: there is no call to acknowledge the warning, and a later load into that store is recorded as unverified too, even when the secret verifies against pseudonyms minted after the first load. Make sure that file is this store's own project's secret: a different one gives each patient's later dates a second offset, and nothing in the store can tell.
+
+The file recovers the dates of every store sharing it: keep it with the store, never with an export. A store that holds shifted dates but has lost its secret refuses `audit()`, `anonymize()` and `export(check_burned_in=True)` rather than generate a second offset; load the secret back to continue.
+
+**Starting a new project over another project's export.** A fresh store that ingests an export from another project, without that project's secret, generates its own secret and writes a `WARNING` row naming the pseudonyms it cannot verify: its offsets are its own, not the source project's, and intervals within each patient are kept. That is the one path for a new project. There is no override to adopt a secret into a store that has one, because that is the only guard against silently mixing two projects' offsets. If the data belongs to the existing project, load that project's secret into a fresh store before its first `audit()` and ingest the export there instead.
+
 ## Clinical Trial Processor (CTP)
 
 Isocenter includes a utility to convert legacy CTP `DicomPixelAnonymizer.script` files into Isocenter's YAML configuration format.
